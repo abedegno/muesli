@@ -1,0 +1,118 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  server:
+    name: server (go)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: muesli_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.6'
+      - name: Resolve DB URL
+        run: echo "TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/muesli_test?sslmode=disable" >> "$GITHUB_ENV"
+      - run: go build ./...
+      - run: go vet ./...
+      - name: Check gofmt
+        run: |
+          files=$(gofmt -l .)
+          if [ -n "$files" ]; then
+            echo "The following files need gofmt formatting:"
+            echo "$files"
+            exit 1
+          fi
+      - run: make check-test-determinism
+      - run: go test ./... -p 4 -parallel 2
+
+  client:
+    name: client (node)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Lint (ESLint)
+        run: npm run lint
+      - name: Format check (Prettier)
+        run: npm run format:check
+      - run: npm run typecheck
+      - run: npm run test
+
+  lighthouse:
+    name: lighthouse (a11y)
+    runs-on: ubuntu-latest
+    env:
+      ELECTRON_SKIP_BINARY_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Ensure Chrome
+        run: |
+          if command -v google-chrome-stable >/dev/null 2>&1 || command -v google-chrome >/dev/null 2>&1; then
+            echo "Chrome already present"; exit 0
+          fi
+          curl -fsSL -o /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo DEBIAN_FRONTEND=noninteractive apt-get update
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y /tmp/chrome.deb
+          rm -f /tmp/chrome.deb
+      - run: npm run build
+      - run: npx @lhci/cli@0.14.x autorun
+
+  plugins:
+    name: plugins (python)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dir: whisper-transcriber
+            install: pip install -e '.[test]'
+          - dir: parakeet-transcriber
+            install: pip install -e '.[test]'
+          - dir: ollama-agent
+            install: pip install -e '.[test]'
+          - dir: conformance
+            install: pip install -e ../whisper-transcriber && pip install -e ../ollama-agent && pip install -e ../parakeet-transcriber && pip install -e '.[test]'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install (${{ matrix.dir }})
+        working-directory: plugins/${{ matrix.dir }}
+        run: |
+          python -m pip install --upgrade pip
+          ${{ matrix.install }}
+      - name: Ruff TID gate (${{ matrix.dir }})
+        working-directory: plugins/${{ matrix.dir }}
+        run: |
+          pip install 'ruff>=0.4'
+          ruff check tests/ --select TID251
+      - name: Test (${{ matrix.dir }})
+        working-directory: plugins/${{ matrix.dir }}
+        run: pytest

@@ -1,0 +1,38 @@
+:root {
+  --background: #ffffff;
+  --app-chrome: #f8fafc;
+  --card: #ffffff;
+  --popover: #ffffff;
+  --foreground: #0f172a;
+  --muted: #f1f5f9;
+  --muted-foreground: #64748b;
+  --primary: #0d9488;
+  --primary-foreground: #ffffff;
+  --accent: #ea580c;
+  --accent-foreground: #ffffff;
+  --destructive: #dc2626;
+  --destructive-foreground: #ffffff;
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --ring: #0d9488;
+  --radius: 0.5rem;
+}
+
+.dark {
+  --background: #0b1220;
+  --app-chrome: #0f172a;
+  --card: #0f172a;
+  --popover: #0f172a;
+  --foreground: #e2e8f0;
+  --muted: #1e293b;
+  --muted-foreground: #94a3b8;
+  --primary: #2dd4bf;
+  --primary-foreground: #04201d;
+  --accent: #fb923c;
+  --accent-foreground: #1a1206;
+  --destructive: #f87171;
+  --destructive-foreground: #1a0606;
+  --border: #1e293b;
+  --input: #1e293b;
+  --ring: #2dd4bf;
+}

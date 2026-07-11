@@ -1,0 +1,3 @@
+# Files pending migration to FakeClock — do not add new files here without a migration PR.
+internal/store/notes_test.go
+internal/worker/trashpurge_test.go

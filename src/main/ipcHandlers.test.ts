@@ -1,0 +1,721 @@
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { FakeServer } from '../../test/fakeServer'
+import { createHandlers } from './ipcHandlers'
+import { TokenStore, type SafeStorageLike } from './tokenStore'
+
+const fakeSafe: SafeStorageLike = {
+  isEncryptionAvailable: () => true,
+  encryptString: (s) => Buffer.from(`enc:${s}`, 'utf8'),
+  decryptString: (b) => b.toString('utf8').replace(/^enc:/, ''),
+}
+
+describe('ipc handlers', () => {
+  let dir: string
+  let server: FakeServer
+
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'muesli-ipc-'))
+    server = new FakeServer()
+  })
+  afterEach(() => rmSync(dir, { recursive: true, force: true }))
+
+  function makeHandlers() {
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    return createHandlers({
+      tokenStore,
+      fetch: server.fetch,
+      onProgress: () => {},
+    })
+  }
+
+  it('connect (first run) sets up, logs in, mints + persists an app token', async () => {
+    const h = makeHandlers()
+    const out = await h.connect({
+      serverUrl: 'http://localhost',
+      email: 'o@example.com',
+      password: 'password123',
+      isFirstRun: true,
+    })
+    expect(out.serverUrl).toBe('http://localhost')
+
+    const cfg = await h.getConfig()
+    expect(cfg?.serverUrl).toBe('http://localhost')
+    expect(cfg?.token).toMatch(/^app-/)
+  })
+
+  it('connect (login, not first run) skips setup', async () => {
+    server.seedUser('o@example.com', 'password123')
+    const h = makeHandlers()
+    await h.connect({
+      serverUrl: 'http://localhost',
+      email: 'o@example.com',
+      password: 'password123',
+      isFirstRun: false,
+    })
+    expect((await h.getConfig())?.token).toMatch(/^app-/)
+  })
+
+  it('connect blocks plain HTTP to a non-loopback server (no network call)', async () => {
+    let called = false
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    const h = createHandlers({
+      tokenStore,
+      fetch: ((...a: Parameters<typeof server.fetch>) => { called = true; return server.fetch(...a) }) as typeof server.fetch,
+      onProgress: () => {},
+    })
+    await expect(
+      h.connect({ serverUrl: 'http://192.168.1.50:8080', email: 'o@example.com', password: 'password123', isFirstRun: true }),
+    ).rejects.toThrow(/ERR_INSECURE_CONNECTION/)
+    expect(called).toBe(false)
+    expect(await h.getConfig()).toBeNull()
+  })
+
+  it('connect proceeds to a non-loopback HTTP server when allowInsecure is set', async () => {
+    server.seedUser('o@example.com', 'password123')
+    const h = makeHandlers()
+    await h.connect({ serverUrl: 'http://192.168.1.50:8080', email: 'o@example.com', password: 'password123', isFirstRun: false, allowInsecure: true })
+    expect((await h.getConfig())?.token).toMatch(/^app-/)
+  })
+
+  it('connect allows plain HTTP to a non-loopback server when MUESLI_ALLOW_INSECURE is set', async () => {
+    server.seedUser('o@example.com', 'password123')
+    process.env.MUESLI_ALLOW_INSECURE = '1'
+    try {
+      const h = makeHandlers()
+      await h.connect({ serverUrl: 'http://192.168.1.50:8080', email: 'o@example.com', password: 'password123', isFirstRun: false })
+      expect((await h.getConfig())?.token).toMatch(/^app-/)
+    } finally {
+      delete process.env.MUESLI_ALLOW_INSECURE
+    }
+  })
+
+  it('connect always allows https to any host', async () => {
+    server.seedUser('o@example.com', 'password123')
+    const h = makeHandlers()
+    await h.connect({ serverUrl: 'https://muesli.example.com', email: 'o@example.com', password: 'password123', isFirstRun: false })
+    expect((await h.getConfig())?.token).toMatch(/^app-/)
+  })
+
+  it('granular create/body/title/audio drive the expected API calls', async () => {
+    server.seedUser('o@example.com', 'password123')
+    const calls: { method: string; path: string }[] = []
+    const baseFetch = server.fetch
+    const spyFetch: typeof baseFetch = (input, init) => {
+      const url = new URL(typeof input === 'string' ? input : input.toString())
+      calls.push({ method: (init?.method ?? 'GET').toUpperCase(), path: url.pathname })
+      return baseFetch(input, init)
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    const h = createHandlers({ tokenStore, fetch: spyFetch, onProgress: () => {} })
+    await h.connect({
+      serverUrl: 'http://localhost',
+      email: 'o@example.com',
+      password: 'password123',
+      isFirstRun: false,
+    })
+
+    const note = await h.createNote('My meeting')
+    expect(note.id).toMatch(/^note-/)
+    await h.updateBody(note.id, '# notes')
+    await h.updateTitle(note.id, 'Renamed')
+    const res = await h.uploadAudio({
+      noteId: note.id,
+      audio: new Uint8Array([1]).buffer,
+      audioMimeType: 'audio/webm',
+    })
+    expect(res.noteId).toBe(note.id)
+
+    const has = (method: string, path: string) =>
+      calls.some((c) => c.method === method && c.path === path)
+    expect(has('POST', '/api/notes')).toBe(true)
+    expect(has('PUT', `/api/notes/${note.id}/body`)).toBe(true)
+    expect(has('PATCH', `/api/notes/${note.id}`)).toBe(true)
+    expect(has('POST', `/api/notes/${note.id}/audio-upload-url`)).toBe(true)
+    expect(server.lastBodyPut?.content).toBe('# notes')
+  })
+
+  it('updateFolder returns the updated folder body', async () => {
+    const seen: string[] = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      const path = new URL(String(url)).pathname
+      seen.push(`${init?.method ?? 'GET'} ${path}`)
+      if (path === '/api/folders/f1' && (init?.method ?? 'GET').toUpperCase() === 'PUT') {
+        return new Response(JSON.stringify({ id: 'f1', name: 'Accounts', created_at: '2026-07-10T00:00:00Z' }), { status: 200 })
+      }
+      return new Response(JSON.stringify({ id: 'f1', name: 'Clients', created_at: '2026-07-10T00:00:00Z' }), { status: 200 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const h = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+
+    const updated = await h.updateFolder('f1', 'Accounts')
+
+    expect(seen).toContain('PUT /api/folders/f1')
+    expect(updated).toMatchObject({ id: 'f1', name: 'Accounts', created_at: '2026-07-10T00:00:00Z' })
+  })
+
+  it('pinNote and unpinNote call the note pin endpoints', async () => {
+    const seen: string[] = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
+      return new Response(JSON.stringify({ status: 'ok' }), { status: 200 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const h = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    await h.pinNote('note-1')
+    await h.unpinNote('note-1')
+    expect(seen).toContain('POST http://localhost/api/notes/note-1/pin')
+    expect(seen).toContain('DELETE http://localhost/api/notes/note-1/pin')
+  })
+
+  it('linkNoteEvent and unlinkNoteEvent call the note event endpoints (CALLNK02)', async () => {
+    const seen: string[] = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
+      return new Response(JSON.stringify({ status: 'ok' }), { status: 200 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const h = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    await h.linkNoteEvent('note-1', 'evt-1')
+    await h.unlinkNoteEvent('note-1')
+    expect(seen).toContain('POST http://localhost/api/notes/note-1/event')
+    expect(seen).toContain('DELETE http://localhost/api/notes/note-1/event')
+  })
+
+  it('getNoteAudioUrl returns null for missing audio and a grant once uploaded', async () => {
+    server.seedUser('o@example.com', 'password123')
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    const h = createHandlers({
+      tokenStore,
+      fetch: server.fetch,
+      onProgress: () => {},
+    })
+    await h.connect({
+      serverUrl: 'http://localhost',
+      email: 'o@example.com',
+      password: 'password123',
+      isFirstRun: false,
+    })
+
+    const note = await h.createNote('My meeting')
+    await expect(h.getNoteAudioUrl(note.id)).resolves.toBeNull()
+
+    const res = await h.uploadAudio({
+      noteId: note.id,
+      audio: new Uint8Array([1]).buffer,
+      audioMimeType: 'audio/webm',
+    })
+    expect(res.noteId).toBe(note.id)
+
+    const grant = await h.getNoteAudioUrl(note.id)
+    expect(grant?.url).toContain(`/_storage/notes/${note.id}/audio/`)
+    expect(grant?.expires_at).toBeTruthy()
+  })
+
+  it('openGoogleCalendarOAuthStart opens the authenticated start URL', async () => {
+    server.seedUser('o@example.com', 'password123')
+    const opened: string[] = []
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const h = createHandlers({
+      tokenStore,
+      fetch: server.fetch,
+      onProgress: () => {},
+      openExternal: async (url) => {
+        opened.push(url)
+      },
+    })
+
+    await h.openGoogleCalendarOAuthStart()
+    expect(opened).toEqual(['http://localhost/api/calendar/oauth/google/start?token=app-test'])
+  })
+
+  it('openMicrosoftCalendarOAuthStart opens the authenticated start URL', async () => {
+    server.seedUser('o@example.com', 'password123')
+    const opened: string[] = []
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const h = createHandlers({
+      tokenStore,
+      fetch: server.fetch,
+      onProgress: () => {},
+      openExternal: async (url) => {
+        opened.push(url)
+      },
+    })
+
+    await h.openMicrosoftCalendarOAuthStart()
+    expect(opened).toEqual(['http://localhost/api/calendar/oauth/microsoft/start?token=app-test'])
+  })
+
+  it('disconnect clears stored credentials', async () => {
+    server.seedUser('o@example.com', 'password123')
+    const h = makeHandlers()
+    await h.connect({
+      serverUrl: 'http://localhost',
+      email: 'o@example.com',
+      password: 'password123',
+      isFirstRun: false,
+    })
+    await h.disconnect()
+    expect(await h.getConfig()).toBeNull()
+  })
+
+  it('listNotes throws when not connected', async () => {
+    const h = makeHandlers()
+    await expect(h.listNotes()).rejects.toThrow(/not connected/i)
+  })
+
+  it('smart-list handlers call the client', async () => {
+    const seen: string[] = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
+      return new Response(
+        JSON.stringify({ id: 'l1', name: 'X', rule: { op: 'and', children: [] }, created_at: '' }),
+        { status: 200 },
+      )
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    const rule = { op: 'and' as const, children: [] }
+    await handlers.createSmartList('X', rule)
+    await handlers.listSmartLists()
+    await handlers.updateSmartList('l1', 'Y', rule)
+    await handlers.deleteSmartList('l1')
+    expect(seen.some((s) => s.startsWith('POST') && s.endsWith('/api/smart-lists'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('GET') && s.endsWith('/api/smart-lists'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('PUT') && s.endsWith('/api/smart-lists/l1'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('DELETE') && s.endsWith('/api/smart-lists/l1'))).toBe(true)
+  })
+
+  it('folder handlers call the client endpoints', async () => {
+    const seen: string[] = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
+      return new Response(
+        JSON.stringify({ id: 'f1', name: 'Clients', created_at: '' }),
+        { status: 200 },
+      )
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    await handlers.listFolders()
+    await handlers.createFolder('Clients')
+    await handlers.updateFolder('f1', 'Accounts')
+    await handlers.deleteFolder('f1')
+    await handlers.addNoteFolder('n1', 'f1')
+    await handlers.removeNoteFolder('n1', 'f1')
+    expect(seen.some((s) => s.startsWith('GET') && s.endsWith('/api/folders'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('POST') && s.endsWith('/api/folders'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('PUT') && s.endsWith('/api/folders/f1'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('DELETE') && s.endsWith('/api/folders/f1'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('POST') && s.endsWith('/api/notes/n1/folders'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('DELETE') && s.endsWith('/api/notes/n1/folders/f1'))).toBe(true)
+  })
+
+  it('reorderNoteInFolder calls the client endpoint', async () => {
+    const seen: string[] = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
+      return new Response(JSON.stringify({ status: 'ok' }), { status: 200 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    await handlers.reorderNoteInFolder('f1', 'n1', 'n0')
+    expect(seen.some((s) => s.startsWith('PUT') && s.endsWith('/api/folders/f1/notes/n1/reorder'))).toBe(true)
+  })
+
+  it('template handlers call the client endpoints', async () => {
+    const seen: string[] = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
+      return new Response(
+        JSON.stringify({ id: 't1', name: 'Default', sections: [], built_in: false }),
+        { status: 200 },
+      )
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    const sections = [{ heading: 'Overview', instruction: 'Summarise' }]
+    await handlers.listTemplates()
+    await handlers.createTemplate('Default', sections)
+    await handlers.updateTemplate('t1', 'Renamed', sections)
+    await handlers.deleteTemplate('t1')
+    expect(seen.some((s) => s.startsWith('GET') && s.endsWith('/api/templates'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('POST') && s.endsWith('/api/templates'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('PUT') && s.endsWith('/api/templates/t1'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('DELETE') && s.endsWith('/api/templates/t1'))).toBe(true)
+  })
+
+  it('deleteNote calls DELETE /api/notes/{id}', async () => {
+    const seen: string[] = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
+      return new Response('', { status: 200 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    await handlers.deleteNote('n1')
+    expect(seen.some((s) => s.startsWith('DELETE') && s.endsWith('/api/notes/n1'))).toBe(true)
+  })
+
+  it('duplicateNote POSTs /api/notes/{id}/duplicate', async () => {
+    const seen: string[] = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
+      return new Response(JSON.stringify({ id: 'n2', title: 'Copy of N1', status: 'recording' }), { status: 201 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    const note = await handlers.duplicateNote('n1')
+    expect(note.id).toBe('n2')
+    expect(seen.some((s) => s.startsWith('POST') && s.endsWith('/api/notes/n1/duplicate'))).toBe(true)
+  })
+
+  it('trash handlers call the client endpoints', async () => {
+    const seen: string[] = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
+      return new Response(JSON.stringify([]), { status: 200 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    await handlers.listTrash()
+    await handlers.restoreNote('n1')
+    await handlers.permanentDeleteNote('n1')
+    expect(seen.some((s) => s.startsWith('GET') && s.endsWith('/api/notes/trash'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('POST') && s.endsWith('/api/notes/n1/restore'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('DELETE') && s.endsWith('/api/notes/n1/permanent'))).toBe(true)
+  })
+
+  it('folder trash handlers call the client endpoints', async () => {
+    const seen: string[] = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
+      return new Response(JSON.stringify([]), { status: 200 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    await handlers.listTrashedFolders()
+    await handlers.restoreFolder('f1')
+    await handlers.permanentDeleteFolder('f1')
+    expect(seen.some((s) => s.startsWith('GET') && s.endsWith('/api/folders/trash'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('POST') && s.endsWith('/api/folders/f1/restore'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('DELETE') && s.endsWith('/api/folders/f1/permanent'))).toBe(true)
+  })
+
+  it('smart-list trash handlers call the client endpoints', async () => {
+    const seen: string[] = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
+      return new Response(JSON.stringify([]), { status: 200 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    await handlers.listTrashedSmartLists()
+    await handlers.restoreSmartList('l1')
+    await handlers.permanentDeleteSmartList('l1')
+    expect(seen.some((s) => s.startsWith('GET') && s.endsWith('/api/smart-lists/trash'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('POST') && s.endsWith('/api/smart-lists/l1/restore'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('DELETE') && s.endsWith('/api/smart-lists/l1/permanent'))).toBe(true)
+  })
+
+  it('resummarize calls POST /api/notes/{id}/resummarize', async () => {
+    const seen: string[] = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
+      return new Response('', { status: 202 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    await handlers.resummarize('n1')
+    expect(seen.some((s) => s.startsWith('POST') && s.endsWith('/api/notes/n1/resummarize'))).toBe(true)
+  })
+
+  it('retranscribeNote calls POST /api/notes/{id}/retranscribe with the provided overrides', async () => {
+    const seen: Array<{ method: string; path: string; body?: unknown }> = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      const parsedUrl = new URL(String(url))
+      seen.push({
+        method: (init?.method ?? 'GET').toUpperCase(),
+        path: parsedUrl.pathname,
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      })
+      return new Response(JSON.stringify({ status: 'transcribing' }), { status: 202 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    const out = await handlers.retranscribeNote('n1', { language: 'en' })
+    expect(out).toEqual({ status: 'transcribing' })
+    expect(seen).toContainEqual({
+      method: 'POST',
+      path: '/api/notes/n1/retranscribe',
+      body: { language: 'en' },
+    })
+  })
+
+  it('regenerateSummary calls POST /api/notes/{id}/templates/{templateId}/summarize', async () => {
+    const seen: string[] = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
+      return new Response('', { status: 202 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    await handlers.regenerateSummary('n1', 't1')
+    expect(seen.some((s) => s.startsWith('POST') && s.endsWith('/api/notes/n1/templates/t1/summarize'))).toBe(true)
+  })
+
+  it('search delegates to GET /api/search?q=', async () => {
+    const seen: string[] = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
+      return new Response(JSON.stringify([
+        { note_id: 'id1', match_type: 'title' },
+        { note_id: 'id2', match_type: 'transcript', segment_id: 'seg1', start_ms: 500, snippet: '…budget review…' },
+      ]), { status: 200 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    const matches = await handlers.search('budget review')
+    expect(matches).toEqual([
+      { note_id: 'id1', match_type: 'title' },
+      { note_id: 'id2', match_type: 'transcript', segment_id: 'seg1', start_ms: 500, snippet: '…budget review…' },
+    ])
+    expect(seen.some((s) => s.startsWith('GET') && s.includes('/api/search?q=budget%20review'))).toBe(true)
+  })
+
+  it('search threads from/to onto the querystring when present', async () => {
+    const seen: string[] = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
+      return new Response('[]', { status: 200 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    await handlers.search('budget', { from: '2024-01-01', to: '2024-02-01' })
+    expect(seen.some((s) => s.includes('/api/search?q=budget&from=2024-01-01&to=2024-02-01'))).toBe(true)
+  })
+
+  it('addTag and removeTag call the client endpoints', async () => {
+    const seen: string[] = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
+      return new Response(JSON.stringify({ id: 't1', name: '1on1' }), { status: 200 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    await handlers.addTag('n1', '1on1')
+    await handlers.removeTag('n1', '1on1')
+    expect(seen.some((s) => s.startsWith('POST') && s.endsWith('/api/notes/n1/tags'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('DELETE') && s.includes('/api/notes/n1/tags?name=1on1'))).toBe(true)
+  })
+
+  it('renameTag PUTs /api/tags/{id} with the saved token', async () => {
+    const seen: Array<{ method?: string; url: string; auth?: string | null }> = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      const auth = new Headers(init?.headers).get('authorization')
+      seen.push({ method: init?.method, url: String(url), auth })
+      return new Response(JSON.stringify({ id: 't1', name: 'renamed' }), { status: 200 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    const out = await handlers.renameTag('t1', 'renamed')
+    expect(out).toEqual({ id: 't1', name: 'renamed' })
+    expect(seen[0].method).toBe('PUT')
+    expect(seen[0].url).toBe('http://localhost/api/tags/t1')
+    expect(seen[0].auth).toBe('Bearer app-test')
+  })
+  it('chat handlers hit the right endpoints with the saved token', async () => {
+    const seen: Array<{ method?: string; url: string }> = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push({ method: init?.method, url: String(url) })
+      return new Response(JSON.stringify({ id: 'c1', title: 'Q&A', created_at: '', updated_at: '' }), { status: 200 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    await handlers.listConversations()
+    await handlers.listConversations('note-1')
+    await handlers.createConversation({ title: 'Q&A' })
+    await handlers.getConversation('c1')
+    await handlers.deleteConversation('c1')
+    await handlers.listMessages('c1')
+    await handlers.sendMessage('c1', { content: 'hi' })
+    expect(seen).toEqual([
+      { method: 'GET', url: 'http://localhost/api/conversations' },
+      { method: 'GET', url: 'http://localhost/api/conversations?note_id=note-1' },
+      { method: 'POST', url: 'http://localhost/api/conversations' },
+      { method: 'GET', url: 'http://localhost/api/conversations/c1' },
+      { method: 'DELETE', url: 'http://localhost/api/conversations/c1' },
+      { method: 'GET', url: 'http://localhost/api/conversations/c1/messages' },
+      { method: 'POST', url: 'http://localhost/api/conversations/c1/messages' },
+    ])
+  })
+
+  it('surfaces a 409 in-flight send guard and a 500 plugin failure as a [NNN] message prefix', async () => {
+    let calls = 0
+    const fetchMock = async (): Promise<Response> => {
+      calls += 1
+      if (calls === 1) return new Response(JSON.stringify({ error: 'message send already in progress' }), { status: 409 })
+      return new Response(JSON.stringify({ error: 'internal error' }), { status: 500 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    await expect(handlers.sendMessage('c1', { content: 'hi' })).rejects.toThrow('[409] message send already in progress')
+    await expect(handlers.sendMessage('c1', { content: 'hi' })).rejects.toThrow('[500] internal error')
+  })
+
+  it('exportNote fetches the note export and parses the suggested filename', async () => {
+    const seen: Array<{ url: string; method?: string }> = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push({ url: String(url), method: init?.method })
+      return new Response('exported note body', {
+        status: 200,
+        headers: {
+          'Content-Disposition': 'attachment; filename="Team Notes.md"',
+          'Content-Type': 'text/markdown; charset=utf-8',
+        },
+      })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+
+    const out = await handlers.exportNote('note-123', 'md')
+
+    expect(seen[0]).toEqual({ method: 'GET', url: 'http://localhost/api/notes/note-123/export?format=md' })
+    expect(Buffer.from(out.bytes).toString('utf8')).toBe('exported note body')
+    expect(out.filename).toBe('Team Notes.md')
+    expect(out.contentType).toBe('text/markdown; charset=utf-8')
+  })
+
+  describe('exportAllNotes', () => {
+    it('writes a zip containing one .md file per note with correct filename and content', async () => {
+      const { mkdtempSync, rmSync, readFileSync } = await import('node:fs')
+      const JSZip = (await import('jszip')).default
+      const { fullNoteToMarkdown } = await import('../renderer/lib/noteMarkdown')
+
+      const tmpDir = mkdtempSync(join(tmpdir(), 'muesli-export-'))
+      const outPath = join(tmpDir, 'test-export.zip')
+
+      try {
+        const fakeNotes = [
+          {
+            id: 'note-aaa',
+            title: 'Board Meeting Q1',
+            status: 'ready',
+            created_at: '2024-01-01T00:00:00Z',
+            updated_at: '2024-01-01T00:00:00Z',
+            deleted_at: null,
+          },
+          {
+            id: 'note-bbb',
+            title: '',
+            status: 'ready',
+            created_at: '2024-01-02T00:00:00Z',
+            updated_at: '2024-01-02T00:00:00Z',
+            deleted_at: null,
+          },
+        ]
+
+        const fakeFullNotes: Record<string, import('../../src/shared/types').FullNote> = {
+          'note-aaa': {
+            note: fakeNotes[0] as import('../../src/shared/types').Note,
+            body_markdown: 'action items here',
+            summaries: [],
+            transcript: null,
+          },
+          'note-bbb': {
+            note: fakeNotes[1] as import('../../src/shared/types').Note,
+            body_markdown: 'empty title note',
+            summaries: [],
+            transcript: null,
+          },
+        }
+
+        // Stub fetch to serve listNotes and getFull
+        const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+          const u = String(url)
+          if (u.endsWith('/api/notes') && (init?.method ?? 'GET') === 'GET') {
+            return new Response(JSON.stringify(fakeNotes), { status: 200 })
+          }
+          for (const id of Object.keys(fakeFullNotes)) {
+            if (u.endsWith(`/api/notes/${id}/full`)) {
+              return new Response(JSON.stringify(fakeFullNotes[id]), { status: 200 })
+            }
+          }
+          return new Response('not found', { status: 404 })
+        }
+
+        const tokenStore = new TokenStore(dir, fakeSafe)
+        tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+        const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+
+        const result = await handlers.exportAllNotes(outPath)
+
+        expect(result.success).toBe(true)
+        if (!result.success) throw new Error('expected success')
+        expect(result.path).toBe(outPath)
+
+        // Load and verify zip
+        const zipBuf = readFileSync(outPath)
+        const zip = await JSZip.loadAsync(zipBuf)
+        const entries = Object.keys(zip.files)
+
+        // Should have exactly 2 entries
+        expect(entries).toHaveLength(2)
+
+        // note-aaa: slug = 'board-meeting-q1'
+        const entry1 = 'note-aaa-board-meeting-q1.md'
+        expect(entries).toContain(entry1)
+        const content1 = await zip.files[entry1].async('string')
+        const expected1 = fullNoteToMarkdown(fakeFullNotes['note-aaa'])
+        expect(content1).toBe(expected1)
+
+        // note-bbb: empty title → 'untitled'
+        const entry2 = 'note-bbb-untitled.md'
+        expect(entries).toContain(entry2)
+        const content2 = await zip.files[entry2].async('string')
+        const expected2 = fullNoteToMarkdown(fakeFullNotes['note-bbb'])
+        expect(content2).toBe(expected2)
+      } finally {
+        rmSync(outPath, { force: true })
+        rmSync(tmpDir, { recursive: true, force: true })
+      }
+    })
+
+    it('returns success:false when not connected', async () => {
+      const tokenStore = new TokenStore(dir, fakeSafe)
+      // no tokenStore.save → not connected
+      const handlers = createHandlers({ tokenStore, fetch: server.fetch, onProgress: () => {} })
+      const result = await handlers.exportAllNotes('/tmp/nope.zip')
+      expect(result.success).toBe(false)
+      if (result.success) throw new Error('expected failure')
+      expect(result.error).toMatch(/not connected/i)
+    })
+  })
+
+})

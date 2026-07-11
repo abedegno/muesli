@@ -1,0 +1,119 @@
+import { useState } from 'react'
+import { Dialog } from '@/components/ui/Dialog'
+import { Button } from '@/components/ui/Button'
+import { Input } from '@/components/ui/Input'
+import type { Template, TemplateSection } from '../../shared/types'
+
+export function TemplateEditor({
+  open,
+  title,
+  initial,
+  onSave,
+  onClose,
+}: {
+  open: boolean
+  title: string
+  initial?: Template
+  onSave: (name: string, sections: TemplateSection[]) => Promise<void>
+  onClose: () => void
+}) {
+  const [name, setName] = useState(initial?.name ?? '')
+  const [sections, setSections] = useState<TemplateSection[]>(
+    initial?.sections ?? [{ heading: '', instruction: '' }],
+  )
+  const [busy, setBusy] = useState(false)
+
+  const valid =
+    name.trim().length > 0 &&
+    sections.every((s) => s.heading.trim().length > 0 && s.instruction.trim().length > 0)
+
+  const update = (i: number, patch: Partial<TemplateSection>) =>
+    setSections(sections.map((s, j) => (j === i ? { ...s, ...patch } : s)))
+  const remove = (i: number) => setSections(sections.filter((_, j) => j !== i))
+  const add = () => setSections([...sections, { heading: '', instruction: '' }])
+  const swap = (a: number, b: number) => {
+    const next = [...sections]
+    ;[next[a], next[b]] = [next[b], next[a]]
+    setSections(next)
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()} title={title}>
+      <label htmlFor="template-editor-name" className="mb-3 block text-sm">
+        <span className="mb-1 block font-medium">Template name</span>
+        <Input id="template-editor-name" aria-label="Template name" value={name} onChange={(e) => setName(e.target.value)} />
+      </label>
+      <div className="mb-4 flex max-h-80 flex-col gap-3 overflow-y-auto">
+        {sections.map((section, i) => (
+          <div key={i} className="rounded-[var(--radius)] border border-border p-3">
+            <Input
+              aria-label={`Section ${i + 1} heading`}
+              value={section.heading}
+              onChange={(e) => update(i, { heading: e.target.value })}
+              placeholder="Heading"
+              className="mb-2"
+            />
+            <textarea
+              aria-label={`Section ${i + 1} instruction`}
+              value={section.instruction}
+              onChange={(e) => update(i, { instruction: e.target.value })}
+              placeholder="Instruction"
+              rows={3}
+              className="w-full rounded-[var(--radius)] border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            />
+            <div className="mt-2 flex gap-2">
+              <Button variant="ghost" size="sm" disabled={i === 0} onClick={() => swap(i, i - 1)}>
+                Move up
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={i === sections.length - 1}
+                onClick={() => swap(i, i + 1)}
+              >
+                Move down
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                aria-label={`Remove section ${i + 1}`}
+                disabled={sections.length === 1}
+                onClick={() => remove(i)}
+              >
+                Remove
+              </Button>
+            </div>
+          </div>
+        ))}
+        <Button variant="secondary" size="sm" className="self-start" onClick={add}>
+          + Add section
+        </Button>
+      </div>
+      <div className="flex items-center justify-end gap-2">
+        <Button variant="secondary" size="sm" onClick={onClose}>
+          Cancel
+        </Button>
+        <Button
+          size="sm"
+          disabled={!valid || busy}
+          onClick={async () => {
+            setBusy(true)
+            try {
+              await onSave(
+                name.trim(),
+                sections.map((s) => ({ heading: s.heading.trim(), instruction: s.instruction.trim() })),
+              )
+              onClose()
+            } catch {
+              // save failed (caller showed a toast); keep the dialog open so edits aren't lost
+            } finally {
+              setBusy(false)
+            }
+          }}
+        >
+          Save
+        </Button>
+      </div>
+    </Dialog>
+  )
+}

@@ -1,0 +1,24 @@
+scripts/
+========
+
+Helper scripts for the Muesli server. None of these are required at runtime;
+they are operator / CI utilities.
+
+Scripts
+-------
+
+smoke.sh
+End-to-end smoke test for the Muesli API critical path. Registers (or
+reuses) a user, logs in, creates a note, obtains a presigned audio upload
+URL, uploads a 16-byte fixture, confirms the upload, and polls until the
+note reaches status=ready. Configurable via MUESLI_URL, MUESLI_EMAIL, and
+MUESLI_PASSWORD environment variables.
+
+diagnose-gpu.sh
+Read-only GPU/CUDA diagnostic script. Checks that nvidia-smi is present
+and functional, the NVIDIA Container Toolkit (nvidia-ctk) is installed, the
+Docker nvidia runtime is configured, NVIDIA kernel modules are loaded,
+/dev/nvidia* device nodes exist, and that a GPU is reachable inside a
+Docker container (smoke test using nvidia/cuda:12.3.1-base-ubuntu22.04).
+Prints [PASS]/[FAIL] with concrete FIX hints and a summary line. Exits 0
+always; all output is tee'd to /tmp/muesli-gpu-diag-<timestamp>.log.

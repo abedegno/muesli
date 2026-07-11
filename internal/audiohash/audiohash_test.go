@@ -1,0 +1,81 @@
+package audiohash_test
+
+import (
+	"bytes"
+	"encoding/binary"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/abedegno/muesli/internal/audiohash"
+)
+
+func TestHashRaw(t *testing.T) {
+	got, err := audiohash.HashRaw(strings.NewReader("hello"))
+	if err != nil {
+		t.Fatalf("hash raw: %v", err)
+	}
+	const want = "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+	if got != want {
+		t.Fatalf("hash raw = %q, want %q", got, want)
+	}
+}
+
+func TestHashNormalized_Fallback(t *testing.T) {
+	got, err := audiohash.HashNormalized("/nonexistent/does-not-exist.mp3")
+	if err != nil {
+		t.Fatalf("hash normalized: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("hash normalized = %q, want empty string", got)
+	}
+}
+
+func TestHashNormalized_WithFFmpeg(t *testing.T) {
+	if _, err := exec.LookPath("ffmpeg"); err != nil {
+		t.Skip("ffmpeg not available")
+	}
+
+	dir := t.TempDir()
+	audioPath := filepath.Join(dir, "silence.wav")
+	if err := os.WriteFile(audioPath, wavSilence(), 0o600); err != nil {
+		t.Fatalf("write wav: %v", err)
+	}
+
+	got, err := audiohash.HashNormalized(audioPath)
+	if err != nil {
+		t.Fatalf("hash normalized: %v", err)
+	}
+	if got == "" {
+		t.Fatal("expected non-empty normalized hash")
+	}
+}
+
+func wavSilence() []byte {
+	const (
+		sampleRate    = 16000
+		channels      = 1
+		bitsPerSample = 16
+		numSamples    = 16
+	)
+	data := make([]byte, numSamples*channels*bitsPerSample/8)
+
+	var buf bytes.Buffer
+	buf.WriteString("RIFF")
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(36+len(data)))
+	buf.WriteString("WAVE")
+	buf.WriteString("fmt ")
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(16))
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(1))
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(channels))
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(sampleRate))
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(sampleRate*channels*bitsPerSample/8))
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(channels*bitsPerSample/8))
+	_ = binary.Write(&buf, binary.LittleEndian, uint16(bitsPerSample))
+	buf.WriteString("data")
+	_ = binary.Write(&buf, binary.LittleEndian, uint32(len(data)))
+	buf.Write(data)
+	return buf.Bytes()
+}

@@ -1,0 +1,1 @@
+"""Parakeet transcriber plugin package."""

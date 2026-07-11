@@ -1,0 +1,12 @@
+node_modules/
+dist/
+out/
+internal/adminui/dist/
+
+# Existing source trees — formatted in a separate follow-up PR
+src/
+web/admin/src/
+
+# Build outputs and vendored assets
+*.min.js
+*.min.css

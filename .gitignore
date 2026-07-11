@@ -1,0 +1,29 @@
+.DS_Store
+.venv/
+__pycache__/
+
+# Python build artifacts
+*.egg-info/
+.pytest_cache/
+
+# Go build artifacts
+/muesli
+*.test
+
+# Local runtime data (audio storage)
+/data/
+
+# Node / Electron desktop client build artifacts
+node_modules/
+/out/
+/dist/
+
+# Admin web UI (Vite React+TS) build artefacts
+web/admin/node_modules/
+web/admin/*.tsbuildinfo
+internal/adminui/dist/*
+!internal/adminui/dist/.gitkeep
+!internal/adminui/dist/index.html
+!internal/adminui/dist/assets/
+internal/adminui/dist/assets/*
+!internal/adminui/dist/assets/app.js

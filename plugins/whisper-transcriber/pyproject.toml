@@ -1,0 +1,38 @@
+[project]
+name = "muesli-whisper-transcriber"
+version = "0.1.0"
+description = "Muesli reference transcriber plugin (local faster-whisper)"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.30",
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "faster-whisper>=1.0",
+    "python-multipart>=0.0.9",
+]
+
+[project.optional-dependencies]
+diarization = ["pyannote.audio>=3.1"]
+test = ["pytest>=8.2", "respx>=0.21", "freezegun>=1.5"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+# Explicit package list so setuptools does not try to auto-discover (the flat
+# layout with a top-level tests/ dir confuses auto-discovery, and the deps-only
+# Docker layer copies pyproject.toml before the package exists).
+[tool.setuptools]
+packages = ["whisper_app"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.ruff.lint]
+select = ["TID251"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"time.sleep" = { msg = "Use frozen_clock fixture instead of time.sleep in tests." }
+"datetime.datetime.now" = { msg = "Use frozen_clock fixture instead of datetime.now() in tests." }

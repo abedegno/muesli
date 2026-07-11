@@ -1,0 +1,33 @@
+# GPU override for the Muesli stack.
+#
+# Prerequisites: NVIDIA Container Toolkit installed on the host.
+# https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.gpu.yml up
+#
+# This override adds NVIDIA GPU access to the Ollama (LLM + embeddings) and
+# Whisper (transcription) services. All other services are unchanged.
+
+services:
+  ollama:
+    runtime: nvidia
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  whisper:
+    environment:
+      WHISPER_DEVICE: cuda
+      WHISPER_COMPUTE_TYPE: float16
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]

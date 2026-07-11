@@ -1,0 +1,63 @@
+@import 'tailwindcss';
+@import './tokens.css';
+
+@theme inline {
+  --color-background: var(--background);
+  --color-app-chrome: var(--app-chrome);
+  --color-card: var(--card);
+  --color-popover: var(--popover);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --radius-DEFAULT: var(--radius);
+  --font-sans: 'Inter', system-ui, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  --font-serif: 'Newsreader', Georgia, 'Times New Roman', serif;
+}
+
+html, body, #root { height: 100%; container-type: inline-size; }
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  font-feature-settings: 'cv11', 'ss01';
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Responsive reflow: stack sidebar above main on narrow / split-screen widths. */
+/* The .app-layout div is the container; we query its inline-size via the   */
+/* nearest parent container (#root) to change its own flex-direction.        */
+@container (max-width: 599px) {
+  .app-layout {
+    flex-direction: column;
+  }
+
+  /* Keep the sidebar scrollable and correctly sized when stacked vertically.
+     Cap its height and give it its own scroll so a populated sidebar can't grow
+     to full content height and push <main> out of the viewport. */
+  .app-layout > aside {
+    height: auto;
+    max-height: 40vh;
+    overflow-y: auto;
+    width: 100% !important;
+    flex: none;
+  }
+
+  /* Main takes the remaining column space and scrolls independently below the
+     stacked sidebar. min-height:0 lets it shrink inside the flex column.       */
+  .app-layout > main {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+  }
+}
