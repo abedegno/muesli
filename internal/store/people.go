@@ -259,6 +259,104 @@ func (s *Store) PeopleForNoteEvent(ctx context.Context, ownerID, noteID string) 
 	return out, nil
 }
 
+// NotesForPerson returns the live notes for ownerID where the person appears
+// either via a linked calendar event attendee email or via speaker aliases.
+// It always returns a non-nil slice.
+func (s *Store) NotesForPerson(ctx context.Context, ownerID, personID string) ([]model.Note, error) {
+	var primaryEmail string
+	err := s.pool.QueryRow(ctx,
+		`SELECT primary_email
+		 FROM people
+		 WHERE id=$1 AND owner_id=$2`,
+		personID, ownerID).Scan(&primaryEmail)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	email := strings.ToLower(strings.TrimSpace(primaryEmail))
+	rows, err := s.pool.Query(ctx,
+		`SELECT DISTINCT n.id, n.owner_id, n.title, n.status, n.pinned, n.started_at, n.ended_at,
+		        n.partial_transcript, n.created_at, n.updated_at, COALESCE(nb.content, ''), n.event_id
+		 FROM notes n
+		 LEFT JOIN note_bodies nb ON nb.note_id = n.id
+		 WHERE n.owner_id = $1
+		   AND n.deleted_at IS NULL
+		   AND (
+		     EXISTS (
+		       SELECT 1
+		       FROM calendar_events ce
+		       WHERE ce.id = n.event_id
+		         AND ce.owner_id = n.owner_id
+		         AND EXISTS (
+		           SELECT 1
+		           FROM jsonb_array_elements(COALESCE(ce.attendees, '[]'::jsonb)) attendee
+		           WHERE lower(attendee->>'email') = $2
+		         )
+		     )
+		     OR EXISTS (
+		       SELECT 1
+		       FROM note_speaker_aliases nsa
+		       WHERE nsa.note_id = n.id
+		         AND nsa.owner_id = $1
+		         AND nsa.person_id = $3
+		     )
+		   )
+		 ORDER BY n.created_at DESC`,
+		ownerID, email, personID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []model.Note{}
+	for rows.Next() {
+		var n model.Note
+		var body string
+		if err := rows.Scan(&n.ID, &n.OwnerID, &n.Title, &n.Status, &n.Pinned, &n.StartedAt, &n.EndedAt, &n.PartialTranscript, &n.CreatedAt, &n.UpdatedAt, &body, &n.EventID); err != nil {
+			return nil, err
+		}
+		n.Snippet = snippet(body)
+		out = append(out, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	ids := make([]string, len(out))
+	for i := range out {
+		ids[i] = out[i].ID
+	}
+	tagMap, err := s.tagsForNotes(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if tags := tagMap[out[i].ID]; tags != nil {
+			out[i].Tags = tags
+		} else {
+			out[i].Tags = []string{}
+		}
+	}
+	folderMap, err := s.foldersForNotes(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if fids := folderMap[out[i].ID]; fids != nil {
+			out[i].FolderIDs = fids
+		} else {
+			out[i].FolderIDs = []string{}
+		}
+	}
+	if out == nil {
+		out = []model.Note{}
+	}
+	return out, nil
+}
+
 func (s *Store) PeopleForNoteSpeakers(ctx context.Context, ownerID, noteID string) ([]model.Person, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT DISTINCT p.id, p.owner_id, p.primary_email, p.display_name, p.company_id, p.first_seen_at, p.updated_at
