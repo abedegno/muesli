@@ -6,14 +6,17 @@ import { LiveTranscriptPanel } from './LiveTranscriptPanel'
 
 function createSource() {
   const listeners = new Set<(event: NoteStreamEvent) => void>()
+  const events: NoteStreamEvent[] = []
   return {
     onNoteStreamEvent(cb: (event: NoteStreamEvent) => void) {
       listeners.add(cb)
       return () => listeners.delete(cb)
     },
     emit(event: NoteStreamEvent) {
+      events.push(event)
       listeners.forEach((cb) => cb(event))
     },
+    events,
   }
 }
 
@@ -54,6 +57,16 @@ describe('LiveTranscriptPanel', () => {
         speaker: null,
         provisional: true,
       })
+    })
+
+    expect(source.events).toContainEqual({
+      noteId: 'note-1',
+      type: 'segment',
+      text: 'first',
+      start_ms: 0,
+      end_ms: 200,
+      speaker: null,
+      provisional: true,
     })
 
     expect(await screen.findByTestId('live-transcript-panel')).toBeInTheDocument()

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { PCM_FRAME_BYTES, PCM_FRAME_SAMPLES, PcmFrameEncoder } from './pcm'
+import { PCM_FIXTURE_EXPECTED_FRAME, PCM_FIXTURE_INPUT_SAMPLES } from './pcm.fixture'
 
 function makeExpectedFrame(): Uint8Array {
   const expected = new Uint8Array(PCM_FRAME_BYTES)
@@ -11,6 +12,16 @@ function makeExpectedFrame(): Uint8Array {
 }
 
 describe('PcmFrameEncoder', () => {
+  it('matches the shared canned PCM fixture exactly', () => {
+    const encoder = new PcmFrameEncoder({ inputSampleRate: 16_000 })
+
+    const frames = encoder.push(PCM_FIXTURE_INPUT_SAMPLES)
+
+    expect(frames).toHaveLength(1)
+    expect(frames[0]).toEqual(PCM_FIXTURE_EXPECTED_FRAME)
+    expect(encoder.flush()).toEqual([])
+  })
+
   it('downsamples 48 kHz mono input into exact 200 ms 16 kHz s16le frames', () => {
     const encoder = new PcmFrameEncoder({ inputSampleRate: 48_000 })
     const input = new Float32Array(PCM_FRAME_SAMPLES * 6).fill(0.25)

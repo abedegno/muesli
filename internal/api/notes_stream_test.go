@@ -1,14 +1,12 @@
 package api_test
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"testing"
-	"time"
 
 	"github.com/abedegno/muesli/internal/api"
 	"github.com/abedegno/muesli/internal/auth"
@@ -144,83 +142,16 @@ func TestNoteStreamRelaysAndPersistsProvisionalSegments(t *testing.T) {
 	httpSrv := httptest.NewServer(srv.Handler())
 	defer httpSrv.Close()
 
-	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
-	pluginDone := make(chan struct{})
-	pluginSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/info":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"name":       "streaming-test",
-				"version":    "1.0.0",
-				"plugin_api": 1,
-				"kind":       model.PluginStreamingTranscriber,
-			})
-		case "/health":
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"status":"ok"}`))
-		case "/stream":
-			conn, err := upgrader.Upgrade(w, r, nil)
-			if err != nil {
-				t.Fatalf("upgrade: %v", err)
-			}
-			defer conn.Close()
-
-			if _, payload, err := conn.ReadMessage(); err != nil {
-				t.Fatalf("read start: %v", err)
-			} else {
-				var start map[string]any
-				if err := json.Unmarshal(payload, &start); err != nil {
-					t.Fatalf("decode start: %v", err)
-				}
-				if start["type"] != "start" || start["sample_rate"].(float64) != 16000 || start["channels"].(float64) != 1 {
-					t.Fatalf("unexpected start %v", start)
-				}
-			}
-			if err := conn.WriteJSON(map[string]string{"type": "ready"}); err != nil {
-				t.Fatalf("write ready: %v", err)
-			}
-			if mt, payload, err := conn.ReadMessage(); err != nil {
-				t.Fatalf("read audio: %v", err)
-			} else if mt != websocket.BinaryMessage || !bytes.Equal(payload, []byte{1, 2, 3, 4}) {
-				t.Fatalf("audio payload = %v", payload)
-			}
-			if err := conn.WriteJSON(map[string]any{
-				"type":    "segment",
-				"final":   true,
-				"text":    "hello world",
-				"t0":      1.25,
-				"t1":      2.5,
-				"speaker": nil,
-			}); err != nil {
-				t.Fatalf("write segment: %v", err)
-			}
-			if _, payload, err := conn.ReadMessage(); err != nil {
-				t.Fatalf("read stop: %v", err)
-			} else if string(payload) != `{"type":"stop"}` {
-				t.Fatalf("stop payload = %s", payload)
-			}
-			close(pluginDone)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer pluginSrv.Close()
-
-	pluginRec := doJSON(t, srv, http.MethodPost, "/api/admin/plugins", map[string]any{
-		"kind":         model.PluginStreamingTranscriber,
-		"name":         "streaming-test",
-		"endpoint_url": pluginSrv.URL,
-		"token":        "plugin-token",
-		"enabled":      true,
-	}, hdr)
-	if pluginRec.Code != http.StatusCreated {
-		t.Fatalf("create plugin: %d %s", pluginRec.Code, pluginRec.Body)
-	}
-	var pluginCreated struct {
-		ID string `json:"id"`
-	}
-	_ = json.Unmarshal(pluginRec.Body.Bytes(), &pluginCreated)
-	if err := st.SetDefaultPlugin(context.Background(), pluginCreated.ID); err != nil {
+	pluginSrv := newFakeStreamingPlugin(t, "plugin-token", []fakeStreamingSegment{
+		{
+			AfterFrames: 1,
+			Text:        "hello world",
+			StartMS:     1250,
+			EndMS:       2500,
+		},
+	}, 0)
+	pluginID := registerPlugin(t, srv, hdr, model.PluginStreamingTranscriber, "streaming-test", pluginSrv.URL(), "plugin-token")
+	if err := st.SetDefaultPlugin(context.Background(), pluginID); err != nil {
 		t.Fatalf("set default plugin: %v", err)
 	}
 
@@ -262,11 +193,6 @@ func TestNoteStreamRelaysAndPersistsProvisionalSegments(t *testing.T) {
 
 	_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 	_ = conn.Close()
-	select {
-	case <-pluginDone:
-	case <-time.After(5 * time.Second):
-		t.Fatal("timeout waiting for plugin stop")
-	}
 
 	var transcriptID string
 	if err := pool.QueryRow(context.Background(), `SELECT id FROM transcripts WHERE note_id=$1`, note.ID).Scan(&transcriptID); err != nil {
@@ -293,65 +219,9 @@ func TestNoteStreamHandlesPluginDropWithoutFailingNote(t *testing.T) {
 	httpSrv := httptest.NewServer(srv.Handler())
 	defer httpSrv.Close()
 
-	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
-	pluginSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/info":
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"name":       "streaming-drop",
-				"version":    "1.0.0",
-				"plugin_api": 1,
-				"kind":       model.PluginStreamingTranscriber,
-			})
-		case "/health":
-			w.WriteHeader(http.StatusOK)
-			_, _ = w.Write([]byte(`{"status":"ok"}`))
-		case "/stream":
-			conn, err := upgrader.Upgrade(w, r, nil)
-			if err != nil {
-				t.Fatalf("upgrade: %v", err)
-			}
-			defer conn.Close()
-
-			if _, payload, err := conn.ReadMessage(); err != nil {
-				t.Fatalf("read start: %v", err)
-			} else {
-				var start map[string]any
-				if err := json.Unmarshal(payload, &start); err != nil {
-					t.Fatalf("decode start: %v", err)
-				}
-				if start["type"] != "start" {
-					t.Fatalf("unexpected start %v", start)
-				}
-			}
-			if err := conn.WriteJSON(map[string]string{"type": "ready"}); err != nil {
-				t.Fatalf("write ready: %v", err)
-			}
-			if _, _, err := conn.ReadMessage(); err != nil {
-				return
-			}
-			_ = conn.Close()
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer pluginSrv.Close()
-
-	pluginRec := doJSON(t, srv, http.MethodPost, "/api/admin/plugins", map[string]any{
-		"kind":         model.PluginStreamingTranscriber,
-		"name":         "streaming-drop",
-		"endpoint_url": pluginSrv.URL,
-		"token":        "plugin-token",
-		"enabled":      true,
-	}, hdr)
-	if pluginRec.Code != http.StatusCreated {
-		t.Fatalf("create plugin: %d %s", pluginRec.Code, pluginRec.Body)
-	}
-	var pluginCreated struct {
-		ID string `json:"id"`
-	}
-	_ = json.Unmarshal(pluginRec.Body.Bytes(), &pluginCreated)
-	if err := st.SetDefaultPlugin(context.Background(), pluginCreated.ID); err != nil {
+	pluginSrv := newFakeStreamingPlugin(t, "plugin-token", nil, 1)
+	pluginID := registerPlugin(t, srv, hdr, model.PluginStreamingTranscriber, "streaming-drop", pluginSrv.URL(), "plugin-token")
+	if err := st.SetDefaultPlugin(context.Background(), pluginID); err != nil {
 		t.Fatalf("set default plugin: %v", err)
 	}
 

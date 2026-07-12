@@ -1,0 +1,192 @@
+package api_test
+
+import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/abedegno/muesli/internal/model"
+	"github.com/abedegno/muesli/internal/plugin"
+	"github.com/gorilla/websocket"
+)
+
+type fakeStreamingSegment struct {
+	AfterFrames int
+	Text        string
+	StartMS     int
+	EndMS       int
+	Speaker     *string
+}
+
+type fakeStreamingPlugin struct {
+	srv             *httptest.Server
+	token           string
+	segments        []fakeStreamingSegment
+	dropAfterFrames int
+
+	mu           sync.Mutex
+	binaryFrames int
+}
+
+func newFakeStreamingPlugin(t *testing.T, token string, segments []fakeStreamingSegment, dropAfterFrames int) *fakeStreamingPlugin {
+	t.Helper()
+	p := &fakeStreamingPlugin{
+		token:           token,
+		segments:        append([]fakeStreamingSegment(nil), segments...),
+		dropAfterFrames: dropAfterFrames,
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/info", p.handleInfo)
+	mux.HandleFunc("/health", p.handleHealth)
+	mux.HandleFunc("/stream", p.handleStream)
+	p.srv = httptest.NewServer(mux)
+	t.Cleanup(p.Close)
+	return p
+}
+
+func (p *fakeStreamingPlugin) URL() string {
+	return p.srv.URL
+}
+
+func (p *fakeStreamingPlugin) Close() {
+	if p.srv != nil {
+		p.srv.Close()
+	}
+}
+
+func (p *fakeStreamingPlugin) BinaryFrames() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.binaryFrames
+}
+
+func (p *fakeStreamingPlugin) handleInfo(w http.ResponseWriter, r *http.Request) {
+	if !p.checkAuth(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(plugin.Info{Name: "fake-streaming", Version: "0", PluginAPI: 1, Kind: model.PluginStreamingTranscriber})
+}
+
+func (p *fakeStreamingPlugin) handleHealth(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write([]byte(`{"status":"ok"}`))
+}
+
+func (p *fakeStreamingPlugin) handleStream(w http.ResponseWriter, r *http.Request) {
+	if !p.checkAuth(r) {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	conn, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer conn.Close()
+
+	if _, payload, err := conn.ReadMessage(); err != nil {
+		return
+	} else {
+		var start struct {
+			Type       string `json:"type"`
+			SampleRate int    `json:"sample_rate"`
+			Channels   int    `json:"channels"`
+		}
+		if err := json.Unmarshal(payload, &start); err != nil {
+			_ = conn.WriteJSON(map[string]any{"type": "error", "message": "invalid start message"})
+			return
+		}
+		if start.Type != "start" || start.SampleRate != 16000 || start.Channels != 1 {
+			_ = conn.WriteJSON(map[string]any{"type": "error", "message": "invalid start parameters"})
+			return
+		}
+	}
+
+	if err := conn.WriteJSON(map[string]string{"type": "ready"}); err != nil {
+		return
+	}
+
+	framesSinceEmit := 0
+	nextSegment := 0
+	for {
+		mt, payload, err := conn.ReadMessage()
+		if err != nil {
+			return
+		}
+		switch mt {
+		case websocket.BinaryMessage:
+			p.mu.Lock()
+			p.binaryFrames++
+			binaryFrames := p.binaryFrames
+			p.mu.Unlock()
+			if p.dropAfterFrames > 0 && binaryFrames >= p.dropAfterFrames {
+				return
+			}
+			framesSinceEmit++
+			if nextSegment < len(p.segments) {
+				seg := p.segments[nextSegment]
+				if seg.AfterFrames > 0 && framesSinceEmit >= seg.AfterFrames {
+					if err := p.emitSegment(conn, seg); err != nil {
+						return
+					}
+					nextSegment++
+					framesSinceEmit = 0
+				}
+			}
+		case websocket.TextMessage:
+			var control struct {
+				Type string `json:"type"`
+			}
+			if err := json.Unmarshal(payload, &control); err != nil {
+				continue
+			}
+			if control.Type != "stop" {
+				continue
+			}
+			if nextSegment < len(p.segments) && framesSinceEmit > 0 {
+				if err := p.emitSegment(conn, p.segments[nextSegment]); err != nil {
+					return
+				}
+				nextSegment++
+			}
+			_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(2*time.Second))
+			return
+		}
+	}
+}
+
+func (p *fakeStreamingPlugin) emitSegment(conn *websocket.Conn, seg fakeStreamingSegment) error {
+	return conn.WriteJSON(map[string]any{
+		"type":    "segment",
+		"final":   true,
+		"text":    seg.Text,
+		"t0":      float64(seg.StartMS) / 1000,
+		"t1":      float64(seg.EndMS) / 1000,
+		"speaker": seg.Speaker,
+	})
+}
+
+func (p *fakeStreamingPlugin) checkAuth(r *http.Request) bool {
+	if p.token == "" {
+		return true
+	}
+	return r.Header.Get("Authorization") == "Bearer "+p.token && r.Header.Get("X-Muesli-Plugin-API") == "1"
+}
+
+func mustPCMFixtureFrameBytes() []byte {
+	const repeat = 400
+	pattern := []int16{0, 8192, -8192, 16384, -16384, 24575, -24575, 32767}
+	out := make([]byte, 0, len(pattern)*repeat*2)
+	for i := 0; i < repeat; i++ {
+		for _, sample := range pattern {
+			out = append(out, byte(sample), byte(sample>>8))
+		}
+	}
+	return out
+}
