@@ -85,6 +85,48 @@ describe('MuesliClient', () => {
     ])
   })
 
+  it('listNoteActionItems GETs the note action-items endpoint and maps the wrapper response', async () => {
+    const calls: Array<{ url: string; method?: string }> = []
+    const fetchMock: FetchLike = async (url, init) => {
+      calls.push({ url: String(url), method: init?.method })
+      const path = new URL(String(url)).pathname
+      if (path === '/api/notes/note-1/action-items') {
+        return new Response(JSON.stringify({
+          action_items: [
+            {
+              id: 'ai-1',
+              note_id: 'note-1',
+              owner_id: 'owner-1',
+              text: 'Ship the launch notes',
+              owner_person_id: null,
+              status: 'open',
+              due_hint: 'Tomorrow',
+              created_at: '2026-07-11T00:00:00Z',
+            },
+          ],
+          decisions: [
+            {
+              id: 'd-1',
+              note_id: 'note-1',
+              owner_id: 'owner-1',
+              text: 'Use the weekly cadence',
+              created_at: '2026-07-11T00:00:00Z',
+            },
+          ],
+        }), { status: 200 })
+      }
+      return new Response('unexpected', { status: 500 })
+    }
+    const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
+    const out = await client.listNoteActionItems('note-1')
+    expect(calls[0].method).toBe('GET')
+    expect(calls[0].url).toBe('http://x/api/notes/note-1/action-items')
+    expect(out.actionItems).toHaveLength(1)
+    expect(out.actionItems[0]).toMatchObject({ id: 'ai-1', status: 'open' })
+    expect(out.decisions).toHaveLength(1)
+    expect(out.decisions[0]).toMatchObject({ id: 'd-1', text: 'Use the weekly cadence' })
+  })
+
   it('exportNote GETs the export endpoint and parses the filename/content type', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = []
     const fetchMock: FetchLike = async (url, init) => {
@@ -204,6 +246,29 @@ describe('MuesliClient', () => {
     expect(calls[0].url).toBe('http://x/api/notes/note-1')
     expect(calls[0].init?.method).toBe('PATCH')
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({ title: 'Renamed' })
+  })
+
+  it('updateActionItem PATCHes /api/action-items/{id} with the mapped body', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    const fetchMock: FetchLike = async (url, init) => {
+      calls.push({ url: String(url), init })
+      return new Response(JSON.stringify({
+        id: 'ai-1',
+        note_id: 'note-1',
+        owner_id: 'owner-1',
+        text: 'Ship the launch notes',
+        owner_person_id: null,
+        status: 'done',
+        due_hint: 'Tomorrow',
+        created_at: '2026-07-11T00:00:00Z',
+      }), { status: 200 })
+    }
+    const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
+    const out = await client.updateActionItem('ai-1', { status: 'done' })
+    expect(calls[0].url).toBe('http://x/api/action-items/ai-1')
+    expect(calls[0].init?.method).toBe('PATCH')
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({ status: 'done' })
+    expect(out.status).toBe('done')
   })
 
   it('deleteNote DELETEs /api/notes/{id}', async () => {

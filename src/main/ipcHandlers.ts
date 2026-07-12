@@ -2,8 +2,8 @@ import { createHash } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import JSZip from 'jszip'
 import { fullNoteToMarkdown } from '../renderer/lib/noteMarkdown'
-import type { AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, Message, MicrosoftOAuthStatus, Note, PersonWithCompany, PluginStatus, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, ServerConfig, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection } from '../shared/types'
-import type { ConnectRequest, CreateConversationRequest, CreateConversationResponse, DiarizationReviewUpdate, SearchOptions, SendMessageRequest, SendMessageResponse, UpdatePersonRequest, UploadAudioRequest } from '../shared/ipc'
+import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, Message, MicrosoftOAuthStatus, Note, PersonWithCompany, PluginStatus, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, ServerConfig, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection } from '../shared/types'
+import type { ConnectRequest, CreateConversationRequest, CreateConversationResponse, DiarizationReviewUpdate, ListNoteActionItemsResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdateActionItemRequest, UpdatePersonRequest, UploadAudioRequest } from '../shared/ipc'
 import { INSECURE_CONNECTION_CODE, isInsecureRemote } from '../shared/url'
 import type { UploadProgress } from './uploadMachine'
 import { ApiError, MuesliClient, type FetchLike, type NoteExportData } from './muesliClient'
@@ -24,9 +24,11 @@ interface Handlers {
   listNotes(folderId?: string): Promise<Note[]>
   listPeople(): Promise<PersonWithCompany[]>
   listCompanies(): Promise<CompanyWithCount[]>
+  listNoteActionItems(noteId: string): Promise<ListNoteActionItemsResponse>
   getPerson(id: string): Promise<PersonWithCompany>
   getPersonNotes(id: string): Promise<Note[]>
   updatePerson(id: string, req: UpdatePersonRequest): Promise<PersonWithCompany>
+  updateActionItem(id: string, req: UpdateActionItemRequest): Promise<ActionItem>
   mergePeople(fromId: string, intoId: string): Promise<PersonWithCompany>
   deletePerson(id: string): Promise<void>
   getCompany(id: string): Promise<CompanyWithPeople>
@@ -169,6 +171,10 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       return authedClient().listCompanies()
     },
 
+    async listNoteActionItems(noteId) {
+      return authedClient().listNoteActionItems(noteId)
+    },
+
     async getPerson(id) {
       return authedClient().getPerson(id)
     },
@@ -179,6 +185,10 @@ export function createHandlers(deps: HandlerDeps): Handlers {
 
     async updatePerson(id, req) {
       return withApiError(() => authedClient().updatePerson(id, req))
+    },
+
+    async updateActionItem(id, req) {
+      return withApiError(() => authedClient().updateActionItem(id, req))
     },
 
     async mergePeople(fromId, intoId) {

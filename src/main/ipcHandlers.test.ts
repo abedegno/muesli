@@ -166,6 +166,58 @@ describe('ipc handlers', () => {
     ])
   })
 
+  it('listNoteActionItems and updateActionItem call the note action-item endpoints', async () => {
+    const seen: string[] = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      const path = new URL(String(url)).pathname
+      seen.push(`${init?.method ?? 'GET'} ${path}`)
+      if (path === '/api/notes/n1/action-items') {
+        return new Response(JSON.stringify({
+          action_items: [
+            {
+              id: 'ai-1',
+              note_id: 'n1',
+              owner_id: 'owner-1',
+              text: 'Ship the launch notes',
+              owner_person_id: null,
+              status: 'open',
+              due_hint: 'Tomorrow',
+              created_at: '2026-07-11T00:00:00Z',
+            },
+          ],
+          decisions: [],
+        }), { status: 200 })
+      }
+      if (path === '/api/action-items/ai-1') {
+        return new Response(JSON.stringify({
+          id: 'ai-1',
+          note_id: 'n1',
+          owner_id: 'owner-1',
+          text: 'Ship the launch notes',
+          owner_person_id: null,
+          status: 'done',
+          due_hint: 'Tomorrow',
+          created_at: '2026-07-11T00:00:00Z',
+        }), { status: 200 })
+      }
+      return new Response('unexpected', { status: 500 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const h = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+
+    const listed = await h.listNoteActionItems('n1')
+    expect(listed.actionItems).toHaveLength(1)
+    expect(listed.actionItems[0]).toMatchObject({ id: 'ai-1', status: 'open' })
+
+    const updated = await h.updateActionItem('ai-1', { status: 'done' })
+    expect(updated.status).toBe('done')
+    expect(seen).toEqual([
+      'GET /api/notes/n1/action-items',
+      'PATCH /api/action-items/ai-1',
+    ])
+  })
+
   it('updateFolder returns the updated folder body', async () => {
     const seen: string[] = []
     const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
