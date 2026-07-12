@@ -182,7 +182,7 @@ func (p *fakeStreamingPlugin) handleStream(w http.ResponseWriter, r *http.Reques
 				p.mu.Unlock()
 				nextSegment++
 			}
-			_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(2*time.Second))
+			_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Time{})
 			return
 		}
 	}
