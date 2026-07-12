@@ -194,6 +194,131 @@ func (s *Store) UpsertPerson(ctx context.Context, ownerID, email, name string, c
 	return person, nil
 }
 
+func (s *Store) UpdatePerson(ctx context.Context, ownerID, id string, displayName *string, companyID *string, clearCompany bool) (model.Person, error) {
+	if displayName == nil && companyID == nil && !clearCompany {
+		return s.GetPerson(ctx, ownerID, id)
+	}
+
+	if companyID != nil {
+		var exists bool
+		err := s.pool.QueryRow(ctx,
+			`SELECT EXISTS(SELECT 1 FROM companies WHERE id=$1 AND owner_id=$2)`,
+			*companyID, ownerID).Scan(&exists)
+		if err != nil {
+			return model.Person{}, err
+		}
+		if !exists {
+			return model.Person{}, ErrNotFound
+		}
+	}
+
+	updateQuery := `UPDATE people
+		SET display_name = COALESCE($3, display_name),
+		    updated_at = now()
+		WHERE id=$1 AND owner_id=$2
+		RETURNING id, owner_id, primary_email, display_name, company_id, first_seen_at, updated_at`
+	updateArgs := []any{id, ownerID, displayName}
+	if clearCompany {
+		updateQuery = `UPDATE people
+			SET display_name = COALESCE($3, display_name),
+			    company_id = NULL,
+			    updated_at = now()
+			WHERE id=$1 AND owner_id=$2
+			RETURNING id, owner_id, primary_email, display_name, company_id, first_seen_at, updated_at`
+	} else if companyID != nil {
+		updateQuery = `UPDATE people
+			SET display_name = COALESCE($3, display_name),
+			    company_id = $4::uuid,
+			    updated_at = now()
+			WHERE id=$1 AND owner_id=$2
+			RETURNING id, owner_id, primary_email, display_name, company_id, first_seen_at, updated_at`
+		updateArgs = append(updateArgs, *companyID)
+	}
+
+	var person model.Person
+	err := s.pool.QueryRow(ctx, updateQuery, updateArgs...).
+		Scan(&person.ID, &person.OwnerID, &person.PrimaryEmail, &person.DisplayName, &person.CompanyID, &person.FirstSeenAt, &person.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.Person{}, ErrNotFound
+	}
+	return person, err
+}
+
+func (s *Store) MergePeople(ctx context.Context, ownerID, fromID, intoID string) (model.Person, error) {
+	if fromID == intoID {
+		return model.Person{}, ErrInvalidMerge
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return model.Person{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var fromOwned, intoOwned bool
+	if err := tx.QueryRow(ctx,
+		`SELECT
+		   EXISTS(SELECT 1 FROM people WHERE id=$1 AND owner_id=$2),
+		   EXISTS(SELECT 1 FROM people WHERE id=$3 AND owner_id=$2)`,
+		fromID, ownerID, intoID).Scan(&fromOwned, &intoOwned); err != nil {
+		return model.Person{}, err
+	}
+	if !fromOwned || !intoOwned {
+		return model.Person{}, ErrNotFound
+	}
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE note_speaker_aliases
+		 SET person_id=$1
+		 WHERE owner_id=$2 AND person_id=$3`,
+		intoID, ownerID, fromID); err != nil {
+		return model.Person{}, err
+	}
+
+	ct, err := tx.Exec(ctx,
+		`DELETE FROM people
+		 WHERE id=$1 AND owner_id=$2`,
+		fromID, ownerID)
+	if err != nil {
+		return model.Person{}, err
+	}
+	if ct.RowsAffected() == 0 {
+		return model.Person{}, ErrNotFound
+	}
+
+	var person model.Person
+	if err := tx.QueryRow(ctx,
+		`SELECT id, owner_id, primary_email, display_name, company_id, first_seen_at, updated_at
+		 FROM people
+		 WHERE id=$1 AND owner_id=$2`,
+		intoID, ownerID).
+		Scan(&person.ID, &person.OwnerID, &person.PrimaryEmail, &person.DisplayName, &person.CompanyID, &person.FirstSeenAt, &person.UpdatedAt); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return model.Person{}, ErrNotFound
+		}
+		return model.Person{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return model.Person{}, err
+	}
+	return person, nil
+}
+
+func (s *Store) DeletePerson(ctx context.Context, ownerID, id string) error {
+	ct, err := s.pool.Exec(ctx,
+		`DELETE FROM people
+		 WHERE id=$1 AND owner_id=$2`,
+		id, ownerID)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) ListPeople(ctx context.Context, ownerID string) ([]model.Person, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, owner_id, primary_email, display_name, company_id, first_seen_at, updated_at

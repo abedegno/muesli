@@ -3,7 +3,7 @@ import { writeFile } from 'node:fs/promises'
 import JSZip from 'jszip'
 import { fullNoteToMarkdown } from '../renderer/lib/noteMarkdown'
 import type { AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, Message, MicrosoftOAuthStatus, Note, PersonWithCompany, PluginStatus, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, ServerConfig, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection } from '../shared/types'
-import type { ConnectRequest, CreateConversationRequest, CreateConversationResponse, DiarizationReviewUpdate, SearchOptions, SendMessageRequest, SendMessageResponse, UploadAudioRequest } from '../shared/ipc'
+import type { ConnectRequest, CreateConversationRequest, CreateConversationResponse, DiarizationReviewUpdate, SearchOptions, SendMessageRequest, SendMessageResponse, UpdatePersonRequest, UploadAudioRequest } from '../shared/ipc'
 import { INSECURE_CONNECTION_CODE, isInsecureRemote } from '../shared/url'
 import type { UploadProgress } from './uploadMachine'
 import { ApiError, MuesliClient, type FetchLike, type NoteExportData } from './muesliClient'
@@ -26,6 +26,9 @@ interface Handlers {
   listCompanies(): Promise<CompanyWithCount[]>
   getPerson(id: string): Promise<PersonWithCompany>
   getPersonNotes(id: string): Promise<Note[]>
+  updatePerson(id: string, req: UpdatePersonRequest): Promise<PersonWithCompany>
+  mergePeople(fromId: string, intoId: string): Promise<PersonWithCompany>
+  deletePerson(id: string): Promise<void>
   getCompany(id: string): Promise<CompanyWithPeople>
   getFull(id: string): Promise<FullNote>
   createNote(title: string): Promise<Note>
@@ -172,6 +175,18 @@ export function createHandlers(deps: HandlerDeps): Handlers {
 
     async getPersonNotes(id) {
       return authedClient().getPersonNotes(id)
+    },
+
+    async updatePerson(id, req) {
+      return withApiError(() => authedClient().updatePerson(id, req))
+    },
+
+    async mergePeople(fromId, intoId) {
+      return withApiError(() => authedClient().mergePeople(fromId, intoId))
+    },
+
+    async deletePerson(id) {
+      await withApiError(() => authedClient().deletePerson(id))
     },
 
     async getCompany(id) {

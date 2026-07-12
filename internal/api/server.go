@@ -179,6 +179,9 @@ func (s *Server) routes() {
 
 		r.Get("/api/people", s.handleListPeople)
 		r.Get("/api/people/{id}", s.handleGetPerson)
+		r.Patch("/api/people/{id}", s.handleUpdatePerson)
+		r.Post("/api/people/{id}/merge", s.handleMergePeople)
+		r.Delete("/api/people/{id}", s.handleDeletePerson)
 		r.Get("/api/people/{id}/notes", s.handleListPersonNotes)
 		r.Post("/api/people/refresh", s.handleRefreshPeople)
 		r.Get("/api/companies", s.handleListCompanies)

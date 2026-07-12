@@ -10,6 +10,9 @@ export const IPC = {
   listCompanies: 'muesli:listCompanies',
   getPerson: 'muesli:getPerson',
   getPersonNotes: 'muesli:getPersonNotes',
+  updatePerson: 'muesli:updatePerson',
+  mergePeople: 'muesli:mergePeople',
+  deletePerson: 'muesli:deletePerson',
   getCompany: 'muesli:getCompany',
   getFull: 'muesli:getFull',
   createNote: 'muesli:createNote',
@@ -142,6 +145,11 @@ export interface SendMessageRequest {
   model_override?: string
 }
 
+export interface UpdatePersonRequest {
+  displayName?: string
+  companyId?: string | null
+}
+
 // Response for POST /api/conversations/{id}/messages: the ASSISTANT reply
 // (the user's own message isn't echoed back — callers already have it).
 export interface SendMessageResponse {
@@ -158,6 +166,9 @@ export interface MuesliBridge {
   listCompanies(): Promise<CompanyWithCount[]>
   getPerson(id: string): Promise<PersonWithCompany>
   getPersonNotes(id: string): Promise<Note[]>
+  updatePerson(id: string, req: UpdatePersonRequest): Promise<PersonWithCompany>
+  mergePeople(fromId: string, intoId: string): Promise<PersonWithCompany>
+  deletePerson(id: string): Promise<void>
   getCompany(id: string): Promise<CompanyWithPeople>
   getFull(id: string): Promise<FullNote>
   createNote(title: string): Promise<Note>
