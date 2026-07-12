@@ -177,6 +177,9 @@ func (s *Server) routes() {
 		r.Post("/api/folders/{id}/restore", s.handleRestoreFolder)
 		r.Delete("/api/folders/{id}/permanent", s.handlePurgeFolder)
 
+		r.Get("/api/people", s.handleListPeople)
+		r.Get("/api/people/{id}", s.handleGetPerson)
+
 		r.Get("/api/calendar/sources", s.handleListCalendarSources)
 		r.Post("/api/calendar/sources", s.handleCreateCalendarSource)
 		r.Post("/api/calendar/sources/{id}/select", s.handleSelectCalendarSource)
