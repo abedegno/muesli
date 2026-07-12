@@ -1,5 +1,3 @@
-import type { Note } from '../../shared/types'
-
 export const MONOGRAM_TONES = ['teal', 'blue', 'violet', 'amber', 'rose', 'slate'] as const
 export type MonogramTone = (typeof MONOGRAM_TONES)[number]
 
@@ -8,6 +6,8 @@ interface Monogram {
   tone: MonogramTone
 }
 
+type MonogramInput = { id: string; title: string } | { id: string; label: string }
+
 // djb2 — small, fast, deterministic across sessions.
 function hash(s: string): number {
   let h = 5381
@@ -15,9 +15,10 @@ function hash(s: string): number {
   return h
 }
 
-export function monogram(note: Pick<Note, 'id' | 'title'>): Monogram {
-  const m = note.title.match(/[A-Za-z0-9]/)
+export function monogram(item: MonogramInput): Monogram {
+  const text = 'label' in item ? item.label : item.title
+  const m = text.match(/[A-Za-z0-9]/)
   const initial = m ? m[0].toUpperCase() : '•'
-  const tone = MONOGRAM_TONES[hash(note.id) % MONOGRAM_TONES.length]
+  const tone = MONOGRAM_TONES[hash(item.id) % MONOGRAM_TONES.length]
   return { initial, tone }
 }

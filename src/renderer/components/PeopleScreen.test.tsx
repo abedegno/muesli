@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { ReactNode } from 'react'
 import { PeopleScreen } from './PeopleScreen'
 import type { CompanyWithCount, PersonWithCompany } from '../../shared/types'
 
@@ -13,6 +14,18 @@ const { listPeopleMock, listCompaniesMock, navigateMock } = vi.hoisted(() => ({
 
 vi.mock('react-router-dom', () => ({
   useNavigate: () => navigateMock,
+  Link: ({ to, children, ...props }: { to: string; children: ReactNode }) => (
+    <a
+      href={to}
+      onClick={(event) => {
+        event.preventDefault()
+        navigateMock(to)
+      }}
+      {...props}
+    >
+      {children}
+    </a>
+  ),
 }))
 
 vi.mock('@/api', () => ({
@@ -66,8 +79,9 @@ describe('PeopleScreen', () => {
     render(<PeopleScreen />)
 
     expect(await screen.findByText('Alex Doe')).toBeInTheDocument()
+    expect(within(screen.getByText('Alex Doe').closest('li') as HTMLElement).getByText('A')).toBeInTheDocument()
     expect(screen.getByText('alex@example.com')).toBeInTheDocument()
-    expect(screen.getByText('Example Inc')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Example Inc' })).toHaveAttribute('href', '/companies/c1')
 
     await userEvent.click(screen.getByRole('button', { name: /alex doe/i }))
     expect(navigateMock).toHaveBeenCalledWith('/people/p1')
@@ -84,6 +98,7 @@ describe('PeopleScreen', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Companies' }))
 
     expect(await screen.findByText('Example Inc')).toBeInTheDocument()
+    expect(within(screen.getByText('Example Inc').closest('li') as HTMLElement).getByText('E')).toBeInTheDocument()
     expect(screen.getByText('example.com')).toBeInTheDocument()
     expect(screen.getByText('3')).toBeInTheDocument()
 
@@ -194,5 +209,72 @@ describe('PeopleScreen', () => {
 
     expect(await screen.findByText('No matches')).toBeInTheDocument()
     expect(screen.getByText('Try a different search for company names or domains.')).toBeInTheDocument()
+  })
+
+  it('sorts people and companies by name by default and reorders on most recent', async () => {
+    listPeopleMock.mockResolvedValue([
+      person({
+        id: 'p1',
+        display_name: 'Zoe Zebra',
+        primary_email: 'zoe@example.com',
+        first_seen_at: '2026-07-04T00:00:00Z',
+        company: {
+          id: 'c1',
+          owner_id: 'owner-1',
+          domain: 'zebra.com',
+          name: 'Zebra Co',
+          created_at: '2026-07-01T00:00:00Z',
+          updated_at: '2026-07-02T00:00:00Z',
+        },
+      }),
+      person({
+        id: 'p2',
+        display_name: 'Alex Arbor',
+        primary_email: 'alex@example.com',
+        first_seen_at: '2026-07-02T00:00:00Z',
+        company: {
+          id: 'c2',
+          owner_id: 'owner-1',
+          domain: 'arbor.com',
+          name: 'Arbor LLC',
+          created_at: '2026-07-03T00:00:00Z',
+          updated_at: '2026-07-04T00:00:00Z',
+        },
+      }),
+    ])
+    listCompaniesMock.mockResolvedValue([
+      company({
+        id: 'c1',
+        name: 'Zebra Co',
+        domain: 'zebra.com',
+        created_at: '2026-07-01T00:00:00Z',
+        updated_at: '2026-07-02T00:00:00Z',
+      }),
+      company({
+        id: 'c2',
+        name: 'Arbor LLC',
+        domain: 'arbor.com',
+        created_at: '2026-07-03T00:00:00Z',
+        updated_at: '2026-07-04T00:00:00Z',
+      }),
+    ])
+
+    const user = userEvent.setup()
+    render(<PeopleScreen />)
+
+    await screen.findByText('Alex Arbor')
+    expect(screen.getByText('2 people · 2 companies')).toBeInTheDocument()
+    const peopleList = screen.getByRole('list')
+    expect(within(peopleList).getAllByRole('listitem')[0]).toHaveTextContent('Alex Arbor')
+    expect(within(peopleList).getAllByRole('listitem')[1]).toHaveTextContent('Zoe Zebra')
+
+    await user.selectOptions(screen.getByLabelText('Sort people and companies'), 'recent')
+    expect(within(peopleList).getAllByRole('listitem')[0]).toHaveTextContent('Zoe Zebra')
+    expect(within(peopleList).getAllByRole('listitem')[1]).toHaveTextContent('Alex Arbor')
+
+    await user.click(screen.getByRole('button', { name: 'Companies' }))
+    const companyList = screen.getByRole('list')
+    expect(within(companyList).getAllByRole('listitem')[0]).toHaveTextContent('Arbor LLC')
+    expect(within(companyList).getAllByRole('listitem')[1]).toHaveTextContent('Zebra Co')
   })
 })

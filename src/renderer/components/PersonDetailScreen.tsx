@@ -4,19 +4,10 @@ import { ArrowLeft } from 'lucide-react'
 import { muesli } from '@/api'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from './EmptyState'
+import { MonogramAvatar } from './MonogramAvatar'
 import { Input } from '@/components/ui/Input'
 import { Skeleton } from '@/components/ui/Skeleton'
-import { monogram, type MonogramTone } from '@/lib/monogram'
 import type { CompanyWithCount, Note, PersonWithCompany } from '../../shared/types'
-
-const TILE: Record<MonogramTone, string> = {
-  teal: 'bg-primary/15 text-primary',
-  blue: 'bg-blue-500/15 text-blue-600 dark:text-blue-300',
-  violet: 'bg-violet-500/15 text-violet-600 dark:text-violet-300',
-  amber: 'bg-amber-500/15 text-amber-600 dark:text-amber-300',
-  rose: 'bg-rose-500/15 text-rose-600 dark:text-rose-300',
-  slate: 'bg-slate-500/15 text-slate-600 dark:text-slate-300',
-}
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -47,15 +38,6 @@ function NoteRow({ note }: { note: Note }) {
         <p className="truncate text-xs text-muted-foreground">{formatNoteDate(note)}</p>
       </Link>
     </li>
-  )
-}
-
-function PersonAvatar({ person }: { person: PersonWithCompany }) {
-  const { initial, tone } = monogram({ id: person.id, title: person.display_name || person.primary_email })
-  return (
-    <div className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-[var(--radius)] text-base font-semibold ${TILE[tone]}`}>
-      {initial}
-    </div>
   )
 }
 
@@ -211,11 +193,17 @@ export function PersonDetailScreen() {
         <div className="space-y-6">
           <section className="space-y-4">
             <div className="flex items-start gap-3">
-              <PersonAvatar person={person} />
+              <MonogramAvatar id={person.id} label={person.display_name || person.primary_email} />
               <div className="min-w-0 flex-1">
                 <h1 className="font-serif text-xl font-semibold">{person.display_name || 'Untitled person'}</h1>
                 <p className="truncate text-sm text-muted-foreground">{person.primary_email}</p>
-                <p className="truncate text-sm text-muted-foreground">{person.company?.name ?? '—'}</p>
+                {person.company ? (
+                  <Link to={`/companies/${person.company.id}`} className="truncate text-sm text-muted-foreground transition-colors hover:text-foreground">
+                    {person.company.name || person.company.domain}
+                  </Link>
+                ) : (
+                  <p className="truncate text-sm text-muted-foreground">—</p>
+                )}
               </div>
             </div>
 

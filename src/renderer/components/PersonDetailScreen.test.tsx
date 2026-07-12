@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { PersonDetailScreen } from './PersonDetailScreen'
@@ -22,7 +22,16 @@ vi.mock('react-router-dom', () => ({
   useNavigate: () => navigateMock,
   useParams: () => paramsState,
   Link: ({ to, children, ...props }: { to: string; children: ReactNode }) => (
-    <a href={to} {...props}>{children}</a>
+    <a
+      href={to}
+      onClick={(event) => {
+        event.preventDefault()
+        navigateMock(to)
+      }}
+      {...props}
+    >
+      {children}
+    </a>
   ),
 }))
 
@@ -113,8 +122,10 @@ describe('PersonDetailScreen', () => {
     render(<PersonDetailScreen />)
 
     expect(await screen.findByText('Alex Doe')).toBeInTheDocument()
+    expect(within(screen.getByRole('heading', { name: 'Alex Doe' }).closest('section') as HTMLElement).getByText('A')).toBeInTheDocument()
     expect(screen.getByText('alex@example.com')).toBeInTheDocument()
-    expect(screen.getByText('Example Inc')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('link', { name: 'Example Inc' }))
+    expect(navigateMock).toHaveBeenCalledWith('/companies/c1')
     expect(screen.getByRole('link', { name: `Weekly sync ${noteDate}` })).toHaveAttribute('href', '/notes/n1')
 
     await userEvent.click(screen.getByRole('button', { name: /back to people/i }))
