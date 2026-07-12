@@ -214,8 +214,8 @@ func TestStreamingE2E_LiveSegmentsAndBatchFinalize(t *testing.T) {
 	if err := conn.WriteMessage(websocket.BinaryMessage, frames[1]); err != nil {
 		t.Fatalf("write pcm frame 1: %v", err)
 	}
-	if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"stop"}`)); err != nil {
-		t.Fatalf("write stop: %v", err)
+	if err := conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")); err != nil {
+		t.Fatalf("write close: %v", err)
 	}
 	_, payload, err = conn.ReadMessage()
 	if err != nil {
@@ -226,7 +226,7 @@ func TestStreamingE2E_LiveSegmentsAndBatchFinalize(t *testing.T) {
 		t.Fatalf("decode second segment: %v", err)
 	}
 	if _, _, err := conn.ReadMessage(); err == nil {
-		t.Fatal("expected clean websocket close after stop")
+		t.Fatal("expected clean websocket close after client disconnect")
 	}
 	segments := []map[string]any{firstSegment, secondSegment}
 	if segments[0]["provisional"] != true || segments[1]["provisional"] != true {
