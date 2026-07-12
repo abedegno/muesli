@@ -149,3 +149,100 @@ func TestActionItemsStoreReplaceListSetStatusAndOwnerScoping(t *testing.T) {
 		t.Fatalf("other owner items=%+v", otherItems)
 	}
 }
+
+func TestActionItemsStoreUpdateAndAssignOwner(t *testing.T) {
+	t.Parallel()
+	st, ownerID, _ := newStoreWithOwner(t)
+	otherID := addUser(t, st)
+	ctx := context.Background()
+
+	note, err := st.CreateNote(ctx, ownerID, "Planning")
+	if err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	otherNote, err := st.CreateNote(ctx, otherID, "Other planning")
+	if err != nil {
+		t.Fatalf("create other note: %v", err)
+	}
+
+	ownerPerson, err := st.UpsertPerson(ctx, ownerID, "assignee@example.com", "Assignee", nil)
+	if err != nil {
+		t.Fatalf("create owner person: %v", err)
+	}
+	foreignPerson, err := st.UpsertPerson(ctx, otherID, "foreign@example.com", "Foreign", nil)
+	if err != nil {
+		t.Fatalf("create foreign person: %v", err)
+	}
+
+	if err := st.ReplaceActionItemsForNote(ctx, ownerID, note.ID,
+		[]model.ActionItem{{Text: "Ship the doc", DueHint: "Friday"}},
+		nil,
+	); err != nil {
+		t.Fatalf("seed action item: %v", err)
+	}
+	items, _, err := st.ListForNote(ctx, ownerID, note.ID)
+	if err != nil {
+		t.Fatalf("list seeded item: %v", err)
+	}
+	item := items[0]
+
+	updatedText := "Ship the updated doc"
+	updated, err := st.UpdateActionItem(ctx, ownerID, item.ID, &updatedText, nil)
+	if err != nil {
+		t.Fatalf("update text: %v", err)
+	}
+	if updated.Text != updatedText || updated.Status != model.ActionItemOpen || updated.OwnerPersonID != nil {
+		t.Fatalf("unexpected text-only update: %+v", updated)
+	}
+
+	updatedStatus := model.ActionItemDone
+	updated, err = st.UpdateActionItem(ctx, ownerID, item.ID, nil, &updatedStatus)
+	if err != nil {
+		t.Fatalf("update status: %v", err)
+	}
+	if updated.Text != updatedText || updated.Status != model.ActionItemDone || updated.OwnerPersonID != nil {
+		t.Fatalf("unexpected status update: %+v", updated)
+	}
+
+	assigned, err := st.AssignOwner(ctx, ownerID, item.ID, &ownerPerson.ID)
+	if err != nil {
+		t.Fatalf("assign owner: %v", err)
+	}
+	if assigned.OwnerPersonID == nil || *assigned.OwnerPersonID != ownerPerson.ID {
+		t.Fatalf("unexpected assigned owner: %+v", assigned)
+	}
+	if assigned.Text != updatedText || assigned.Status != model.ActionItemDone {
+		t.Fatalf("assign should preserve text/status: %+v", assigned)
+	}
+
+	cleared, err := st.AssignOwner(ctx, ownerID, item.ID, nil)
+	if err != nil {
+		t.Fatalf("clear owner: %v", err)
+	}
+	if cleared.OwnerPersonID != nil {
+		t.Fatalf("clear should nil owner: %+v", cleared)
+	}
+
+	if _, err := st.AssignOwner(ctx, ownerID, item.ID, &foreignPerson.ID); !errors.Is(err, store.ErrInvalidOwner) {
+		t.Fatalf("foreign owner = %v want ErrInvalidOwner", err)
+	}
+	afterForeign, _, err := st.ListForNote(ctx, ownerID, note.ID)
+	if err != nil {
+		t.Fatalf("relist after foreign owner: %v", err)
+	}
+	if afterForeign[0].OwnerPersonID != nil {
+		t.Fatalf("foreign owner attempt should not change item: %+v", afterForeign[0])
+	}
+
+	otherItems, _, err := st.ListForNote(ctx, otherID, otherNote.ID)
+	if err != nil {
+		t.Fatalf("list other note: %v", err)
+	}
+	otherItemID := otherItems[0].ID
+	if _, err := st.UpdateActionItem(ctx, ownerID, otherItemID, &updatedText, nil); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("cross-owner update = %v want ErrNotFound", err)
+	}
+	if _, err := st.AssignOwner(ctx, ownerID, otherItemID, &ownerPerson.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("cross-owner assign = %v want ErrNotFound", err)
+	}
+}

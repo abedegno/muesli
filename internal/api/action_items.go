@@ -9,6 +9,7 @@ import (
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/store"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 type actionItemsResponse struct {
@@ -20,6 +21,23 @@ type actionItemStatusRequest struct {
 	Status string `json:"status"`
 }
 
+type actionItemPatchRequest struct {
+	Text             *string
+	Status           *string
+	OwnerPersonID    *string
+	HasText          bool
+	HasStatus        bool
+	HasOwnerPersonID bool
+}
+
+var (
+	errActionItemPatchNoFields      = errors.New("no fields to update")
+	errActionItemPatchInvalidBody   = errors.New("invalid body")
+	errActionItemPatchInvalidText   = errors.New("invalid text")
+	errActionItemPatchInvalidStatus = errors.New("invalid status")
+	errActionItemPatchInvalidOwner  = errors.New("invalid owner")
+)
+
 func validActionItemStatus(status string) bool {
 	switch status {
 	case model.ActionItemOpen, model.ActionItemDone:
@@ -27,6 +45,65 @@ func validActionItemStatus(status string) bool {
 	default:
 		return false
 	}
+}
+
+func parseActionItemPatch(raw map[string]json.RawMessage) (actionItemPatchRequest, error) {
+	var req actionItemPatchRequest
+
+	if v, ok := raw["text"]; ok {
+		req.HasText = true
+		if string(v) == "null" {
+			return actionItemPatchRequest{}, errActionItemPatchInvalidText
+		}
+		var text string
+		if err := json.Unmarshal(v, &text); err != nil {
+			return actionItemPatchRequest{}, errActionItemPatchInvalidBody
+		}
+		if text == "" {
+			return actionItemPatchRequest{}, errActionItemPatchInvalidText
+		}
+		req.Text = &text
+	}
+
+	if v, ok := raw["status"]; ok {
+		req.HasStatus = true
+		if string(v) == "null" {
+			return actionItemPatchRequest{}, errActionItemPatchInvalidStatus
+		}
+		var status string
+		if err := json.Unmarshal(v, &status); err != nil {
+			return actionItemPatchRequest{}, errActionItemPatchInvalidBody
+		}
+		if !validActionItemStatus(status) {
+			return actionItemPatchRequest{}, errActionItemPatchInvalidStatus
+		}
+		req.Status = &status
+	}
+
+	if v, ok := raw["owner_person_id"]; ok {
+		req.HasOwnerPersonID = true
+		if string(v) == "null" {
+			req.OwnerPersonID = nil
+		} else {
+			var ownerPersonID string
+			if err := json.Unmarshal(v, &ownerPersonID); err != nil {
+				return actionItemPatchRequest{}, errActionItemPatchInvalidBody
+			}
+			if ownerPersonID == "" {
+				return actionItemPatchRequest{}, errActionItemPatchInvalidOwner
+			}
+			if _, err := uuid.Parse(ownerPersonID); err != nil {
+				return actionItemPatchRequest{}, errActionItemPatchInvalidOwner
+			}
+			req.OwnerPersonID = &ownerPersonID
+		}
+	}
+
+	if !req.HasText && !req.HasStatus && !req.HasOwnerPersonID {
+		return actionItemPatchRequest{}, errActionItemPatchNoFields
+	}
+
+	return req, nil
 }
 
 func (s *Server) handleListNoteActionItems(w http.ResponseWriter, r *http.Request) {
@@ -78,23 +155,62 @@ func (s *Server) handleUpdateActionItemStatus(w http.ResponseWriter, r *http.Req
 	if !validID(w, r, id) {
 		return
 	}
-	var req actionItemStatusRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if !validActionItemStatus(req.Status) {
-		writeError(w, http.StatusBadRequest, "invalid status")
+	req, err := parseActionItemPatch(raw)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	item, err := s.deps.Store.SetStatus(r.Context(), uid, id, req.Status)
-	if errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	} else if err != nil {
-		log.Printf("handleUpdateActionItemStatus: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
+	if req.HasOwnerPersonID && req.OwnerPersonID != nil {
+		if _, err := s.deps.Store.GetPerson(r.Context(), uid, *req.OwnerPersonID); errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusBadRequest, "invalid owner")
+			return
+		} else if err != nil {
+			log.Printf("handleUpdateActionItemStatus: validate owner: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+
+	var item model.ActionItem
+	var updated bool
+	if req.HasText || req.HasStatus {
+		item, err = s.deps.Store.UpdateActionItem(r.Context(), uid, id, req.Text, req.Status)
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		} else if err != nil {
+			log.Printf("handleUpdateActionItemStatus: update item: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		updated = true
+	}
+
+	if req.HasOwnerPersonID {
+		item, err = s.deps.Store.AssignOwner(r.Context(), uid, id, req.OwnerPersonID)
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		} else if errors.Is(err, store.ErrInvalidOwner) {
+			writeError(w, http.StatusBadRequest, "invalid owner")
+			return
+		} else if err != nil {
+			log.Printf("handleUpdateActionItemStatus: assign owner: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		updated = true
+	}
+
+	if !updated {
+		writeError(w, http.StatusBadRequest, "no fields to update")
 		return
 	}
+
 	writeJSON(w, http.StatusOK, item)
 }

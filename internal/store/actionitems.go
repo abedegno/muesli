@@ -18,6 +18,13 @@ func actionItemOwnerPersonID(ns sql.NullString) *string {
 	return &v
 }
 
+func actionItemArg(v *string) any {
+	if v == nil {
+		return nil
+	}
+	return *v
+}
+
 // ReplaceActionItemsForNote replaces a note's stored action items and decisions
 // in one transaction. The note must exist, belong to ownerID, and be live.
 func (s *Store) ReplaceActionItemsForNote(ctx context.Context, ownerID, noteID string, items []model.ActionItem, decisions []model.Decision) error {
@@ -132,6 +139,75 @@ func (s *Store) SetStatus(ctx context.Context, ownerID, id, status string) (mode
 		    AND n.deleted_at IS NULL
 		 RETURNING ai.id, ai.note_id, ai.owner_id, ai.text, ai.owner_person_id, ai.status, ai.due_hint, ai.created_at`,
 		status, id, ownerID).
+		Scan(&item.ID, &item.NoteID, &item.OwnerID, &item.Text, &ownerPerson, &item.Status, &item.DueHint, &item.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.ActionItem{}, ErrNotFound
+	}
+	if err != nil {
+		return model.ActionItem{}, err
+	}
+	item.OwnerPersonID = actionItemOwnerPersonID(ownerPerson)
+	return item, nil
+}
+
+// UpdateActionItem updates the non-nil action item fields for ownerID and
+// returns the row. ErrNotFound is returned when the item does not exist, is
+// not owned, or its parent note is missing/trashed.
+func (s *Store) UpdateActionItem(ctx context.Context, ownerID, id string, text *string, status *string) (model.ActionItem, error) {
+	var item model.ActionItem
+	var ownerPerson sql.NullString
+	err := s.pool.QueryRow(ctx,
+		`UPDATE action_items ai
+		    SET text = COALESCE($1, ai.text),
+		        status = COALESCE($2, ai.status)
+		   FROM notes n
+		  WHERE ai.id=$3
+		    AND ai.owner_id=$4
+		    AND n.owner_id=$4
+		    AND ai.note_id = n.id
+		    AND n.deleted_at IS NULL
+		 RETURNING ai.id, ai.note_id, ai.owner_id, ai.text, ai.owner_person_id, ai.status, ai.due_hint, ai.created_at`,
+		actionItemArg(text), actionItemArg(status), id, ownerID).
+		Scan(&item.ID, &item.NoteID, &item.OwnerID, &item.Text, &ownerPerson, &item.Status, &item.DueHint, &item.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.ActionItem{}, ErrNotFound
+	}
+	if err != nil {
+		return model.ActionItem{}, err
+	}
+	item.OwnerPersonID = actionItemOwnerPersonID(ownerPerson)
+	return item, nil
+}
+
+// AssignOwner updates an action item's owner_person_id. When personID is nil it
+// clears the owner; otherwise the person must exist and belong to ownerID.
+func (s *Store) AssignOwner(ctx context.Context, ownerID, id string, personID *string) (model.ActionItem, error) {
+	if personID != nil {
+		if _, err := s.GetPerson(ctx, ownerID, *personID); err != nil {
+			if errors.Is(err, ErrNotFound) {
+				return model.ActionItem{}, ErrInvalidOwner
+			}
+			return model.ActionItem{}, err
+		}
+	}
+
+	var item model.ActionItem
+	var ownerPerson sql.NullString
+	var ownerPersonArg any
+	if personID != nil {
+		ownerPersonArg = *personID
+	}
+	err := s.pool.QueryRow(ctx,
+		`UPDATE action_items ai
+		    SET owner_person_id = $1
+		   FROM notes n
+		  WHERE ai.id=$2
+		    AND ai.owner_id=$3
+		    AND n.owner_id=$3
+		    AND ai.note_id = n.id
+		    AND n.deleted_at IS NULL
+		 RETURNING ai.id, ai.note_id, ai.owner_id, ai.text, ai.owner_person_id, ai.status, ai.due_hint, ai.created_at`,
+		ownerPersonArg, id, ownerID).
 		Scan(&item.ID, &item.NoteID, &item.OwnerID, &item.Text, &ownerPerson, &item.Status, &item.DueHint, &item.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return model.ActionItem{}, ErrNotFound

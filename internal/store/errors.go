@@ -16,3 +16,7 @@ var ErrInvalidTransition = errors.New("invalid state transition")
 // ErrInvalidMerge is returned when a merge request is invalid, such as when
 // the source and target company IDs are the same.
 var ErrInvalidMerge = errors.New("invalid merge")
+
+// ErrInvalidOwner is returned when an action item owner assignment references
+// a person that does not belong to the caller.
+var ErrInvalidOwner = errors.New("invalid owner")
