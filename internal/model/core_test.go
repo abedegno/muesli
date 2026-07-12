@@ -78,6 +78,44 @@ func TestNoteCoreJSONRoundTrip(t *testing.T) {
 	}
 }
 
+func TestNoteLinkCoreJSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	createdAt := time.Date(2026, time.July, 12, 12, 0, 0, 0, time.UTC)
+
+	cases := []struct {
+		name     string
+		value    NoteLink
+		wantKeys []string
+	}{
+		{
+			name: "fully populated",
+			value: NoteLink{
+				ID:         "link_1",
+				OwnerID:    "owner_1",
+				FromNoteID: "note_a",
+				ToNoteID:   "note_b",
+				CreatedAt:  createdAt,
+			},
+			wantKeys: []string{"id", "owner_id", "from_note_id", "to_note_id", "created_at"},
+		},
+		{
+			name:     "zero value",
+			value:    NoteLink{},
+			wantKeys: []string{"id", "owner_id", "from_note_id", "to_note_id", "created_at"},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			assertJSONRoundTrip(t, tc.value, tc.wantKeys)
+		})
+	}
+}
+
 func TestSegmentCoreJSONRoundTrip(t *testing.T) {
 	t.Parallel()
 
