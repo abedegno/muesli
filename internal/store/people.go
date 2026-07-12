@@ -175,6 +175,90 @@ func (s *Store) ListPeople(ctx context.Context, ownerID string) ([]model.Person,
 	return out, nil
 }
 
+// PeopleForNoteEvent returns the people whose primary_email matches a note's
+// linked calendar event attendees, scoped to the note owner. It returns an
+// empty (non-nil) slice when the note has no event, the event has no attendees,
+// or no attendee emails resolve to people.
+func (s *Store) PeopleForNoteEvent(ctx context.Context, ownerID, noteID string) ([]model.Person, error) {
+	var eventID *string
+	err := s.pool.QueryRow(ctx,
+		`SELECT event_id
+		 FROM notes
+		 WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL`,
+		noteID, ownerID).Scan(&eventID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if eventID == nil {
+		return []model.Person{}, nil
+	}
+
+	var attendeesRaw string
+	err = s.pool.QueryRow(ctx,
+		`SELECT attendees::text
+		 FROM calendar_events
+		 WHERE id=$1 AND owner_id=$2`,
+		*eventID, ownerID).Scan(&attendeesRaw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	attendees, err := decodeCalendarAttendees(attendeesRaw)
+	if err != nil {
+		return nil, err
+	}
+	emails := make([]string, 0, len(attendees))
+	seen := make(map[string]struct{}, len(attendees))
+	for _, attendee := range attendees {
+		email := strings.ToLower(strings.TrimSpace(attendee.Email))
+		if email == "" {
+			continue
+		}
+		if _, ok := seen[email]; ok {
+			continue
+		}
+		seen[email] = struct{}{}
+		emails = append(emails, email)
+	}
+	if len(emails) == 0 {
+		return []model.Person{}, nil
+	}
+
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, owner_id, primary_email, display_name, company_id, first_seen_at, updated_at
+		 FROM people
+		 WHERE owner_id=$1
+		   AND lower(primary_email) = ANY($2::text[])
+		 ORDER BY display_name, primary_email`,
+		ownerID, emails)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []model.Person{}
+	for rows.Next() {
+		var person model.Person
+		if err := rows.Scan(&person.ID, &person.OwnerID, &person.PrimaryEmail, &person.DisplayName, &person.CompanyID, &person.FirstSeenAt, &person.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, person)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []model.Person{}
+	}
+	return out, nil
+}
+
 func (s *Store) PeopleForNoteSpeakers(ctx context.Context, ownerID, noteID string) ([]model.Person, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT DISTINCT p.id, p.owner_id, p.primary_email, p.display_name, p.company_id, p.first_seen_at, p.updated_at

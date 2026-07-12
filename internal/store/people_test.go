@@ -4,7 +4,11 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
+	"github.com/abedegno/muesli/internal/calendar"
+	"github.com/abedegno/muesli/internal/model"
+	peoplelogic "github.com/abedegno/muesli/internal/people"
 	"github.com/abedegno/muesli/internal/store"
 	"github.com/abedegno/muesli/internal/testutil"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -315,5 +319,102 @@ func TestPeopleStoreGetPersonNotFound(t *testing.T) {
 	}
 	if _, err := st.GetPerson(ctx, otherOwner.ID, person.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("cross-owner get: want ErrNotFound, got %v", err)
+	}
+}
+
+// This test is DB-backed and CI-only: testutil.NewPool skips when
+// TEST_DATABASE_URL is unset.
+func TestPeopleForNoteEventScopesSpeakerMatching(t *testing.T) {
+	t.Parallel()
+
+	pool := testutil.NewPool(t)
+	st := store.New(pool)
+	ctx := context.Background()
+
+	owner, err := st.CreateUser(ctx, "event-scope-owner@example.com", "h")
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+
+	first, err := st.UpsertPerson(ctx, owner.ID, "chris.one@example.com", "Chris", nil)
+	if err != nil {
+		t.Fatalf("create first person: %v", err)
+	}
+	second, err := st.UpsertPerson(ctx, owner.ID, "chris.two@example.com", "Chris", nil)
+	if err != nil {
+		t.Fatalf("create second person: %v", err)
+	}
+
+	source, err := st.CreateSource(ctx, owner.ID, "ics", "Team Calendar", "sealed-creds")
+	if err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	if err := st.UpsertEvents(ctx, owner.ID, source.ID, []calendar.NormalizedEvent{{
+		ExternalID: "evt-1",
+		Title:      "Team sync",
+		StartsAt:   noteEventTestBase,
+		EndsAt:     noteEventTestBase.Add(30 * time.Minute),
+		Attendees: []model.Attendee{
+			{Email: "CHRIS.ONE@EXAMPLE.COM", Name: "Chris", Response: "accepted"},
+		},
+	}}); err != nil {
+		t.Fatalf("upsert event: %v", err)
+	}
+	events, err := st.ListEvents(ctx, owner.ID, noteEventTestBase.Add(-time.Hour), noteEventTestBase.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d: %+v", len(events), events)
+	}
+
+	note, err := st.CreateNote(ctx, owner.ID, "Meeting note")
+	if err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	if err := st.SetNoteEvent(ctx, owner.ID, note.ID, events[0].ID); err != nil {
+		t.Fatalf("set note event: %v", err)
+	}
+	if err := st.UpsertSpeakerAlias(ctx, owner.ID, note.ID, "SPEAKER_00", "Chris"); err != nil {
+		t.Fatalf("upsert speaker alias: %v", err)
+	}
+
+	fullPeople, err := st.ListPeople(ctx, owner.ID)
+	if err != nil {
+		t.Fatalf("list people: %v", err)
+	}
+	if gotID, ok := peoplelogic.MatchPersonByName("Chris", fullPeople); ok {
+		t.Fatalf("expected org-wide matching to stay ambiguous, got %q", gotID)
+	}
+
+	scopedPeople, err := st.PeopleForNoteEvent(ctx, owner.ID, note.ID)
+	if err != nil {
+		t.Fatalf("people for note event: %v", err)
+	}
+	if len(scopedPeople) != 1 {
+		t.Fatalf("expected exactly 1 scoped person, got %d: %+v", len(scopedPeople), scopedPeople)
+	}
+	if scopedPeople[0].ID != first.ID {
+		t.Fatalf("expected scoped person %q, got %+v", first.ID, scopedPeople[0])
+	}
+	if gotID, ok := peoplelogic.MatchPersonByName("Chris", scopedPeople); !ok || gotID != first.ID {
+		t.Fatalf("expected scoped match to resolve to %q, got (%q, %v)", first.ID, gotID, ok)
+	}
+
+	if err := peoplelogic.LinkNoteSpeakers(ctx, st, owner.ID, note.ID); err != nil {
+		t.Fatalf("link note speakers: %v", err)
+	}
+	aliases, err := st.ListSpeakerAliases(ctx, owner.ID, note.ID)
+	if err != nil {
+		t.Fatalf("list speaker aliases: %v", err)
+	}
+	if len(aliases) != 1 {
+		t.Fatalf("expected 1 alias, got %d: %+v", len(aliases), aliases)
+	}
+	if aliases[0].PersonID == nil || *aliases[0].PersonID != first.ID {
+		t.Fatalf("expected alias linked to %q, got %+v", first.ID, aliases[0])
+	}
+	if *aliases[0].PersonID == second.ID {
+		t.Fatalf("alias linked to the wrong person: %+v", aliases[0])
 	}
 }

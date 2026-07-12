@@ -13,7 +13,10 @@ import (
 func LinkNoteSpeakers(ctx context.Context, st *store.Store, ownerID, noteID string) error {
 	aliases, aliasErr := st.ListSpeakerAliases(ctx, ownerID, noteID)
 
-	people, peopleErr := st.ListPeople(ctx, ownerID)
+	people, peopleErr := st.PeopleForNoteEvent(ctx, ownerID, noteID)
+	if peopleErr == nil && len(people) == 0 {
+		people, peopleErr = st.ListPeople(ctx, ownerID)
+	}
 
 	var firstErr error
 	if aliasErr != nil {
