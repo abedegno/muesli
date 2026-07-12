@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/abedegno/muesli/internal/model"
+	"github.com/abedegno/muesli/internal/notelinks"
 	"github.com/abedegno/muesli/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -234,6 +235,20 @@ func (s *Server) handleUpdateNoteBody(w http.ResponseWriter, r *http.Request) {
 	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+
+	fromNoteID := chi.URLParam(r, "id")
+	for _, title := range notelinks.ParseMentions(req.Content) {
+		target, err := s.deps.Store.FindNoteByTitleCI(r.Context(), uid, title)
+		if err != nil {
+			continue
+		}
+		if target.ID == fromNoteID {
+			continue
+		}
+		if _, err := s.deps.Store.AddLink(r.Context(), uid, fromNoteID, target.ID); err != nil && !errors.Is(err, store.ErrDuplicate) {
+			continue
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
