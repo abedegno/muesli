@@ -58,6 +58,33 @@ describe('MuesliClient', () => {
     expect(got.pinned).toBe(false)
   })
 
+  it('fetches person and company detail payloads from the expected endpoints', async () => {
+    const calls: Array<{ url: string; method?: string }> = []
+    const fetchMock: FetchLike = async (url, init) => {
+      calls.push({ url: String(url), method: init?.method })
+      const path = new URL(String(url)).pathname
+      if (path === '/api/people/p1/notes') {
+        return new Response(JSON.stringify([{ id: 'n1', title: 'Meeting', status: 'ready', created_at: '', updated_at: '', partial_transcript: false }]), { status: 200 })
+      }
+      if (path === '/api/people/p1') {
+        return new Response(JSON.stringify({ id: 'p1', primary_email: 'alex@example.com', display_name: 'Alex Doe', first_seen_at: '', updated_at: '', company: { id: 'c1', owner_id: 'o1', domain: 'example.com', name: 'Example Inc', created_at: '', updated_at: '' } }), { status: 200 })
+      }
+      if (path === '/api/companies/c1') {
+        return new Response(JSON.stringify({ id: 'c1', owner_id: 'o1', domain: 'example.com', name: 'Example Inc', created_at: '', updated_at: '', people: [{ id: 'p1', primary_email: 'alex@example.com', display_name: 'Alex Doe', first_seen_at: '', updated_at: '' }] }), { status: 200 })
+      }
+      return new Response('unexpected', { status: 500 })
+    }
+    const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
+    await expect(client.getPerson('p1')).resolves.toMatchObject({ id: 'p1', company: { id: 'c1' } })
+    await expect(client.getPersonNotes('p1')).resolves.toHaveLength(1)
+    await expect(client.getCompany('c1')).resolves.toMatchObject({ id: 'c1', people: [{ id: 'p1' }] })
+    expect(calls.map((c) => `${c.method ?? 'GET'} ${c.url}`)).toEqual([
+      'GET http://x/api/people/p1',
+      'GET http://x/api/people/p1/notes',
+      'GET http://x/api/companies/c1',
+    ])
+  })
+
   it('exportNote GETs the export endpoint and parses the filename/content type', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = []
     const fetchMock: FetchLike = async (url, init) => {

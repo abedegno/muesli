@@ -137,6 +137,35 @@ describe('ipc handlers', () => {
     expect(server.lastBodyPut?.content).toBe('# notes')
   })
 
+  it('getPerson, getPersonNotes, and getCompany call the expected authenticated endpoints', async () => {
+    server.seedUser('o@example.com', 'password123')
+    const seen: string[] = []
+    const baseFetch = server.fetch
+    const spyFetch: typeof baseFetch = (input, init) => {
+      seen.push(`${init?.method ?? 'GET'} ${new URL(String(input)).pathname}`)
+      return baseFetch(input, init)
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    const h = createHandlers({ tokenStore, fetch: spyFetch, onProgress: () => {} })
+    await h.connect({
+      serverUrl: 'http://localhost',
+      email: 'o@example.com',
+      password: 'password123',
+      isFirstRun: false,
+    })
+    seen.length = 0
+
+    await expect(h.getPerson('p1')).rejects.toMatchObject({ status: 404 })
+    await expect(h.getPersonNotes('p1')).rejects.toMatchObject({ status: 404 })
+    await expect(h.getCompany('c1')).rejects.toMatchObject({ status: 404 })
+
+    expect(seen).toEqual([
+      'GET /api/people/p1',
+      'GET /api/people/p1/notes',
+      'GET /api/companies/c1',
+    ])
+  })
+
   it('updateFolder returns the updated folder body', async () => {
     const seen: string[] = []
     const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {

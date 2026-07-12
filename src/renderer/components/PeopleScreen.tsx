@@ -1,4 +1,5 @@
 import { useEffect, useState, type ReactNode } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { Building2, Users } from 'lucide-react'
 import { muesli } from '@/api'
 import { EmptyState } from './EmptyState'
@@ -41,31 +42,32 @@ function TabButton({
   )
 }
 
-function PeopleRow({ person }: { person: PersonWithCompany }) {
+function PeopleRow({ person, onOpen }: { person: PersonWithCompany; onOpen: () => void }) {
   return (
     <li className="flex items-start justify-between gap-4 rounded-[var(--radius)] border border-border px-3 py-2">
-      <div className="min-w-0 flex-1">
+      <button type="button" onClick={onOpen} className="min-w-0 flex-1 text-left">
         <p className="truncate text-sm font-medium">{person.display_name || 'Untitled person'}</p>
         <p className="truncate text-xs text-muted-foreground">{person.primary_email}</p>
-      </div>
+      </button>
       <p className="shrink-0 truncate text-sm text-muted-foreground">{person.company?.name ?? '—'}</p>
     </li>
   )
 }
 
-function CompanyRow({ company }: { company: CompanyWithCount }) {
+function CompanyRow({ company, onOpen }: { company: CompanyWithCount; onOpen: () => void }) {
   return (
     <li className="flex items-start justify-between gap-4 rounded-[var(--radius)] border border-border px-3 py-2">
-      <div className="min-w-0 flex-1">
+      <button type="button" onClick={onOpen} className="min-w-0 flex-1 text-left">
         <p className="truncate text-sm font-medium">{company.name || 'Untitled company'}</p>
         <p className="truncate text-xs text-muted-foreground">{company.domain}</p>
-      </div>
+      </button>
       <p className="shrink-0 text-sm text-muted-foreground">{company.people_count}</p>
     </li>
   )
 }
 
 export function PeopleScreen() {
+  const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState<Tab>('people')
   const [people, setPeople] = useState<PersonWithCompany[] | null>(null)
   const [companies, setCompanies] = useState<CompanyWithCount[] | null>(null)
@@ -141,10 +143,10 @@ export function PeopleScreen() {
             : 'Companies synced from your server will appear here.'}
         />
       ) : (
-        <ul className="flex flex-col gap-2">
+          <ul className="flex flex-col gap-2">
           {activeTab === 'people'
-            ? people?.map((person) => <PeopleRow key={person.id} person={person} />)
-            : companies?.map((company) => <CompanyRow key={company.id} company={company} />)}
+            ? people?.map((person) => <PeopleRow key={person.id} person={person} onOpen={() => navigate(`/people/${person.id}`)} />)
+            : companies?.map((company) => <CompanyRow key={company.id} company={company} onOpen={() => navigate(`/companies/${company.id}`)} />)}
         </ul>
       )}
     </div>
