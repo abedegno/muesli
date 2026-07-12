@@ -888,6 +888,56 @@ func TestFinalizeNoteDoubleCallCreatesWebhookOnce(t *testing.T) {
 	}
 }
 
+func TestFinalizeNotePersistsActionItems(t *testing.T) {
+	proc, st, noteID, _, _ := pipelineFixture(t, "keep")
+	ctx := context.Background()
+
+	var calls int
+	proc.SetActionItemsExtractor(func(_ context.Context, input actionitems.Input) (actionitems.Result, error) {
+		calls++
+		if len(input.Transcript) == 0 || len(input.Summary) == 0 {
+			t.Fatalf("action items input incomplete: %+v", input)
+		}
+		return actionitems.Result{
+			ActionItems: []actionitems.ActionItem{{Text: "ship the doc", Owner: "Alice", DueHint: "Friday"}},
+			Decisions:   []actionitems.Decision{{Text: "keep the weekly cadence"}},
+		}, nil
+	})
+
+	drain(t, proc, st)
+
+	ownerID, err := st.NoteOwnerID(ctx, noteID)
+	if err != nil {
+		t.Fatalf("NoteOwnerID: %v", err)
+	}
+	items, decisions, err := st.ListForNote(ctx, ownerID, noteID)
+	if err != nil {
+		t.Fatalf("ListForNote: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("action items extraction calls = %d, want 1", calls)
+	}
+	if len(items) != 1 {
+		t.Fatalf("items len=%d want 1", len(items))
+	}
+	if items[0].Text != "ship the doc" || items[0].DueHint != "Friday" || items[0].Status != model.ActionItemOpen {
+		t.Fatalf("unexpected persisted action item: %+v", items[0])
+	}
+	if items[0].OwnerPersonID != nil {
+		t.Fatalf("owner_person_id should be nil, got %+v", items[0].OwnerPersonID)
+	}
+	if len(decisions) != 1 || decisions[0].Text != "keep the weekly cadence" {
+		t.Fatalf("unexpected persisted decisions: %+v", decisions)
+	}
+	ownerItems, err := st.ListForOwner(ctx, ownerID, model.ActionItemOpen)
+	if err != nil {
+		t.Fatalf("ListForOwner: %v", err)
+	}
+	if len(ownerItems) != 1 || ownerItems[0].ID != items[0].ID {
+		t.Fatalf("owner items=%+v want one persisted item", ownerItems)
+	}
+}
+
 // TestFinalizeNoteWebhookSummaryPresentWhenZeroReadySummaries is a regression
 // test (cross-review blocking finding on PR #201): a note can legitimately
 // reach ready with ZERO ready summaries via the partial-success path (all
