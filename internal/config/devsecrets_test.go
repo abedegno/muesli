@@ -67,7 +67,7 @@ func TestDevSecretWarnings(t *testing.T) {
 			wantVars: []string{"MUESLI_DEFAULT_AGENT_TOKEN"},
 		},
 		{
-			name: "all four dev defaults at once",
+			name: "all five dev defaults at once",
 			cfg: Config{
 				MasterKey:                        "+kdb0f+R3nCdy80T2zDMmZm5lUxfWpzehijIE3Zvsw8=",
 				StorageSigningKey:                "dev-storage-signing-key-change-me",

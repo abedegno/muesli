@@ -5,7 +5,7 @@ import wave
 
 import pytest
 
-from streaming_app.config import Settings
+from streaming_app.transcribe import TranscriptionSettings
 from streaming_app.transcribe import transcribe_utterance
 
 
@@ -14,7 +14,7 @@ from streaming_app.transcribe import transcribe_utterance
     reason="optional real-model integration is opt-in via MUESLI_STREAMING_INTEGRATION=1",
 )
 def test_optional_real_model_smoke():
-    settings = Settings()
+    settings = TranscriptionSettings(model="tiny.en", device="cpu", compute_type="int8")
     sample_rate = 16000
     duration_s = 2
     pcm = array.array("h", [0] * (sample_rate * duration_s))
