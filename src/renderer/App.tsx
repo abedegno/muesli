@@ -13,6 +13,7 @@ const TrashScreen = lazy(() => import('./components/TrashScreen').then(m => ({ d
 const TagsPage = lazy(() => import('./components/TagsPage').then(m => ({ default: m.TagsPage })))
 const ChatScreen = lazy(() => import('./components/chat/ChatScreen').then(m => ({ default: m.ChatScreen })))
 const ComingUpScreen = lazy(() => import('./components/ComingUpScreen').then(m => ({ default: m.ComingUpScreen })))
+const PeopleScreen = lazy(() => import('./components/PeopleScreen').then(m => ({ default: m.PeopleScreen })))
 const NoteScreen = lazy(() => import('./components/NoteScreen').then((m) => ({ default: m.NoteScreen })))
 
 export function App() {
@@ -43,6 +44,7 @@ export function App() {
               <Route path="/settings/tags" element={<TagsPage />} />
               <Route path="/trash" element={<TrashScreen />} />
               <Route path="/coming-up" element={<ComingUpScreen />} />
+              <Route path="/people" element={<PeopleScreen />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
           </Routes>
