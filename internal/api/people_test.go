@@ -199,6 +199,34 @@ func TestPeopleGetPersonRejectsMalformedID(t *testing.T) {
 	}
 }
 
+// TestPeopleRefresh is DB-backed and CI-only: it verifies the endpoint
+// returns 401 without auth and 202 once authenticated, but it does not wait
+// for the background derivation goroutine to finish.
+func TestPeopleRefresh(t *testing.T) {
+	t.Parallel()
+	srv, st := newPeopleTestServer(t)
+	_, ownerHdr := peopleAuthHeader(t, st, "people-refresh@example.com")
+
+	rec := doJSON(t, srv, http.MethodPost, "/api/people/refresh", nil, nil)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated refresh status %d, want 401; body %s", rec.Code, rec.Body)
+	}
+
+	rec = doJSON(t, srv, http.MethodPost, "/api/people/refresh", nil, ownerHdr)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("authenticated refresh status %d, want 202; body %s", rec.Code, rec.Body)
+	}
+	var accepted struct {
+		Status string `json:"status"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&accepted); err != nil {
+		t.Fatalf("decode refresh response: %v", err)
+	}
+	if accepted.Status != "accepted" {
+		t.Fatalf("refresh status field = %q, want accepted", accepted.Status)
+	}
+}
+
 func TestCompaniesListOwnerScopingAndPeopleCount(t *testing.T) {
 	t.Parallel()
 	srv, st := newPeopleTestServer(t)
