@@ -118,6 +118,58 @@ func TestNoteBodyUpdate(t *testing.T) {
 	}
 }
 
+func TestFindNoteByTitleCI(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	owner, _ := st.CreateUser(ctx, "lookup@example.com", "h")
+	other, _ := st.CreateUser(ctx, "lookup2@example.com", "h")
+
+	unique, err := st.CreateNote(ctx, owner.ID, "Existing Title")
+	if err != nil {
+		t.Fatalf("create unique: %v", err)
+	}
+	if _, err := st.CreateNote(ctx, owner.ID, "Existing Title Copy"); err != nil {
+		t.Fatalf("create filler: %v", err)
+	}
+	if _, err := st.CreateNote(ctx, other.ID, "Existing Title"); err != nil {
+		t.Fatalf("create foreign: %v", err)
+	}
+
+	got, err := st.FindNoteByTitleCI(ctx, owner.ID, "existing title")
+	if err != nil {
+		t.Fatalf("find unique: %v", err)
+	}
+	if got.ID != unique.ID || got.OwnerID != owner.ID {
+		t.Fatalf("found %+v, want %+v", got, unique)
+	}
+
+	trashed, err := st.CreateNote(ctx, owner.ID, "Trashed Title")
+	if err != nil {
+		t.Fatalf("create trashed: %v", err)
+	}
+	if err := st.DeleteNote(ctx, owner.ID, trashed.ID); err != nil {
+		t.Fatalf("trash note: %v", err)
+	}
+	if _, err := st.FindNoteByTitleCI(ctx, owner.ID, "trashed title"); err != store.ErrNotFound {
+		t.Fatalf("trashed lookup err = %v, want ErrNotFound", err)
+	}
+
+	if _, err := st.CreateNote(ctx, owner.ID, "Ambiguous"); err != nil {
+		t.Fatalf("create ambig1: %v", err)
+	}
+	if _, err := st.CreateNote(ctx, owner.ID, "ambiguous"); err != nil {
+		t.Fatalf("create ambig2: %v", err)
+	}
+	if _, err := st.FindNoteByTitleCI(ctx, owner.ID, "AMBIGUOUS"); err != store.ErrNotFound {
+		t.Fatalf("ambiguous lookup err = %v, want ErrNotFound", err)
+	}
+
+	if _, err := st.FindNoteByTitleCI(ctx, owner.ID, "missing"); err != store.ErrNotFound {
+		t.Fatalf("missing lookup err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestDuplicateNoteCopiesEditableContent(t *testing.T) {
 	t.Parallel()
 	st := store.New(testutil.NewPool(t))

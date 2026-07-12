@@ -354,6 +354,96 @@ func TestSetupStatusAndBodyUpdate(t *testing.T) {
 	}
 }
 
+func TestUpdateNoteBodyParsesMentionsIntoLinks(t *testing.T) {
+	t.Parallel()
+	srv, st := newTestServer(t)
+	ctx := context.Background()
+	email := "mentions@example.com"
+
+	_ = doJSON(t, srv, http.MethodPost, "/api/setup",
+		map[string]string{"email": email, "password": "password123"}, nil)
+	rec := doJSON(t, srv, http.MethodPost, "/api/login",
+		map[string]string{"email": email, "password": "password123"}, nil)
+	var login struct {
+		Token string `json:"token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &login)
+	hdr := map[string]string{"Authorization": "Bearer " + login.Token}
+
+	owner, err := st.GetUserByEmail(ctx, email)
+	if err != nil {
+		t.Fatalf("get owner: %v", err)
+	}
+	source, err := st.CreateNote(ctx, owner.ID, "Source note")
+	if err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	target, err := st.CreateNote(ctx, owner.ID, "Existing Title")
+	if err != nil {
+		t.Fatalf("create target: %v", err)
+	}
+
+	rec = doJSON(t, srv, http.MethodPut, "/api/notes/"+source.ID+"/body",
+		map[string]string{"content": "See [[Existing Title]]"}, hdr)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("body update status %d body %s", rec.Code, rec.Body)
+	}
+
+	outgoing, err := st.OutgoingLinks(ctx, owner.ID, source.ID)
+	if err != nil {
+		t.Fatalf("outgoing links: %v", err)
+	}
+	if len(outgoing) != 1 || outgoing[0].ToNoteID != target.ID {
+		t.Fatalf("outgoing=%+v, want one link to %s", outgoing, target.ID)
+	}
+}
+
+func TestUpdateNoteBodySkipsAmbiguousMentions(t *testing.T) {
+	t.Parallel()
+	srv, st := newTestServer(t)
+	ctx := context.Background()
+	email := "mentions-ambiguous@example.com"
+
+	_ = doJSON(t, srv, http.MethodPost, "/api/setup",
+		map[string]string{"email": email, "password": "password123"}, nil)
+	rec := doJSON(t, srv, http.MethodPost, "/api/login",
+		map[string]string{"email": email, "password": "password123"}, nil)
+	var login struct {
+		Token string `json:"token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &login)
+	hdr := map[string]string{"Authorization": "Bearer " + login.Token}
+
+	owner, err := st.GetUserByEmail(ctx, email)
+	if err != nil {
+		t.Fatalf("get owner: %v", err)
+	}
+	source, err := st.CreateNote(ctx, owner.ID, "Source note")
+	if err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	if _, err := st.CreateNote(ctx, owner.ID, "Existing Title"); err != nil {
+		t.Fatalf("create target 1: %v", err)
+	}
+	if _, err := st.CreateNote(ctx, owner.ID, "existing title"); err != nil {
+		t.Fatalf("create target 2: %v", err)
+	}
+
+	rec = doJSON(t, srv, http.MethodPut, "/api/notes/"+source.ID+"/body",
+		map[string]string{"content": "See [[Existing Title]]"}, hdr)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("body update status %d body %s", rec.Code, rec.Body)
+	}
+
+	outgoing, err := st.OutgoingLinks(ctx, owner.ID, source.ID)
+	if err != nil {
+		t.Fatalf("outgoing links: %v", err)
+	}
+	if len(outgoing) != 0 {
+		t.Fatalf("outgoing=%+v, want no links", outgoing)
+	}
+}
+
 func TestNoteResponsesIncludeTagsArray(t *testing.T) {
 	t.Parallel()
 	srv, _ := newTestServer(t)
