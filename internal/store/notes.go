@@ -176,6 +176,52 @@ func (s *Store) UpdateNoteBody(ctx context.Context, ownerID, noteID, content str
 	return nil
 }
 
+// FindNoteByTitleCI returns the owner's live note whose title matches title
+// case-insensitively. If there is no match or more than one match, ErrNotFound
+// is returned.
+func (s *Store) FindNoteByTitleCI(ctx context.Context, ownerID, title string) (model.Note, error) {
+	if strings.TrimSpace(title) == "" {
+		return model.Note{}, ErrNotFound
+	}
+
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, owner_id, title, status, pinned, started_at, ended_at, partial_transcript, audio_object_key, retention_state, created_at, updated_at, event_id
+		 FROM notes
+		 WHERE owner_id=$1
+		   AND deleted_at IS NULL
+		   AND lower(title)=lower($2)
+		 ORDER BY id
+		 LIMIT 2`,
+		ownerID, title)
+	if err != nil {
+		return model.Note{}, err
+	}
+	defer rows.Close()
+
+	var matches []model.Note
+	for rows.Next() {
+		var n model.Note
+		var audioKey, retention *string
+		if err := rows.Scan(&n.ID, &n.OwnerID, &n.Title, &n.Status, &n.Pinned, &n.StartedAt, &n.EndedAt, &n.PartialTranscript, &audioKey, &retention, &n.CreatedAt, &n.UpdatedAt, &n.EventID); err != nil {
+			return model.Note{}, err
+		}
+		if audioKey != nil {
+			n.AudioObjectKey = *audioKey
+		}
+		if retention != nil {
+			n.RetentionState = *retention
+		}
+		matches = append(matches, n)
+	}
+	if err := rows.Err(); err != nil {
+		return model.Note{}, err
+	}
+	if len(matches) != 1 {
+		return model.Note{}, ErrNotFound
+	}
+	return matches[0], nil
+}
+
 // SetNotePinned updates the note's pinned flag, owner-scoped.
 func (s *Store) SetNotePinned(ctx context.Context, ownerID, noteID string, pinned bool) error {
 	ct, err := s.pool.Exec(ctx,
