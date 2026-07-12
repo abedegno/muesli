@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { FullNote, Note, NoteLinksResponse } from '../../shared/types'
 
-const { getFullMock, listNoteLinksMock, navigateMock, refreshMock } = vi.hoisted(() => ({
+const { addNoteLinkMock, getFullMock, listNoteLinksMock, listNotesMock, navigateMock, refreshMock } = vi.hoisted(() => ({
+  addNoteLinkMock: vi.fn(),
   getFullMock: vi.fn(),
   listNoteLinksMock: vi.fn(),
+  listNotesMock: vi.fn(),
   navigateMock: vi.fn(),
   refreshMock: vi.fn(),
 }))
@@ -41,6 +43,8 @@ vi.mock('@/api', () => ({
   muesli: {
     getFull: (...args: Parameters<typeof getFullMock>) => getFullMock(...args),
     listNoteLinks: (...args: Parameters<typeof listNoteLinksMock>) => listNoteLinksMock(...args),
+    listNotes: (...args: Parameters<typeof listNotesMock>) => listNotesMock(...args),
+    addNoteLink: (...args: Parameters<typeof addNoteLinkMock>) => addNoteLinkMock(...args),
     listTemplates: vi.fn(async () => []),
     listNoteActionItems: vi.fn(async () => ({ actionItems: [], decisions: [] })),
     addTag: vi.fn(),
@@ -86,10 +90,17 @@ import { NoteScreen } from './NoteScreen'
 beforeEach(() => {
   getFullMock.mockReset()
   listNoteLinksMock.mockReset()
+  listNotesMock.mockReset()
+  addNoteLinkMock.mockReset()
   navigateMock.mockReset()
   refreshMock.mockReset()
   getFullMock.mockResolvedValue(note)
   listNoteLinksMock.mockResolvedValue({ outgoing: [], backlinks: [] } satisfies NoteLinksResponse)
+  listNotesMock.mockResolvedValue([
+    { id: 'n1', title: 'Current note', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
+    { id: 'n2', title: 'Project Plan', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
+    { id: 'n3', title: 'Weekly Retro', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
+  ] satisfies Note[])
 })
 
 afterEach(() => {
@@ -98,6 +109,33 @@ afterEach(() => {
 })
 
 describe('NoteScreen links panel', () => {
+  it('filters add-link candidates and adds the selected note', async () => {
+    const user = userEvent.setup()
+    const addedLink = { id: 'l1', owner_id: 'u1', from_note_id: 'n1', to_note_id: 'n2', created_at: '2026-07-12T00:00:00Z' }
+    listNoteLinksMock
+      .mockResolvedValueOnce({ outgoing: [], backlinks: [] })
+      .mockResolvedValueOnce({ outgoing: [addedLink], backlinks: [] })
+    addNoteLinkMock.mockResolvedValue(addedLink)
+
+    render(<NoteScreen />)
+
+    const input = await screen.findByLabelText('Add link')
+    await user.type(input, 'proj')
+
+    expect(screen.getByRole('button', { name: 'Project Plan' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Weekly Retro' })).not.toBeInTheDocument()
+
+    await user.keyboard('{ArrowDown}{Enter}')
+
+    expect(addNoteLinkMock).toHaveBeenCalledWith('n1', 'n2')
+    expect(await screen.findByRole('heading', { name: 'Outgoing' })).toBeInTheDocument()
+
+    const outgoingHeading = screen.getByRole('heading', { name: 'Outgoing' })
+    const outgoingSection = outgoingHeading.parentElement
+    expect(outgoingSection).not.toBeNull()
+    expect(within(outgoingSection as HTMLElement).getByRole('button', { name: 'Project Plan' })).toBeInTheDocument()
+  })
+
   it('renders outgoing and backlink titles and navigates when a row is clicked', async () => {
     const user = userEvent.setup()
     listNoteLinksMock.mockResolvedValue({
