@@ -378,7 +378,7 @@ func TestNoteStreamHandlesPluginDropWithoutFailingNote(t *testing.T) {
 		t.Fatal("expected stream to end after plugin drop")
 	}
 
-	got, err := st.GetNote(context.Background(), "streamer-user", note.ID)
+	got, err := st.GetNoteByID(context.Background(), note.ID)
 	if err != nil {
 		t.Fatalf("get note: %v", err)
 	}
