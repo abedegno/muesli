@@ -1,0 +1,1 @@
+"""Muesli streaming transcriber plugin."""
