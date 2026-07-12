@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/abedegno/muesli/internal/actionitems"
 	"github.com/abedegno/muesli/internal/audiohash"
 	"github.com/abedegno/muesli/internal/config"
 	"github.com/abedegno/muesli/internal/crypto"
@@ -30,17 +31,27 @@ const downloadTTL = 30 * time.Minute
 // Processor executes one job at a time. It is safe for concurrent use across
 // goroutines because all state lives in the store/storage it wraps.
 type Processor struct {
-	store    *store.Store
-	crypto   *crypto.Crypto
-	storage  storage.Provider
-	cfg      config.Config
-	embedder embed.Embedder
+	store                *store.Store
+	crypto               *crypto.Crypto
+	storage              storage.Provider
+	cfg                  config.Config
+	embedder             embed.Embedder
+	actionItemsExtractor ActionItemsExtractor
 }
+
+// ActionItemsExtractor extracts structured action items and decisions from a
+// finished note snapshot.
+type ActionItemsExtractor func(context.Context, actionitems.Input) (actionitems.Result, error)
 
 // NewProcessor builds a Processor from its collaborators. emb may be nil, which
 // disables embedding generation (the system degrades to lexical-only search).
 func NewProcessor(st *store.Store, cr *crypto.Crypto, prov storage.Provider, cfg config.Config, emb embed.Embedder) *Processor {
 	return &Processor{store: st, crypto: cr, storage: prov, cfg: cfg, embedder: emb}
+}
+
+// SetActionItemsExtractor wires an optional action-items extraction hook.
+func (p *Processor) SetActionItemsExtractor(extractor ActionItemsExtractor) {
+	p.actionItemsExtractor = extractor
 }
 
 // Process dispatches a claimed job, recording completion or failure. It never
@@ -419,6 +430,7 @@ func (p *Processor) FinalizeNote(ctx context.Context, noteID string) {
 		// to do here.
 		return
 	}
+	p.maybeExtractActionItems(ctx, noteID, transcript)
 	// Embedding is config-gated: only enqueue when an embedder is wired in. This
 	// runs once per ready transition (MarkNoteReady above just won it).
 	if p.embedder != nil {
@@ -427,6 +439,43 @@ func (p *Processor) FinalizeNote(ctx context.Context, noteID string) {
 		}
 	}
 	p.enqueueNoteCompletedWebhooks(ctx, noteID, transcript)
+}
+
+func (p *Processor) maybeExtractActionItems(ctx context.Context, noteID string, transcript model.Transcript) {
+	if p.actionItemsExtractor == nil {
+		return
+	}
+	sections, ok := p.readySummarySections(ctx, noteID)
+	if !ok {
+		return
+	}
+	result, err := p.actionItemsExtractor(ctx, actionitems.Input{
+		Transcript: transcript.Segments,
+		Summary:    sections,
+	})
+	if err != nil {
+		slog.DebugContext(ctx, "action items extraction failed", "error", err, "note_id", noteID)
+		return
+	}
+	slog.DebugContext(ctx, "action items extracted", "note_id", noteID, "action_items", len(result.ActionItems), "decisions", len(result.Decisions))
+}
+
+func (p *Processor) readySummarySections(ctx context.Context, noteID string) ([]model.SummarySection, bool) {
+	summaries, err := p.store.GetSummaries(ctx, noteID)
+	if err != nil {
+		slog.WarnContext(ctx, "finalize: get summaries for extraction", "error", err, "note_id", noteID)
+		return nil, false
+	}
+	for _, sm := range summaries {
+		if sm.Status == model.SummaryReady {
+			sections := sm.Sections
+			if sections == nil {
+				sections = []model.SummarySection{}
+			}
+			return sections, true
+		}
+	}
+	return nil, false
 }
 
 // webhookNotePayload is the JSON body delivered for the note.completed event

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/abedegno/muesli/internal/actionitems"
 	"github.com/abedegno/muesli/internal/config"
 	"github.com/abedegno/muesli/internal/crypto"
 	"github.com/abedegno/muesli/internal/model"
@@ -849,11 +850,25 @@ func TestFinalizeNoteDoubleCallCreatesWebhookOnce(t *testing.T) {
 	}
 	seedWebhook(t, st, owner, "https://example.test/hook", true)
 
+	var calls int
+	var got actionitems.Input
+	proc.SetActionItemsExtractor(func(_ context.Context, input actionitems.Input) (actionitems.Result, error) {
+		calls++
+		got = input
+		return actionitems.Result{ActionItems: []actionitems.ActionItem{{Text: "ship the doc", Owner: "Alice", DueHint: "Friday"}}}, nil
+	})
+
 	drain(t, proc, st) // the note's natural path to ready calls FinalizeNote once
 
 	n, _ := st.GetNoteByID(ctx, noteID)
 	if n.Status != model.NoteReady {
 		t.Fatalf("note status = %q, want ready", n.Status)
+	}
+	if calls != 1 {
+		t.Fatalf("action items extraction calls = %d, want 1", calls)
+	}
+	if len(got.Transcript) == 0 || len(got.Summary) == 0 {
+		t.Fatalf("action items input incomplete: %+v", got)
 	}
 
 	// Simulate a duplicate/racing FinalizeNote invocation on the already-ready
@@ -867,6 +882,9 @@ func TestFinalizeNoteDoubleCallCreatesWebhookOnce(t *testing.T) {
 	}
 	if len(deliveries) != 1 {
 		t.Fatalf("deliveries = %d, want exactly 1 despite duplicate FinalizeNote call", len(deliveries))
+	}
+	if calls != 1 {
+		t.Fatalf("action items extraction calls = %d, want exactly 1 despite duplicate FinalizeNote call", calls)
 	}
 }
 
@@ -886,6 +904,12 @@ func TestFinalizeNoteWebhookSummaryPresentWhenZeroReadySummaries(t *testing.T) {
 		t.Fatalf("NoteOwnerID: %v", err)
 	}
 	seedWebhook(t, st, owner, "https://example.test/hook", true)
+
+	var calls int
+	proc.SetActionItemsExtractor(func(_ context.Context, input actionitems.Input) (actionitems.Result, error) {
+		calls++
+		return actionitems.Result{}, nil
+	})
 
 	// Process the transcribe job: succeeds, fans out 2 summarize jobs (one per
 	// built-in template).
@@ -943,5 +967,8 @@ func TestFinalizeNoteWebhookSummaryPresentWhenZeroReadySummaries(t *testing.T) {
 	}
 	if len(payload.Summary.Sections) != 0 {
 		t.Fatalf("summary.sections = %d, want 0", len(payload.Summary.Sections))
+	}
+	if calls != 0 {
+		t.Fatalf("action items extraction calls = %d, want 0 when there is no ready summary", calls)
 	}
 }
