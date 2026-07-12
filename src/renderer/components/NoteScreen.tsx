@@ -11,6 +11,7 @@ import { NoteHeader } from './NoteHeader'
 import { ProcessingBanner } from './ProcessingBanner'
 import { TagBar } from './TagBar'
 import { FolderBar } from './FolderBar'
+import { LiveTranscriptPanel } from './LiveTranscriptPanel'
 import { tagIndex } from '@/lib/tagIndex'
 import { loadAudioPrefs, saveAudioPrefs } from '@/lib/audioPrefs'
 // Lazy so TipTap (the renderer-bundle bulk) is only fetched when an editor mounts.
@@ -54,6 +55,7 @@ export function NoteScreen() {
     existingNoteTitle: string
   } | null>(null)
   const sessionRef = useRef<RecordingSession | null>(null)
+  const noteIdRef = useRef(id)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const pollAbortRef = useRef<AbortController | null>(null)
   const tagAbortRef = useRef<AbortController | null>(null)
@@ -115,10 +117,15 @@ export function NoteScreen() {
       if (timerRef.current) clearInterval(timerRef.current)
       pollAbortRef.current?.abort()
       tagAbortRef.current?.abort()
+      void muesli.stopNoteStream?.(noteIdRef.current)?.catch(() => {})
       uploadProgressUnsubRef.current?.()
       uploadProgressUnsubRef.current = null
     }
   }, [])
+
+  useEffect(() => {
+    noteIdRef.current = id
+  }, [id])
 
   useEffect(() => {
     autostartConsumedRef.current = false
@@ -316,11 +323,18 @@ export function NoteScreen() {
     }
   }
 
-  async function start() {
+  const start = useCallback(async () => {
     setMicError(null)
     try {
+      void muesli.startNoteStream?.(id)?.catch(() => {})
       const session = new RecordingSession(
-        new ElectronCapture({ deviceId: selectedDeviceId, gainLinear }),
+        new ElectronCapture({
+          deviceId: selectedDeviceId,
+          gainLinear,
+          onPcmFrame: (frame) => {
+            void muesli.sendNoteStreamAudio?.(id, frame)?.catch(() => {})
+          },
+        }),
         { onWarning: (w) => notify(w, 'info') },
       )
       sessionRef.current = session
@@ -330,6 +344,7 @@ export function NoteScreen() {
       const startedAt = Date.now()
       timerRef.current = setInterval(() => setElapsedMs(Date.now() - startedAt), 500)
     } catch (err) {
+      void muesli.stopNoteStream?.(id)?.catch(() => {})
       if (timerRef.current) clearInterval(timerRef.current)
       setRecordState('idle')
       if (
@@ -352,7 +367,7 @@ export function NoteScreen() {
         notify(err instanceof Error ? err.message : 'Could not start recording', 'error')
       }
     }
-  }
+  }, [gainLinear, id, notify, selectedDeviceId])
 
   async function doUpload(audio: ArrayBuffer, mimeType: string) {
     setRecordState('processing')
@@ -390,6 +405,7 @@ export function NoteScreen() {
       uploadProgressUnsubRef.current = null
 
       if (err instanceof Error && err.message === 'aborted') return
+      void muesli.stopNoteStream?.(id)?.catch(() => {})
       setRecordState('idle')
       notify(err instanceof Error ? err.message : 'Upload failed', 'error')
     }
@@ -400,6 +416,7 @@ export function NoteScreen() {
     if (!session) return
     if (timerRef.current) clearInterval(timerRef.current)
     const result = await session.stop()
+    void muesli.stopNoteStream?.(id)?.catch(() => {})
     setRecordState('processing')
     const audio = result.bytes.slice().buffer as ArrayBuffer
 
@@ -641,6 +658,7 @@ export function NoteScreen() {
         />
       )}
       <ProcessingBanner status={full.note.status} onRetry={retryPipeline} onProcessNext={processNext} statusEnteredAt={full.note.updated_at} onGetDownloadStatus={() => muesli.getDefaultTranscriberStatus()} />
+      <LiveTranscriptPanel noteId={id} isRecording={recordState === 'recording'} />
       <TagBar
         tags={full.note.tags ?? []}
         suggestions={tagIndex(allNotes).map((t) => t.name)}
