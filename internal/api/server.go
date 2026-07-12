@@ -179,6 +179,8 @@ func (s *Server) routes() {
 
 		r.Get("/api/people", s.handleListPeople)
 		r.Get("/api/people/{id}", s.handleGetPerson)
+		r.Get("/api/companies", s.handleListCompanies)
+		r.Get("/api/companies/{id}", s.handleGetCompany)
 
 		r.Get("/api/calendar/sources", s.handleListCalendarSources)
 		r.Post("/api/calendar/sources", s.handleCreateCalendarSource)

@@ -96,6 +96,98 @@ func TestPeopleStoreCompanies(t *testing.T) {
 	}
 }
 
+func TestPeopleStoreCompaniesWithPeopleCountAndCompanyLookup(t *testing.T) {
+	st, ownerID, _ := newPeopleStoreWithOwner(t)
+	ctx := context.Background()
+
+	_, err := st.UpsertCompany(ctx, ownerID, "zero.example", "Zero")
+	if err != nil {
+		t.Fatalf("create zero company: %v", err)
+	}
+	companyOne, err := st.UpsertCompany(ctx, ownerID, "one.example", "One")
+	if err != nil {
+		t.Fatalf("create one company: %v", err)
+	}
+	companyTwo, err := st.UpsertCompany(ctx, ownerID, "two.example", "Two")
+	if err != nil {
+		t.Fatalf("create two company: %v", err)
+	}
+	if _, err := st.UpsertPerson(ctx, ownerID, "alice@example.com", "Alice", ptrString(companyOne.ID)); err != nil {
+		t.Fatalf("seed one person: %v", err)
+	}
+	if _, err := st.UpsertPerson(ctx, ownerID, "bob@example.com", "Bob", ptrString(companyTwo.ID)); err != nil {
+		t.Fatalf("seed first two person: %v", err)
+	}
+	if _, err := st.UpsertPerson(ctx, ownerID, "bobby@example.com", "Bobby", ptrString(companyTwo.ID)); err != nil {
+		t.Fatalf("seed second two person: %v", err)
+	}
+
+	otherOwner, err := st.CreateUser(ctx, "other-count@example.com", "h")
+	if err != nil {
+		t.Fatalf("create other owner: %v", err)
+	}
+	otherCompany, err := st.UpsertCompany(ctx, otherOwner.ID, "other.example", "Other")
+	if err != nil {
+		t.Fatalf("create other company: %v", err)
+	}
+	if _, err := st.UpsertPerson(ctx, otherOwner.ID, "outside@example.com", "Outside", ptrString(otherCompany.ID)); err != nil {
+		t.Fatalf("seed other owner's person: %v", err)
+	}
+
+	listed, err := st.ListCompaniesWithPeopleCount(ctx, ownerID)
+	if err != nil {
+		t.Fatalf("list companies with counts: %v", err)
+	}
+	if len(listed) != 3 {
+		t.Fatalf("expected 3 companies, got %d: %+v", len(listed), listed)
+	}
+	if listed[0].Domain != "one.example" || listed[0].PeopleCount != 1 {
+		t.Fatalf("unexpected first company: %+v", listed[0])
+	}
+	if listed[1].Domain != "two.example" || listed[1].PeopleCount != 2 {
+		t.Fatalf("unexpected second company: %+v", listed[1])
+	}
+	if listed[2].Domain != "zero.example" || listed[2].PeopleCount != 0 {
+		t.Fatalf("unexpected third company: %+v", listed[2])
+	}
+	for _, company := range listed {
+		if company.OwnerID != ownerID {
+			t.Fatalf("found company for wrong owner: %+v", company)
+		}
+	}
+
+	got, err := st.GetCompany(ctx, ownerID, companyTwo.ID)
+	if err != nil {
+		t.Fatalf("get company: %v", err)
+	}
+	if got.ID != companyTwo.ID || got.OwnerID != ownerID || got.Domain != companyTwo.Domain || got.Name != companyTwo.Name {
+		t.Fatalf("unexpected company lookup: %+v", got)
+	}
+
+	people, err := st.ListPeopleByCompany(ctx, ownerID, companyTwo.ID)
+	if err != nil {
+		t.Fatalf("list people by company: %v", err)
+	}
+	if len(people) != 2 {
+		t.Fatalf("expected 2 people for company, got %d: %+v", len(people), people)
+	}
+	if people[0].DisplayName != "Bob" || people[1].DisplayName != "Bobby" {
+		t.Fatalf("unexpected people ordering: %+v", people)
+	}
+	for _, person := range people {
+		if person.CompanyID == nil || *person.CompanyID != companyTwo.ID {
+			t.Fatalf("unexpected person company: %+v", person)
+		}
+	}
+
+	if _, err := st.GetCompany(ctx, ownerID, "00000000-0000-0000-0000-000000000000"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("missing company: want ErrNotFound, got %v", err)
+	}
+	if _, err := st.GetCompany(ctx, otherOwner.ID, companyTwo.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("cross-owner company get: want ErrNotFound, got %v", err)
+	}
+}
+
 func ptrString(s string) *string {
 	return &s
 }
