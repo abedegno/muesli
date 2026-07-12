@@ -1,4 +1,4 @@
-import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, Decision, DiarizationReview, FullNote, Folder, GoogleOAuthStatus, Message, MicrosoftOAuthStatus, Note, NoteLinksResponse, PersonWithCompany, PluginStatus, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection, UploadGrant } from '../shared/types'
+import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, Decision, DiarizationReview, FullNote, Folder, GoogleOAuthStatus, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection, UploadGrant } from '../shared/types'
 import type { CreateConversationRequest, CreateConversationResponse, ListNoteActionItemsResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdateActionItemRequest, UpdatePersonRequest } from '../shared/ipc'
 import { buildNoteExportRequest, parseContentDispositionFilename } from '../shared/export'
 import { buildCalendarEventsPath } from '../shared/calendar'
@@ -87,6 +87,10 @@ export class MuesliClient {
 
   async listNoteLinks(id: string): Promise<NoteLinksResponse> {
     return this.json<NoteLinksResponse>('GET', `/api/notes/${id}/links`)
+  }
+
+  async addNoteLink(id: string, toNoteId: string): Promise<NoteLink> {
+    return this.json<NoteLink>('POST', `/api/notes/${id}/links`, { to_note_id: toNoteId })
   }
 
   async listActionItems(status?: string): Promise<ActionItem[]> {
