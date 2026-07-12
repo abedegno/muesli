@@ -11,7 +11,7 @@ vi.mock('@tiptap/react', async () => {
     _options: { onUpdate?: ({ editor }: { editor: MockEditor }) => void } | null
     storage: { markdown: { getMarkdown: () => string } }
     view: { dispatch: ReturnType<typeof vi.fn> }
-    state: { doc: {}; tr: { setMeta: ReturnType<typeof vi.fn> } }
+    state: { doc: object; tr: { setMeta: ReturnType<typeof vi.fn> } }
     commands: { setTextSelection: ReturnType<typeof vi.fn> }
     chain: () => {
       focus: () => unknown
