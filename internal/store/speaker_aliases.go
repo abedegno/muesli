@@ -10,7 +10,7 @@ import (
 // the owner. Returns an empty (non-nil) slice when no aliases exist.
 func (s *Store) ListSpeakerAliases(ctx context.Context, ownerID, noteID string) ([]model.SpeakerAlias, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT note_id, speaker_label, alias_name
+		`SELECT note_id, person_id, speaker_label, alias_name
 		 FROM note_speaker_aliases
 		 WHERE owner_id = $1 AND note_id = $2
 		 ORDER BY speaker_label`,
@@ -22,7 +22,7 @@ func (s *Store) ListSpeakerAliases(ctx context.Context, ownerID, noteID string) 
 	out := []model.SpeakerAlias{}
 	for rows.Next() {
 		var a model.SpeakerAlias
-		if err := rows.Scan(&a.NoteID, &a.SpeakerLabel, &a.AliasName); err != nil {
+		if err := rows.Scan(&a.NoteID, &a.PersonID, &a.SpeakerLabel, &a.AliasName); err != nil {
 			return nil, err
 		}
 		out = append(out, a)
@@ -69,6 +69,23 @@ func (s *Store) DeleteSpeakerAlias(ctx context.Context, ownerID, noteID, speaker
 		`DELETE FROM note_speaker_aliases
 		 WHERE owner_id = $1 AND note_id = $2 AND speaker_label = $3`,
 		ownerID, noteID, speakerLabel)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// SetSpeakerAliasPerson sets or clears the person link for a speaker alias.
+// Returns ErrNotFound if no alias exists for the owner/note/label tuple.
+func (s *Store) SetSpeakerAliasPerson(ctx context.Context, ownerID, noteID, speakerLabel string, personID *string) error {
+	ct, err := s.pool.Exec(ctx,
+		`UPDATE note_speaker_aliases
+		 SET person_id = $4
+		 WHERE owner_id = $1 AND note_id = $2 AND speaker_label = $3`,
+		ownerID, noteID, speakerLabel, personID)
 	if err != nil {
 		return err
 	}

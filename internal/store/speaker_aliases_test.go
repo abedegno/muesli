@@ -76,6 +76,43 @@ func TestSpeakerAliases(t *testing.T) {
 		}
 	})
 
+	t.Run("SetPersonAndClear", func(t *testing.T) {
+		ownerID := nextOwner(t, "person")
+		n, err := st.CreateNote(ctx, ownerID, "Planning")
+		if err != nil {
+			t.Fatalf("create note: %v", err)
+		}
+		if err := st.UpsertSpeakerAlias(ctx, ownerID, n.ID, "SPEAKER_02", "Carol"); err != nil {
+			t.Fatalf("upsert alias: %v", err)
+		}
+		person, err := st.UpsertPerson(ctx, ownerID, "carol@example.com", "Carol", nil)
+		if err != nil {
+			t.Fatalf("upsert person: %v", err)
+		}
+
+		if err := st.SetSpeakerAliasPerson(ctx, ownerID, n.ID, "SPEAKER_02", &person.ID); err != nil {
+			t.Fatalf("set speaker alias person: %v", err)
+		}
+		aliases, err := st.ListSpeakerAliases(ctx, ownerID, n.ID)
+		if err != nil {
+			t.Fatalf("list aliases after set: %v", err)
+		}
+		if len(aliases) != 1 || aliases[0].PersonID == nil || *aliases[0].PersonID != person.ID {
+			t.Fatalf("after set: got %+v, want PersonID=%s", aliases, person.ID)
+		}
+
+		if err := st.SetSpeakerAliasPerson(ctx, ownerID, n.ID, "SPEAKER_02", nil); err != nil {
+			t.Fatalf("clear speaker alias person: %v", err)
+		}
+		aliases2, err := st.ListSpeakerAliases(ctx, ownerID, n.ID)
+		if err != nil {
+			t.Fatalf("list aliases after clear: %v", err)
+		}
+		if len(aliases2) != 1 || aliases2[0].PersonID != nil {
+			t.Fatalf("after clear: got %+v, want PersonID=nil", aliases2)
+		}
+	})
+
 	t.Run("DeleteRemovesAndReturnsNotFound", func(t *testing.T) {
 		ownerID := nextOwner(t, "delete")
 		n, err := st.CreateNote(ctx, ownerID, "Review")
@@ -119,6 +156,15 @@ func TestSpeakerAliases(t *testing.T) {
 	t.Run("UpsertNoteNotFound", func(t *testing.T) {
 		ownerID := nextOwner(t, "nf")
 		err := st.UpsertSpeakerAlias(ctx, ownerID, "00000000-0000-0000-0000-000000000000", "SPEAKER_00", "X")
+		if !errors.Is(err, store.ErrNotFound) {
+			t.Errorf("got %v, want ErrNotFound", err)
+		}
+	})
+
+	t.Run("SetPersonNotFound", func(t *testing.T) {
+		ownerID := nextOwner(t, "setnf")
+		personID := "00000000-0000-0000-0000-000000000000"
+		err := st.SetSpeakerAliasPerson(ctx, ownerID, "00000000-0000-0000-0000-000000000000", "SPEAKER_00", &personID)
 		if !errors.Is(err, store.ErrNotFound) {
 			t.Errorf("got %v, want ErrNotFound", err)
 		}
