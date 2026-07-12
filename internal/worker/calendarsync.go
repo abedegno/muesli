@@ -11,6 +11,7 @@ import (
 
 	"github.com/abedegno/muesli/internal/calendar"
 	"github.com/abedegno/muesli/internal/crypto"
+	"github.com/abedegno/muesli/internal/people"
 	"github.com/abedegno/muesli/internal/store"
 )
 
@@ -124,6 +125,9 @@ func SyncSource(ctx context.Context, st *store.Store, cr *crypto.Crypto, googleC
 
 	if err := st.UpdateSourceStatus(ctx, sourceID, "ok", time.Now()); err != nil {
 		return fmt.Errorf("sync source %s: update status: %w", sourceID, err)
+	}
+	if err := people.DerivePeople(ctx, st, ownerID); err != nil {
+		slog.ErrorContext(ctx, "calendar sync: derive people", "source_id", sourceID, "owner_id", ownerID, "error", err)
 	}
 	return nil
 }
