@@ -8,9 +8,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/abedegno/muesli/internal/api"
 	"github.com/abedegno/muesli/internal/auth"
+	"github.com/abedegno/muesli/internal/calendar"
 	"github.com/abedegno/muesli/internal/crypto"
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/store"
@@ -196,6 +198,163 @@ func TestPeopleGetPersonRejectsMalformedID(t *testing.T) {
 	rec := doJSON(t, srv, http.MethodGet, "/api/people/not-a-uuid", nil, ownerHdr)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad id status %d, want 400; body %s", rec.Code, rec.Body)
+	}
+}
+
+func TestPeoplePersonNotesEndpoint(t *testing.T) {
+	t.Parallel()
+	srv, st := newPeopleTestServer(t)
+	ownerID, ownerHdr := peopleAuthHeader(t, st, "person-notes-owner@example.com")
+	otherID, otherHdr := peopleAuthHeader(t, st, "person-notes-other@example.com")
+
+	person, err := st.UpsertPerson(context.Background(), ownerID, "person.activity@example.com", "Person", nil)
+	if err != nil {
+		t.Fatalf("upsert person: %v", err)
+	}
+	emptyPerson, err := st.UpsertPerson(context.Background(), ownerID, "empty.activity@example.com", "Empty", nil)
+	if err != nil {
+		t.Fatalf("upsert empty person: %v", err)
+	}
+
+	source, err := st.CreateSource(context.Background(), ownerID, "ics", "Team Calendar", "sealed-creds")
+	if err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	if err := st.UpsertEvents(context.Background(), ownerID, source.ID, []calendar.NormalizedEvent{{
+		ExternalID: "evt-person-notes",
+		Title:      "Person notes",
+		StartsAt:   noteEventHandlerTestBase,
+		EndsAt:     noteEventHandlerTestBase.Add(30 * time.Minute),
+		Attendees:  []model.Attendee{{Email: "PERSON.ACTIVITY@EXAMPLE.COM", Name: "Person"}},
+	}}); err != nil {
+		t.Fatalf("upsert event: %v", err)
+	}
+	events, err := st.ListEvents(context.Background(), ownerID, noteEventHandlerTestBase.Add(-time.Hour), noteEventHandlerTestBase.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	eventNote, err := st.CreateNote(context.Background(), ownerID, "Event note")
+	if err != nil {
+		t.Fatalf("create event note: %v", err)
+	}
+	if err := st.UpdateNoteBody(context.Background(), ownerID, eventNote.ID, "event body"); err != nil {
+		t.Fatalf("update event body: %v", err)
+	}
+	if _, err := st.AddNoteTag(context.Background(), ownerID, eventNote.ID, "work"); err != nil {
+		t.Fatalf("add event tag: %v", err)
+	}
+	folder, err := st.CreateFolder(context.Background(), ownerID, "Projects", nil)
+	if err != nil {
+		t.Fatalf("create folder: %v", err)
+	}
+	if err := st.AddNoteFolder(context.Background(), ownerID, eventNote.ID, folder.ID); err != nil {
+		t.Fatalf("add note folder: %v", err)
+	}
+	if err := st.SetNoteEvent(context.Background(), ownerID, eventNote.ID, events[0].ID); err != nil {
+		t.Fatalf("set note event: %v", err)
+	}
+
+	aliasNote, err := st.CreateNote(context.Background(), ownerID, "Alias note")
+	if err != nil {
+		t.Fatalf("create alias note: %v", err)
+	}
+	if err := st.UpdateNoteBody(context.Background(), ownerID, aliasNote.ID, "alias body"); err != nil {
+		t.Fatalf("update alias body: %v", err)
+	}
+	if err := st.UpsertSpeakerAlias(context.Background(), ownerID, aliasNote.ID, "SPEAKER_00", "Person"); err != nil {
+		t.Fatalf("upsert alias: %v", err)
+	}
+	if err := st.SetSpeakerAliasPerson(context.Background(), ownerID, aliasNote.ID, "SPEAKER_00", &person.ID); err != nil {
+		t.Fatalf("set alias person: %v", err)
+	}
+
+	otherSource, err := st.CreateSource(context.Background(), otherID, "ics", "Other Calendar", "sealed-creds")
+	if err != nil {
+		t.Fatalf("create other source: %v", err)
+	}
+	if err := st.UpsertEvents(context.Background(), otherID, otherSource.ID, []calendar.NormalizedEvent{{
+		ExternalID: "evt-other-person-notes",
+		Title:      "Other person notes",
+		StartsAt:   noteEventHandlerTestBase,
+		EndsAt:     noteEventHandlerTestBase.Add(15 * time.Minute),
+		Attendees:  []model.Attendee{{Email: "PERSON.ACTIVITY@EXAMPLE.COM", Name: "Person"}},
+	}}); err != nil {
+		t.Fatalf("upsert other event: %v", err)
+	}
+	otherEvents, err := st.ListEvents(context.Background(), otherID, noteEventHandlerTestBase.Add(-time.Hour), noteEventHandlerTestBase.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("list other events: %v", err)
+	}
+	otherOwnerNote, err := st.CreateNote(context.Background(), otherID, "Other owner note")
+	if err != nil {
+		t.Fatalf("create other owner note: %v", err)
+	}
+	if err := st.SetNoteEvent(context.Background(), otherID, otherOwnerNote.ID, otherEvents[0].ID); err != nil {
+		t.Fatalf("set other owner note event: %v", err)
+	}
+
+	rec := doJSON(t, srv, http.MethodGet, "/api/people/"+person.ID+"/notes", nil, ownerHdr)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("notes status %d body %s", rec.Code, rec.Body)
+	}
+	var notes []model.Note
+	if err := json.NewDecoder(rec.Body).Decode(&notes); err != nil {
+		t.Fatalf("decode notes response: %v", err)
+	}
+	if len(notes) != 2 {
+		t.Fatalf("expected 2 notes, got %d: %+v", len(notes), notes)
+	}
+	if notes[0].CreatedAt.Before(notes[1].CreatedAt) {
+		t.Fatalf("notes not ordered by created_at desc: %+v", notes)
+	}
+	seenEvent := false
+	seenAlias := false
+	for _, note := range notes {
+		if note.OwnerID != ownerID {
+			t.Fatalf("found note for wrong owner: %+v", note)
+		}
+		if note.ID == otherOwnerNote.ID {
+			t.Fatalf("cross-owner note leaked into person notes: %+v", note)
+		}
+		switch note.ID {
+		case eventNote.ID:
+			seenEvent = true
+			if note.Snippet == "" || len(note.Tags) != 1 || len(note.FolderIDs) != 1 {
+				t.Fatalf("expected completed event note payload, got %+v", note)
+			}
+		case aliasNote.ID:
+			seenAlias = true
+			if note.Snippet == "" || note.Tags == nil || note.FolderIDs == nil {
+				t.Fatalf("expected completed alias note payload, got %+v", note)
+			}
+		default:
+			t.Fatalf("unexpected note returned: %+v", note)
+		}
+	}
+	if !seenEvent || !seenAlias {
+		t.Fatalf("missing expected notes: event=%v alias=%v", seenEvent, seenAlias)
+	}
+
+	rec = doJSON(t, srv, http.MethodGet, "/api/people/"+emptyPerson.ID+"/notes", nil, ownerHdr)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("empty person notes status %d body %s", rec.Code, rec.Body)
+	}
+	var emptyNotes []model.Note
+	if err := json.NewDecoder(rec.Body).Decode(&emptyNotes); err != nil {
+		t.Fatalf("decode empty notes: %v", err)
+	}
+	if emptyNotes == nil || len(emptyNotes) != 0 {
+		t.Fatalf("expected empty array, got %+v", emptyNotes)
+	}
+
+	rec = doJSON(t, srv, http.MethodGet, "/api/people/"+person.ID+"/notes", nil, otherHdr)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-owner notes status %d, want 404; body %s", rec.Code, rec.Body)
+	}
+
+	rec = doJSON(t, srv, http.MethodGet, "/api/people/00000000-0000-0000-0000-000000000000/notes", nil, ownerHdr)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing person notes status %d, want 404; body %s", rec.Code, rec.Body)
 	}
 }
 
