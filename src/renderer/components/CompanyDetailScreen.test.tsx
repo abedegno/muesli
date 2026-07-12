@@ -16,7 +16,16 @@ vi.mock('react-router-dom', () => ({
   useNavigate: () => navigateMock,
   useParams: () => paramsState,
   Link: ({ to, children, ...props }: { to: string; children: ReactNode }) => (
-    <a href={to} {...props}>{children}</a>
+    <a
+      href={to}
+      onClick={(event) => {
+        event.preventDefault()
+        navigateMock(to)
+      }}
+      {...props}
+    >
+      {children}
+    </a>
   ),
 }))
 
@@ -62,8 +71,10 @@ describe('CompanyDetailScreen', () => {
     render(<CompanyDetailScreen />)
 
     expect(await screen.findByText('Example Inc')).toBeInTheDocument()
+    expect(screen.getByText('E')).toBeInTheDocument()
     expect(screen.getByText('example.com')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Alex Doe alex@example.com' })).toHaveAttribute('href', '/people/p1')
+    await userEvent.click(screen.getByRole('link', { name: 'Alex Doe alex@example.com' }))
+    expect(navigateMock).toHaveBeenCalledWith('/people/p1')
 
     await userEvent.click(screen.getByRole('button', { name: /back to people/i }))
     expect(navigateMock).toHaveBeenCalledWith('/people')
