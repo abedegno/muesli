@@ -209,6 +209,7 @@ func (s *Server) routes() {
 
 		r.Get("/api/notes/{id}/speaker-aliases", s.handleListSpeakerAliases)
 		r.Put("/api/notes/{id}/speaker-aliases/{label}", s.handleUpsertSpeakerAlias)
+		r.Put("/api/notes/{id}/speaker-aliases/{label}/person", s.handleSetSpeakerAliasPerson)
 		r.Delete("/api/notes/{id}/speaker-aliases/{label}", s.handleDeleteSpeakerAlias)
 
 		r.Get("/api/notes/{id}/transcript/review", s.handleGetDiarizationReview)

@@ -35,6 +35,33 @@ func setupAliasTest(t *testing.T) (srv *api.Server, st *store.Store, hdr map[str
 	return
 }
 
+func setupAliasPersonTest(t *testing.T) (srv *api.Server, st *store.Store, ownerID string, hdr map[string]string, noteID string) {
+	t.Helper()
+	srv, st = newTestServer(t)
+
+	ctx := context.Background()
+	owner, err := st.CreateUser(ctx, "alias-person-owner@example.com", "password123")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	raw, hash, err := auth.GenerateToken()
+	if err != nil {
+		t.Fatalf("generate token: %v", err)
+	}
+	if err := st.CreateToken(ctx, owner.ID, "session", hash, "session"); err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+	hdr = map[string]string{"Authorization": "Bearer " + raw}
+
+	noteRec := doJSON(t, srv, http.MethodPost, "/api/notes", map[string]string{"title": "Meeting"}, hdr)
+	if noteRec.Code != http.StatusCreated {
+		t.Fatalf("create note status=%d body=%s", noteRec.Code, noteRec.Body)
+	}
+	var note struct{ ID string }
+	_ = json.Unmarshal(noteRec.Body.Bytes(), &note)
+	return srv, st, owner.ID, hdr, note.ID
+}
+
 func TestSpeakerAliasesGetEmpty(t *testing.T) {
 	t.Parallel()
 	srv, _, hdr, noteID := setupAliasTest(t)
@@ -179,5 +206,132 @@ func TestSpeakerAliasesCrossOwnerReturns404(t *testing.T) {
 	rec = doJSON(t, srv, http.MethodGet, "/api/notes/"+noteID+"/speaker-aliases", nil, otherHdr)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("cross-owner GET: status=%d, want 404; body=%s", rec.Code, rec.Body)
+	}
+}
+
+func TestSpeakerAliasPersonSetAndClear(t *testing.T) {
+	t.Parallel()
+	srv, st, ownerID, hdr, noteID := setupAliasPersonTest(t)
+
+	person, err := st.UpsertPerson(context.Background(), ownerID, "speaker@example.com", "Speaker", nil)
+	if err != nil {
+		t.Fatalf("upsert person: %v", err)
+	}
+
+	put := doJSON(t, srv, http.MethodPut, "/api/notes/"+noteID+"/speaker-aliases/SPEAKER_00",
+		map[string]string{"alias_name": "Alice"}, hdr)
+	if put.Code != http.StatusOK {
+		t.Fatalf("create alias status=%d body=%s", put.Code, put.Body)
+	}
+
+	set := doJSON(t, srv, http.MethodPut, "/api/notes/"+noteID+"/speaker-aliases/SPEAKER_00/person",
+		map[string]string{"person_id": person.ID}, hdr)
+	if set.Code != http.StatusOK {
+		t.Fatalf("set person status=%d body=%s", set.Code, set.Body)
+	}
+	var setResp struct {
+		NoteID       string  `json:"note_id"`
+		SpeakerLabel string  `json:"speaker_label"`
+		PersonID     *string `json:"person_id"`
+	}
+	if err := json.Unmarshal(set.Body.Bytes(), &setResp); err != nil {
+		t.Fatalf("decode set response: %v", err)
+	}
+	if setResp.NoteID != noteID || setResp.SpeakerLabel != "SPEAKER_00" || setResp.PersonID == nil || *setResp.PersonID != person.ID {
+		t.Fatalf("unexpected set response: %+v", setResp)
+	}
+
+	rec := doJSON(t, srv, http.MethodGet, "/api/notes/"+noteID+"/speaker-aliases", nil, hdr)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get aliases status=%d body=%s", rec.Code, rec.Body)
+	}
+	var aliases struct {
+		Aliases []model.SpeakerAlias `json:"aliases"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &aliases); err != nil {
+		t.Fatalf("decode aliases response: %v", err)
+	}
+	if len(aliases.Aliases) != 1 || aliases.Aliases[0].PersonID == nil || *aliases.Aliases[0].PersonID != person.ID {
+		t.Fatalf("expected linked person in list, got %+v", aliases.Aliases)
+	}
+
+	clear := doJSON(t, srv, http.MethodPut, "/api/notes/"+noteID+"/speaker-aliases/SPEAKER_00/person",
+		map[string]any{"person_id": nil}, hdr)
+	if clear.Code != http.StatusOK {
+		t.Fatalf("clear person status=%d body=%s", clear.Code, clear.Body)
+	}
+	var clearResp struct {
+		NoteID       string  `json:"note_id"`
+		SpeakerLabel string  `json:"speaker_label"`
+		PersonID     *string `json:"person_id"`
+	}
+	if err := json.Unmarshal(clear.Body.Bytes(), &clearResp); err != nil {
+		t.Fatalf("decode clear response: %v", err)
+	}
+	if clearResp.PersonID != nil {
+		t.Fatalf("expected cleared link, got %+v", clearResp)
+	}
+}
+
+func TestSpeakerAliasPersonReturns404ForMissingAliasAndForeignPerson(t *testing.T) {
+	t.Parallel()
+	srv, st, ownerID, hdr, noteID := setupAliasPersonTest(t)
+
+	other, err := st.CreateUser(context.Background(), "alias-person-other@example.com", "password123")
+	if err != nil {
+		t.Fatalf("create other user: %v", err)
+	}
+	otherPerson, err := st.UpsertPerson(context.Background(), other.ID, "other@example.com", "Other", nil)
+	if err != nil {
+		t.Fatalf("upsert other person: %v", err)
+	}
+	ownedPerson, err := st.UpsertPerson(context.Background(), ownerID, "owned@example.com", "Owned", nil)
+	if err != nil {
+		t.Fatalf("upsert owned person: %v", err)
+	}
+
+	put := doJSON(t, srv, http.MethodPut, "/api/notes/"+noteID+"/speaker-aliases/SPEAKER_00",
+		map[string]string{"alias_name": "Alice"}, hdr)
+	if put.Code != http.StatusOK {
+		t.Fatalf("create alias status=%d body=%s", put.Code, put.Body)
+	}
+
+	otherHdr := map[string]string{"Authorization": "Bearer " + func() string {
+		raw, hash, err := auth.GenerateToken()
+		if err != nil {
+			t.Fatalf("generate token: %v", err)
+		}
+		if err := st.CreateToken(context.Background(), other.ID, "session", hash, "session"); err != nil {
+			t.Fatalf("create token: %v", err)
+		}
+		return raw
+	}()}
+
+	missingAlias := doJSON(t, srv, http.MethodPut, "/api/notes/"+noteID+"/speaker-aliases/SPEAKER_99/person",
+		map[string]string{"person_id": ownedPerson.ID}, hdr)
+	if missingAlias.Code != http.StatusNotFound {
+		t.Fatalf("missing alias status=%d body=%s", missingAlias.Code, missingAlias.Body)
+	}
+
+	foreignPerson := doJSON(t, srv, http.MethodPut, "/api/notes/"+noteID+"/speaker-aliases/SPEAKER_00/person",
+		map[string]string{"person_id": otherPerson.ID}, hdr)
+	if foreignPerson.Code != http.StatusNotFound {
+		t.Fatalf("foreign person status=%d body=%s", foreignPerson.Code, foreignPerson.Body)
+	}
+
+	crossOwner := doJSON(t, srv, http.MethodPut, "/api/notes/"+noteID+"/speaker-aliases/SPEAKER_00/person",
+		map[string]string{"person_id": ownedPerson.ID}, otherHdr)
+	if crossOwner.Code != http.StatusNotFound {
+		t.Fatalf("cross-owner alias status=%d body=%s", crossOwner.Code, crossOwner.Body)
+	}
+}
+
+func TestSpeakerAliasPersonRejectsMalformedJSON(t *testing.T) {
+	t.Parallel()
+	srv, _, _, hdr, noteID := setupAliasPersonTest(t)
+
+	put := doRaw(t, srv, http.MethodPut, "/api/notes/"+noteID+"/speaker-aliases/SPEAKER_00/person", "{", hdr)
+	if put.Code != http.StatusBadRequest {
+		t.Fatalf("malformed body status=%d body=%s", put.Code, put.Body)
 	}
 }
