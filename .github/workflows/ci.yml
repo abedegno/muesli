@@ -94,6 +94,8 @@ jobs:
             install: pip install -e '.[test]'
           - dir: parakeet-transcriber
             install: pip install -e '.[test]'
+          - dir: streaming-transcriber
+            install: pip install -e '.[test]'
           - dir: ollama-agent
             install: pip install -e '.[test]'
           - dir: conformance
