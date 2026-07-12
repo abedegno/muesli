@@ -1,10 +1,15 @@
 package api_test
 
+// This file is DB-backed and CI-only: testutil.NewPool skips when
+// TEST_DATABASE_URL is unset, so these tests must not be run on the local
+// runner.
+
 import (
 	"context"
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/abedegno/muesli/internal/api"
 	"github.com/abedegno/muesli/internal/auth"
@@ -334,4 +339,132 @@ func TestSpeakerAliasPersonRejectsMalformedJSON(t *testing.T) {
 	if put.Code != http.StatusBadRequest {
 		t.Fatalf("malformed body status=%d body=%s", put.Code, put.Body)
 	}
+}
+
+func TestNotePeopleListAndOwnerScoping(t *testing.T) {
+	t.Parallel()
+	srv, st, ownerID, hdr, noteID := setupAliasPersonTest(t)
+
+	personOne, err := st.UpsertPerson(context.Background(), ownerID, "one@example.com", "Alpha", nil)
+	if err != nil {
+		t.Fatalf("upsert person one: %v", err)
+	}
+	personTwo, err := st.UpsertPerson(context.Background(), ownerID, "two@example.com", "Beta", nil)
+	if err != nil {
+		t.Fatalf("upsert person two: %v", err)
+	}
+
+	for _, tc := range []struct {
+		label  string
+		person string
+		alias  string
+	}{
+		{label: "SPEAKER_00", person: personOne.ID, alias: "Alpha"},
+		{label: "SPEAKER_01", person: personOne.ID, alias: "Alpha"},
+		{label: "SPEAKER_02", person: personTwo.ID, alias: "Beta"},
+	} {
+		if put := doJSON(t, srv, http.MethodPut, "/api/notes/"+noteID+"/speaker-aliases/"+tc.label,
+			map[string]string{"alias_name": tc.alias}, hdr); put.Code != http.StatusOK {
+			t.Fatalf("create alias %s status=%d body=%s", tc.label, put.Code, put.Body)
+		}
+		if set := doJSON(t, srv, http.MethodPut, "/api/notes/"+noteID+"/speaker-aliases/"+tc.label+"/person",
+			map[string]string{"person_id": tc.person}, hdr); set.Code != http.StatusOK {
+			t.Fatalf("link alias %s status=%d body=%s", tc.label, set.Code, set.Body)
+		}
+	}
+
+	rec := doJSON(t, srv, http.MethodGet, "/api/notes/"+noteID+"/people", nil, hdr)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET note people status=%d body=%s", rec.Code, rec.Body)
+	}
+	var resp struct {
+		People []model.Person `json:"people"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode note people response: %v", err)
+	}
+	if len(resp.People) != 2 {
+		t.Fatalf("expected 2 distinct people, got %d: %+v", len(resp.People), resp.People)
+	}
+	if resp.People[0].DisplayName != "Alpha" || resp.People[1].DisplayName != "Beta" {
+		t.Fatalf("unexpected ordering or payload: %+v", resp.People)
+	}
+	if resp.People[0].ID != personOne.ID || resp.People[1].ID != personTwo.ID {
+		t.Fatalf("unexpected people returned: %+v", resp.People)
+	}
+
+	other, err := st.CreateUser(context.Background(), "note-people-other@example.com", "password123")
+	if err != nil {
+		t.Fatalf("create other user: %v", err)
+	}
+	raw, hash, err := auth.GenerateToken()
+	if err != nil {
+		t.Fatalf("generate token: %v", err)
+	}
+	if err := st.CreateToken(context.Background(), other.ID, "session", hash, "session"); err != nil {
+		t.Fatalf("create other token: %v", err)
+	}
+	otherHdr := map[string]string{"Authorization": "Bearer " + raw}
+
+	cross := doJSON(t, srv, http.MethodGet, "/api/notes/"+noteID+"/people", nil, otherHdr)
+	if cross.Code != http.StatusNotFound {
+		t.Fatalf("cross-owner note people status=%d body=%s", cross.Code, cross.Body)
+	}
+}
+
+func TestRelinkNoteSpeakersReturnsAcceptedAndRelinksAsync(t *testing.T) {
+	t.Parallel()
+	srv, st, ownerID, hdr, noteID := setupAliasPersonTest(t)
+
+	put := doJSON(t, srv, http.MethodPut, "/api/notes/"+noteID+"/speaker-aliases/SPEAKER_00",
+		map[string]string{"alias_name": "ReLink"}, hdr)
+	if put.Code != http.StatusOK {
+		t.Fatalf("create alias status=%d body=%s", put.Code, put.Body)
+	}
+
+	before, err := st.PeopleForNoteSpeakers(context.Background(), ownerID, noteID)
+	if err != nil {
+		t.Fatalf("people before relink: %v", err)
+	}
+	if len(before) != 0 {
+		t.Fatalf("expected no linked people before relink, got %+v", before)
+	}
+
+	target, err := st.UpsertPerson(context.Background(), ownerID, "relink@example.com", "ReLink", nil)
+	if err != nil {
+		t.Fatalf("upsert person: %v", err)
+	}
+
+	rec := doJSON(t, srv, http.MethodPost, "/api/notes/"+noteID+"/relink-speakers", nil, hdr)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("relink status=%d body=%s", rec.Code, rec.Body)
+	}
+	var accepted struct {
+		NoteID string `json:"note_id"`
+		Status string `json:"status"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &accepted); err != nil {
+		t.Fatalf("decode relink response: %v", err)
+	}
+	if accepted.NoteID != noteID || accepted.Status != "relinking" {
+		t.Fatalf("unexpected relink response: %+v", accepted)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		peopleList, err := st.PeopleForNoteSpeakers(context.Background(), ownerID, noteID)
+		if err != nil {
+			t.Fatalf("people for note speakers: %v", err)
+		}
+		if len(peopleList) == 1 && peopleList[0].ID == target.ID {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	peopleList, err := st.PeopleForNoteSpeakers(context.Background(), ownerID, noteID)
+	if err != nil {
+		t.Fatalf("final people for note speakers: %v", err)
+	}
+	t.Fatalf("timed out waiting for async relink; got %+v", peopleList)
 }
