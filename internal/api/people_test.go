@@ -262,6 +262,10 @@ func TestPeopleUpdatePersonPatchAndClearCompany(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("clear company status %d body %s", rec.Code, rec.Body)
 	}
+	out = struct {
+		model.Person
+		Company *model.Company `json:"company,omitempty"`
+	}{}
 	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
 		t.Fatalf("decode clear patch response: %v", err)
 	}
