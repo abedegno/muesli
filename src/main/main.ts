@@ -5,6 +5,7 @@ import { IPC, type ConnectRequest, type CreateConversationRequest, type Diarizat
 import type { RetranscribeNoteRequest, RuleGroup, TemplateSection } from '../shared/types'
 import type { UpdatePersonRequest } from '../shared/ipc'
 import { createHandlers } from './ipcHandlers'
+import { NoteStreamRelay } from './noteStreamRelay'
 import { TokenStore } from './tokenStore'
 
 let mainWindow: BrowserWindow | null = null
@@ -33,6 +34,10 @@ function createWindow() {
 
 app.whenReady().then(() => {
   const tokenStore = new TokenStore(app.getPath('userData'), safeStorage)
+  const noteStream = new NoteStreamRelay({
+    getConfig: () => tokenStore.load(),
+    emit: (event) => mainWindow?.webContents.send(IPC.noteStreamEvent, event),
+  })
   const handlers = createHandlers({
     tokenStore,
     openExternal: async (url: string) => {
@@ -74,6 +79,9 @@ app.whenReady().then(() => {
   ipcMain.handle(IPC.permanentDeleteNote, (_e, id: string) => handlers.permanentDeleteNote(id))
   ipcMain.handle(IPC.getNoteAudioUrl, (_e, noteId: string) => handlers.getNoteAudioUrl(noteId))
   ipcMain.handle(IPC.uploadAudio, (_e, req: UploadAudioRequest) => handlers.uploadAudio(req))
+  ipcMain.handle(IPC.startNoteStream, (_e, noteId: string) => noteStream.start(noteId))
+  ipcMain.handle(IPC.stopNoteStream, (_e, noteId: string) => noteStream.stop(noteId))
+  ipcMain.handle(IPC.sendNoteStreamAudio, (_e, noteId: string, audio: ArrayBuffer) => noteStream.sendAudio(noteId, audio))
   ipcMain.handle(IPC.addTag, (_e, noteId: string, name: string) => handlers.addTag(noteId, name))
   ipcMain.handle(IPC.removeTag, (_e, noteId: string, name: string) => handlers.removeTag(noteId, name))
   ipcMain.handle(IPC.renameTag, (_e, id: string, name: string) => handlers.renameTag(id, name))

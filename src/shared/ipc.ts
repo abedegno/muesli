@@ -31,6 +31,10 @@ export const IPC = {
   getNoteAudioUrl: 'muesli:getNoteAudioUrl',
   uploadAudio: 'muesli:uploadAudio',
   uploadProgress: 'muesli:uploadProgress',
+  startNoteStream: 'muesli:startNoteStream',
+  stopNoteStream: 'muesli:stopNoteStream',
+  sendNoteStreamAudio: 'muesli:sendNoteStreamAudio',
+  noteStreamEvent: 'muesli:noteStreamEvent',
   addTag: 'muesli:addTag',
   removeTag: 'muesli:removeTag',
   renameTag: 'muesli:renameTag',
@@ -100,6 +104,23 @@ export interface UploadAudioRequest {
   audio: ArrayBuffer | null
   audioMimeType?: string
 }
+
+export interface NoteStreamSegmentEvent {
+  noteId: string
+  type: 'segment'
+  text: string
+  start_ms: number
+  end_ms: number
+  speaker: string | null
+  provisional: true
+}
+
+export interface NoteStreamConnectionEvent {
+  noteId: string
+  type: 'connecting' | 'live' | 'unavailable' | 'dropped'
+}
+
+export type NoteStreamEvent = NoteStreamSegmentEvent | NoteStreamConnectionEvent
 
 // Body accepted by MuesliBridge.postDiarizationReview / POST
 // /api/notes/{id}/transcript/review. At least one of segmentId or
@@ -186,6 +207,10 @@ export interface MuesliBridge {
   permanentDeleteNote(id: string): Promise<void>
   getNoteAudioUrl(noteId: string): Promise<AudioUrlGrant | null>
   uploadAudio(req: UploadAudioRequest): Promise<{ noteId: string }>
+  startNoteStream(noteId: string): Promise<void>
+  stopNoteStream(noteId: string): Promise<void>
+  sendNoteStreamAudio(noteId: string, audio: ArrayBuffer): Promise<void>
+  onNoteStreamEvent(cb: (event: NoteStreamEvent) => void): () => void
   addTag(noteId: string, name: string): Promise<{ id: string; name: string }>
   removeTag(noteId: string, name: string): Promise<void>
   renameTag(id: string, name: string): Promise<{ id: string; name: string }>
