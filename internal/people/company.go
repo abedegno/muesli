@@ -29,6 +29,26 @@ var personalProviders = map[string]struct{}{
 	"hey.com":        {},
 }
 
+var canonicalDomains = map[string]string{
+	"youtube.com":      "google.com",
+	"youtu.be":         "google.com",
+	"office.com":       "microsoft.com",
+	"microsoft365.com": "microsoft.com",
+	"fb.com":           "facebook.com",
+	"instagram.com":    "facebook.com",
+	"messenger.com":    "facebook.com",
+	"aws.amazon.com":   "amazon.com",
+}
+
+// CanonicalCompanyDomain collapses well-known company/domain aliases to a
+// single canonical company domain.
+func CanonicalCompanyDomain(domain string) string {
+	if canonical, ok := canonicalDomains[domain]; ok {
+		return canonical
+	}
+	return domain
+}
+
 // CompanyDomain returns the registrable domain for an email address and
 // whether it is considered a company domain.
 func CompanyDomain(email string) (domain string, isCompany bool) {
@@ -44,6 +64,8 @@ func CompanyDomain(email string) (domain string, isCompany bool) {
 	if err != nil {
 		return "", false
 	}
+
+	domain = CanonicalCompanyDomain(domain)
 
 	if _, ok := personalProviders[domain]; ok {
 		return domain, false

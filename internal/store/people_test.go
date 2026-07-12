@@ -192,6 +192,101 @@ func TestPeopleStoreCompaniesWithPeopleCountAndCompanyLookup(t *testing.T) {
 	}
 }
 
+func TestPeopleStoreMergeCompanies(t *testing.T) {
+	st, ownerID, _ := newPeopleStoreWithOwner(t)
+	ctx := context.Background()
+
+	fromCompany, err := st.UpsertCompany(ctx, ownerID, "from.example", "From")
+	if err != nil {
+		t.Fatalf("create from company: %v", err)
+	}
+	intoCompany, err := st.UpsertCompany(ctx, ownerID, "into.example", "Into")
+	if err != nil {
+		t.Fatalf("create into company: %v", err)
+	}
+	fromPersonOne, err := st.UpsertPerson(ctx, ownerID, "one@from.example", "One", ptrString(fromCompany.ID))
+	if err != nil {
+		t.Fatalf("create from person one: %v", err)
+	}
+	fromPersonTwo, err := st.UpsertPerson(ctx, ownerID, "two@from.example", "Two", ptrString(fromCompany.ID))
+	if err != nil {
+		t.Fatalf("create from person two: %v", err)
+	}
+	intoPerson, err := st.UpsertPerson(ctx, ownerID, "one@into.example", "Into", ptrString(intoCompany.ID))
+	if err != nil {
+		t.Fatalf("create into person: %v", err)
+	}
+
+	if err := st.MergeCompanies(ctx, ownerID, fromCompany.ID, intoCompany.ID); err != nil {
+		t.Fatalf("merge companies: %v", err)
+	}
+
+	if _, err := st.GetCompany(ctx, ownerID, fromCompany.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("from company should be deleted, got %v", err)
+	}
+	merged, err := st.GetCompany(ctx, ownerID, intoCompany.ID)
+	if err != nil {
+		t.Fatalf("get into company after merge: %v", err)
+	}
+	if merged.ID != intoCompany.ID {
+		t.Fatalf("unexpected surviving company: %+v", merged)
+	}
+
+	people, err := st.ListPeopleByCompany(ctx, ownerID, intoCompany.ID)
+	if err != nil {
+		t.Fatalf("list people by merged company: %v", err)
+	}
+	if len(people) != 3 {
+		t.Fatalf("expected 3 people after merge, got %d: %+v", len(people), people)
+	}
+	for _, person := range people {
+		if person.CompanyID == nil || *person.CompanyID != intoCompany.ID {
+			t.Fatalf("person not repointed to surviving company: %+v", person)
+		}
+	}
+
+	if got, err := st.GetPerson(ctx, ownerID, fromPersonOne.ID); err != nil {
+		t.Fatalf("get merged person one: %v", err)
+	} else if got.CompanyID == nil || *got.CompanyID != intoCompany.ID {
+		t.Fatalf("person one company mismatch: %+v", got)
+	}
+	if got, err := st.GetPerson(ctx, ownerID, fromPersonTwo.ID); err != nil {
+		t.Fatalf("get merged person two: %v", err)
+	} else if got.CompanyID == nil || *got.CompanyID != intoCompany.ID {
+		t.Fatalf("person two company mismatch: %+v", got)
+	}
+	if got, err := st.GetPerson(ctx, ownerID, intoPerson.ID); err != nil {
+		t.Fatalf("get surviving person: %v", err)
+	} else if got.CompanyID == nil || *got.CompanyID != intoCompany.ID {
+		t.Fatalf("surviving person company mismatch: %+v", got)
+	}
+
+	otherOwner, err := st.CreateUser(ctx, "merge-other@example.com", "h")
+	if err != nil {
+		t.Fatalf("create other owner: %v", err)
+	}
+	otherCompany, err := st.UpsertCompany(ctx, otherOwner.ID, "other.example", "Other")
+	if err != nil {
+		t.Fatalf("create other company: %v", err)
+	}
+
+	if err := st.MergeCompanies(ctx, ownerID, fromCompany.ID, otherCompany.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("cross-owner into company: want ErrNotFound, got %v", err)
+	}
+	if err := st.MergeCompanies(ctx, otherOwner.ID, otherCompany.ID, intoCompany.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("cross-owner from company: want ErrNotFound, got %v", err)
+	}
+	if err := st.MergeCompanies(ctx, ownerID, fromCompany.ID, "00000000-0000-0000-0000-000000000000"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("missing into company: want ErrNotFound, got %v", err)
+	}
+	if err := st.MergeCompanies(ctx, ownerID, "00000000-0000-0000-0000-000000000000", intoCompany.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("missing from company: want ErrNotFound, got %v", err)
+	}
+	if err := st.MergeCompanies(ctx, ownerID, intoCompany.ID, intoCompany.ID); !errors.Is(err, store.ErrInvalidMerge) {
+		t.Fatalf("same-company merge: want ErrInvalidMerge, got %v", err)
+	}
+}
+
 func ptrString(s string) *string {
 	return &s
 }
