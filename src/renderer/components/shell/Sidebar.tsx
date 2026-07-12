@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { Plus, Search, FileText, MessageSquare, Settings, Tag as TagIcon, Filter, Sparkles, Folder as FolderIcon, ChevronRight, ChevronDown, Trash2, PanelLeft, PanelLeftClose, MoreHorizontal, Calendar } from 'lucide-react'
+import { Plus, Search, FileText, MessageSquare, Settings, Tag as TagIcon, Filter, Sparkles, Folder as FolderIcon, ChevronRight, ChevronDown, Trash2, PanelLeft, PanelLeftClose, MoreHorizontal, Calendar, Users } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import { descendantIds } from '@/lib/folders'
 import { readStoredFolderCollapsed, writeStoredFolderCollapsed, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from '@/lib/sidebarPrefs'
@@ -434,6 +434,9 @@ export function Sidebar({
       </NavLink>
       <NavLink to="/coming-up" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
         <Calendar size={16} /> Coming up
+      </NavLink>
+      <NavLink to="/people" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
+        <Users size={16} /> People
       </NavLink>
       <NavLink to="/trash" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
         <Trash2 size={16} /> Trash
