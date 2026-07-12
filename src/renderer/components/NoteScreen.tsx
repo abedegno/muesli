@@ -44,39 +44,97 @@ function noteTitleForId(allNotes: Note[], noteId: string): string {
 
 function NoteLinksPanel({ noteId, allNotes, onOpenNote }: { noteId: string; allNotes: Note[]; onOpenNote: (id: string) => void }) {
   const [links, setLinks] = useState<NoteLinksResponse | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [linksError, setLinksError] = useState<string | null>(null)
+  const [addLinkError, setAddLinkError] = useState<string | null>(null)
+  const [notes, setNotes] = useState<Note[] | null>(null)
+  const [notesError, setNotesError] = useState<string | null>(null)
+  const [query, setQuery] = useState('')
+  const [pickerDismissed, setPickerDismissed] = useState(false)
+  const [activeIndex, setActiveIndex] = useState(0)
+  const inputRef = useRef<HTMLInputElement | null>(null)
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([])
+
+  const loadLinks = useCallback(async () => {
+    if (!noteId) return
+    setLinks(null)
+    setLinksError(null)
+    try {
+      const res = await muesli.listNoteLinks(noteId)
+      setLinks({
+        outgoing: res.outgoing ?? [],
+        backlinks: res.backlinks ?? [],
+      })
+    } catch (err) {
+      setLinksError(err instanceof Error ? err.message : 'Could not load links')
+    }
+  }, [noteId])
 
   useEffect(() => {
-    if (!noteId) return
+    void loadLinks()
+  }, [loadLinks])
 
+  useEffect(() => {
     let cancelled = false
-    setLinks(null)
-    setError(null)
+    setNotes(null)
+    setNotesError(null)
 
-    void muesli.listNoteLinks(noteId)
+    const listNotes = muesli.listNotes
+    if (typeof listNotes !== 'function') {
+      setNotes([])
+      return () => {
+        cancelled = true
+      }
+    }
+
+    void listNotes()
       .then((res) => {
         if (cancelled) return
-        setLinks({
-          outgoing: res.outgoing ?? [],
-          backlinks: res.backlinks ?? [],
-        })
+        setNotes(res ?? [])
       })
       .catch((err) => {
         if (cancelled) return
-        setError(err instanceof Error ? err.message : 'Could not load links')
+        setNotes([])
+        setNotesError(err instanceof Error ? err.message : 'Could not load notes')
       })
 
     return () => {
       cancelled = true
     }
-  }, [noteId])
+  }, [])
 
   if (!noteId) return null
 
   const outgoing = links?.outgoing ?? []
   const backlinks = links?.backlinks ?? []
   const hasAnyLinks = outgoing.length > 0 || backlinks.length > 0
-  const loading = links === null && error === null
+  const loading = links === null && linksError === null
+  const noteList = notes ?? []
+  const filteredNotes = query.trim()
+    ? noteList.filter((note) => note.id !== noteId && note.title.toLowerCase().includes(query.trim().toLowerCase()))
+    : []
+  const showPicker = query.trim().length > 0 && !pickerDismissed
+  const activeCandidate = filteredNotes[activeIndex] ?? filteredNotes[0] ?? null
+
+  const focusCandidate = (index: number) => {
+    if (filteredNotes.length === 0) return
+    const nextIndex = Math.max(0, Math.min(index, filteredNotes.length - 1))
+    setActiveIndex(nextIndex)
+    optionRefs.current[nextIndex]?.focus()
+  }
+
+  const selectCandidate = async (candidate: Note) => {
+    try {
+      setAddLinkError(null)
+      await muesli.addNoteLink(noteId, candidate.id)
+      setQuery('')
+      setPickerDismissed(false)
+      setActiveIndex(0)
+      await loadLinks()
+      inputRef.current?.focus()
+    } catch (err) {
+      setAddLinkError(err instanceof Error ? err.message : 'Could not add link')
+    }
+  }
 
   return (
     <section className="border-b border-border px-6 py-4">
@@ -84,10 +142,130 @@ function NoteLinksPanel({ noteId, allNotes, onOpenNote }: { noteId: string; allN
         <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Links</h2>
       </div>
 
-      {error ? (
+      <div className="mt-4 rounded-lg border border-border bg-background/40 p-3">
+        <label htmlFor={`add-link-${noteId}`} className="text-sm font-medium">
+          Add link
+        </label>
+        <input
+          ref={inputRef}
+          id={`add-link-${noteId}`}
+          type="text"
+          autoComplete="off"
+          className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
+          placeholder="Type a note title"
+          value={query}
+          aria-describedby={`add-link-help-${noteId}`}
+          onChange={(e) => {
+            setQuery(e.target.value)
+            setPickerDismissed(false)
+            setAddLinkError(null)
+            setActiveIndex(0)
+          }}
+          onFocus={() => setPickerDismissed(false)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') {
+              if (showPicker) {
+                e.preventDefault()
+                setPickerDismissed(true)
+              }
+              return
+            }
+
+            if (filteredNotes.length === 0) return
+
+            if (e.key === 'ArrowDown') {
+              e.preventDefault()
+              setPickerDismissed(false)
+              focusCandidate(0)
+              return
+            }
+
+            if (e.key === 'ArrowUp') {
+              e.preventDefault()
+              setPickerDismissed(false)
+              focusCandidate(filteredNotes.length - 1)
+              return
+            }
+
+            if (e.key === 'Enter' && showPicker) {
+              e.preventDefault()
+              void selectCandidate(activeCandidate ?? filteredNotes[0])
+            }
+          }}
+        />
+        <p id={`add-link-help-${noteId}`} className="mt-1 text-xs text-muted-foreground">
+          Type to filter other notes. Use Tab or Arrow keys to move through matches.
+        </p>
+        {notesError ? (
+          <div role="alert" className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            Could not load notes.
+            <div className="mt-1 text-destructive/80">{notesError}</div>
+          </div>
+        ) : showPicker ? (
+          filteredNotes.length > 0 ? (
+            <ul aria-label="Matching notes" className="mt-3 space-y-2">
+              {filteredNotes.map((note, index) => (
+                <li key={note.id}>
+                  <button
+                    ref={(el) => {
+                      optionRefs.current[index] = el
+                    }}
+                    type="button"
+                    aria-label={note.title}
+                    className={`flex w-full items-center justify-between gap-3 rounded-lg border px-3 py-2 text-left text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+                      index === activeIndex
+                        ? 'border-ring bg-accent/40 text-foreground'
+                        : 'border-border bg-background/70 text-foreground hover:bg-accent/30'
+                    }`}
+                    onFocus={() => setActiveIndex(index)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault()
+                        focusCandidate(index + 1)
+                      } else if (e.key === 'ArrowUp') {
+                        e.preventDefault()
+                        if (index === 0) {
+                          inputRef.current?.focus()
+                        } else {
+                          focusCandidate(index - 1)
+                        }
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault()
+                        setPickerDismissed(true)
+                        inputRef.current?.focus()
+                      }
+                    }}
+                    onClick={() => {
+                      void selectCandidate(note)
+                    }}
+                  >
+                    <span className="truncate">{note.title}</span>
+                    <span className="shrink-0 text-xs text-muted-foreground">{note.id}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="mt-3 text-sm text-muted-foreground">No matching notes</p>
+          )
+        ) : query.trim() ? (
+          <p className="mt-3 text-sm text-muted-foreground">Press Escape to hide matches</p>
+        ) : (
+          <p className="mt-3 text-sm text-muted-foreground">Start typing a note title to add a link.</p>
+        )}
+        {addLinkError ? (
+          <div role="alert" className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+            Could not add link.
+            <div className="mt-1 text-destructive/80">{addLinkError}</div>
+          </div>
+        ) : null}
+        {notes === null && !notesError ? <p className="mt-2 text-xs text-muted-foreground">Loading note list...</p> : null}
+      </div>
+
+      {linksError ? (
         <div role="alert" className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
           Could not load links.
-          <div className="mt-1 text-xs text-destructive/80">{error}</div>
+          <div className="mt-1 text-xs text-destructive/80">{linksError}</div>
         </div>
       ) : loading ? (
         <div role="status" className="mt-3 space-y-2">

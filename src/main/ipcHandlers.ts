@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import JSZip from 'jszip'
 import { fullNoteToMarkdown } from '../renderer/lib/noteMarkdown'
-import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, Message, MicrosoftOAuthStatus, Note, NoteLinksResponse, PersonWithCompany, PluginStatus, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, ServerConfig, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection } from '../shared/types'
+import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, ServerConfig, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection } from '../shared/types'
 import type { ConnectRequest, CreateConversationRequest, CreateConversationResponse, DiarizationReviewUpdate, ListNoteActionItemsResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdateActionItemRequest, UpdatePersonRequest, UploadAudioRequest } from '../shared/ipc'
 import { INSECURE_CONNECTION_CODE, isInsecureRemote } from '../shared/url'
 import type { UploadProgress } from './uploadMachine'
@@ -26,6 +26,7 @@ interface Handlers {
   listCompanies(): Promise<CompanyWithCount[]>
   listNoteActionItems(noteId: string): Promise<ListNoteActionItemsResponse>
   listNoteLinks(id: string): Promise<NoteLinksResponse>
+  addNoteLink(id: string, toNoteId: string): Promise<NoteLink>
   listActionItems(status?: string): Promise<ActionItem[]>
   getPerson(id: string): Promise<PersonWithCompany>
   getPersonNotes(id: string): Promise<Note[]>
@@ -179,6 +180,10 @@ export function createHandlers(deps: HandlerDeps): Handlers {
 
     async listNoteLinks(id) {
       return authedClient().listNoteLinks(id)
+    },
+
+    async addNoteLink(id, toNoteId) {
+      return withApiError(() => authedClient().addNoteLink(id, toNoteId))
     },
 
     async listActionItems(status) {
