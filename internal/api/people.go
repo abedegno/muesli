@@ -152,6 +152,36 @@ func (s *Server) handleGetPerson(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (s *Server) handleListPersonNotes(w http.ResponseWriter, r *http.Request) {
+	uid, _ := userIDFromContext(r.Context())
+	id := chi.URLParam(r, "id")
+	if !validPersonID(w, id) {
+		return
+	}
+
+	person, err := s.deps.Store.GetPerson(r.Context(), uid, id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if err != nil {
+		log.Printf("handleListPersonNotes: get person: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	notes, err := s.deps.Store.NotesForPerson(r.Context(), uid, person.ID)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if err != nil {
+		log.Printf("handleListPersonNotes: notes for person: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, notes)
+}
+
 func (s *Server) handleGetCompany(w http.ResponseWriter, r *http.Request) {
 	uid, _ := userIDFromContext(r.Context())
 	id := chi.URLParam(r, "id")

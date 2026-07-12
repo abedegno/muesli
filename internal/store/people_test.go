@@ -418,3 +418,178 @@ func TestPeopleForNoteEventScopesSpeakerMatching(t *testing.T) {
 		t.Fatalf("alias linked to the wrong person: %+v", aliases[0])
 	}
 }
+
+// This test is DB-backed and CI-only: testutil.NewPool skips when
+// TEST_DATABASE_URL is unset.
+func TestNotesForPersonIncludesEventAttendeesAndSpeakerAliases(t *testing.T) {
+	t.Parallel()
+
+	pool := testutil.NewPool(t)
+	st := store.New(pool)
+	ctx := context.Background()
+
+	owner, err := st.CreateUser(ctx, "activity-owner@example.com", "h")
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	otherOwner, err := st.CreateUser(ctx, "activity-other@example.com", "h")
+	if err != nil {
+		t.Fatalf("create other owner: %v", err)
+	}
+
+	person, err := st.UpsertPerson(ctx, owner.ID, "person.activity@example.com", "Person", nil)
+	if err != nil {
+		t.Fatalf("create person: %v", err)
+	}
+	if _, err := st.UpsertPerson(ctx, otherOwner.ID, "person.activity@example.com", "Person", nil); err != nil {
+		t.Fatalf("create other person's person: %v", err)
+	}
+
+	source, err := st.CreateSource(ctx, owner.ID, "ics", "Team Calendar", "sealed-creds")
+	if err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	if err := st.UpsertEvents(ctx, owner.ID, source.ID, []calendar.NormalizedEvent{{
+		ExternalID: "evt-activity",
+		Title:      "Activity sync",
+		StartsAt:   noteEventTestBase,
+		EndsAt:     noteEventTestBase.Add(30 * time.Minute),
+		Attendees: []model.Attendee{
+			{Email: "PERSON.ACTIVITY@EXAMPLE.COM", Name: "Person"},
+		},
+	}}); err != nil {
+		t.Fatalf("upsert event: %v", err)
+	}
+	events, err := st.ListEvents(ctx, owner.ID, noteEventTestBase.Add(-time.Hour), noteEventTestBase.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(events))
+	}
+
+	eventNote, err := st.CreateNote(ctx, owner.ID, "Event note")
+	if err != nil {
+		t.Fatalf("create event note: %v", err)
+	}
+	if err := st.UpdateNoteBody(ctx, owner.ID, eventNote.ID, "event body"); err != nil {
+		t.Fatalf("update event note body: %v", err)
+	}
+	if _, err := st.AddNoteTag(ctx, owner.ID, eventNote.ID, "work"); err != nil {
+		t.Fatalf("add event note tag: %v", err)
+	}
+	folder, err := st.CreateFolder(ctx, owner.ID, "Projects", nil)
+	if err != nil {
+		t.Fatalf("create folder: %v", err)
+	}
+	if err := st.AddNoteFolder(ctx, owner.ID, eventNote.ID, folder.ID); err != nil {
+		t.Fatalf("add event note folder: %v", err)
+	}
+	if err := st.SetNoteEvent(ctx, owner.ID, eventNote.ID, events[0].ID); err != nil {
+		t.Fatalf("set event note event: %v", err)
+	}
+
+	aliasNote, err := st.CreateNote(ctx, owner.ID, "Alias note")
+	if err != nil {
+		t.Fatalf("create alias note: %v", err)
+	}
+	if err := st.UpdateNoteBody(ctx, owner.ID, aliasNote.ID, "alias body"); err != nil {
+		t.Fatalf("update alias note body: %v", err)
+	}
+	if err := st.UpsertSpeakerAlias(ctx, owner.ID, aliasNote.ID, "SPEAKER_00", "Person"); err != nil {
+		t.Fatalf("upsert alias: %v", err)
+	}
+	if err := st.SetSpeakerAliasPerson(ctx, owner.ID, aliasNote.ID, "SPEAKER_00", &person.ID); err != nil {
+		t.Fatalf("set alias person: %v", err)
+	}
+
+	otherSource, err := st.CreateSource(ctx, otherOwner.ID, "ics", "Other Calendar", "sealed-creds")
+	if err != nil {
+		t.Fatalf("create other source: %v", err)
+	}
+	if err := st.UpsertEvents(ctx, otherOwner.ID, otherSource.ID, []calendar.NormalizedEvent{{
+		ExternalID: "evt-other",
+		Title:      "Other activity",
+		StartsAt:   noteEventTestBase,
+		EndsAt:     noteEventTestBase.Add(15 * time.Minute),
+		Attendees: []model.Attendee{
+			{Email: "PERSON.ACTIVITY@EXAMPLE.COM", Name: "Person"},
+		},
+	}}); err != nil {
+		t.Fatalf("upsert other event: %v", err)
+	}
+	otherEvents, err := st.ListEvents(ctx, otherOwner.ID, noteEventTestBase.Add(-time.Hour), noteEventTestBase.Add(time.Hour))
+	if err != nil {
+		t.Fatalf("list other events: %v", err)
+	}
+	otherEventNote, err := st.CreateNote(ctx, otherOwner.ID, "Other event note")
+	if err != nil {
+		t.Fatalf("create other event note: %v", err)
+	}
+	if err := st.SetNoteEvent(ctx, otherOwner.ID, otherEventNote.ID, otherEvents[0].ID); err != nil {
+		t.Fatalf("set other note event: %v", err)
+	}
+
+	notes, err := st.NotesForPerson(ctx, owner.ID, person.ID)
+	if err != nil {
+		t.Fatalf("notes for person: %v", err)
+	}
+	if len(notes) != 2 {
+		t.Fatalf("expected 2 notes, got %d: %+v", len(notes), notes)
+	}
+	if notes[0].CreatedAt.Before(notes[1].CreatedAt) {
+		t.Fatalf("notes not ordered by created_at desc: %+v", notes)
+	}
+
+	seenEvent := false
+	seenAlias := false
+	for _, note := range notes {
+		if note.OwnerID != owner.ID {
+			t.Fatalf("found note for wrong owner: %+v", note)
+		}
+		if note.ID == otherEventNote.ID {
+			t.Fatalf("cross-owner note leaked into person activity: %+v", note)
+		}
+		switch note.ID {
+		case eventNote.ID:
+			seenEvent = true
+			if note.Snippet == "" {
+				t.Fatal("expected event note snippet to be populated")
+			}
+			if len(note.Tags) != 1 || note.Tags[0] != "work" {
+				t.Fatalf("unexpected event note tags: %+v", note.Tags)
+			}
+			if len(note.FolderIDs) != 1 || note.FolderIDs[0] != folder.ID {
+				t.Fatalf("unexpected event note folders: %+v", note.FolderIDs)
+			}
+		case aliasNote.ID:
+			seenAlias = true
+			if note.Snippet == "" {
+				t.Fatal("expected alias note snippet to be populated")
+			}
+			if note.Tags == nil || note.FolderIDs == nil {
+				t.Fatalf("expected complete note slices, got tags=%v folders=%v", note.Tags, note.FolderIDs)
+			}
+		default:
+			t.Fatalf("unexpected note returned: %+v", note)
+		}
+	}
+	if !seenEvent || !seenAlias {
+		t.Fatalf("missing expected notes: event=%v alias=%v", seenEvent, seenAlias)
+	}
+
+	emptyPerson, err := st.UpsertPerson(ctx, owner.ID, "no-activity@example.com", "Idle", nil)
+	if err != nil {
+		t.Fatalf("create empty person: %v", err)
+	}
+	emptyNotes, err := st.NotesForPerson(ctx, owner.ID, emptyPerson.ID)
+	if err != nil {
+		t.Fatalf("notes for empty person: %v", err)
+	}
+	if emptyNotes == nil {
+		t.Fatal("expected empty non-nil slice, got nil")
+	}
+	if len(emptyNotes) != 0 {
+		t.Fatalf("expected no notes for empty person, got %+v", emptyNotes)
+	}
+}
