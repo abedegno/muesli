@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import JSZip from 'jszip'
 import { fullNoteToMarkdown } from '../renderer/lib/noteMarkdown'
-import type { AudioUrlGrant, CalendarEvent, Conversation, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, Message, MicrosoftOAuthStatus, Note, PluginStatus, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, ServerConfig, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection } from '../shared/types'
+import type { AudioUrlGrant, CalendarEvent, CompanyWithCount, Conversation, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, Message, MicrosoftOAuthStatus, Note, PersonWithCompany, PluginStatus, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, ServerConfig, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection } from '../shared/types'
 import type { ConnectRequest, CreateConversationRequest, CreateConversationResponse, DiarizationReviewUpdate, SearchOptions, SendMessageRequest, SendMessageResponse, UploadAudioRequest } from '../shared/ipc'
 import { INSECURE_CONNECTION_CODE, isInsecureRemote } from '../shared/url'
 import type { UploadProgress } from './uploadMachine'
@@ -22,6 +22,8 @@ interface Handlers {
   connect(req: ConnectRequest): Promise<{ serverUrl: string }>
   disconnect(): Promise<void>
   listNotes(folderId?: string): Promise<Note[]>
+  listPeople(): Promise<PersonWithCompany[]>
+  listCompanies(): Promise<CompanyWithCount[]>
   getFull(id: string): Promise<FullNote>
   createNote(title: string): Promise<Note>
   updateBody(id: string, content: string): Promise<void>
@@ -151,6 +153,14 @@ export function createHandlers(deps: HandlerDeps): Handlers {
 
     async listNotes(folderId) {
       return authedClient().listNotes(folderId)
+    },
+
+    async listPeople() {
+      return authedClient().listPeople()
+    },
+
+    async listCompanies() {
+      return authedClient().listCompanies()
     },
 
     async getCalendarEvents(from, to) {

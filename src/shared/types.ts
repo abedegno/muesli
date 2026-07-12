@@ -271,3 +271,31 @@ export interface CalendarEvent {
   attendees: Attendee[]
   source_id: string
 }
+
+// Mirrors the server's model.Person (internal/model/model.go).
+export interface Person {
+  id: string
+  primary_email: string
+  display_name: string
+  company_id?: string
+  first_seen_at: string
+  updated_at: string
+}
+
+// Mirrors the server's model.Company (internal/model/model.go).
+export interface Company {
+  id: string
+  owner_id: string
+  domain: string
+  name: string
+  created_at: string
+  updated_at: string
+}
+
+export interface PersonWithCompany extends Person {
+  company?: Company
+}
+
+export interface CompanyWithCount extends Company {
+  people_count: number
+}
