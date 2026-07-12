@@ -69,8 +69,9 @@ type Note struct {
 
 // Plugin kinds.
 const (
-	PluginTranscriber = "transcriber"
-	PluginAgent       = "agent"
+	PluginTranscriber          = "transcriber"
+	PluginStreamingTranscriber = "streaming-transcriber"
+	PluginAgent                = "agent"
 )
 
 // Note statuses used by the pipeline. NoteReady/NoteTranscribing/NoteSummarizing

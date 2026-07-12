@@ -78,6 +78,56 @@ func (s *Store) SaveTranscript(ctx context.Context, tr model.Transcript) (model.
 	return tr, nil
 }
 
+// AppendProvisionalTranscriptSegment ensures a transcript row exists for the
+// note and appends one provisional segment. It is used by the live streaming
+// transcription path; the batch SaveTranscript path still replaces the whole
+// transcript atomically later.
+func (s *Store) AppendProvisionalTranscriptSegment(ctx context.Context, noteID string, tr model.Transcript, seg model.Segment) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	// Create the transcript row on first live segment, but never overwrite an
+	// existing row for the note.
+	_, err = tx.Exec(ctx,
+		`INSERT INTO transcripts (id, note_id, transcriber_plugin, model, review_state)
+		 VALUES ($1,$2,$3,$4,$5)
+		 ON CONFLICT (note_id) DO NOTHING`,
+		uuid.NewString(), noteID, tr.TranscriberPlugin, tr.Model, model.ReviewStateCompleted)
+	if err != nil {
+		return err
+	}
+
+	var transcriptID string
+	if err := tx.QueryRow(ctx, `SELECT id FROM transcripts WHERE note_id=$1`, noteID).Scan(&transcriptID); err != nil {
+		return err
+	}
+
+	segID := uuid.NewString()
+	var speaker *string
+	if seg.Speaker != "" {
+		speaker = &seg.Speaker
+	}
+	var wordsJSON []byte
+	if len(seg.Words) > 0 {
+		wordsJSON, err = json.Marshal(seg.Words)
+		if err != nil {
+			return err
+		}
+	}
+	_, err = tx.Exec(ctx,
+		`INSERT INTO transcript_segments (id, transcript_id, start_ms, end_ms, text, source, speaker, words, confidence, provisional)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+		segID, transcriptID, seg.StartMS, seg.EndMS, seg.Text, seg.Source, speaker, wordsJSON, seg.Confidence, true)
+	if err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
 // GetTranscript returns a note's transcript with ordered segments.
 func (s *Store) GetTranscript(ctx context.Context, noteID string) (model.Transcript, error) {
 	var tr model.Transcript
