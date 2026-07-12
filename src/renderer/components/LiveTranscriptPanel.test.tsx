@@ -1,19 +1,22 @@
 // @vitest-environment jsdom
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest'
-import type { NoteStreamEvent } from '../../shared/ipc'
+import type { NoteStreamEvent, NoteStreamSegmentEvent } from '../../shared/ipc'
 import { LiveTranscriptPanel } from './LiveTranscriptPanel'
 
 function createSource() {
   const listeners = new Set<(event: NoteStreamEvent) => void>()
+  const events: NoteStreamEvent[] = []
   return {
     onNoteStreamEvent(cb: (event: NoteStreamEvent) => void) {
       listeners.add(cb)
       return () => listeners.delete(cb)
     },
     emit(event: NoteStreamEvent) {
+      events.push(event)
       listeners.forEach((cb) => cb(event))
     },
+    events,
   }
 }
 
@@ -32,28 +35,40 @@ describe('LiveTranscriptPanel', () => {
   it('appends finalized segments in arrival order and auto-scrolls to the latest', async () => {
     const source = createSource()
     render(<LiveTranscriptPanel noteId="note-1" isRecording source={source} />)
+    const firstSegment: NoteStreamSegmentEvent = {
+      noteId: 'note-1',
+      type: 'segment',
+      text: 'first',
+      start_ms: 0,
+      end_ms: 200,
+      speaker: null,
+      provisional: true,
+    }
+    const secondSegment: NoteStreamSegmentEvent = {
+      noteId: 'note-1',
+      type: 'segment',
+      text: 'second',
+      start_ms: 200,
+      end_ms: 400,
+      speaker: null,
+      provisional: true,
+    }
 
     act(() => {
       source.emit({ noteId: 'note-1', type: 'connecting' })
       source.emit({ noteId: 'note-1', type: 'live' })
-      source.emit({
-        noteId: 'note-1',
-        type: 'segment',
-        text: 'first',
-        start_ms: 0,
-        end_ms: 200,
-        speaker: null,
-        provisional: true,
-      })
-      source.emit({
-        noteId: 'note-1',
-        type: 'segment',
-        text: 'second',
-        start_ms: 200,
-        end_ms: 400,
-        speaker: null,
-        provisional: true,
-      })
+      source.emit(firstSegment)
+      source.emit(secondSegment)
+    })
+
+    expect(source.events).toContainEqual({
+      noteId: 'note-1',
+      type: 'segment',
+      text: 'first',
+      start_ms: 0,
+      end_ms: 200,
+      speaker: null,
+      provisional: true,
     })
 
     expect(await screen.findByTestId('live-transcript-panel')).toBeInTheDocument()
