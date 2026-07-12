@@ -85,6 +85,11 @@ export class MuesliClient {
     return { actionItems: res.action_items, decisions: res.decisions }
   }
 
+  async listActionItems(status?: string): Promise<ActionItem[]> {
+    const path = status ? `/api/action-items?status=${encodeURIComponent(status)}` : '/api/action-items'
+    return this.json<ActionItem[]>('GET', path)
+  }
+
   async getPerson(id: string): Promise<PersonWithCompany> {
     return this.json<PersonWithCompany>('GET', `/api/people/${id}`)
   }

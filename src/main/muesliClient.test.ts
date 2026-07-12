@@ -127,6 +127,35 @@ describe('MuesliClient', () => {
     expect(out.decisions[0]).toMatchObject({ id: 'd-1', text: 'Use the weekly cadence' })
   })
 
+  it('listActionItems GETs /api/action-items with the status query param', async () => {
+    const calls: Array<{ url: string; method?: string }> = []
+    const fetchMock: FetchLike = async (url, init) => {
+      calls.push({ url: String(url), method: init?.method })
+      const fullUrl = String(url)
+      if (fullUrl === 'http://x/api/action-items?status=all') {
+        return new Response(JSON.stringify([
+          {
+            id: 'ai-1',
+            note_id: 'note-1',
+            owner_id: 'owner-1',
+            text: 'Ship the launch notes',
+            owner_person_id: null,
+            status: 'done',
+            due_hint: 'Tomorrow',
+            created_at: '2026-07-11T00:00:00Z',
+          },
+        ]), { status: 200 })
+      }
+      return new Response('unexpected', { status: 500 })
+    }
+    const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
+    const out = await client.listActionItems('all')
+    expect(calls[0].method).toBe('GET')
+    expect(calls[0].url).toBe('http://x/api/action-items?status=all')
+    expect(out).toHaveLength(1)
+    expect(out[0]).toMatchObject({ id: 'ai-1', status: 'done' })
+  })
+
   it('exportNote GETs the export endpoint and parses the filename/content type', async () => {
     const calls: Array<{ url: string; init?: RequestInit }> = []
     const fetchMock: FetchLike = async (url, init) => {

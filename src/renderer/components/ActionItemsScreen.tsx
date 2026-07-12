@@ -3,48 +3,13 @@ import { Link } from 'react-router-dom'
 import { muesli } from '@/api'
 import { EmptyState } from './EmptyState'
 import { Skeleton } from '@/components/ui/Skeleton'
-import type { ActionItem, Note, ServerConfig } from '../../shared/types'
+import type { ActionItem, Note } from '../../shared/types'
 
 type StatusFilter = 'open' | 'all'
 
 function errorMessage(err: unknown): string {
   if (err instanceof Error) return err.message
   return String(err)
-}
-
-function apiUrl(serverUrl: string, path: string): string {
-  return new URL(path, `${serverUrl.replace(/\/+$/, '')}/`).toString()
-}
-
-function parseResponseError(body: unknown, status: number): string {
-  if (body && typeof body === 'object' && 'error' in body) {
-    const message = String((body as { error: unknown }).error)
-    if (message.trim()) return message
-  }
-  if (typeof body === 'string' && body.trim()) return body
-  return `request failed: ${status}`
-}
-
-async function fetchJson<T>(cfg: ServerConfig, path: string): Promise<T> {
-  const res = await fetch(apiUrl(cfg.serverUrl, path), {
-    headers: {
-      Authorization: `Bearer ${cfg.token}`,
-    },
-  })
-  const text = await res.text()
-  const parsed = text ? safeParse(text) : undefined
-  if (!res.ok) {
-    throw new Error(parseResponseError(parsed, res.status))
-  }
-  return parsed as T
-}
-
-function safeParse(text: string): unknown {
-  try {
-    return JSON.parse(text)
-  } catch {
-    return text
-  }
 }
 
 function compareByText(a: string, b: string): number {
@@ -138,9 +103,6 @@ function NoteGroup({
 }
 
 export function ActionItemsScreen() {
-  const [config, setConfig] = useState<ServerConfig | null>(null)
-  const [configLoaded, setConfigLoaded] = useState(false)
-  const [configError, setConfigError] = useState<string | null>(null)
   const [notesById, setNotesById] = useState<Record<string, Note> | null>(null)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('open')
   const [actionItems, setActionItems] = useState<ActionItem[] | null>(null)
@@ -148,63 +110,23 @@ export function ActionItemsScreen() {
 
   useEffect(() => {
     let cancelled = false
-    void muesli.getConfig()
-      .then((cfg) => {
-        if (cancelled) return
-        if (!cfg) {
-          setConfig(null)
-          setConfigError('Not connected')
-        } else {
-          setConfig(cfg)
-          setConfigError(null)
-        }
-      })
-      .catch((err) => {
-        if (cancelled) return
-        setConfig(null)
-        setConfigError(errorMessage(err))
-      })
-      .finally(() => {
-        if (!cancelled) setConfigLoaded(true)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
+    setNotesById(null)
+    setActionItems(null)
+    setActionItemsError(null)
 
-  useEffect(() => {
-    if (!config) return
-    let cancelled = false
-    void fetchJson<Note[]>(config, '/api/notes')
-      .then((notes) => {
+    void Promise.all([muesli.listNotes(), muesli.listActionItems(statusFilter)])
+      .then(([notes, items]) => {
         if (cancelled) return
         const next: Record<string, Note> = {}
         for (const note of notes ?? []) {
           next[note.id] = note
         }
         setNotesById(next)
-      })
-      .catch(() => {
-        if (!cancelled) setNotesById({})
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [config])
-
-  useEffect(() => {
-    if (!config) return
-    let cancelled = false
-    setActionItems(null)
-    setActionItemsError(null)
-
-    void fetchJson<ActionItem[]>(config, `/api/action-items?status=${statusFilter}`)
-      .then((items) => {
-        if (cancelled) return
         setActionItems(items ?? [])
       })
       .catch((err) => {
         if (cancelled) return
+        setNotesById({})
         setActionItems([])
         setActionItemsError(errorMessage(err))
       })
@@ -212,7 +134,7 @@ export function ActionItemsScreen() {
     return () => {
       cancelled = true
     }
-  }, [config, statusFilter])
+  }, [statusFilter])
 
   const groups = useMemo(() => {
     const byNote = new Map<string, ActionItem[]>()
@@ -237,7 +159,7 @@ export function ActionItemsScreen() {
       })
   }, [actionItems, notesById])
 
-  const loading = !configLoaded || (config !== null && configError === null && (actionItems === null || notesById === null))
+  const loading = actionItems === null || notesById === null
   const empty = actionItems !== null && actionItems.length === 0 && actionItemsError === null
   const visibleCount = actionItems?.length ?? 0
 
@@ -256,17 +178,6 @@ export function ActionItemsScreen() {
         </div>
         <div className="flex flex-col gap-3">
           {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-28 w-full" />)}
-        </div>
-      </div>
-    )
-  }
-
-  if (configError) {
-    return (
-      <div className="mx-auto max-w-4xl p-6">
-        <div role="alert" className="rounded-[var(--radius)] border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-          <p className="font-medium">Could not load action items.</p>
-          <p className="mt-1 break-words">{configError}</p>
         </div>
       </div>
     )

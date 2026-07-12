@@ -6,27 +6,21 @@ import { MemoryRouter, Route, Routes, useParams } from 'react-router-dom'
 import type { ActionItem, Note } from '../../shared/types'
 import { ActionItemsScreen } from './ActionItemsScreen'
 
-const getConfig = vi.fn()
-const fetchMock = vi.fn<typeof fetch>()
+const { listNotesMock, listActionItemsMock } = vi.hoisted(() => ({
+  listNotesMock: vi.fn(),
+  listActionItemsMock: vi.fn(),
+}))
 
 vi.mock('@/api', () => ({
   muesli: {
-    getConfig: () => getConfig(),
+    listNotes: () => listNotesMock(),
+    listActionItems: (status?: string) => listActionItemsMock(status),
   },
 }))
 
 function NoteRoute() {
   const { id = '' } = useParams()
   return <div>Note route: {id}</div>
-}
-
-function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      'Content-Type': 'application/json',
-    },
-  })
 }
 
 function note(over: Partial<Note> = {}): Note {
@@ -56,15 +50,13 @@ function actionItem(over: Partial<ActionItem> = {}): ActionItem {
 }
 
 beforeEach(() => {
-  getConfig.mockResolvedValue({ serverUrl: 'http://muesli.local', token: 'token-123' })
-  fetchMock.mockReset()
-  vi.stubGlobal('fetch', fetchMock)
+  listNotesMock.mockReset()
+  listActionItemsMock.mockReset()
 })
 
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
-  vi.unstubAllGlobals()
 })
 
 describe('ActionItemsScreen', () => {
@@ -80,28 +72,22 @@ describe('ActionItemsScreen', () => {
   }
 
   beforeEach(() => {
-    fetchMock.mockImplementation(async (input) => {
-      const url = String(input)
-      if (url === 'http://muesli.local/api/notes') {
-        return jsonResponse([
-          note({ id: 'note-a', title: 'Planning review', created_at: '2026-07-01T10:00:00Z' }),
-          note({ id: 'note-b', title: 'Customer sync', created_at: '2026-07-02T10:00:00Z' }),
-        ])
-      }
-      if (url === 'http://muesli.local/api/action-items?status=open') {
-        return jsonResponse([
-          actionItem({ id: 'ai-1', note_id: 'note-a', text: 'Ship the doc', created_at: '2026-07-01T12:00:00Z' }),
-          actionItem({ id: 'ai-2', note_id: 'note-b', text: 'Book the follow-up', due_hint: '', created_at: '2026-07-02T12:00:00Z' }),
-        ])
-      }
-      if (url === 'http://muesli.local/api/action-items?status=all') {
-        return jsonResponse([
+    listNotesMock.mockResolvedValue([
+      note({ id: 'note-a', title: 'Planning review', created_at: '2026-07-01T10:00:00Z' }),
+      note({ id: 'note-b', title: 'Customer sync', created_at: '2026-07-02T10:00:00Z' }),
+    ])
+    listActionItemsMock.mockImplementation(async (status?: string) => {
+      if (status === 'all') {
+        return [
           actionItem({ id: 'ai-1', note_id: 'note-a', text: 'Ship the doc', created_at: '2026-07-01T12:00:00Z' }),
           actionItem({ id: 'ai-2', note_id: 'note-b', text: 'Book the follow-up', due_hint: '', created_at: '2026-07-02T12:00:00Z' }),
           actionItem({ id: 'ai-3', note_id: 'note-b', text: 'Send the recap', status: 'done', due_hint: '', created_at: '2026-07-02T13:00:00Z' }),
-        ])
+        ]
       }
-      throw new Error(`unexpected fetch: ${url}`)
+      return [
+        actionItem({ id: 'ai-1', note_id: 'note-a', text: 'Ship the doc', created_at: '2026-07-01T12:00:00Z' }),
+        actionItem({ id: 'ai-2', note_id: 'note-b', text: 'Book the follow-up', due_hint: '', created_at: '2026-07-02T12:00:00Z' }),
+      ]
     })
   })
 
@@ -123,17 +109,12 @@ describe('ActionItemsScreen', () => {
     renderScreen()
 
     expect(await screen.findByText('Planning review')).toBeInTheDocument()
+    expect(listActionItemsMock).toHaveBeenCalledWith('open')
+
     await user.click(screen.getByRole('button', { name: 'All' }))
 
     await waitFor(() => {
-      expect(fetchMock).toHaveBeenCalledWith(
-        'http://muesli.local/api/action-items?status=all',
-        expect.objectContaining({
-          headers: expect.objectContaining({
-            Authorization: 'Bearer token-123',
-          }),
-        }),
-      )
+      expect(listActionItemsMock).toHaveBeenLastCalledWith('all')
     })
     expect(await screen.findByText('Send the recap')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'true')
