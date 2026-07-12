@@ -212,19 +212,31 @@ func (s *Store) UpdatePerson(ctx context.Context, ownerID, id string, displayNam
 		}
 	}
 
+	updateQuery := `UPDATE people
+		SET display_name = COALESCE($3, display_name),
+		    updated_at = now()
+		WHERE id=$1 AND owner_id=$2
+		RETURNING id, owner_id, primary_email, display_name, company_id, first_seen_at, updated_at`
+	updateArgs := []any{id, ownerID, displayName}
+	if clearCompany {
+		updateQuery = `UPDATE people
+			SET display_name = COALESCE($3, display_name),
+			    company_id = NULL,
+			    updated_at = now()
+			WHERE id=$1 AND owner_id=$2
+			RETURNING id, owner_id, primary_email, display_name, company_id, first_seen_at, updated_at`
+	} else if companyID != nil {
+		updateQuery = `UPDATE people
+			SET display_name = COALESCE($3, display_name),
+			    company_id = $4::uuid,
+			    updated_at = now()
+			WHERE id=$1 AND owner_id=$2
+			RETURNING id, owner_id, primary_email, display_name, company_id, first_seen_at, updated_at`
+		updateArgs = append(updateArgs, *companyID)
+	}
+
 	var person model.Person
-	err := s.pool.QueryRow(ctx,
-		`UPDATE people
-		 SET display_name = COALESCE($3, display_name),
-		     company_id = CASE
-		       WHEN $5 THEN NULL
-		       WHEN $4 IS NOT NULL THEN $4::uuid
-		       ELSE company_id
-		     END,
-		     updated_at = now()
-		 WHERE id=$1 AND owner_id=$2
-		 RETURNING id, owner_id, primary_email, display_name, company_id, first_seen_at, updated_at`,
-		id, ownerID, displayName, companyID, clearCompany).
+	err := s.pool.QueryRow(ctx, updateQuery, updateArgs...).
 		Scan(&person.ID, &person.OwnerID, &person.PrimaryEmail, &person.DisplayName, &person.CompanyID, &person.FirstSeenAt, &person.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return model.Person{}, ErrNotFound
