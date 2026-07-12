@@ -144,8 +144,18 @@ func TestFindNoteByTitleCI(t *testing.T) {
 		t.Fatalf("found %+v, want %+v", got, unique)
 	}
 
-	ambig1, err := st.CreateNote(ctx, owner.ID, "Ambiguous")
+	trashed, err := st.CreateNote(ctx, owner.ID, "Trashed Title")
 	if err != nil {
+		t.Fatalf("create trashed: %v", err)
+	}
+	if err := st.DeleteNote(ctx, owner.ID, trashed.ID); err != nil {
+		t.Fatalf("trash note: %v", err)
+	}
+	if _, err := st.FindNoteByTitleCI(ctx, owner.ID, "trashed title"); err != store.ErrNotFound {
+		t.Fatalf("trashed lookup err = %v, want ErrNotFound", err)
+	}
+
+	if _, err := st.CreateNote(ctx, owner.ID, "Ambiguous"); err != nil {
 		t.Fatalf("create ambig1: %v", err)
 	}
 	if _, err := st.CreateNote(ctx, owner.ID, "ambiguous"); err != nil {
@@ -153,13 +163,6 @@ func TestFindNoteByTitleCI(t *testing.T) {
 	}
 	if _, err := st.FindNoteByTitleCI(ctx, owner.ID, "AMBIGUOUS"); err != store.ErrNotFound {
 		t.Fatalf("ambiguous lookup err = %v, want ErrNotFound", err)
-	}
-
-	if err := st.DeleteNote(ctx, owner.ID, ambig1.ID); err != nil {
-		t.Fatalf("trash ambig1: %v", err)
-	}
-	if _, err := st.FindNoteByTitleCI(ctx, owner.ID, "Ambiguous"); err != store.ErrNotFound {
-		t.Fatalf("trashed lookup err = %v, want ErrNotFound", err)
 	}
 
 	if _, err := st.FindNoteByTitleCI(ctx, owner.ID, "missing"); err != store.ErrNotFound {
