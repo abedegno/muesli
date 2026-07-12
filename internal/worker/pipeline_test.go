@@ -120,6 +120,26 @@ func drain(t *testing.T, proc *worker.Processor, st *store.Store) {
 	t.Fatal("drain did not terminate")
 }
 
+func seedProvisionalTranscript(t *testing.T, st *store.Store, noteID string) {
+	t.Helper()
+	ctx := context.Background()
+	if err := st.AppendProvisionalTranscriptSegment(ctx, noteID, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "live-stub",
+		Model:             "stream",
+	}, model.Segment{
+		StartMS: 0,
+		EndMS:   1000,
+		Text:    "provisional segment",
+		Source:  "mic",
+	}); err != nil {
+		t.Fatalf("AppendProvisionalTranscriptSegment: %v", err)
+	}
+	if err := st.SetNotePartialTranscript(ctx, noteID, true); err != nil {
+		t.Fatalf("SetNotePartialTranscript: %v", err)
+	}
+}
+
 func TestPipelineHappyPath(t *testing.T) {
 	proc, st, noteID, _, _ := pipelineFixture(t, "keep")
 	drain(t, proc, st)
@@ -128,6 +148,9 @@ func TestPipelineHappyPath(t *testing.T) {
 	n, _ := st.GetNoteByID(ctx, noteID)
 	if n.Status != model.NoteReady {
 		t.Fatalf("note status = %q, want ready", n.Status)
+	}
+	if n.PartialTranscript {
+		t.Fatal("partial_transcript should be false after successful batch transcription")
 	}
 	tr, err := st.GetTranscript(ctx, noteID)
 	if err != nil || len(tr.Segments) != 2 {
@@ -148,6 +171,35 @@ func TestPipelineHappyPath(t *testing.T) {
 	// Audio kept.
 	if n.RetentionState == "discarded" {
 		t.Fatal("retention=keep should not discard audio")
+	}
+}
+
+func TestPipelineReplacesProvisionalTranscriptAndClearsFlag(t *testing.T) {
+	proc, st, noteID, _, _ := pipelineFixture(t, "keep")
+	seedProvisionalTranscript(t, st, noteID)
+	drain(t, proc, st)
+	ctx := context.Background()
+
+	n, err := st.GetNoteByID(ctx, noteID)
+	if err != nil {
+		t.Fatalf("GetNoteByID: %v", err)
+	}
+	if n.PartialTranscript {
+		t.Fatal("partial_transcript should be false after successful batch transcription")
+	}
+
+	tr, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("GetTranscript: %v", err)
+	}
+	if len(tr.Segments) != 2 {
+		t.Fatalf("segments = %d, want 2 batch segments", len(tr.Segments))
+	}
+	if got, want := tr.Segments[0].Text, "Welcome everyone."; got != want {
+		t.Fatalf("segment[0].Text = %q, want %q", got, want)
+	}
+	if got, want := tr.Segments[1].Text, "Let's begin."; got != want {
+		t.Fatalf("segment[1].Text = %q, want %q", got, want)
 	}
 }
 
@@ -513,6 +565,37 @@ func TestPipelineTranscribeTerminalFailureMarksNoteFailed(t *testing.T) {
 	n, _ := st.GetNoteByID(ctx, noteID)
 	if n.Status != model.NoteFailed {
 		t.Fatalf("note status = %q, want failed", n.Status)
+	}
+}
+
+func TestPipelineTranscribeFailureLeavesProvisionalTranscriptIntact(t *testing.T) {
+	proc, st, noteID, tr, _ := pipelineFixture(t, "keep")
+	seedProvisionalTranscript(t, st, noteID)
+	tr.FailNext(999)
+
+	drain(t, proc, st)
+	ctx := context.Background()
+
+	n, err := st.GetNoteByID(ctx, noteID)
+	if err != nil {
+		t.Fatalf("GetNoteByID: %v", err)
+	}
+	if n.Status != model.NoteFailed {
+		t.Fatalf("note status = %q, want failed", n.Status)
+	}
+	if !n.PartialTranscript {
+		t.Fatal("partial_transcript should remain true after terminal transcribe failure")
+	}
+
+	trx, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("GetTranscript: %v", err)
+	}
+	if len(trx.Segments) != 1 {
+		t.Fatalf("segments = %d, want 1 provisional segment", len(trx.Segments))
+	}
+	if got, want := trx.Segments[0].Text, "provisional segment"; got != want {
+		t.Fatalf("segment[0].Text = %q, want %q", got, want)
 	}
 }
 

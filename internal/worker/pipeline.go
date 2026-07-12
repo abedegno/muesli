@@ -239,6 +239,10 @@ func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, err
 		return false, fmt.Errorf("partial transcript: %s", resp.PartialReason)
 	}
 
+	if err := p.store.SetNotePartialTranscript(ctx, job.NoteID, false); err != nil {
+		slog.WarnContext(ctx, "failed to clear partial transcript flag", "error", err, "job_id", job.ID, "job_type", job.Type, "note_id", job.NoteID)
+	}
+
 	// Retention: discard the audio object if configured.
 	if p.cfg.AudioRetention == "discard" {
 		if derr := p.storage.Delete(audioKey); derr != nil {
