@@ -178,7 +178,7 @@ func TestStreamingE2E_LiveSegmentsAndBatchFinalize(t *testing.T) {
 			EndMS:       2500,
 		},
 		{
-			AfterFrames: 0,
+			AfterFrames: 1,
 			Text:        "and again",
 			StartMS:     2500,
 			EndMS:       4000,
