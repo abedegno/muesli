@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import JSZip from 'jszip'
 import { fullNoteToMarkdown } from '../renderer/lib/noteMarkdown'
-import type { AudioUrlGrant, CalendarEvent, CompanyWithCount, Conversation, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, Message, MicrosoftOAuthStatus, Note, PersonWithCompany, PluginStatus, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, ServerConfig, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection } from '../shared/types'
+import type { AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, Message, MicrosoftOAuthStatus, Note, PersonWithCompany, PluginStatus, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, ServerConfig, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection } from '../shared/types'
 import type { ConnectRequest, CreateConversationRequest, CreateConversationResponse, DiarizationReviewUpdate, SearchOptions, SendMessageRequest, SendMessageResponse, UploadAudioRequest } from '../shared/ipc'
 import { INSECURE_CONNECTION_CODE, isInsecureRemote } from '../shared/url'
 import type { UploadProgress } from './uploadMachine'
@@ -24,6 +24,9 @@ interface Handlers {
   listNotes(folderId?: string): Promise<Note[]>
   listPeople(): Promise<PersonWithCompany[]>
   listCompanies(): Promise<CompanyWithCount[]>
+  getPerson(id: string): Promise<PersonWithCompany>
+  getPersonNotes(id: string): Promise<Note[]>
+  getCompany(id: string): Promise<CompanyWithPeople>
   getFull(id: string): Promise<FullNote>
   createNote(title: string): Promise<Note>
   updateBody(id: string, content: string): Promise<void>
@@ -161,6 +164,18 @@ export function createHandlers(deps: HandlerDeps): Handlers {
 
     async listCompanies() {
       return authedClient().listCompanies()
+    },
+
+    async getPerson(id) {
+      return authedClient().getPerson(id)
+    },
+
+    async getPersonNotes(id) {
+      return authedClient().getPersonNotes(id)
+    },
+
+    async getCompany(id) {
+      return authedClient().getCompany(id)
     },
 
     async getCalendarEvents(from, to) {

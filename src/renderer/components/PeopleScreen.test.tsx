@@ -5,9 +5,14 @@ import userEvent from '@testing-library/user-event'
 import { PeopleScreen } from './PeopleScreen'
 import type { CompanyWithCount, PersonWithCompany } from '../../shared/types'
 
-const { listPeopleMock, listCompaniesMock } = vi.hoisted(() => ({
+const { listPeopleMock, listCompaniesMock, navigateMock } = vi.hoisted(() => ({
   listPeopleMock: vi.fn(),
   listCompaniesMock: vi.fn(),
+  navigateMock: vi.fn(),
+}))
+
+vi.mock('react-router-dom', () => ({
+  useNavigate: () => navigateMock,
 }))
 
 vi.mock('@/api', () => ({
@@ -22,6 +27,7 @@ afterEach(cleanup)
 beforeEach(() => {
   listPeopleMock.mockReset()
   listCompaniesMock.mockReset()
+  navigateMock.mockReset()
 })
 
 const person = (over: Partial<PersonWithCompany> = {}): PersonWithCompany => ({
@@ -62,6 +68,9 @@ describe('PeopleScreen', () => {
     expect(await screen.findByText('Alex Doe')).toBeInTheDocument()
     expect(screen.getByText('alex@example.com')).toBeInTheDocument()
     expect(screen.getByText('Example Inc')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /alex doe/i }))
+    expect(navigateMock).toHaveBeenCalledWith('/people/p1')
   })
 
   it('switches to the Companies tab and renders domain, name, and people_count', async () => {
@@ -77,6 +86,9 @@ describe('PeopleScreen', () => {
     expect(await screen.findByText('Example Inc')).toBeInTheDocument()
     expect(screen.getByText('example.com')).toBeInTheDocument()
     expect(screen.getByText('3')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /example inc/i }))
+    expect(navigateMock).toHaveBeenCalledWith('/companies/c1')
   })
 
   it('shows the empty state when there are no people yet', async () => {

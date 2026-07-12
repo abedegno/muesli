@@ -299,3 +299,7 @@ export interface PersonWithCompany extends Person {
 export interface CompanyWithCount extends Company {
   people_count: number
 }
+
+export interface CompanyWithPeople extends Company {
+  people: Person[]
+}
