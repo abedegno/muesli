@@ -34,6 +34,19 @@ export interface Note {
   event_id?: string
 }
 
+export interface NoteLink {
+  id: string
+  owner_id: string
+  from_note_id: string
+  to_note_id: string
+  created_at: string
+}
+
+export interface NoteLinksResponse {
+  outgoing: NoteLink[]
+  backlinks: NoteLink[]
+}
+
 export interface UploadGrant {
   url: string
   method: 'PUT'

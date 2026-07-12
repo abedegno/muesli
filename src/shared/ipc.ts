@@ -1,4 +1,4 @@
-import type { ActionItem, ActionItemStatus, CalendarEvent, ChatSource, CompanyWithCount, CompanyWithPeople, Conversation, Decision, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, Message, MicrosoftOAuthStatus, Note, PersonWithCompany, PluginStatus, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, ServerConfig, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection, AudioUrlGrant } from './types'
+import type { ActionItem, ActionItemStatus, AudioUrlGrant, CalendarEvent, ChatSource, CompanyWithCount, CompanyWithPeople, Conversation, Decision, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, Message, MicrosoftOAuthStatus, Note, NoteLinksResponse, PersonWithCompany, PluginStatus, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, ServerConfig, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection } from './types'
 import type { UploadProgress } from '../main/uploadMachine'
 
 export const IPC = {
@@ -9,6 +9,7 @@ export const IPC = {
   listPeople: 'muesli:listPeople',
   listCompanies: 'muesli:listCompanies',
   listNoteActionItems: 'muesli:listNoteActionItems',
+  listNoteLinks: 'muesli:listNoteLinks',
   listActionItems: 'muesli:listActionItems',
   getPerson: 'muesli:getPerson',
   getPersonNotes: 'muesli:getPersonNotes',
@@ -200,6 +201,7 @@ export interface MuesliBridge {
   listPeople(): Promise<PersonWithCompany[]>
   listCompanies(): Promise<CompanyWithCount[]>
   listNoteActionItems(noteId: string): Promise<ListNoteActionItemsResponse>
+  listNoteLinks(id: string): Promise<NoteLinksResponse>
   listActionItems(status?: string): Promise<ActionItem[]>
   getPerson(id: string): Promise<PersonWithCompany>
   getPersonNotes(id: string): Promise<Note[]>
