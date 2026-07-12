@@ -9,6 +9,7 @@ export const IPC = {
   listPeople: 'muesli:listPeople',
   listCompanies: 'muesli:listCompanies',
   listNoteActionItems: 'muesli:listNoteActionItems',
+  listActionItems: 'muesli:listActionItems',
   getPerson: 'muesli:getPerson',
   getPersonNotes: 'muesli:getPersonNotes',
   updatePerson: 'muesli:updatePerson',
@@ -199,6 +200,7 @@ export interface MuesliBridge {
   listPeople(): Promise<PersonWithCompany[]>
   listCompanies(): Promise<CompanyWithCount[]>
   listNoteActionItems(noteId: string): Promise<ListNoteActionItemsResponse>
+  listActionItems(status?: string): Promise<ActionItem[]>
   getPerson(id: string): Promise<PersonWithCompany>
   getPersonNotes(id: string): Promise<Note[]>
   updatePerson(id: string, req: UpdatePersonRequest): Promise<PersonWithCompany>

@@ -218,6 +218,37 @@ describe('ipc handlers', () => {
     ])
   })
 
+  it('listActionItems calls the cross-note action-item list endpoint', async () => {
+    const seen: string[] = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      const parsed = new URL(String(url))
+      seen.push(`${init?.method ?? 'GET'} ${parsed.pathname}${parsed.search}`)
+      if (parsed.pathname === '/api/action-items' && parsed.search === '?status=all') {
+        return new Response(JSON.stringify([
+          {
+            id: 'ai-1',
+            note_id: 'n1',
+            owner_id: 'owner-1',
+            text: 'Ship the launch notes',
+            owner_person_id: null,
+            status: 'done',
+            due_hint: 'Tomorrow',
+            created_at: '2026-07-11T00:00:00Z',
+          },
+        ]), { status: 200 })
+      }
+      return new Response('unexpected', { status: 500 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const h = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+
+    const listed = await h.listActionItems('all')
+    expect(listed).toHaveLength(1)
+    expect(listed[0]).toMatchObject({ id: 'ai-1', status: 'done' })
+    expect(seen).toEqual(['GET /api/action-items?status=all'])
+  })
+
   it('updateFolder returns the updated folder body', async () => {
     const seen: string[] = []
     const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
