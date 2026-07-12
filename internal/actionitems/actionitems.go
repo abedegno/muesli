@@ -160,7 +160,7 @@ func parseBulletResponse(raw string) Result {
 }
 
 func stripBulletPrefix(line string) string {
-	for _, prefix := range []string{"- ", "* ", "• "} {
+	for _, prefix := range []string{"- ", "* ", "\u2022 "} {
 		if strings.HasPrefix(line, prefix) {
 			return strings.TrimSpace(line[len(prefix):])
 		}

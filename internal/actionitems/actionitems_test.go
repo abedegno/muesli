@@ -64,6 +64,14 @@ func TestParseResponse(t *testing.T) {
 				Decisions:   []Decision{},
 			},
 		},
+		{
+			name: "blank",
+			raw:  "",
+			want: Result{
+				ActionItems: []ActionItem{},
+				Decisions:   []Decision{},
+			},
+		},
 	}
 
 	for _, tt := range tests {
