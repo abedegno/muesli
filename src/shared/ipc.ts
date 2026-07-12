@@ -1,4 +1,4 @@
-import type { AudioUrlGrant, CalendarEvent, ChatSource, CompanyWithCount, Conversation, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, Message, MicrosoftOAuthStatus, Note, PersonWithCompany, PluginStatus, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, ServerConfig, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection } from './types'
+import type { AudioUrlGrant, CalendarEvent, ChatSource, CompanyWithCount, CompanyWithPeople, Conversation, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, Message, MicrosoftOAuthStatus, Note, PersonWithCompany, PluginStatus, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, ServerConfig, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection } from './types'
 import type { UploadProgress } from '../main/uploadMachine'
 
 export const IPC = {
@@ -8,6 +8,9 @@ export const IPC = {
   listNotes: 'muesli:listNotes',
   listPeople: 'muesli:listPeople',
   listCompanies: 'muesli:listCompanies',
+  getPerson: 'muesli:getPerson',
+  getPersonNotes: 'muesli:getPersonNotes',
+  getCompany: 'muesli:getCompany',
   getFull: 'muesli:getFull',
   createNote: 'muesli:createNote',
   updateBody: 'muesli:updateBody',
@@ -153,6 +156,9 @@ export interface MuesliBridge {
   listNotes(folderId?: string): Promise<Note[]>
   listPeople(): Promise<PersonWithCompany[]>
   listCompanies(): Promise<CompanyWithCount[]>
+  getPerson(id: string): Promise<PersonWithCompany>
+  getPersonNotes(id: string): Promise<Note[]>
+  getCompany(id: string): Promise<CompanyWithPeople>
   getFull(id: string): Promise<FullNote>
   createNote(title: string): Promise<Note>
   updateBody(id: string, content: string): Promise<void>

@@ -1,4 +1,4 @@
-import type { AudioUrlGrant, CalendarEvent, CompanyWithCount, Conversation, DiarizationReview, FullNote, Folder, GoogleOAuthStatus, Message, MicrosoftOAuthStatus, Note, PersonWithCompany, PluginStatus, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection, UploadGrant } from '../shared/types'
+import type { AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, DiarizationReview, FullNote, Folder, GoogleOAuthStatus, Message, MicrosoftOAuthStatus, Note, PersonWithCompany, PluginStatus, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection, UploadGrant } from '../shared/types'
 import type { CreateConversationRequest, CreateConversationResponse, SearchOptions, SendMessageRequest, SendMessageResponse } from '../shared/ipc'
 import { buildNoteExportRequest, parseContentDispositionFilename } from '../shared/export'
 import { buildCalendarEventsPath } from '../shared/calendar'
@@ -78,6 +78,18 @@ export class MuesliClient {
 
   async listCompanies(): Promise<CompanyWithCount[]> {
     return this.json<CompanyWithCount[]>('GET', '/api/companies')
+  }
+
+  async getPerson(id: string): Promise<PersonWithCompany> {
+    return this.json<PersonWithCompany>('GET', `/api/people/${id}`)
+  }
+
+  async getPersonNotes(id: string): Promise<Note[]> {
+    return this.json<Note[]>('GET', `/api/people/${id}/notes`)
+  }
+
+  async getCompany(id: string): Promise<CompanyWithPeople> {
+    return this.json<CompanyWithPeople>('GET', `/api/companies/${id}`)
   }
 
   // --- Calendar (CALUI01) ---
