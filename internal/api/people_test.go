@@ -198,3 +198,120 @@ func TestPeopleGetPersonRejectsMalformedID(t *testing.T) {
 		t.Fatalf("bad id status %d, want 400; body %s", rec.Code, rec.Body)
 	}
 }
+
+func TestCompaniesListOwnerScopingAndPeopleCount(t *testing.T) {
+	t.Parallel()
+	srv, st := newPeopleTestServer(t)
+	ownerID, ownerHdr := peopleAuthHeader(t, st, "companies-owner@example.com")
+	otherID, _ := peopleAuthHeader(t, st, "companies-other@example.com")
+
+	_, err := st.UpsertCompany(context.Background(), ownerID, "zero.example", "Zero")
+	if err != nil {
+		t.Fatalf("upsert empty company: %v", err)
+	}
+	oneCompany, err := st.UpsertCompany(context.Background(), ownerID, "one.example", "One")
+	if err != nil {
+		t.Fatalf("upsert one company: %v", err)
+	}
+	twoCompany, err := st.UpsertCompany(context.Background(), ownerID, "two.example", "Two")
+	if err != nil {
+		t.Fatalf("upsert two company: %v", err)
+	}
+	if _, err := st.UpsertPerson(context.Background(), ownerID, "alice@example.com", "Alice", &oneCompany.ID); err != nil {
+		t.Fatalf("upsert one person: %v", err)
+	}
+	if _, err := st.UpsertPerson(context.Background(), ownerID, "bob@example.com", "Bob", &twoCompany.ID); err != nil {
+		t.Fatalf("upsert two person 1: %v", err)
+	}
+	if _, err := st.UpsertPerson(context.Background(), ownerID, "bobby@example.com", "Bobby", &twoCompany.ID); err != nil {
+		t.Fatalf("upsert two person 2: %v", err)
+	}
+	otherCompany, err := st.UpsertCompany(context.Background(), otherID, "other.example", "Other")
+	if err != nil {
+		t.Fatalf("upsert other company: %v", err)
+	}
+	if _, err := st.UpsertPerson(context.Background(), otherID, "outside@example.com", "Outside", &otherCompany.ID); err != nil {
+		t.Fatalf("upsert other person's person: %v", err)
+	}
+
+	rec := doJSON(t, srv, http.MethodGet, "/api/companies", nil, ownerHdr)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("list companies status %d body %s", rec.Code, rec.Body)
+	}
+	var listed []struct {
+		model.Company
+		PeopleCount int64 `json:"people_count"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&listed); err != nil {
+		t.Fatalf("decode companies response: %v", err)
+	}
+	if len(listed) != 3 {
+		t.Fatalf("expected 3 companies, got %d: %+v", len(listed), listed)
+	}
+	if listed[0].Domain != "one.example" || listed[0].PeopleCount != 1 {
+		t.Fatalf("unexpected first company: %+v", listed[0])
+	}
+	if listed[1].Domain != "two.example" || listed[1].PeopleCount != 2 {
+		t.Fatalf("unexpected second company: %+v", listed[1])
+	}
+	if listed[2].Domain != "zero.example" || listed[2].PeopleCount != 0 {
+		t.Fatalf("unexpected third company: %+v", listed[2])
+	}
+	for _, company := range listed {
+		if company.OwnerID != ownerID {
+			t.Fatalf("found company for wrong owner: %+v", company.Company)
+		}
+	}
+
+	if rec = doJSON(t, srv, http.MethodGet, "/api/companies/"+twoCompany.ID, nil, ownerHdr); rec.Code != http.StatusOK {
+		t.Fatalf("get company status %d body %s", rec.Code, rec.Body)
+	}
+	var got struct {
+		model.Company
+		People []model.Person `json:"people"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&got); err != nil {
+		t.Fatalf("decode company response: %v", err)
+	}
+	if got.ID != twoCompany.ID || got.OwnerID != ownerID {
+		t.Fatalf("unexpected company payload: %+v", got.Company)
+	}
+	if len(got.People) != 2 {
+		t.Fatalf("expected 2 people, got %d: %+v", len(got.People), got.People)
+	}
+	if got.People[0].DisplayName != "Bob" || got.People[1].DisplayName != "Bobby" {
+		t.Fatalf("unexpected people ordering: %+v", got.People)
+	}
+	for _, person := range got.People {
+		if person.CompanyID == nil || *person.CompanyID != twoCompany.ID {
+			t.Fatalf("unexpected person company: %+v", person)
+		}
+	}
+}
+
+func TestCompaniesGetOwnerScopingAndValidation(t *testing.T) {
+	t.Parallel()
+	srv, st := newPeopleTestServer(t)
+	ownerID, ownerHdr := peopleAuthHeader(t, st, "companies-get-owner@example.com")
+	_, otherHdr := peopleAuthHeader(t, st, "companies-get-other@example.com")
+
+	company, err := st.UpsertCompany(context.Background(), ownerID, "example.com", "Example")
+	if err != nil {
+		t.Fatalf("upsert company: %v", err)
+	}
+
+	rec := doJSON(t, srv, http.MethodGet, "/api/companies/"+company.ID, nil, otherHdr)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-owner get status %d, want 404; body %s", rec.Code, rec.Body)
+	}
+
+	rec = doJSON(t, srv, http.MethodGet, "/api/companies/00000000-0000-0000-0000-000000000000", nil, ownerHdr)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing company status %d, want 404; body %s", rec.Code, rec.Body)
+	}
+
+	rec = doJSON(t, srv, http.MethodGet, "/api/companies/not-a-uuid", nil, ownerHdr)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("bad id status %d, want 400; body %s", rec.Code, rec.Body)
+	}
+}
