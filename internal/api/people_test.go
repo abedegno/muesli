@@ -6,6 +6,7 @@ package api_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"testing"
 	"time"
@@ -198,6 +199,208 @@ func TestPeopleGetPersonRejectsMalformedID(t *testing.T) {
 	rec := doJSON(t, srv, http.MethodGet, "/api/people/not-a-uuid", nil, ownerHdr)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad id status %d, want 400; body %s", rec.Code, rec.Body)
+	}
+}
+
+func TestPeopleUpdatePersonPatchAndClearCompany(t *testing.T) {
+	t.Parallel()
+	srv, st := newPeopleTestServer(t)
+	ownerID, ownerHdr := peopleAuthHeader(t, st, "people-update-owner@example.com")
+	_, otherHdr := peopleAuthHeader(t, st, "people-update-other@example.com")
+	otherOwnerID, _ := peopleAuthHeader(t, st, "people-update-company-owner@example.com")
+
+	companyOne, err := st.UpsertCompany(context.Background(), ownerID, "one.example", "One")
+	if err != nil {
+		t.Fatalf("upsert company one: %v", err)
+	}
+	companyTwo, err := st.UpsertCompany(context.Background(), ownerID, "two.example", "Two")
+	if err != nil {
+		t.Fatalf("upsert company two: %v", err)
+	}
+	otherCompany, err := st.UpsertCompany(context.Background(), otherOwnerID, "other.example", "Other")
+	if err != nil {
+		t.Fatalf("upsert other company: %v", err)
+	}
+	person, err := st.UpsertPerson(context.Background(), ownerID, "person@example.com", "Original", &companyOne.ID)
+	if err != nil {
+		t.Fatalf("upsert person: %v", err)
+	}
+
+	rec := doJSON(t, srv, http.MethodPatch, "/api/people/"+person.ID, map[string]any{"display_name": "Renamed"}, ownerHdr)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch name status %d body %s", rec.Code, rec.Body)
+	}
+	var out struct {
+		model.Person
+		Company *model.Company `json:"company,omitempty"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatalf("decode patch response: %v", err)
+	}
+	if out.DisplayName != "Renamed" {
+		t.Fatalf("expected renamed person, got %+v", out.Person)
+	}
+	if out.Company == nil || out.Company.ID != companyOne.ID {
+		t.Fatalf("name-only patch should keep company, got %+v", out.Company)
+	}
+
+	rec = doJSON(t, srv, http.MethodPatch, "/api/people/"+person.ID, map[string]any{"company_id": companyTwo.ID}, ownerHdr)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("patch company status %d body %s", rec.Code, rec.Body)
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatalf("decode company patch response: %v", err)
+	}
+	if out.DisplayName != "Renamed" {
+		t.Fatalf("company-only patch should keep name, got %+v", out.Person)
+	}
+	if out.Company == nil || out.Company.ID != companyTwo.ID {
+		t.Fatalf("expected reassigned company, got %+v", out.Company)
+	}
+
+	rec = doJSON(t, srv, http.MethodPatch, "/api/people/"+person.ID, map[string]any{"company_id": nil}, ownerHdr)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("clear company status %d body %s", rec.Code, rec.Body)
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatalf("decode clear patch response: %v", err)
+	}
+	if out.Company != nil {
+		t.Fatalf("company_id null should clear company, got %+v", out.Company)
+	}
+
+	rec = doJSON(t, srv, http.MethodPatch, "/api/people/"+person.ID, map[string]any{"company_id": otherCompany.ID}, ownerHdr)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-owner company patch status %d, want 404; body %s", rec.Code, rec.Body)
+	}
+
+	rec = doJSON(t, srv, http.MethodPatch, "/api/people/"+person.ID, map[string]any{"company_id": "00000000-0000-0000-0000-000000000000"}, ownerHdr)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing company patch status %d, want 404; body %s", rec.Code, rec.Body)
+	}
+
+	rec = doJSON(t, srv, http.MethodPatch, "/api/people/"+person.ID, map[string]any{"display_name": "Denied"}, otherHdr)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-owner patch status %d, want 404; body %s", rec.Code, rec.Body)
+	}
+}
+
+func TestPeopleMergePersonRepointsAliasesAndReturnsSurvivor(t *testing.T) {
+	t.Parallel()
+	srv, st := newPeopleTestServer(t)
+	ownerID, ownerHdr := peopleAuthHeader(t, st, "people-merge-owner@example.com")
+	_, otherHdr := peopleAuthHeader(t, st, "people-merge-other@example.com")
+	otherOwnerID, _ := peopleAuthHeader(t, st, "people-merge-target-owner@example.com")
+
+	survivor, err := st.UpsertPerson(context.Background(), ownerID, "survivor@example.com", "Survivor", nil)
+	if err != nil {
+		t.Fatalf("upsert survivor: %v", err)
+	}
+	loser, err := st.UpsertPerson(context.Background(), ownerID, "loser@example.com", "Loser", nil)
+	if err != nil {
+		t.Fatalf("upsert loser: %v", err)
+	}
+	note, err := st.CreateNote(context.Background(), ownerID, "Meeting")
+	if err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	if err := st.UpsertSpeakerAlias(context.Background(), ownerID, note.ID, "SPEAKER_00", "Loser"); err != nil {
+		t.Fatalf("create alias: %v", err)
+	}
+	if err := st.SetSpeakerAliasPerson(context.Background(), ownerID, note.ID, "SPEAKER_00", &loser.ID); err != nil {
+		t.Fatalf("link alias to loser: %v", err)
+	}
+
+	rec := doJSON(t, srv, http.MethodPost, "/api/people/"+loser.ID+"/merge", map[string]any{"into": survivor.ID}, ownerHdr)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("merge status %d body %s", rec.Code, rec.Body)
+	}
+	var out struct {
+		model.Person
+		Company *model.Company `json:"company,omitempty"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&out); err != nil {
+		t.Fatalf("decode merge response: %v", err)
+	}
+	if out.ID != survivor.ID {
+		t.Fatalf("expected survivor response, got %+v", out.Person)
+	}
+
+	aliases, err := st.ListSpeakerAliases(context.Background(), ownerID, note.ID)
+	if err != nil {
+		t.Fatalf("list aliases: %v", err)
+	}
+	if len(aliases) != 1 || aliases[0].PersonID == nil || *aliases[0].PersonID != survivor.ID {
+		t.Fatalf("expected alias repointed to survivor, got %+v", aliases)
+	}
+	if _, err := st.GetPerson(context.Background(), ownerID, loser.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("expected loser person to be deleted, got %v", err)
+	}
+
+	rec = doJSON(t, srv, http.MethodPost, "/api/people/"+survivor.ID+"/merge", map[string]any{"into": survivor.ID}, ownerHdr)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("same-id merge status %d, want 400; body %s", rec.Code, rec.Body)
+	}
+
+	otherPerson, err := st.UpsertPerson(context.Background(), otherOwnerID, "other@example.com", "Other", nil)
+	if err != nil {
+		t.Fatalf("upsert other owner person: %v", err)
+	}
+	rec = doJSON(t, srv, http.MethodPost, "/api/people/"+loser.ID+"/merge", map[string]any{"into": otherPerson.ID}, otherHdr)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-owner merge status %d, want 404; body %s", rec.Code, rec.Body)
+	}
+
+	rec = doJSON(t, srv, http.MethodPost, "/api/people/"+loser.ID+"/merge", map[string]any{"into": otherPerson.ID}, ownerHdr)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-owner target merge status %d, want 404; body %s", rec.Code, rec.Body)
+	}
+}
+
+func TestPeopleDeletePersonUnlinksAliases(t *testing.T) {
+	t.Parallel()
+	srv, st := newPeopleTestServer(t)
+	ownerID, ownerHdr := peopleAuthHeader(t, st, "people-delete-owner@example.com")
+	_, otherHdr := peopleAuthHeader(t, st, "people-delete-other@example.com")
+
+	person, err := st.UpsertPerson(context.Background(), ownerID, "delete@example.com", "Delete", nil)
+	if err != nil {
+		t.Fatalf("upsert person: %v", err)
+	}
+	note, err := st.CreateNote(context.Background(), ownerID, "Meeting")
+	if err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	if err := st.UpsertSpeakerAlias(context.Background(), ownerID, note.ID, "SPEAKER_00", "Delete"); err != nil {
+		t.Fatalf("create alias: %v", err)
+	}
+	if err := st.SetSpeakerAliasPerson(context.Background(), ownerID, note.ID, "SPEAKER_00", &person.ID); err != nil {
+		t.Fatalf("link alias to person: %v", err)
+	}
+
+	rec := doJSON(t, srv, http.MethodDelete, "/api/people/"+person.ID, nil, ownerHdr)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("delete status %d body %s", rec.Code, rec.Body)
+	}
+	if _, err := st.GetPerson(context.Background(), ownerID, person.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("expected person to be deleted, got %v", err)
+	}
+
+	aliases, err := st.ListSpeakerAliases(context.Background(), ownerID, note.ID)
+	if err != nil {
+		t.Fatalf("list aliases: %v", err)
+	}
+	if len(aliases) != 1 || aliases[0].PersonID != nil {
+		t.Fatalf("expected alias person_id to be nulled, got %+v", aliases)
+	}
+
+	if _, err := st.GetNote(context.Background(), ownerID, note.ID); err != nil {
+		t.Fatalf("note should remain: %v", err)
+	}
+
+	rec = doJSON(t, srv, http.MethodDelete, "/api/people/"+person.ID, nil, otherHdr)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-owner delete status %d, want 404; body %s", rec.Code, rec.Body)
 	}
 }
 

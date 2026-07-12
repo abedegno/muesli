@@ -42,6 +42,10 @@ type mergeCompaniesRequest struct {
 	Into string `json:"into"`
 }
 
+type mergePeopleRequest struct {
+	Into string `json:"into"`
+}
+
 // kickPeopleRefresh runs people.DerivePeople in the background, logging and
 // swallowing its error: the HTTP response has already gone out by the time
 // this runs, so there is no one left to report the error to.
@@ -156,6 +160,162 @@ func (s *Server) handleGetPerson(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleUpdatePerson(w http.ResponseWriter, r *http.Request) {
+	uid, _ := userIDFromContext(r.Context())
+	id := chi.URLParam(r, "id")
+	if !validPersonID(w, id) {
+		return
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+
+	var displayName *string
+	var companyID *string
+	clearCompany := false
+
+	if v, ok := raw["display_name"]; ok {
+		if string(v) == "null" {
+			writeError(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+		var s string
+		if err := json.Unmarshal(v, &s); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid body")
+			return
+		}
+		displayName = &s
+	}
+
+	if v, ok := raw["company_id"]; ok {
+		if string(v) == "null" {
+			clearCompany = true
+		} else {
+			var s string
+			if err := json.Unmarshal(v, &s); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid body")
+				return
+			}
+			s = strings.TrimSpace(s)
+			if s == "" {
+				writeError(w, http.StatusBadRequest, "invalid body")
+				return
+			}
+			if _, err := uuid.Parse(s); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid body")
+				return
+			}
+			companyID = &s
+		}
+	}
+
+	person, err := s.deps.Store.UpdatePerson(r.Context(), uid, id, displayName, companyID, clearCompany)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if err != nil {
+		log.Printf("handleUpdatePerson: update person: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	resp := personResponse{Person: person}
+	if person.CompanyID != nil {
+		companies, err := s.deps.Store.ListCompanies(r.Context(), uid)
+		if err != nil {
+			log.Printf("handleUpdatePerson: list companies: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		for _, company := range companies {
+			if company.ID == *person.CompanyID {
+				company := company
+				resp.Company = &company
+				break
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleMergePeople(w http.ResponseWriter, r *http.Request) {
+	uid, _ := userIDFromContext(r.Context())
+	fromID := chi.URLParam(r, "id")
+	if !validPersonID(w, fromID) {
+		return
+	}
+
+	var req mergePeopleRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if strings.TrimSpace(req.Into) == "" {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if _, err := uuid.Parse(req.Into); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if req.Into == fromID {
+		writeError(w, http.StatusBadRequest, "invalid merge")
+		return
+	}
+
+	person, err := s.deps.Store.MergePeople(r.Context(), uid, fromID, req.Into)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if err != nil {
+		log.Printf("handleMergePeople: merge people: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	resp := personResponse{Person: person}
+	if person.CompanyID != nil {
+		companies, err := s.deps.Store.ListCompanies(r.Context(), uid)
+		if err != nil {
+			log.Printf("handleMergePeople: list companies: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		for _, company := range companies {
+			if company.ID == *person.CompanyID {
+				company := company
+				resp.Company = &company
+				break
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) handleDeletePerson(w http.ResponseWriter, r *http.Request) {
+	uid, _ := userIDFromContext(r.Context())
+	id := chi.URLParam(r, "id")
+	if !validPersonID(w, id) {
+		return
+	}
+
+	if err := s.deps.Store.DeletePerson(r.Context(), uid, id); errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if err != nil {
+		log.Printf("handleDeletePerson: delete person: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) handleListPersonNotes(w http.ResponseWriter, r *http.Request) {

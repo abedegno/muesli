@@ -4,13 +4,18 @@ import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { PersonDetailScreen } from './PersonDetailScreen'
-import type { Note, PersonWithCompany } from '../../shared/types'
+import type { CompanyWithCount, Note, PersonWithCompany } from '../../shared/types'
 
-const { getPersonMock, getPersonNotesMock, navigateMock, paramsState } = vi.hoisted(() => ({
+const { deletePersonMock, getPersonMock, getPersonNotesMock, listCompaniesMock, listPeopleMock, mergePeopleMock, navigateMock, paramsState, updatePersonMock } = vi.hoisted(() => ({
+  deletePersonMock: vi.fn(),
   getPersonMock: vi.fn(),
   getPersonNotesMock: vi.fn(),
+  listCompaniesMock: vi.fn(),
+  listPeopleMock: vi.fn(),
+  mergePeopleMock: vi.fn(),
   navigateMock: vi.fn(),
   paramsState: { id: 'p1' as string },
+  updatePersonMock: vi.fn(),
 }))
 
 vi.mock('react-router-dom', () => ({
@@ -23,21 +28,52 @@ vi.mock('react-router-dom', () => ({
 
 vi.mock('@/api', () => ({
   muesli: {
+    deletePerson: (...args: Parameters<typeof deletePersonMock>) => deletePersonMock(...args),
     getPerson: (...args: Parameters<typeof getPersonMock>) => getPersonMock(...args),
     getPersonNotes: (...args: Parameters<typeof getPersonNotesMock>) => getPersonNotesMock(...args),
+    listCompanies: (...args: Parameters<typeof listCompaniesMock>) => listCompaniesMock(...args),
+    listPeople: (...args: Parameters<typeof listPeopleMock>) => listPeopleMock(...args),
+    mergePeople: (...args: Parameters<typeof mergePeopleMock>) => mergePeopleMock(...args),
+    updatePerson: (...args: Parameters<typeof updatePersonMock>) => updatePersonMock(...args),
   },
 }))
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+})
+
+afterEach(() => {
+  vi.restoreAllMocks()
+})
 
 beforeEach(() => {
+  deletePersonMock.mockReset()
   getPersonMock.mockReset()
   getPersonNotesMock.mockReset()
+  listCompaniesMock.mockReset()
+  listPeopleMock.mockReset()
+  mergePeopleMock.mockReset()
   navigateMock.mockReset()
+  updatePersonMock.mockReset()
   paramsState.id = 'p1'
 })
 
-const person = (over: Partial<PersonWithCompany> = {}): PersonWithCompany => ({
+const company = (over: Partial<CompanyWithCount> = {}): CompanyWithCount => ({
+  id: 'c1',
+  owner_id: 'owner-1',
+  domain: 'example.com',
+  name: 'Example Inc',
+  created_at: '2026-07-01T00:00:00Z',
+  updated_at: '2026-07-02T00:00:00Z',
+  people_count: 3,
+  ...over,
+})
+
+type PersonFixture = Omit<Partial<PersonWithCompany>, 'company'> & { company?: PersonWithCompany['company'] | null }
+
+const person = (
+  over: PersonFixture = {},
+): PersonWithCompany => ({
   id: 'p1',
   primary_email: 'alex@example.com',
   display_name: 'Alex Doe',
@@ -52,7 +88,7 @@ const person = (over: Partial<PersonWithCompany> = {}): PersonWithCompany => ({
     updated_at: '2026-07-02T00:00:00Z',
   },
   ...over,
-})
+}) as PersonWithCompany
 
 const note = (over: Partial<Note> = {}): Note => ({
   id: 'n1',
@@ -64,12 +100,15 @@ const note = (over: Partial<Note> = {}): Note => ({
   started_at: '2026-07-01T00:00:00Z',
   ...over,
 })
+
 const noteDate = new Date('2026-07-01T00:00:00Z').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 
 describe('PersonDetailScreen', () => {
   it('renders the person details and notes', async () => {
     getPersonMock.mockResolvedValue(person())
     getPersonNotesMock.mockResolvedValue([note()])
+    listCompaniesMock.mockResolvedValue([company()])
+    listPeopleMock.mockResolvedValue([person(), person({ id: 'p2', display_name: 'Other Person', primary_email: 'other@example.com' })])
 
     render(<PersonDetailScreen />)
 
@@ -82,22 +121,99 @@ describe('PersonDetailScreen', () => {
     expect(navigateMock).toHaveBeenCalledWith('/people')
   })
 
-  it('shows the empty state when there are no notes', async () => {
+  it('submits edits and updates the displayed name and company', async () => {
     getPersonMock.mockResolvedValue(person())
     getPersonNotesMock.mockResolvedValue([])
+    listCompaniesMock.mockResolvedValue([
+      company(),
+      company({ id: 'c2', domain: 'acme.com', name: 'Acme Co', people_count: 1 }),
+    ])
+    listPeopleMock.mockResolvedValue([
+      person(),
+      person({ id: 'p2', display_name: 'Other Person', primary_email: 'other@example.com', company: null }),
+    ])
+    updatePersonMock.mockResolvedValue(person({
+      display_name: 'Alex Renamed',
+      company: {
+        id: 'c2',
+        owner_id: 'owner-1',
+        domain: 'acme.com',
+        name: 'Acme Co',
+        created_at: '2026-07-01T00:00:00Z',
+        updated_at: '2026-07-02T00:00:00Z',
+      },
+    }))
 
+    const user = userEvent.setup()
     render(<PersonDetailScreen />)
 
-    expect(await screen.findByText('No notes yet')).toBeInTheDocument()
+    expect(await screen.findByText('Alex Doe')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /edit/i }))
+
+    await user.clear(screen.getByLabelText('Display name'))
+    await user.type(screen.getByLabelText('Display name'), 'Alex Renamed')
+    await user.selectOptions(screen.getByLabelText('Company'), 'c2')
+    await user.click(screen.getByRole('button', { name: /save changes/i }))
+
+    expect(updatePersonMock).toHaveBeenCalledWith('p1', { displayName: 'Alex Renamed', companyId: 'c2' })
+    expect(await screen.findByText('Alex Renamed')).toBeInTheDocument()
+    expect(screen.getByText('Acme Co')).toBeInTheDocument()
   })
 
-  it('shows an error block when loading fails', async () => {
+  it('merges into the selected person and navigates to the survivor', async () => {
     getPersonMock.mockResolvedValue(person())
-    getPersonNotesMock.mockRejectedValue(new Error('notes offline'))
+    getPersonNotesMock.mockResolvedValue([])
+    listCompaniesMock.mockResolvedValue([company()])
+    listPeopleMock.mockResolvedValue([
+      person(),
+      person({ id: 'p2', display_name: 'Merge Target', primary_email: 'merge@example.com', company: null }),
+      person({ id: 'p3', display_name: 'Another Target', primary_email: 'other@example.com', company: null }),
+    ])
+    mergePeopleMock.mockResolvedValue(person({ id: 'p2', display_name: 'Merge Target', primary_email: 'merge@example.com', company: null }))
 
+    const user = userEvent.setup()
     render(<PersonDetailScreen />)
 
-    expect(await screen.findByText(/could not load person/i)).toBeInTheDocument()
-    expect(screen.getByText('notes offline')).toBeInTheDocument()
+    expect(await screen.findByText('Alex Doe')).toBeInTheDocument()
+    await user.selectOptions(screen.getByLabelText('Merge into'), 'p3')
+    await user.click(screen.getByRole('button', { name: /^merge$/i }))
+
+    expect(mergePeopleMock).toHaveBeenCalledWith('p1', 'p3')
+    expect(navigateMock).toHaveBeenCalledWith('/people/p2')
+  })
+
+  it('blocks delete when confirmation is rejected', async () => {
+    getPersonMock.mockResolvedValue(person())
+    getPersonNotesMock.mockResolvedValue([])
+    listCompaniesMock.mockResolvedValue([company()])
+    listPeopleMock.mockResolvedValue([person(), person({ id: 'p2', display_name: 'Other Person', primary_email: 'other@example.com', company: null })])
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+    const user = userEvent.setup()
+    render(<PersonDetailScreen />)
+
+    expect(await screen.findByText('Alex Doe')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /^delete$/i }))
+
+    expect(deletePersonMock).not.toHaveBeenCalled()
+    expect(navigateMock).not.toHaveBeenCalled()
+  })
+
+  it('deletes the person after confirmation and navigates back to people', async () => {
+    getPersonMock.mockResolvedValue(person())
+    getPersonNotesMock.mockResolvedValue([])
+    listCompaniesMock.mockResolvedValue([company()])
+    listPeopleMock.mockResolvedValue([person(), person({ id: 'p2', display_name: 'Other Person', primary_email: 'other@example.com', company: null })])
+    deletePersonMock.mockResolvedValue(undefined)
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    const user = userEvent.setup()
+    render(<PersonDetailScreen />)
+
+    expect(await screen.findByText('Alex Doe')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: /^delete$/i }))
+
+    expect(deletePersonMock).toHaveBeenCalledWith('p1')
+    expect(navigateMock).toHaveBeenCalledWith('/people')
   })
 })

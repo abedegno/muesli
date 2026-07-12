@@ -395,6 +395,190 @@ func TestPeopleStorePeople(t *testing.T) {
 	}
 }
 
+func TestPeopleStoreUpdatePerson(t *testing.T) {
+	st, ownerID, _ := newPeopleStoreWithOwner(t)
+	ctx := context.Background()
+
+	companyOne, err := st.UpsertCompany(ctx, ownerID, "one.example", "One")
+	if err != nil {
+		t.Fatalf("create first company: %v", err)
+	}
+	companyTwo, err := st.UpsertCompany(ctx, ownerID, "two.example", "Two")
+	if err != nil {
+		t.Fatalf("create second company: %v", err)
+	}
+	person, err := st.UpsertPerson(ctx, ownerID, "alice@example.com", "Alice", ptrString(companyOne.ID))
+	if err != nil {
+		t.Fatalf("create person: %v", err)
+	}
+
+	updated, err := st.UpdatePerson(ctx, ownerID, person.ID, ptrString("Alicia"), nil, false)
+	if err != nil {
+		t.Fatalf("update display name: %v", err)
+	}
+	if updated.DisplayName != "Alicia" {
+		t.Fatalf("expected display name to change, got %+v", updated)
+	}
+	if updated.CompanyID == nil || *updated.CompanyID != companyOne.ID {
+		t.Fatalf("display-name-only update should keep company, got %+v", updated.CompanyID)
+	}
+
+	updated, err = st.UpdatePerson(ctx, ownerID, person.ID, nil, ptrString(companyTwo.ID), false)
+	if err != nil {
+		t.Fatalf("update company: %v", err)
+	}
+	if updated.DisplayName != "Alicia" {
+		t.Fatalf("company-only update should keep display name, got %+v", updated)
+	}
+	if updated.CompanyID == nil || *updated.CompanyID != companyTwo.ID {
+		t.Fatalf("expected company to change, got %+v", updated.CompanyID)
+	}
+
+	updated, err = st.UpdatePerson(ctx, ownerID, person.ID, nil, nil, true)
+	if err != nil {
+		t.Fatalf("clear company: %v", err)
+	}
+	if updated.CompanyID != nil {
+		t.Fatalf("expected company to clear, got %+v", updated.CompanyID)
+	}
+
+	otherOwner, err := st.CreateUser(ctx, "other-update@example.com", "h")
+	if err != nil {
+		t.Fatalf("create other owner: %v", err)
+	}
+	if _, err := st.UpdatePerson(ctx, otherOwner.ID, person.ID, ptrString("X"), nil, false); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("cross-owner update: want ErrNotFound, got %v", err)
+	}
+	if _, err := st.UpdatePerson(ctx, ownerID, "00000000-0000-0000-0000-000000000000", ptrString("X"), nil, false); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("missing update: want ErrNotFound, got %v", err)
+	}
+}
+
+func TestPeopleStoreMergePeople(t *testing.T) {
+	st, ownerID, _ := newPeopleStoreWithOwner(t)
+	ctx := context.Background()
+
+	fromPerson, err := st.UpsertPerson(ctx, ownerID, "from@example.com", "From", nil)
+	if err != nil {
+		t.Fatalf("create from person: %v", err)
+	}
+	intoPerson, err := st.UpsertPerson(ctx, ownerID, "into@example.com", "Into", nil)
+	if err != nil {
+		t.Fatalf("create into person: %v", err)
+	}
+	note, err := st.CreateNote(ctx, ownerID, "Alias note")
+	if err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	if err := st.UpsertSpeakerAlias(ctx, ownerID, note.ID, "SPEAKER_00", "From speaker"); err != nil {
+		t.Fatalf("upsert alias: %v", err)
+	}
+	if err := st.SetSpeakerAliasPerson(ctx, ownerID, note.ID, "SPEAKER_00", &fromPerson.ID); err != nil {
+		t.Fatalf("set alias person: %v", err)
+	}
+
+	merged, err := st.MergePeople(ctx, ownerID, fromPerson.ID, intoPerson.ID)
+	if err != nil {
+		t.Fatalf("merge people: %v", err)
+	}
+	if merged.ID != intoPerson.ID {
+		t.Fatalf("expected surviving person to be returned, got %+v", merged)
+	}
+	if _, err := st.GetPerson(ctx, ownerID, fromPerson.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("from person should be deleted, got %v", err)
+	}
+	if got, err := st.GetPerson(ctx, ownerID, intoPerson.ID); err != nil {
+		t.Fatalf("get into person: %v", err)
+	} else if got.ID != intoPerson.ID {
+		t.Fatalf("unexpected into person: %+v", got)
+	}
+
+	aliases, err := st.ListSpeakerAliases(ctx, ownerID, note.ID)
+	if err != nil {
+		t.Fatalf("list aliases: %v", err)
+	}
+	if len(aliases) != 1 {
+		t.Fatalf("expected 1 alias after merge, got %d: %+v", len(aliases), aliases)
+	}
+	if aliases[0].PersonID == nil || *aliases[0].PersonID != intoPerson.ID {
+		t.Fatalf("expected alias to point at survivor, got %+v", aliases[0])
+	}
+	if gotNote, err := st.GetNote(ctx, ownerID, note.ID); err != nil {
+		t.Fatalf("note should survive merge: %v", err)
+	} else if gotNote.ID != note.ID {
+		t.Fatalf("unexpected note after merge: %+v", gotNote)
+	}
+
+	if _, err := st.MergePeople(ctx, ownerID, fromPerson.ID, fromPerson.ID); !errors.Is(err, store.ErrInvalidMerge) {
+		t.Fatalf("same-person merge: want ErrInvalidMerge, got %v", err)
+	}
+
+	otherOwner, err := st.CreateUser(ctx, "merge-other@example.com", "h")
+	if err != nil {
+		t.Fatalf("create other owner: %v", err)
+	}
+	otherPerson, err := st.UpsertPerson(ctx, otherOwner.ID, "other@example.com", "Other", nil)
+	if err != nil {
+		t.Fatalf("create other person: %v", err)
+	}
+	if _, err := st.MergePeople(ctx, otherOwner.ID, otherPerson.ID, intoPerson.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("cross-owner source merge: want ErrNotFound, got %v", err)
+	}
+	if _, err := st.MergePeople(ctx, ownerID, intoPerson.ID, otherPerson.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("cross-owner target merge: want ErrNotFound, got %v", err)
+	}
+}
+
+func TestPeopleStoreDeletePerson(t *testing.T) {
+	st, ownerID, _ := newPeopleStoreWithOwner(t)
+	ctx := context.Background()
+
+	person, err := st.UpsertPerson(ctx, ownerID, "delete@example.com", "Delete", nil)
+	if err != nil {
+		t.Fatalf("create person: %v", err)
+	}
+	note, err := st.CreateNote(ctx, ownerID, "Delete note")
+	if err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	if err := st.UpsertSpeakerAlias(ctx, ownerID, note.ID, "SPEAKER_00", "Delete speaker"); err != nil {
+		t.Fatalf("upsert alias: %v", err)
+	}
+	if err := st.SetSpeakerAliasPerson(ctx, ownerID, note.ID, "SPEAKER_00", &person.ID); err != nil {
+		t.Fatalf("set alias person: %v", err)
+	}
+
+	if err := st.DeletePerson(ctx, ownerID, person.ID); err != nil {
+		t.Fatalf("delete person: %v", err)
+	}
+	if _, err := st.GetPerson(ctx, ownerID, person.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("deleted person should be gone, got %v", err)
+	}
+	aliases, err := st.ListSpeakerAliases(ctx, ownerID, note.ID)
+	if err != nil {
+		t.Fatalf("list aliases after delete: %v", err)
+	}
+	if len(aliases) != 1 {
+		t.Fatalf("expected alias row to remain, got %+v", aliases)
+	}
+	if aliases[0].PersonID != nil {
+		t.Fatalf("expected alias person link to be cleared, got %+v", aliases[0])
+	}
+	if gotNote, err := st.GetNote(ctx, ownerID, note.ID); err != nil {
+		t.Fatalf("note should survive delete: %v", err)
+	} else if gotNote.ID != note.ID {
+		t.Fatalf("unexpected note after delete: %+v", gotNote)
+	}
+
+	otherOwner, err := st.CreateUser(ctx, "delete-other@example.com", "h")
+	if err != nil {
+		t.Fatalf("create other owner: %v", err)
+	}
+	if err := st.DeletePerson(ctx, otherOwner.ID, person.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("cross-owner delete: want ErrNotFound, got %v", err)
+	}
+}
+
 func TestPeopleStoreGetPersonNotFound(t *testing.T) {
 	st, ownerID, _ := newPeopleStoreWithOwner(t)
 	ctx := context.Background()
@@ -414,6 +598,199 @@ func TestPeopleStoreGetPersonNotFound(t *testing.T) {
 	}
 	if _, err := st.GetPerson(ctx, otherOwner.ID, person.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("cross-owner get: want ErrNotFound, got %v", err)
+	}
+}
+
+func TestPeopleStoreUpdatePersonPartialAndCompanyClear(t *testing.T) {
+	st, ownerID, _ := newPeopleStoreWithOwner(t)
+	ctx := context.Background()
+
+	companyOne, err := st.UpsertCompany(ctx, ownerID, "one.example", "One")
+	if err != nil {
+		t.Fatalf("create first company: %v", err)
+	}
+	companyTwo, err := st.UpsertCompany(ctx, ownerID, "two.example", "Two")
+	if err != nil {
+		t.Fatalf("create second company: %v", err)
+	}
+	person, err := st.UpsertPerson(ctx, ownerID, "person@example.com", "Original", ptrString(companyOne.ID))
+	if err != nil {
+		t.Fatalf("seed person: %v", err)
+	}
+
+	renamed, err := st.UpdatePerson(ctx, ownerID, person.ID, ptrString("Renamed"), nil, false)
+	if err != nil {
+		t.Fatalf("rename person: %v", err)
+	}
+	if renamed.DisplayName != "Renamed" {
+		t.Fatalf("unexpected renamed person: %+v", renamed)
+	}
+	if renamed.CompanyID == nil || *renamed.CompanyID != companyOne.ID {
+		t.Fatalf("display-name-only patch should keep company, got %+v", renamed.CompanyID)
+	}
+
+	reassigned, err := st.UpdatePerson(ctx, ownerID, person.ID, nil, ptrString(companyTwo.ID), false)
+	if err != nil {
+		t.Fatalf("reassign company: %v", err)
+	}
+	if reassigned.DisplayName != "Renamed" {
+		t.Fatalf("company-only patch should keep display name, got %+v", reassigned)
+	}
+	if reassigned.CompanyID == nil || *reassigned.CompanyID != companyTwo.ID {
+		t.Fatalf("expected reassigned company, got %+v", reassigned.CompanyID)
+	}
+
+	cleared, err := st.UpdatePerson(ctx, ownerID, person.ID, nil, nil, true)
+	if err != nil {
+		t.Fatalf("clear company: %v", err)
+	}
+	if cleared.CompanyID != nil {
+		t.Fatalf("company_id:null should clear company, got %+v", cleared.CompanyID)
+	}
+
+	otherOwner, err := st.CreateUser(ctx, "other-update@example.com", "h")
+	if err != nil {
+		t.Fatalf("create other owner: %v", err)
+	}
+	if _, err := st.UpdatePerson(ctx, otherOwner.ID, person.ID, ptrString("Other"), nil, false); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("cross-owner update: want ErrNotFound, got %v", err)
+	}
+	if _, err := st.UpdatePerson(ctx, ownerID, "00000000-0000-0000-0000-000000000000", ptrString("Missing"), nil, false); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("missing person update: want ErrNotFound, got %v", err)
+	}
+	if _, err := st.UpdatePerson(ctx, ownerID, person.ID, nil, ptrString("00000000-0000-0000-0000-000000000000"), false); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("missing company update: want ErrNotFound, got %v", err)
+	}
+}
+
+func TestPeopleStoreMergePeopleRepointsAliasesAndDeletesLoser(t *testing.T) {
+	st, ownerID, _ := newPeopleStoreWithOwner(t)
+	ctx := context.Background()
+
+	survivor, err := st.UpsertPerson(ctx, ownerID, "survivor@example.com", "Survivor", nil)
+	if err != nil {
+		t.Fatalf("seed survivor: %v", err)
+	}
+	loser, err := st.UpsertPerson(ctx, ownerID, "loser@example.com", "Loser", nil)
+	if err != nil {
+		t.Fatalf("seed loser: %v", err)
+	}
+	note, err := st.CreateNote(ctx, ownerID, "Meeting")
+	if err != nil {
+		t.Fatalf("seed note: %v", err)
+	}
+	if err := st.UpsertSpeakerAlias(ctx, ownerID, note.ID, "SPEAKER_00", "Loser"); err != nil {
+		t.Fatalf("seed alias: %v", err)
+	}
+	if err := st.SetSpeakerAliasPerson(ctx, ownerID, note.ID, "SPEAKER_00", ptrString(loser.ID)); err != nil {
+		t.Fatalf("link alias to loser: %v", err)
+	}
+
+	merged, err := st.MergePeople(ctx, ownerID, loser.ID, survivor.ID)
+	if err != nil {
+		t.Fatalf("merge people: %v", err)
+	}
+	if merged.ID != survivor.ID {
+		t.Fatalf("expected surviving person %q, got %+v", survivor.ID, merged)
+	}
+	if _, err := st.GetPerson(ctx, ownerID, loser.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("loser should be removed, got %v", err)
+	}
+
+	aliases, err := st.ListSpeakerAliases(ctx, ownerID, note.ID)
+	if err != nil {
+		t.Fatalf("list aliases: %v", err)
+	}
+	if len(aliases) != 1 {
+		t.Fatalf("expected 1 alias, got %d: %+v", len(aliases), aliases)
+	}
+	if aliases[0].PersonID == nil || *aliases[0].PersonID != survivor.ID {
+		t.Fatalf("expected alias repointed to survivor, got %+v", aliases[0])
+	}
+
+	if _, err := st.GetNote(ctx, ownerID, note.ID); err != nil {
+		t.Fatalf("note should remain after merge: %v", err)
+	}
+
+	otherOwner, err := st.CreateUser(ctx, "other-merge@example.com", "h")
+	if err != nil {
+		t.Fatalf("create other owner: %v", err)
+	}
+	otherPerson, err := st.UpsertPerson(ctx, otherOwner.ID, "other@example.com", "Other", nil)
+	if err != nil {
+		t.Fatalf("seed other person's person: %v", err)
+	}
+	if _, err := st.MergePeople(ctx, ownerID, loser.ID, otherPerson.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("cross-owner merge target: want ErrNotFound, got %v", err)
+	}
+	if _, err := st.MergePeople(ctx, otherOwner.ID, otherPerson.ID, survivor.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("cross-owner merge source: want ErrNotFound, got %v", err)
+	}
+	if _, err := st.MergePeople(ctx, ownerID, "00000000-0000-0000-0000-000000000000", survivor.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("missing source person: want ErrNotFound, got %v", err)
+	}
+	if _, err := st.MergePeople(ctx, ownerID, loser.ID, "00000000-0000-0000-0000-000000000000"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("missing target person: want ErrNotFound, got %v", err)
+	}
+	if _, err := st.MergePeople(ctx, ownerID, survivor.ID, survivor.ID); !errors.Is(err, store.ErrInvalidMerge) {
+		t.Fatalf("same-person merge: want ErrInvalidMerge, got %v", err)
+	}
+}
+
+func TestPeopleStoreDeletePersonUnlinksAliases(t *testing.T) {
+	st, ownerID, _ := newPeopleStoreWithOwner(t)
+	ctx := context.Background()
+
+	person, err := st.UpsertPerson(ctx, ownerID, "delete@example.com", "Delete Me", nil)
+	if err != nil {
+		t.Fatalf("seed person: %v", err)
+	}
+	note, err := st.CreateNote(ctx, ownerID, "Meeting")
+	if err != nil {
+		t.Fatalf("seed note: %v", err)
+	}
+	if err := st.UpsertSpeakerAlias(ctx, ownerID, note.ID, "SPEAKER_00", "Delete Me"); err != nil {
+		t.Fatalf("seed alias: %v", err)
+	}
+	if err := st.SetSpeakerAliasPerson(ctx, ownerID, note.ID, "SPEAKER_00", ptrString(person.ID)); err != nil {
+		t.Fatalf("link alias to person: %v", err)
+	}
+
+	if err := st.DeletePerson(ctx, ownerID, person.ID); err != nil {
+		t.Fatalf("delete person: %v", err)
+	}
+	if _, err := st.GetPerson(ctx, ownerID, person.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("deleted person should be missing, got %v", err)
+	}
+
+	aliases, err := st.ListSpeakerAliases(ctx, ownerID, note.ID)
+	if err != nil {
+		t.Fatalf("list aliases: %v", err)
+	}
+	if len(aliases) != 1 {
+		t.Fatalf("expected 1 alias, got %d: %+v", len(aliases), aliases)
+	}
+	if aliases[0].PersonID != nil {
+		t.Fatalf("person delete should set alias person_id null, got %+v", aliases[0])
+	}
+
+	if _, err := st.GetNote(ctx, ownerID, note.ID); err != nil {
+		t.Fatalf("note should remain after delete: %v", err)
+	}
+
+	otherOwner, err := st.CreateUser(ctx, "other-delete@example.com", "h")
+	if err != nil {
+		t.Fatalf("create other owner: %v", err)
+	}
+	otherPerson, err := st.UpsertPerson(ctx, otherOwner.ID, "other@example.com", "Other", nil)
+	if err != nil {
+		t.Fatalf("seed other person: %v", err)
+	}
+	if err := st.DeletePerson(ctx, otherOwner.ID, person.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("cross-owner delete: want ErrNotFound, got %v", err)
+	}
+	if err := st.DeletePerson(ctx, ownerID, otherPerson.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("missing owner delete target: want ErrNotFound, got %v", err)
 	}
 }
 
