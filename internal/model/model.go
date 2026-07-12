@@ -233,9 +233,10 @@ type Template struct {
 // human-readable alias name, scoped to a note and owner. Substitution happens
 // at read time only — the stored transcript_segments rows are never modified.
 type SpeakerAlias struct {
-	NoteID       string `json:"note_id"`
-	SpeakerLabel string `json:"speaker_label"`
-	AliasName    string `json:"alias_name"`
+	NoteID       string  `json:"note_id"`
+	PersonID     *string `json:"person_id,omitempty"`
+	SpeakerLabel string  `json:"speaker_label"`
+	AliasName    string  `json:"alias_name"`
 }
 
 // Webhook delivery statuses.
