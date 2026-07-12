@@ -472,12 +472,14 @@ plugin URL, bearer token, kind, and any config values.
 Set these environment variables on the server **before it starts**; the server
 auto-registers the plugins on boot and the operation is idempotent:
 
-| Variable                           | Description                                     |
-| ---------------------------------- | ----------------------------------------------- |
-| `MUESLI_DEFAULT_TRANSCRIBER_URL`   | Base URL of the default transcriber plugin      |
-| `MUESLI_DEFAULT_TRANSCRIBER_TOKEN` | Bearer token for the default transcriber plugin |
-| `MUESLI_DEFAULT_AGENT_URL`         | Base URL of the default agent plugin            |
-| `MUESLI_DEFAULT_AGENT_TOKEN`       | Bearer token for the default agent plugin       |
+| Variable                                     | Description                                               |
+| -------------------------------------------- | --------------------------------------------------------- |
+| `MUESLI_DEFAULT_TRANSCRIBER_URL`             | Base URL of the default transcriber plugin                |
+| `MUESLI_DEFAULT_TRANSCRIBER_TOKEN`           | Bearer token for the default transcriber plugin           |
+| `MUESLI_DEFAULT_STREAMING_TRANSCRIBER_URL`   | Base URL of the default streaming transcriber plugin      |
+| `MUESLI_DEFAULT_STREAMING_TRANSCRIBER_TOKEN` | Bearer token for the default streaming transcriber plugin |
+| `MUESLI_DEFAULT_AGENT_URL`                   | Base URL of the default agent plugin                      |
+| `MUESLI_DEFAULT_AGENT_TOKEN`                 | Bearer token for the default agent plugin                 |
 
 See [`cmd/muesli/main.go`](../cmd/muesli/main.go) for the boot-time
 registration logic.

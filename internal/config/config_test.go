@@ -308,11 +308,17 @@ func TestLoadDefaultPluginFields(t *testing.T) {
 	if cfg.DefaultTranscriberURL != "" || cfg.DefaultTranscriberToken != "" {
 		t.Fatalf("expected empty transcriber url/token, got %q %q", cfg.DefaultTranscriberURL, cfg.DefaultTranscriberToken)
 	}
+	if cfg.DefaultStreamingTranscriberURL != "" || cfg.DefaultStreamingTranscriberToken != "" {
+		t.Fatalf("expected empty streaming transcriber url/token, got %q %q", cfg.DefaultStreamingTranscriberURL, cfg.DefaultStreamingTranscriberToken)
+	}
 	if cfg.DefaultAgentURL != "" || cfg.DefaultAgentToken != "" {
 		t.Fatalf("expected empty agent url/token, got %q %q", cfg.DefaultAgentURL, cfg.DefaultAgentToken)
 	}
 	if cfg.DefaultTranscriberConfig != "{}" {
 		t.Fatalf("DefaultTranscriberConfig = %q, want {}", cfg.DefaultTranscriberConfig)
+	}
+	if cfg.DefaultStreamingTranscriberConfig != "{}" {
+		t.Fatalf("DefaultStreamingTranscriberConfig = %q, want {}", cfg.DefaultStreamingTranscriberConfig)
 	}
 	if cfg.DefaultAgentConfig != "{}" {
 		t.Fatalf("DefaultAgentConfig = %q, want {}", cfg.DefaultAgentConfig)
@@ -320,19 +326,25 @@ func TestLoadDefaultPluginFields(t *testing.T) {
 
 	// Set: values are read from env.
 	cfg, err = Load(get(map[string]string{
-		"DATABASE_URL":                      "postgres://localhost/muesli",
-		"MUESLI_DEFAULT_TRANSCRIBER_URL":    "http://transcriber:9000",
-		"MUESLI_DEFAULT_TRANSCRIBER_TOKEN":  "t-tok",
-		"MUESLI_DEFAULT_TRANSCRIBER_CONFIG": `{"model":"whisper"}`,
-		"MUESLI_DEFAULT_AGENT_URL":          "http://agent:9100",
-		"MUESLI_DEFAULT_AGENT_TOKEN":        "a-tok",
-		"MUESLI_DEFAULT_AGENT_CONFIG":       `{"model":"gpt"}`,
+		"DATABASE_URL":                                "postgres://localhost/muesli",
+		"MUESLI_DEFAULT_TRANSCRIBER_URL":              "http://transcriber:9000",
+		"MUESLI_DEFAULT_TRANSCRIBER_TOKEN":            "t-tok",
+		"MUESLI_DEFAULT_TRANSCRIBER_CONFIG":           `{"model":"whisper"}`,
+		"MUESLI_DEFAULT_STREAMING_TRANSCRIBER_URL":    "http://streaming-transcriber:8000",
+		"MUESLI_DEFAULT_STREAMING_TRANSCRIBER_TOKEN":  "s-tok",
+		"MUESLI_DEFAULT_STREAMING_TRANSCRIBER_CONFIG": `{"model":"tiny.en"}`,
+		"MUESLI_DEFAULT_AGENT_URL":                    "http://agent:9100",
+		"MUESLI_DEFAULT_AGENT_TOKEN":                  "a-tok",
+		"MUESLI_DEFAULT_AGENT_CONFIG":                 `{"model":"gpt"}`,
 	}))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if cfg.DefaultTranscriberURL != "http://transcriber:9000" || cfg.DefaultTranscriberToken != "t-tok" || cfg.DefaultTranscriberConfig != `{"model":"whisper"}` {
 		t.Fatalf("transcriber fields = %q %q %q", cfg.DefaultTranscriberURL, cfg.DefaultTranscriberToken, cfg.DefaultTranscriberConfig)
+	}
+	if cfg.DefaultStreamingTranscriberURL != "http://streaming-transcriber:8000" || cfg.DefaultStreamingTranscriberToken != "s-tok" || cfg.DefaultStreamingTranscriberConfig != `{"model":"tiny.en"}` {
+		t.Fatalf("streaming transcriber fields = %q %q %q", cfg.DefaultStreamingTranscriberURL, cfg.DefaultStreamingTranscriberToken, cfg.DefaultStreamingTranscriberConfig)
 	}
 	if cfg.DefaultAgentURL != "http://agent:9100" || cfg.DefaultAgentToken != "a-tok" || cfg.DefaultAgentConfig != `{"model":"gpt"}` {
 		t.Fatalf("agent fields = %q %q %q", cfg.DefaultAgentURL, cfg.DefaultAgentToken, cfg.DefaultAgentConfig)

@@ -83,6 +83,23 @@ services:
       retries: 10
       start_period: 20s
 
+  streaming-transcriber:
+    build: ./plugins/streaming-transcriber
+    profiles: ['streaming']
+    environment:
+      MUESLI_PLUGIN_TOKEN: ${STREAMING_TOKEN:-dev-streaming-token}
+    healthcheck:
+      # The python image has no curl; use the bundled Python to hit /health.
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(''http://localhost:8000/health'').status==200 else 1)"',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
   agent:
     build: ./plugins/ollama-agent
     depends_on:
@@ -110,6 +127,7 @@ services:
         condition: service_healthy
       whisper:
         condition: service_healthy
+      # streaming-transcriber is opt-in via the streaming profile; do not add depends_on here.
       agent:
         condition: service_healthy
     ports:
@@ -131,6 +149,9 @@ services:
       MUESLI_DEFAULT_TRANSCRIBER_URL: http://whisper:8000
       MUESLI_DEFAULT_TRANSCRIBER_TOKEN: ${WHISPER_TOKEN:-dev-whisper-token}
       MUESLI_DEFAULT_TRANSCRIBER_CONFIG: '{"model":"base"}'
+      MUESLI_DEFAULT_STREAMING_TRANSCRIBER_URL: http://streaming-transcriber:8000
+      MUESLI_DEFAULT_STREAMING_TRANSCRIBER_TOKEN: ${STREAMING_TOKEN:-dev-streaming-token}
+      MUESLI_DEFAULT_STREAMING_TRANSCRIBER_CONFIG: '{"model":"tiny.en"}'
       MUESLI_DEFAULT_AGENT_URL: http://agent:8000
       MUESLI_DEFAULT_AGENT_TOKEN: ${AGENT_TOKEN:-dev-agent-token}
       MUESLI_DEFAULT_AGENT_CONFIG: '{"ollama_url":"http://ollama:11434","model":"llama3.2:3b"}'

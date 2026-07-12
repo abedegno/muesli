@@ -58,13 +58,16 @@ type Config struct {
 	// Default plugins auto-registered on startup (all optional). A kind is only
 	// registered when both its URL and token are set. Config fields hold a JSON
 	// string and default to "{}".
-	DefaultTranscriberURL    string
-	DefaultTranscriberToken  string
-	DefaultTranscriberConfig string
-	TranscribeLanguage       string
-	DefaultAgentURL          string
-	DefaultAgentToken        string
-	DefaultAgentConfig       string
+	DefaultTranscriberURL             string
+	DefaultTranscriberToken           string
+	DefaultTranscriberConfig          string
+	TranscribeLanguage                string
+	DefaultStreamingTranscriberURL    string
+	DefaultStreamingTranscriberToken  string
+	DefaultStreamingTranscriberConfig string
+	DefaultAgentURL                   string
+	DefaultAgentToken                 string
+	DefaultAgentConfig                string
 
 	GoogleOAuthClientID        string
 	GoogleOAuthClientSecret    string
@@ -102,6 +105,9 @@ func Load(get func(string) string) (Config, error) {
 	cfg.DefaultTranscriberToken = get("MUESLI_DEFAULT_TRANSCRIBER_TOKEN")
 	cfg.DefaultTranscriberConfig = def(get("MUESLI_DEFAULT_TRANSCRIBER_CONFIG"), "{}")
 	cfg.TranscribeLanguage = get("MUESLI_TRANSCRIBE_LANGUAGE")
+	cfg.DefaultStreamingTranscriberURL = get("MUESLI_DEFAULT_STREAMING_TRANSCRIBER_URL")
+	cfg.DefaultStreamingTranscriberToken = get("MUESLI_DEFAULT_STREAMING_TRANSCRIBER_TOKEN")
+	cfg.DefaultStreamingTranscriberConfig = def(get("MUESLI_DEFAULT_STREAMING_TRANSCRIBER_CONFIG"), "{}")
 	cfg.DefaultAgentURL = get("MUESLI_DEFAULT_AGENT_URL")
 	cfg.DefaultAgentToken = get("MUESLI_DEFAULT_AGENT_TOKEN")
 	cfg.DefaultAgentConfig = def(get("MUESLI_DEFAULT_AGENT_CONFIG"), "{}")

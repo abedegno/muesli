@@ -41,13 +41,14 @@ func entriesString(entries []ConfigEntry) string {
 
 func TestEffectiveRedactsSecrets(t *testing.T) {
 	cfg := Config{
-		Addr:                       ":9999",
-		MasterKey:                  fakeSecret,
-		StorageSigningKey:          fakeSecret,
-		DefaultTranscriberToken:    fakeSecret,
-		DefaultAgentToken:          fakeSecret,
-		GoogleOAuthClientSecret:    fakeSecret,
-		MicrosoftOAuthClientSecret: fakeSecret,
+		Addr:                             ":9999",
+		MasterKey:                        fakeSecret,
+		StorageSigningKey:                fakeSecret,
+		DefaultTranscriberToken:          fakeSecret,
+		DefaultStreamingTranscriberToken: fakeSecret,
+		DefaultAgentToken:                fakeSecret,
+		GoogleOAuthClientSecret:          fakeSecret,
+		MicrosoftOAuthClientSecret:       fakeSecret,
 	}
 
 	entries := Effective(cfg, noEnv)
@@ -57,12 +58,13 @@ func TestEffectiveRedactsSecrets(t *testing.T) {
 	}
 
 	wantSet := map[string]bool{
-		"MUESLI_MASTER_KEY":                    true,
-		"MUESLI_STORAGE_SIGNING_KEY":           true,
-		"MUESLI_DEFAULT_TRANSCRIBER_TOKEN":     true,
-		"MUESLI_DEFAULT_AGENT_TOKEN":           true,
-		"MUESLI_GOOGLE_OAUTH_CLIENT_SECRET":    true,
-		"MUESLI_MICROSOFT_OAUTH_CLIENT_SECRET": true,
+		"MUESLI_MASTER_KEY":                          true,
+		"MUESLI_STORAGE_SIGNING_KEY":                 true,
+		"MUESLI_DEFAULT_TRANSCRIBER_TOKEN":           true,
+		"MUESLI_DEFAULT_STREAMING_TRANSCRIBER_TOKEN": true,
+		"MUESLI_DEFAULT_AGENT_TOKEN":                 true,
+		"MUESLI_GOOGLE_OAUTH_CLIENT_SECRET":          true,
+		"MUESLI_MICROSOFT_OAUTH_CLIENT_SECRET":       true,
 	}
 	seen := map[string]bool{}
 	for _, e := range entries {
