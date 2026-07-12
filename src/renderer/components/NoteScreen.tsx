@@ -11,6 +11,7 @@ import { NoteHeader } from './NoteHeader'
 import { ProcessingBanner } from './ProcessingBanner'
 import { TagBar } from './TagBar'
 import { FolderBar } from './FolderBar'
+import { NoteActionItemsPanel } from './NoteActionItemsPanel'
 import { LiveTranscriptPanel } from './LiveTranscriptPanel'
 import { tagIndex } from '@/lib/tagIndex'
 import { loadAudioPrefs, saveAudioPrefs } from '@/lib/audioPrefs'
@@ -681,6 +682,7 @@ export function NoteScreen() {
           catch (err) { notify(err instanceof Error ? err.message : 'Could not remove from folder', 'error') }
         }}
       />
+      <NoteActionItemsPanel noteId={id} />
       <div className="flex-1 overflow-y-auto px-6 py-4">
         {capture || full.note.status === 'recording' ? (
           <Suspense fallback={<div className="p-4 text-sm text-muted-foreground">Loading editor…</div>}>

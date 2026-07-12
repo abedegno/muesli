@@ -1,9 +1,8 @@
 import { basename, join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from 'electron'
-import { IPC, type ConnectRequest, type CreateConversationRequest, type DiarizationReviewUpdate, type SearchOptions, type SendMessageRequest, type UploadAudioRequest } from '../shared/ipc'
+import { IPC, type ConnectRequest, type CreateConversationRequest, type DiarizationReviewUpdate, type SearchOptions, type SendMessageRequest, type UpdateActionItemRequest, type UpdatePersonRequest, type UploadAudioRequest } from '../shared/ipc'
 import type { RetranscribeNoteRequest, RuleGroup, TemplateSection } from '../shared/types'
-import type { UpdatePersonRequest } from '../shared/ipc'
 import { createHandlers } from './ipcHandlers'
 import { NoteStreamRelay } from './noteStreamRelay'
 import { TokenStore } from './tokenStore'
@@ -52,9 +51,11 @@ app.whenReady().then(() => {
   ipcMain.handle(IPC.listNotes, (_e, folderId?: string) => handlers.listNotes(folderId))
   ipcMain.handle(IPC.listPeople, () => handlers.listPeople())
   ipcMain.handle(IPC.listCompanies, () => handlers.listCompanies())
+  ipcMain.handle(IPC.listNoteActionItems, (_e, noteId: string) => handlers.listNoteActionItems(noteId))
   ipcMain.handle(IPC.getPerson, (_e, id: string) => handlers.getPerson(id))
   ipcMain.handle(IPC.getPersonNotes, (_e, id: string) => handlers.getPersonNotes(id))
   ipcMain.handle(IPC.updatePerson, (_e, id: string, req: UpdatePersonRequest) => handlers.updatePerson(id, req))
+  ipcMain.handle(IPC.updateActionItem, (_e, id: string, req: UpdateActionItemRequest) => handlers.updateActionItem(id, req))
   ipcMain.handle(IPC.mergePeople, (_e, fromId: string, intoId: string) => handlers.mergePeople(fromId, intoId))
   ipcMain.handle(IPC.deletePerson, (_e, id: string) => handlers.deletePerson(id))
   ipcMain.handle(IPC.getCompany, (_e, id: string) => handlers.getCompany(id))

@@ -1,5 +1,5 @@
-import type { AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, DiarizationReview, FullNote, Folder, GoogleOAuthStatus, Message, MicrosoftOAuthStatus, Note, PersonWithCompany, PluginStatus, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection, UploadGrant } from '../shared/types'
-import type { CreateConversationRequest, CreateConversationResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdatePersonRequest } from '../shared/ipc'
+import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, Decision, DiarizationReview, FullNote, Folder, GoogleOAuthStatus, Message, MicrosoftOAuthStatus, Note, PersonWithCompany, PluginStatus, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection, UploadGrant } from '../shared/types'
+import type { CreateConversationRequest, CreateConversationResponse, ListNoteActionItemsResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdateActionItemRequest, UpdatePersonRequest } from '../shared/ipc'
 import { buildNoteExportRequest, parseContentDispositionFilename } from '../shared/export'
 import { buildCalendarEventsPath } from '../shared/calendar'
 
@@ -80,6 +80,11 @@ export class MuesliClient {
     return this.json<CompanyWithCount[]>('GET', '/api/companies')
   }
 
+  async listNoteActionItems(id: string): Promise<ListNoteActionItemsResponse> {
+    const res = await this.json<{ action_items: ActionItem[]; decisions: Decision[] }>('GET', `/api/notes/${id}/action-items`)
+    return { actionItems: res.action_items, decisions: res.decisions }
+  }
+
   async getPerson(id: string): Promise<PersonWithCompany> {
     return this.json<PersonWithCompany>('GET', `/api/people/${id}`)
   }
@@ -93,6 +98,14 @@ export class MuesliClient {
     if (req.displayName !== undefined) body.display_name = req.displayName
     if (req.companyId !== undefined) body.company_id = req.companyId
     return this.json<PersonWithCompany>('PATCH', `/api/people/${id}`, body)
+  }
+
+  async updateActionItem(id: string, req: UpdateActionItemRequest): Promise<ActionItem> {
+    const body: Record<string, unknown> = {}
+    if (req.text !== undefined) body.text = req.text
+    if (req.status !== undefined) body.status = req.status
+    if (req.ownerPersonId !== undefined) body.owner_person_id = req.ownerPersonId
+    return this.json<ActionItem>('PATCH', `/api/action-items/${id}`, body)
   }
 
   async mergePeople(fromId: string, intoId: string): Promise<PersonWithCompany> {

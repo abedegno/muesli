@@ -1,4 +1,4 @@
-import type { AudioUrlGrant, CalendarEvent, ChatSource, CompanyWithCount, CompanyWithPeople, Conversation, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, Message, MicrosoftOAuthStatus, Note, PersonWithCompany, PluginStatus, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, ServerConfig, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection } from './types'
+import type { ActionItem, ActionItemStatus, CalendarEvent, ChatSource, CompanyWithCount, CompanyWithPeople, Conversation, Decision, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, Message, MicrosoftOAuthStatus, Note, PersonWithCompany, PluginStatus, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, ServerConfig, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection, AudioUrlGrant } from './types'
 import type { UploadProgress } from '../main/uploadMachine'
 
 export const IPC = {
@@ -8,9 +8,11 @@ export const IPC = {
   listNotes: 'muesli:listNotes',
   listPeople: 'muesli:listPeople',
   listCompanies: 'muesli:listCompanies',
+  listNoteActionItems: 'muesli:listNoteActionItems',
   getPerson: 'muesli:getPerson',
   getPersonNotes: 'muesli:getPersonNotes',
   updatePerson: 'muesli:updatePerson',
+  updateActionItem: 'muesli:updateActionItem',
   mergePeople: 'muesli:mergePeople',
   deletePerson: 'muesli:deletePerson',
   getCompany: 'muesli:getCompany',
@@ -171,6 +173,17 @@ export interface UpdatePersonRequest {
   companyId?: string | null
 }
 
+export interface UpdateActionItemRequest {
+  text?: string
+  status?: ActionItemStatus
+  ownerPersonId?: string | null
+}
+
+export interface ListNoteActionItemsResponse {
+  actionItems: ActionItem[]
+  decisions: Decision[]
+}
+
 // Response for POST /api/conversations/{id}/messages: the ASSISTANT reply
 // (the user's own message isn't echoed back — callers already have it).
 export interface SendMessageResponse {
@@ -185,9 +198,11 @@ export interface MuesliBridge {
   listNotes(folderId?: string): Promise<Note[]>
   listPeople(): Promise<PersonWithCompany[]>
   listCompanies(): Promise<CompanyWithCount[]>
+  listNoteActionItems(noteId: string): Promise<ListNoteActionItemsResponse>
   getPerson(id: string): Promise<PersonWithCompany>
   getPersonNotes(id: string): Promise<Note[]>
   updatePerson(id: string, req: UpdatePersonRequest): Promise<PersonWithCompany>
+  updateActionItem(id: string, req: UpdateActionItemRequest): Promise<ActionItem>
   mergePeople(fromId: string, intoId: string): Promise<PersonWithCompany>
   deletePerson(id: string): Promise<void>
   getCompany(id: string): Promise<CompanyWithPeople>

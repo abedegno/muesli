@@ -110,6 +110,29 @@ export interface FullNote {
   summaries: Summary[]
 }
 
+export type ActionItemStatus = 'open' | 'done'
+
+// Mirrors the server's model.ActionItem (internal/model/model.go).
+export interface ActionItem {
+  id: string
+  note_id: string
+  owner_id: string
+  text: string
+  owner_person_id: string | null
+  status: ActionItemStatus
+  due_hint: string
+  created_at: string
+}
+
+// Mirrors the server's model.Decision (internal/model/model.go).
+export interface Decision {
+  id: string
+  note_id: string
+  owner_id: string
+  text: string
+  created_at: string
+}
+
 // Connection/credential config persisted on disk (token stored encrypted; see tokenStore).
 export interface ServerConfig {
   serverUrl: string
