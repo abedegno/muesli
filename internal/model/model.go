@@ -15,6 +15,11 @@ const (
 	NoteFailed       = "failed"
 )
 
+const (
+	ActionItemOpen = "open"
+	ActionItemDone = "done"
+)
+
 type Tag struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -65,6 +70,27 @@ type Note struct {
 	PartialTranscript bool `json:"partial_transcript"`
 	// EventID is the id of the calendar event this note is linked to, if any.
 	EventID *string `json:"event_id,omitempty"`
+}
+
+// ActionItem is a structured action item extracted from a note.
+type ActionItem struct {
+	ID            string    `json:"id"`
+	NoteID        string    `json:"note_id"`
+	OwnerID       string    `json:"owner_id"`
+	Text          string    `json:"text"`
+	OwnerPersonID *string   `json:"owner_person_id,omitempty"`
+	Status        string    `json:"status"`
+	DueHint       string    `json:"due_hint"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+// Decision is a structured decision extracted from a note.
+type Decision struct {
+	ID        string    `json:"id"`
+	NoteID    string    `json:"note_id"`
+	OwnerID   string    `json:"owner_id"`
+	Text      string    `json:"text"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // Plugin kinds.
