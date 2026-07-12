@@ -110,4 +110,89 @@ describe('PeopleScreen', () => {
     expect(screen.getByText('people service unavailable')).toBeInTheDocument()
     expect(screen.queryByText('No people yet')).not.toBeInTheDocument()
   })
+
+  it('filters people and companies client-side and shows a no-matches empty state', async () => {
+    listPeopleMock.mockResolvedValue([
+      person({
+        id: 'p1',
+        display_name: 'Alex Doe',
+        primary_email: 'alex@example.com',
+        company: {
+          id: 'c1',
+          owner_id: 'owner-1',
+          domain: 'example.com',
+          name: 'Example Inc',
+          created_at: '2026-07-01T00:00:00Z',
+          updated_at: '2026-07-02T00:00:00Z',
+        },
+      }),
+      person({
+        id: 'p2',
+        display_name: 'Brianna Miles',
+        primary_email: 'brianna@other.com',
+        company: {
+          id: 'c2',
+          owner_id: 'owner-1',
+          domain: 'other.com',
+          name: 'Other LLC',
+          created_at: '2026-07-01T00:00:00Z',
+          updated_at: '2026-07-02T00:00:00Z',
+        },
+      }),
+      person({
+        id: 'p3',
+        display_name: 'Casey Zhang',
+        primary_email: 'casey@sample.org',
+        company: {
+          id: 'c3',
+          owner_id: 'owner-1',
+          domain: 'sample.org',
+          name: 'Sample Co',
+          created_at: '2026-07-01T00:00:00Z',
+          updated_at: '2026-07-02T00:00:00Z',
+        },
+      }),
+    ])
+    listCompaniesMock.mockResolvedValue([
+      company({ id: 'c1', name: 'Example Inc', domain: 'example.com', people_count: 10 }),
+      company({ id: 'c2', name: 'Other LLC', domain: 'other.com', people_count: 4 }),
+      company({ id: 'c3', name: 'Sample Co', domain: 'sample.org', people_count: 2 }),
+    ])
+
+    const user = userEvent.setup()
+    render(<PeopleScreen />)
+
+    expect(await screen.findByText('Alex Doe')).toBeInTheDocument()
+    expect(screen.getByText('Brianna Miles')).toBeInTheDocument()
+    expect(screen.getByText('Casey Zhang')).toBeInTheDocument()
+
+    const search = screen.getByRole('textbox', { name: /search people and companies/i })
+
+    await user.type(search, 'alex')
+    expect(screen.getByText('Alex Doe')).toBeInTheDocument()
+    expect(screen.queryByText('Brianna Miles')).not.toBeInTheDocument()
+    expect(screen.queryByText('Casey Zhang')).not.toBeInTheDocument()
+
+    await user.clear(search)
+    expect(screen.getByText('Alex Doe')).toBeInTheDocument()
+    expect(screen.getByText('Brianna Miles')).toBeInTheDocument()
+    expect(screen.getByText('Casey Zhang')).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: 'Companies' }))
+    await user.type(search, 'other')
+    expect(screen.getByText('Other LLC')).toBeInTheDocument()
+    expect(screen.queryByText('Example Inc')).not.toBeInTheDocument()
+    expect(screen.queryByText('Sample Co')).not.toBeInTheDocument()
+
+    await user.clear(search)
+    expect(screen.getByText('Example Inc')).toBeInTheDocument()
+    expect(screen.getByText('Other LLC')).toBeInTheDocument()
+    expect(screen.getByText('Sample Co')).toBeInTheDocument()
+
+    await user.clear(search)
+    await user.type(search, 'zzzz')
+
+    expect(await screen.findByText('No matches')).toBeInTheDocument()
+    expect(screen.getByText('Try a different search for company names or domains.')).toBeInTheDocument()
+  })
 })

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Building2, Users } from 'lucide-react'
 import { muesli } from '@/api'
 import { EmptyState } from './EmptyState'
+import { Input } from '@/components/ui/Input'
 import { Skeleton } from '@/components/ui/Skeleton'
 import type { CompanyWithCount, PersonWithCompany } from '../../shared/types'
 
@@ -69,6 +70,7 @@ function CompanyRow({ company, onOpen }: { company: CompanyWithCount; onOpen: ()
 export function PeopleScreen() {
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState<Tab>('people')
+  const [query, setQuery] = useState('')
   const [people, setPeople] = useState<PersonWithCompany[] | null>(null)
   const [companies, setCompanies] = useState<CompanyWithCount[] | null>(null)
   const [peopleError, setPeopleError] = useState<string | null>(null)
@@ -106,12 +108,29 @@ export function PeopleScreen() {
     }
   }, [])
 
+  const normalizedQuery = query.trim().toLowerCase()
   const isPeopleLoading = people === null && peopleError === null
   const isCompaniesLoading = companies === null && companiesError === null
   const activeError = activeTab === 'people' ? peopleError : companiesError
   const activeItems = activeTab === 'people' ? people : companies
   const activeLoading = activeTab === 'people' ? isPeopleLoading : isCompaniesLoading
+  const filteredPeople = normalizedQuery
+    ? people?.filter((person) => {
+        const displayName = person.display_name.toLowerCase()
+        const primaryEmail = person.primary_email.toLowerCase()
+        return displayName.includes(normalizedQuery) || primaryEmail.includes(normalizedQuery)
+      }) ?? null
+    : people
+  const filteredCompanies = normalizedQuery
+    ? companies?.filter((company) => {
+        const name = company.name.toLowerCase()
+        const domain = company.domain.toLowerCase()
+        return name.includes(normalizedQuery) || domain.includes(normalizedQuery)
+      }) ?? null
+    : companies
+  const activeFilteredItems = activeTab === 'people' ? filteredPeople : filteredCompanies
   const isEmpty = activeItems !== null && activeItems.length === 0 && activeError === null
+  const hasNoMatches = normalizedQuery.length > 0 && activeFilteredItems !== null && activeFilteredItems.length === 0 && activeError === null
 
   return (
     <div className="mx-auto max-w-3xl p-6">
@@ -119,6 +138,17 @@ export function PeopleScreen() {
         <h1 className="mb-1 font-serif text-xl font-semibold">People</h1>
         <p className="text-sm text-muted-foreground">Browse people and companies from your workspace.</p>
       </div>
+
+      <label htmlFor="people-search" className="mb-4 block">
+        <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-muted-foreground">Search</span>
+        <Input
+          id="people-search"
+          aria-label="Search people and companies"
+          placeholder="Search people or companies"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      </label>
 
       <div className="mb-4 flex items-center gap-2">
         <TabButton active={activeTab === 'people'} onClick={() => setActiveTab('people')} icon={<Users size={14} />} label="People" />
@@ -135,6 +165,13 @@ export function PeopleScreen() {
           <p className="font-medium">Could not load {activeTab}</p>
           <p className="mt-1 break-words">{activeError}</p>
         </div>
+      ) : hasNoMatches ? (
+        <EmptyState
+          title="No matches"
+          hint={activeTab === 'people'
+            ? 'Try a different search for people or email addresses.'
+            : 'Try a different search for company names or domains.'}
+        />
       ) : isEmpty ? (
         <EmptyState
           title={activeTab === 'people' ? 'No people yet' : 'No companies yet'}
@@ -143,10 +180,10 @@ export function PeopleScreen() {
             : 'Companies synced from your server will appear here.'}
         />
       ) : (
-          <ul className="flex flex-col gap-2">
+        <ul className="flex flex-col gap-2">
           {activeTab === 'people'
-            ? people?.map((person) => <PeopleRow key={person.id} person={person} onOpen={() => navigate(`/people/${person.id}`)} />)
-            : companies?.map((company) => <CompanyRow key={company.id} company={company} onOpen={() => navigate(`/companies/${company.id}`)} />)}
+            ? filteredPeople?.map((person) => <PeopleRow key={person.id} person={person} onOpen={() => navigate(`/people/${person.id}`)} />)
+            : filteredCompanies?.map((company) => <CompanyRow key={company.id} company={company} onOpen={() => navigate(`/companies/${company.id}`)} />)}
         </ul>
       )}
     </div>
