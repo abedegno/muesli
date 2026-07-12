@@ -64,7 +64,7 @@ func (s *Store) MergeCompanies(ctx context.Context, ownerID, fromID, intoID stri
 		`SELECT
 		   EXISTS(SELECT 1 FROM companies WHERE id=$1 AND owner_id=$2),
 		   EXISTS(SELECT 1 FROM companies WHERE id=$3 AND owner_id=$2)`,
-		fromID, ownerID, intoID, ownerID).Scan(&fromOwned, &intoOwned); err != nil {
+		fromID, ownerID, intoID).Scan(&fromOwned, &intoOwned); err != nil {
 		return err
 	}
 	if !fromOwned || !intoOwned {
