@@ -4,6 +4,7 @@ import { ArrowLeft } from 'lucide-react'
 import { muesli } from '@/api'
 import { Button } from '@/components/ui/Button'
 import { EmptyState } from './EmptyState'
+import { MonogramAvatar } from './MonogramAvatar'
 import { Skeleton } from '@/components/ui/Skeleton'
 import type { CompanyWithPeople, Person } from '../../shared/types'
 
@@ -85,9 +86,12 @@ export function CompanyDetailScreen() {
         <ErrorBlock message={error} subject="company" />
       ) : company ? (
         <div className="space-y-6">
-          <section className="space-y-2">
-            <h1 className="font-serif text-xl font-semibold">{company.name || 'Untitled company'}</h1>
-            <p className="text-sm text-muted-foreground">{company.domain}</p>
+          <section className="flex items-start gap-3">
+            <MonogramAvatar id={company.id} label={company.name || company.domain} />
+            <div className="min-w-0 flex-1 space-y-2">
+              <h1 className="font-serif text-xl font-semibold">{company.name || 'Untitled company'}</h1>
+              <p className="truncate text-sm text-muted-foreground">{company.domain}</p>
+            </div>
           </section>
 
           {isEmpty ? (
