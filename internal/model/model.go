@@ -78,7 +78,7 @@ type ActionItem struct {
 	NoteID        string    `json:"note_id"`
 	OwnerID       string    `json:"owner_id"`
 	Text          string    `json:"text"`
-	OwnerPersonID *string   `json:"owner_person_id,omitempty"`
+	OwnerPersonID *string   `json:"owner_person_id"`
 	Status        string    `json:"status"`
 	DueHint       string    `json:"due_hint"`
 	CreatedAt     time.Time `json:"created_at"`
