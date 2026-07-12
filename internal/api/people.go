@@ -18,6 +18,16 @@ type personResponse struct {
 	Company *model.Company `json:"company,omitempty"`
 }
 
+type companyResponse struct {
+	model.Company
+	PeopleCount int64 `json:"people_count"`
+}
+
+type companyWithPeopleResponse struct {
+	model.Company
+	People []model.Person `json:"people"`
+}
+
 func (s *Server) handleListPeople(w http.ResponseWriter, r *http.Request) {
 	uid, _ := userIDFromContext(r.Context())
 	people, err := s.deps.Store.ListPeople(r.Context(), uid)
@@ -64,6 +74,26 @@ func (s *Server) handleListPeople(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, out)
 }
 
+func (s *Server) handleListCompanies(w http.ResponseWriter, r *http.Request) {
+	uid, _ := userIDFromContext(r.Context())
+	companies, err := s.deps.Store.ListCompaniesWithPeopleCount(r.Context(), uid)
+	if err != nil {
+		log.Printf("handleListCompanies: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	out := make([]companyResponse, 0, len(companies))
+	for _, company := range companies {
+		out = append(out, companyResponse{
+			Company:     company.Company,
+			PeopleCount: company.PeopleCount,
+		})
+	}
+
+	writeJSON(w, http.StatusOK, out)
+}
+
 func (s *Server) handleGetPerson(w http.ResponseWriter, r *http.Request) {
 	uid, _ := userIDFromContext(r.Context())
 	id := chi.URLParam(r, "id")
@@ -101,10 +131,48 @@ func (s *Server) handleGetPerson(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (s *Server) handleGetCompany(w http.ResponseWriter, r *http.Request) {
+	uid, _ := userIDFromContext(r.Context())
+	id := chi.URLParam(r, "id")
+	if !validCompanyID(w, id) {
+		return
+	}
+
+	company, err := s.deps.Store.GetCompany(r.Context(), uid, id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if err != nil {
+		log.Printf("handleGetCompany: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	people, err := s.deps.Store.ListPeopleByCompany(r.Context(), uid, id)
+	if err != nil {
+		log.Printf("handleGetCompany: list people by company: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, companyWithPeopleResponse{
+		Company: company,
+		People:  people,
+	})
+}
+
 // validPersonID reports whether id is a syntactically valid UUID. People
 // handlers return 400 for malformed ids so callers can distinguish bad input
 // from a missing record.
 func validPersonID(w http.ResponseWriter, id string) bool {
+	if _, err := uuid.Parse(id); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid id")
+		return false
+	}
+	return true
+}
+
+func validCompanyID(w http.ResponseWriter, id string) bool {
 	if _, err := uuid.Parse(id); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid id")
 		return false

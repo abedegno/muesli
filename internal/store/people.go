@@ -10,6 +10,11 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+type CompanyWithPeopleCount struct {
+	model.Company
+	PeopleCount int64
+}
+
 func (s *Store) UpsertCompany(ctx context.Context, ownerID, domain, name string) (model.Company, error) {
 	id := uuid.NewString()
 	var company model.Company
@@ -26,6 +31,19 @@ func (s *Store) UpsertCompany(ctx context.Context, ownerID, domain, name string)
 		return model.Company{}, err
 	}
 	return company, nil
+}
+
+func (s *Store) GetCompany(ctx context.Context, ownerID, id string) (model.Company, error) {
+	var company model.Company
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, owner_id, domain, name, created_at, updated_at
+		 FROM companies
+		 WHERE id=$1 AND owner_id=$2`, id, ownerID).
+		Scan(&company.ID, &company.OwnerID, &company.Domain, &company.Name, &company.CreatedAt, &company.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.Company{}, ErrNotFound
+	}
+	return company, err
 }
 
 func (s *Store) ListCompanies(ctx context.Context, ownerID string) ([]model.Company, error) {
@@ -48,6 +66,64 @@ func (s *Store) ListCompanies(ctx context.Context, ownerID string) ([]model.Comp
 		out = append(out, company)
 	}
 	return out, rows.Err()
+}
+
+func (s *Store) ListCompaniesWithPeopleCount(ctx context.Context, ownerID string) ([]CompanyWithPeopleCount, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT c.id, c.owner_id, c.domain, c.name, c.created_at, c.updated_at, COUNT(p.id) AS people_count
+		 FROM companies c
+		 LEFT JOIN people p ON p.company_id = c.id AND p.owner_id = c.owner_id
+		 WHERE c.owner_id=$1
+		 GROUP BY c.id, c.owner_id, c.domain, c.name, c.created_at, c.updated_at
+		 ORDER BY c.domain`, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []CompanyWithPeopleCount{}
+	for rows.Next() {
+		var company CompanyWithPeopleCount
+		if err := rows.Scan(&company.ID, &company.OwnerID, &company.Domain, &company.Name, &company.CreatedAt, &company.UpdatedAt, &company.PeopleCount); err != nil {
+			return nil, err
+		}
+		out = append(out, company)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []CompanyWithPeopleCount{}
+	}
+	return out, nil
+}
+
+func (s *Store) ListPeopleByCompany(ctx context.Context, ownerID, companyID string) ([]model.Person, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, owner_id, primary_email, display_name, company_id, first_seen_at, updated_at
+		 FROM people
+		 WHERE owner_id=$1 AND company_id=$2
+		 ORDER BY display_name, primary_email`, ownerID, companyID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []model.Person{}
+	for rows.Next() {
+		var person model.Person
+		if err := rows.Scan(&person.ID, &person.OwnerID, &person.PrimaryEmail, &person.DisplayName, &person.CompanyID, &person.FirstSeenAt, &person.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, person)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []model.Person{}
+	}
+	return out, nil
 }
 
 func (s *Store) UpsertPerson(ctx context.Context, ownerID, email, name string, companyID *string) (model.Person, error) {
