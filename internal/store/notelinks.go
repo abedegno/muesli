@@ -2,11 +2,9 @@ package store
 
 import (
 	"context"
-	"errors"
 
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 )
 
 func scanNoteLink(row interface{ Scan(...any) error }) (model.NoteLink, error) {
@@ -23,32 +21,35 @@ func (s *Store) AddLink(ctx context.Context, ownerID, fromNoteID, toNoteID strin
 		return model.NoteLink{}, ErrSelfLink
 	}
 
-	tx, err := s.pool.Begin(ctx)
+	fromOK, err := s.noteOwnedLive(ctx, ownerID, fromNoteID)
 	if err != nil {
 		return model.NoteLink{}, err
 	}
-	defer tx.Rollback(ctx)
+	if !fromOK {
+		return model.NoteLink{}, ErrNotFound
+	}
+	toOK, err := s.noteOwnedLive(ctx, ownerID, toNoteID)
+	if err != nil {
+		return model.NoteLink{}, err
+	}
+	if !toOK {
+		return model.NoteLink{}, ErrNotFound
+	}
 
 	var link model.NoteLink
-	err = tx.QueryRow(ctx,
+	err = s.pool.QueryRow(ctx,
 		`INSERT INTO note_links (id, owner_id, from_note_id, to_note_id)
-		 SELECT $4, $1, f.id, t.id
-		 FROM notes f
-		 JOIN notes t ON t.id = $3 AND t.owner_id = $1 AND t.deleted_at IS NULL
-		 WHERE f.id = $2 AND f.owner_id = $1 AND f.deleted_at IS NULL
+		 VALUES ($1,$2,$3,$4)
 		 RETURNING id, owner_id, from_note_id, to_note_id, created_at`,
 		uuid.NewString(), ownerID, fromNoteID, toNoteID).
 		Scan(&link.ID, &link.OwnerID, &link.FromNoteID, &link.ToNoteID, &link.CreatedAt)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return model.NoteLink{}, ErrNotFound
-	}
 	if isUniqueViolation(err) {
 		return model.NoteLink{}, ErrDuplicate
 	}
 	if err != nil {
 		return model.NoteLink{}, err
 	}
-	return link, tx.Commit(ctx)
+	return link, nil
 }
 
 // RemoveLink deletes one owner-scoped directed note link.
