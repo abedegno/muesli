@@ -43,6 +43,10 @@ describe('Sidebar', () => {
     renderSidebar()
     expect(screen.getByRole('link', { name: /chat/i })).toHaveAttribute('href', '/chat')
   })
+  it('renders a global Action items nav link', () => {
+    renderSidebar()
+    expect(screen.getByRole('link', { name: /action items/i })).toHaveAttribute('href', '/action-items')
+  })
   it('collapsed sidebar still exposes a Chat entry point', () => {
     renderSidebar({ collapsed: true })
     expect(screen.getByRole('button', { name: /chat/i })).toBeInTheDocument()

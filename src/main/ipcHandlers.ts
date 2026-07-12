@@ -25,6 +25,7 @@ interface Handlers {
   listPeople(): Promise<PersonWithCompany[]>
   listCompanies(): Promise<CompanyWithCount[]>
   listNoteActionItems(noteId: string): Promise<ListNoteActionItemsResponse>
+  listActionItems(status?: string): Promise<ActionItem[]>
   getPerson(id: string): Promise<PersonWithCompany>
   getPersonNotes(id: string): Promise<Note[]>
   updatePerson(id: string, req: UpdatePersonRequest): Promise<PersonWithCompany>
@@ -173,6 +174,10 @@ export function createHandlers(deps: HandlerDeps): Handlers {
 
     async listNoteActionItems(noteId) {
       return authedClient().listNoteActionItems(noteId)
+    },
+
+    async listActionItems(status) {
+      return authedClient().listActionItems(status)
     },
 
     async getPerson(id) {
