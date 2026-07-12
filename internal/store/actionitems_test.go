@@ -180,6 +180,12 @@ func TestActionItemsStoreUpdateAndAssignOwner(t *testing.T) {
 	); err != nil {
 		t.Fatalf("seed action item: %v", err)
 	}
+	if err := st.ReplaceActionItemsForNote(ctx, otherID, otherNote.ID,
+		[]model.ActionItem{{Text: "Other owner's item", DueHint: "Soon"}},
+		nil,
+	); err != nil {
+		t.Fatalf("seed other action item: %v", err)
+	}
 	items, _, err := st.ListForNote(ctx, ownerID, note.ID)
 	if err != nil {
 		t.Fatalf("list seeded item: %v", err)

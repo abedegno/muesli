@@ -193,21 +193,32 @@ func (s *Store) AssignOwner(ctx context.Context, ownerID, id string, personID *s
 
 	var item model.ActionItem
 	var ownerPerson sql.NullString
-	var ownerPersonArg any
-	if personID != nil {
-		ownerPersonArg = *personID
-	}
-	err := s.pool.QueryRow(ctx,
-		`UPDATE action_items ai
-		    SET owner_person_id = $1
+	var query string
+	var args []any
+	if personID == nil {
+		query = `UPDATE action_items ai
+		    SET owner_person_id = NULL
+		   FROM notes n
+		  WHERE ai.id=$1
+		    AND ai.owner_id=$2
+		    AND n.owner_id=$2
+		    AND ai.note_id = n.id
+		    AND n.deleted_at IS NULL
+		 RETURNING ai.id, ai.note_id, ai.owner_id, ai.text, ai.owner_person_id, ai.status, ai.due_hint, ai.created_at`
+		args = []any{id, ownerID}
+	} else {
+		query = `UPDATE action_items ai
+		    SET owner_person_id = $1::uuid
 		   FROM notes n
 		  WHERE ai.id=$2
 		    AND ai.owner_id=$3
 		    AND n.owner_id=$3
 		    AND ai.note_id = n.id
 		    AND n.deleted_at IS NULL
-		 RETURNING ai.id, ai.note_id, ai.owner_id, ai.text, ai.owner_person_id, ai.status, ai.due_hint, ai.created_at`,
-		ownerPersonArg, id, ownerID).
+		 RETURNING ai.id, ai.note_id, ai.owner_id, ai.text, ai.owner_person_id, ai.status, ai.due_hint, ai.created_at`
+		args = []any{*personID, id, ownerID}
+	}
+	err := s.pool.QueryRow(ctx, query, args...).
 		Scan(&item.ID, &item.NoteID, &item.OwnerID, &item.Text, &ownerPerson, &item.Status, &item.DueHint, &item.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return model.ActionItem{}, ErrNotFound
