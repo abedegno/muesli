@@ -3,8 +3,10 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 
+	"github.com/abedegno/muesli/internal/people"
 	"github.com/abedegno/muesli/internal/store"
 	"github.com/go-chi/chi/v5"
 )
@@ -70,6 +72,10 @@ func (s *Server) handleUpsertSpeakerAlias(w http.ResponseWriter, r *http.Request
 		}
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
+	}
+
+	if err := people.LinkNoteSpeakers(r.Context(), s.deps.Store, uid, noteID); err != nil {
+		log.Printf("handleUpsertSpeakerAlias: link speakers: %v", err)
 	}
 
 	writeJSON(w, http.StatusOK, map[string]interface{}{
