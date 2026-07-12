@@ -24,13 +24,133 @@ import { buildSubtitleCues } from '@/lib/subtitleCues'
 import { cuesToSrt, cuesToAss, cuesToVtt } from '@/lib/subtitleFormats'
 import { Dialog } from '@/components/ui/Dialog'
 import { Button } from '@/components/ui/Button'
-import type { FullNote, Template } from '../../shared/types'
+import type { Folder, FullNote, Note, NoteLink, NoteLinksResponse, Template } from '../../shared/types'
 import { isTerminal } from '../../shared/types'
 import { Skeleton } from './ui/Skeleton'
 import type { RecordState } from './RecordControl'
 import { DuplicateAudioDialog } from './DuplicateAudioDialog'
 
-interface Ctx { notes: import('../../shared/types').Note[]; allNotes: import('../../shared/types').Note[]; folders: import('../../shared/types').Folder[]; refresh: () => void }
+interface Ctx { notes: Note[]; allNotes: Note[]; folders: Folder[]; refresh: () => void }
+
+function linkedNoteId(link: NoteLink, currentNoteId: string): string {
+  if (link.from_note_id === currentNoteId) return link.to_note_id
+  if (link.to_note_id === currentNoteId) return link.from_note_id
+  return link.to_note_id
+}
+
+function noteTitleForId(allNotes: Note[], noteId: string): string {
+  return allNotes.find((note) => note.id === noteId)?.title || noteId
+}
+
+function NoteLinksPanel({ noteId, allNotes, onOpenNote }: { noteId: string; allNotes: Note[]; onOpenNote: (id: string) => void }) {
+  const [links, setLinks] = useState<NoteLinksResponse | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!noteId) return
+
+    let cancelled = false
+    setLinks(null)
+    setError(null)
+
+    void muesli.listNoteLinks(noteId)
+      .then((res) => {
+        if (cancelled) return
+        setLinks({
+          outgoing: res.outgoing ?? [],
+          backlinks: res.backlinks ?? [],
+        })
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setError(err instanceof Error ? err.message : 'Could not load links')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [noteId])
+
+  if (!noteId) return null
+
+  const outgoing = links?.outgoing ?? []
+  const backlinks = links?.backlinks ?? []
+  const hasAnyLinks = outgoing.length > 0 || backlinks.length > 0
+  const loading = links === null && error === null
+
+  return (
+    <section className="border-b border-border px-6 py-4">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Links</h2>
+      </div>
+
+      {error ? (
+        <div role="alert" className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          Could not load links.
+          <div className="mt-1 text-xs text-destructive/80">{error}</div>
+        </div>
+      ) : loading ? (
+        <div role="status" className="mt-3 space-y-2">
+          <p className="text-sm text-muted-foreground">Loading links...</p>
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </div>
+      ) : !hasAnyLinks ? (
+        <p className="mt-3 text-sm text-muted-foreground">No links yet</p>
+      ) : (
+        <div className="mt-4 space-y-5">
+          <div>
+            <h3 className="text-sm font-medium">Outgoing</h3>
+            {outgoing.length > 0 ? (
+              <ul className="mt-2 space-y-2">
+                {outgoing.map((link) => {
+                  const otherNoteId = linkedNoteId(link, noteId)
+                  return (
+                    <li key={link.id}>
+                      <button
+                        type="button"
+                        className="flex w-full items-center justify-between gap-3 rounded-lg border border-border bg-background/70 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        onClick={() => onOpenNote(otherNoteId)}
+                      >
+                        <span className="truncate">{noteTitleForId(allNotes, otherNoteId)}</span>
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            ) : (
+              <p className="mt-2 text-sm text-muted-foreground">No outgoing links</p>
+            )}
+          </div>
+
+          <div>
+            <h3 className="text-sm font-medium">Referenced by</h3>
+            {backlinks.length > 0 ? (
+              <ul className="mt-2 space-y-2">
+                {backlinks.map((link) => {
+                  const otherNoteId = linkedNoteId(link, noteId)
+                  return (
+                    <li key={link.id}>
+                      <button
+                        type="button"
+                        className="flex w-full items-center justify-between gap-3 rounded-lg border border-border bg-background/70 px-3 py-2 text-left text-sm text-foreground transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        onClick={() => onOpenNote(otherNoteId)}
+                      >
+                        <span className="truncate">{noteTitleForId(allNotes, otherNoteId)}</span>
+                      </button>
+                    </li>
+                  )
+                })}
+              </ul>
+            ) : (
+              <p className="mt-2 text-sm text-muted-foreground">No references yet</p>
+            )}
+          </div>
+        </div>
+      )}
+    </section>
+  )
+}
 
 export function NoteScreen() {
   const { id = '' } = useParams()
@@ -681,6 +801,11 @@ export function NoteScreen() {
           try { await muesli.removeNoteFolder(id, folderId); setFull(await muesli.getFull(id)); refresh() }
           catch (err) { notify(err instanceof Error ? err.message : 'Could not remove from folder', 'error') }
         }}
+      />
+      <NoteLinksPanel
+        noteId={id}
+        allNotes={allNotes}
+        onOpenNote={(noteId) => navigate(`/notes/${noteId}`)}
       />
       <NoteActionItemsPanel noteId={id} />
       <div className="flex-1 overflow-y-auto px-6 py-4">
