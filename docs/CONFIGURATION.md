@@ -72,6 +72,14 @@ set.
 | `MUESLI_DEFAULT_TRANSCRIBER_TOKEN`  | string      | _(none)_ | No        | Bearer token the server sends to the transcriber plugin. Must match the plugin's `MUESLI_PLUGIN_TOKEN`. |
 | `MUESLI_DEFAULT_TRANSCRIBER_CONFIG` | JSON string | `{}`     | No        | Plugin-specific config JSON passed at registration (e.g. `{"model":"base"}`).                           |
 
+### Streaming transcriber
+
+| Variable                                      | Type        | Default  | Required? | Description                                                                                           |
+| --------------------------------------------- | ----------- | -------- | --------- | ----------------------------------------------------------------------------------------------------- |
+| `MUESLI_DEFAULT_STREAMING_TRANSCRIBER_URL`    | string      | _(none)_ | No        | HTTP base URL of the default streaming transcriber plugin (e.g. `http://streaming-transcriber:8000`). |
+| `MUESLI_DEFAULT_STREAMING_TRANSCRIBER_TOKEN`  | string      | _(none)_ | No        | Bearer token the server sends to the streaming transcriber plugin. Must match `MUESLI_PLUGIN_TOKEN`.  |
+| `MUESLI_DEFAULT_STREAMING_TRANSCRIBER_CONFIG` | JSON string | `{}`     | No        | Plugin-specific config JSON passed at registration (e.g. `{"model":"tiny.en"}`).                      |
+
 ### Agent (Ollama)
 
 | Variable                      | Type        | Default  | Required? | Description                                                                                                             |
@@ -105,8 +113,9 @@ These variables are convenience wrappers used by `docker-compose.yml` only.
 They are **not** read directly by the Muesli server or plugins — Compose
 expands them into the real variables above.
 
-| Variable            | What it expands to                                                | Default             | Description                                                                                                     |
-| ------------------- | ----------------------------------------------------------------- | ------------------- | --------------------------------------------------------------------------------------------------------------- |
-| `POSTGRES_PASSWORD` | `POSTGRES_DB` password / `DATABASE_URL`                           | `postgres`          | Postgres superuser password. Compose injects it into both the postgres service and the server’s `DATABASE_URL`. |
-| `WHISPER_TOKEN`     | `MUESLI_DEFAULT_TRANSCRIBER_TOKEN` + plugin `MUESLI_PLUGIN_TOKEN` | `dev-whisper-token` | Shared bearer token wired by Compose to both the server’s transcriber-token setting and the whisper plugin.     |
-| `AGENT_TOKEN`       | `MUESLI_DEFAULT_AGENT_TOKEN` + plugin `MUESLI_PLUGIN_TOKEN`       | `dev-agent-token`   | Shared bearer token wired by Compose to both the server’s agent-token setting and the ollama-agent plugin.      |
+| Variable            | What it expands to                                                          | Default               | Description                                                                                                       |
+| ------------------- | --------------------------------------------------------------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `POSTGRES_PASSWORD` | `POSTGRES_DB` password / `DATABASE_URL`                                     | `postgres`            | Postgres superuser password. Compose injects it into both the postgres service and the server’s `DATABASE_URL`.   |
+| `WHISPER_TOKEN`     | `MUESLI_DEFAULT_TRANSCRIBER_TOKEN` + plugin `MUESLI_PLUGIN_TOKEN`           | `dev-whisper-token`   | Shared bearer token wired by Compose to both the server’s transcriber-token setting and the whisper plugin.       |
+| `STREAMING_TOKEN`   | `MUESLI_DEFAULT_STREAMING_TRANSCRIBER_TOKEN` + plugin `MUESLI_PLUGIN_TOKEN` | `dev-streaming-token` | Shared bearer token wired by Compose to both the server’s streaming-transcriber setting and the streaming plugin. |
+| `AGENT_TOKEN`       | `MUESLI_DEFAULT_AGENT_TOKEN` + plugin `MUESLI_PLUGIN_TOKEN`                 | `dev-agent-token`     | Shared bearer token wired by Compose to both the server’s agent-token setting and the ollama-agent plugin.        |

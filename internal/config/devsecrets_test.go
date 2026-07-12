@@ -23,10 +23,11 @@ func TestDevSecretWarnings(t *testing.T) {
 		{
 			name: "real values — no warnings",
 			cfg: Config{
-				MasterKey:               "cmVhbC1rZXktdGhhdC1pcy1ub3QtZGVmYXVsdA==",
-				StorageSigningKey:       "real-signing-key",
-				DefaultTranscriberToken: "real-whisper-token",
-				DefaultAgentToken:       "real-agent-token",
+				MasterKey:                        "cmVhbC1rZXktdGhhdC1pcy1ub3QtZGVmYXVsdA==",
+				StorageSigningKey:                "real-signing-key",
+				DefaultTranscriberToken:          "real-whisper-token",
+				DefaultStreamingTranscriberToken: "real-streaming-token",
+				DefaultAgentToken:                "real-agent-token",
 			},
 			wantVars: nil,
 		},
@@ -52,6 +53,13 @@ func TestDevSecretWarnings(t *testing.T) {
 			wantVars: []string{"MUESLI_DEFAULT_TRANSCRIBER_TOKEN"},
 		},
 		{
+			name: "dev streaming transcriber token only",
+			cfg: Config{
+				DefaultStreamingTranscriberToken: "dev-streaming-token",
+			},
+			wantVars: []string{"MUESLI_DEFAULT_STREAMING_TRANSCRIBER_TOKEN"},
+		},
+		{
 			name: "dev agent token only",
 			cfg: Config{
 				DefaultAgentToken: "dev-agent-token",
@@ -59,17 +67,19 @@ func TestDevSecretWarnings(t *testing.T) {
 			wantVars: []string{"MUESLI_DEFAULT_AGENT_TOKEN"},
 		},
 		{
-			name: "all four dev defaults at once",
+			name: "all five dev defaults at once",
 			cfg: Config{
-				MasterKey:               "+kdb0f+R3nCdy80T2zDMmZm5lUxfWpzehijIE3Zvsw8=",
-				StorageSigningKey:       "dev-storage-signing-key-change-me",
-				DefaultTranscriberToken: "dev-whisper-token",
-				DefaultAgentToken:       "dev-agent-token",
+				MasterKey:                        "+kdb0f+R3nCdy80T2zDMmZm5lUxfWpzehijIE3Zvsw8=",
+				StorageSigningKey:                "dev-storage-signing-key-change-me",
+				DefaultTranscriberToken:          "dev-whisper-token",
+				DefaultStreamingTranscriberToken: "dev-streaming-token",
+				DefaultAgentToken:                "dev-agent-token",
 			},
 			wantVars: []string{
 				"MUESLI_MASTER_KEY",
 				"MUESLI_STORAGE_SIGNING_KEY",
 				"MUESLI_DEFAULT_TRANSCRIBER_TOKEN",
+				"MUESLI_DEFAULT_STREAMING_TRANSCRIBER_TOKEN",
 				"MUESLI_DEFAULT_AGENT_TOKEN",
 			},
 		},
