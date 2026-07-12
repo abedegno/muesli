@@ -183,6 +183,7 @@ func (s *Server) routes() {
 		r.Post("/api/people/refresh", s.handleRefreshPeople)
 		r.Get("/api/companies", s.handleListCompanies)
 		r.Get("/api/companies/{id}", s.handleGetCompany)
+		r.Post("/api/companies/{id}/merge", s.handleMergeCompanies)
 
 		r.Get("/api/calendar/sources", s.handleListCalendarSources)
 		r.Post("/api/calendar/sources", s.handleCreateCalendarSource)

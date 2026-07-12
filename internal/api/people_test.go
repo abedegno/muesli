@@ -502,3 +502,78 @@ func TestCompaniesGetOwnerScopingAndValidation(t *testing.T) {
 		t.Fatalf("bad id status %d, want 400; body %s", rec.Code, rec.Body)
 	}
 }
+
+func TestCompaniesMergeMovesPeopleAndReturnsSurvivor(t *testing.T) {
+	t.Parallel()
+	srv, st := newPeopleTestServer(t)
+	ownerID, ownerHdr := peopleAuthHeader(t, st, "companies-merge-owner@example.com")
+	_, otherHdr := peopleAuthHeader(t, st, "companies-merge-other@example.com")
+	otherOwnerID, _ := peopleAuthHeader(t, st, "companies-merge-third@example.com")
+
+	fromCompany, err := st.UpsertCompany(context.Background(), ownerID, "from.example", "From")
+	if err != nil {
+		t.Fatalf("upsert from company: %v", err)
+	}
+	intoCompany, err := st.UpsertCompany(context.Background(), ownerID, "into.example", "Into")
+	if err != nil {
+		t.Fatalf("upsert into company: %v", err)
+	}
+	otherCompany, err := st.UpsertCompany(context.Background(), otherOwnerID, "other.example", "Other")
+	if err != nil {
+		t.Fatalf("upsert other company: %v", err)
+	}
+	if _, err := st.UpsertPerson(context.Background(), ownerID, "alice@from.example", "Alice", &fromCompany.ID); err != nil {
+		t.Fatalf("upsert from person: %v", err)
+	}
+	if _, err := st.UpsertPerson(context.Background(), ownerID, "bob@into.example", "Bob", &intoCompany.ID); err != nil {
+		t.Fatalf("upsert into person: %v", err)
+	}
+
+	rec := doJSON(t, srv, http.MethodPost, "/api/companies/"+fromCompany.ID+"/merge", map[string]string{"into": intoCompany.ID}, ownerHdr)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("merge status %d body %s", rec.Code, rec.Body)
+	}
+	var merged struct {
+		model.Company
+		People []model.Person `json:"people"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&merged); err != nil {
+		t.Fatalf("decode merge response: %v", err)
+	}
+	if merged.ID != intoCompany.ID || merged.OwnerID != ownerID {
+		t.Fatalf("unexpected surviving company: %+v", merged.Company)
+	}
+	if len(merged.People) != 2 {
+		t.Fatalf("expected 2 people after merge, got %d: %+v", len(merged.People), merged.People)
+	}
+	for _, person := range merged.People {
+		if person.CompanyID == nil || *person.CompanyID != intoCompany.ID {
+			t.Fatalf("merged person not repointed: %+v", person)
+		}
+	}
+
+	rec = doJSON(t, srv, http.MethodPost, "/api/companies/"+fromCompany.ID+"/merge", map[string]string{"into": fromCompany.ID}, ownerHdr)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("same-company merge status %d, want 400; body %s", rec.Code, rec.Body)
+	}
+
+	rec = doJSON(t, srv, http.MethodPost, "/api/companies/"+fromCompany.ID+"/merge", map[string]string{}, ownerHdr)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing body merge status %d, want 400; body %s", rec.Code, rec.Body)
+	}
+
+	rec = doJSON(t, srv, http.MethodPost, "/api/companies/"+fromCompany.ID+"/merge", map[string]string{"into": otherCompany.ID}, ownerHdr)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-owner merge status %d, want 404; body %s", rec.Code, rec.Body)
+	}
+
+	rec = doJSON(t, srv, http.MethodPost, "/api/companies/"+fromCompany.ID+"/merge", map[string]string{"into": "00000000-0000-0000-0000-000000000000"}, ownerHdr)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("missing target merge status %d, want 404; body %s", rec.Code, rec.Body)
+	}
+
+	rec = doJSON(t, srv, http.MethodPost, "/api/companies/"+fromCompany.ID+"/merge", map[string]string{"into": intoCompany.ID}, otherHdr)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("cross-owner source merge status %d, want 404; body %s", rec.Code, rec.Body)
+	}
+}
