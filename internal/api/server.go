@@ -221,6 +221,7 @@ func (s *Server) routes() {
 
 		r.Get("/api/notes/{id}/transcript/review", s.handleGetDiarizationReview)
 		r.Post("/api/notes/{id}/transcript/review", s.handlePostDiarizationReview)
+		r.Get("/api/notes/{id}/stream", s.handleNoteStream)
 
 		r.Post("/api/audio/dedup-check", s.handleAudioDedupCheck)
 

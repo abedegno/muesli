@@ -38,8 +38,8 @@ func (s *Server) handleCreatePlugin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if req.Kind != model.PluginTranscriber && req.Kind != model.PluginAgent {
-		writeError(w, http.StatusBadRequest, "kind must be transcriber or agent")
+	if req.Kind != model.PluginTranscriber && req.Kind != model.PluginStreamingTranscriber && req.Kind != model.PluginAgent {
+		writeError(w, http.StatusBadRequest, "kind must be transcriber, streaming-transcriber, or agent")
 		return
 	}
 	if req.Name == "" || req.EndpointURL == "" {
