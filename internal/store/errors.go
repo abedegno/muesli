@@ -20,3 +20,6 @@ var ErrInvalidMerge = errors.New("invalid merge")
 // ErrInvalidOwner is returned when an action item owner assignment references
 // a person that does not belong to the caller.
 var ErrInvalidOwner = errors.New("invalid owner")
+
+// ErrSelfLink is returned when a note-link request tries to link a note to itself.
+var ErrSelfLink = errors.New("self link")

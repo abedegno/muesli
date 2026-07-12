@@ -72,6 +72,15 @@ type Note struct {
 	EventID *string `json:"event_id,omitempty"`
 }
 
+// NoteLink is an explicit directed link between two notes.
+type NoteLink struct {
+	ID         string    `json:"id"`
+	OwnerID    string    `json:"owner_id"`
+	FromNoteID string    `json:"from_note_id"`
+	ToNoteID   string    `json:"to_note_id"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
 // ActionItem is a structured action item extracted from a note.
 type ActionItem struct {
 	ID            string    `json:"id"`

@@ -161,6 +161,9 @@ func (s *Server) routes() {
 		r.Delete("/api/tags/{id}", s.handleDeleteTag)
 		r.Post("/api/notes/{id}/tags", s.handleAddNoteTag)
 		r.Delete("/api/notes/{id}/tags", s.handleRemoveNoteTag) // ?name=<tag>
+		r.Post("/api/notes/{id}/links", s.handleAddNoteLink)
+		r.Delete("/api/notes/{id}/links", s.handleRemoveNoteLink)
+		r.Get("/api/notes/{id}/links", s.handleListNoteLinks)
 
 		r.Get("/api/smart-lists", s.handleListSmartLists)
 		r.Get("/api/smart-lists/trash", s.handleListTrashedSmartLists)
