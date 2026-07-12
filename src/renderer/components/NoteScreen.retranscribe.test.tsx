@@ -42,6 +42,8 @@ vi.mock('@/api', () => ({
     resummarize: vi.fn(),
     regenerateSummary: vi.fn(),
     listTemplates: vi.fn(async () => []),
+    listNoteActionItems: vi.fn(async () => ({ actionItems: [], decisions: [] })),
+    updateActionItem: vi.fn(),
     deleteNote: vi.fn(),
     exportFile: vi.fn(),
     exportNote: vi.fn(),
