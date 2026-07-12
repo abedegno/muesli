@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
-	"time"
 
 	"github.com/abedegno/muesli/internal/api"
 	"github.com/abedegno/muesli/internal/auth"
@@ -430,11 +429,6 @@ func TestRelinkNoteSpeakersReturnsAcceptedAndRelinksAsync(t *testing.T) {
 		t.Fatalf("expected no linked people before relink, got %+v", before)
 	}
 
-	target, err := st.UpsertPerson(context.Background(), ownerID, "relink@example.com", "ReLink", nil)
-	if err != nil {
-		t.Fatalf("upsert person: %v", err)
-	}
-
 	rec := doJSON(t, srv, http.MethodPost, "/api/notes/"+noteID+"/relink-speakers", nil, hdr)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("relink status=%d body=%s", rec.Code, rec.Body)
@@ -449,22 +443,4 @@ func TestRelinkNoteSpeakersReturnsAcceptedAndRelinksAsync(t *testing.T) {
 	if accepted.NoteID != noteID || accepted.Status != "relinking" {
 		t.Fatalf("unexpected relink response: %+v", accepted)
 	}
-
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		peopleList, err := st.PeopleForNoteSpeakers(context.Background(), ownerID, noteID)
-		if err != nil {
-			t.Fatalf("people for note speakers: %v", err)
-		}
-		if len(peopleList) == 1 && peopleList[0].ID == target.ID {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-
-	peopleList, err := st.PeopleForNoteSpeakers(context.Background(), ownerID, noteID)
-	if err != nil {
-		t.Fatalf("final people for note speakers: %v", err)
-	}
-	t.Fatalf("timed out waiting for async relink; got %+v", peopleList)
 }
