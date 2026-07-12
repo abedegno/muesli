@@ -2,9 +2,11 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/abedegno/muesli/internal/model"
@@ -34,6 +36,10 @@ type companyResponse struct {
 type companyWithPeopleResponse struct {
 	model.Company
 	People []model.Person `json:"people"`
+}
+
+type mergeCompaniesRequest struct {
+	Into string `json:"into"`
 }
 
 // kickPeopleRefresh runs people.DerivePeople in the background, logging and
@@ -202,6 +208,62 @@ func (s *Server) handleGetCompany(w http.ResponseWriter, r *http.Request) {
 	people, err := s.deps.Store.ListPeopleByCompany(r.Context(), uid, id)
 	if err != nil {
 		log.Printf("handleGetCompany: list people by company: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, companyWithPeopleResponse{
+		Company: company,
+		People:  people,
+	})
+}
+
+func (s *Server) handleMergeCompanies(w http.ResponseWriter, r *http.Request) {
+	uid, _ := userIDFromContext(r.Context())
+	fromID := chi.URLParam(r, "id")
+	if !validCompanyID(w, fromID) {
+		return
+	}
+
+	var req mergeCompaniesRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if strings.TrimSpace(req.Into) == "" {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if _, err := uuid.Parse(req.Into); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+
+	if err := s.deps.Store.MergeCompanies(r.Context(), uid, fromID, req.Into); errors.Is(err, store.ErrInvalidMerge) {
+		writeError(w, http.StatusBadRequest, "invalid merge")
+		return
+	} else if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if err != nil {
+		log.Printf("handleMergeCompanies: merge companies: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	company, err := s.deps.Store.GetCompany(r.Context(), uid, req.Into)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if err != nil {
+		log.Printf("handleMergeCompanies: get surviving company: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	people, err := s.deps.Store.ListPeopleByCompany(r.Context(), uid, req.Into)
+	if err != nil {
+		log.Printf("handleMergeCompanies: list people by company: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}

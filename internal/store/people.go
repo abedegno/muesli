@@ -46,6 +46,53 @@ func (s *Store) GetCompany(ctx context.Context, ownerID, id string) (model.Compa
 	return company, err
 }
 
+// MergeCompanies moves all people from one company to another, then removes
+// the source company. Both companies must belong to ownerID.
+func (s *Store) MergeCompanies(ctx context.Context, ownerID, fromID, intoID string) error {
+	if fromID == intoID {
+		return ErrInvalidMerge
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var fromOwned, intoOwned bool
+	if err := tx.QueryRow(ctx,
+		`SELECT
+		   EXISTS(SELECT 1 FROM companies WHERE id=$1 AND owner_id=$2),
+		   EXISTS(SELECT 1 FROM companies WHERE id=$3 AND owner_id=$2)`,
+		fromID, ownerID, intoID, ownerID).Scan(&fromOwned, &intoOwned); err != nil {
+		return err
+	}
+	if !fromOwned || !intoOwned {
+		return ErrNotFound
+	}
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE people
+		 SET company_id=$1, updated_at=now()
+		 WHERE owner_id=$2 AND company_id=$3`,
+		intoID, ownerID, fromID); err != nil {
+		return err
+	}
+
+	ct, err := tx.Exec(ctx,
+		`DELETE FROM companies
+		 WHERE id=$1 AND owner_id=$2`,
+		fromID, ownerID)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+
+	return tx.Commit(ctx)
+}
+
 func (s *Store) ListCompanies(ctx context.Context, ownerID string) ([]model.Company, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, owner_id, domain, name, created_at, updated_at
