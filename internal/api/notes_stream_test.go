@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -149,6 +150,12 @@ func TestNoteStreamRelaysAndPersistsProvisionalSegments(t *testing.T) {
 			StartMS:     1250,
 			EndMS:       2500,
 		},
+		{
+			AfterFrames: 0,
+			Text:        "and again",
+			StartMS:     2500,
+			EndMS:       4000,
+		},
 	}, 0)
 	pluginID := registerPlugin(t, srv, hdr, model.PluginStreamingTranscriber, "streaming-test", pluginSrv.URL(), "plugin-token")
 	if err := st.SetDefaultPlugin(context.Background(), pluginID); err != nil {
@@ -169,41 +176,69 @@ func TestNoteStreamRelaysAndPersistsProvisionalSegments(t *testing.T) {
 	}
 	defer conn.Close()
 
-	if err := conn.WriteMessage(websocket.BinaryMessage, []byte{1, 2, 3, 4}); err != nil {
-		t.Fatalf("write audio: %v", err)
+	frames := pcmFixtureAllFrames(t)
+	if len(frames) != 2 {
+		t.Fatalf("pcm fixture frames = %d, want 2", len(frames))
 	}
-
+	if err := conn.WriteMessage(websocket.BinaryMessage, frames[0]); err != nil {
+		t.Fatalf("write audio frame 0: %v", err)
+	}
 	_, payload, err := conn.ReadMessage()
 	if err != nil {
-		t.Fatalf("read segment: %v", err)
+		t.Fatalf("read first segment: %v", err)
 	}
-	var segMsg map[string]any
-	if err := json.Unmarshal(payload, &segMsg); err != nil {
-		t.Fatalf("decode segment: %v", err)
+	var firstSegment map[string]any
+	if err := json.Unmarshal(payload, &firstSegment); err != nil {
+		t.Fatalf("decode first segment: %v", err)
 	}
-	if segMsg["type"] != "segment" || segMsg["text"] != "hello world" {
-		t.Fatalf("segment = %v", segMsg)
+	if firstSegment["type"] != "segment" {
+		t.Fatalf("first payload = %v", firstSegment)
 	}
-	if segMsg["provisional"] != true {
-		t.Fatalf("segment must be provisional: %v", segMsg)
+	if err := conn.WriteMessage(websocket.BinaryMessage, frames[1]); err != nil {
+		t.Fatalf("write audio frame 1: %v", err)
 	}
-	if segMsg["start_ms"] != float64(1250) || segMsg["end_ms"] != float64(2500) {
-		t.Fatalf("segment timings = %v", segMsg)
+	if err := conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"stop"}`)); err != nil {
+		t.Fatalf("write stop: %v", err)
+	}
+	_, payload, err = conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read second segment: %v", err)
+	}
+	var secondSegment map[string]any
+	if err := json.Unmarshal(payload, &secondSegment); err != nil {
+		t.Fatalf("decode second segment: %v", err)
+	}
+	if _, _, err := conn.ReadMessage(); err == nil {
+		t.Fatal("expected clean websocket close after stop")
+	}
+	segments := []map[string]any{firstSegment, secondSegment}
+	if got := pluginSrv.Frames(); len(got) != len(frames) {
+		t.Fatalf("plugin saw %d frames, want %d", len(got), len(frames))
+	} else {
+		for i := range frames {
+			if !bytes.Equal(got[i], frames[i]) {
+				t.Fatalf("frame %d payload mismatch", i)
+			}
+		}
+	}
+	if segments[0]["text"] != "hello world" || segments[1]["text"] != "and again" {
+		t.Fatalf("segments = %v", segments)
+	}
+	if segments[0]["provisional"] != true || segments[1]["provisional"] != true {
+		t.Fatalf("segments must be provisional: %v", segments)
+	}
+	if segments[0]["start_ms"] != float64(1250) || segments[0]["end_ms"] != float64(2500) {
+		t.Fatalf("segment[0] timings = %v", segments[0])
+	}
+	if segments[1]["start_ms"] != float64(2500) || segments[1]["end_ms"] != float64(4000) {
+		t.Fatalf("segment[1] timings = %v", segments[1])
 	}
 
 	_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
 	_ = conn.Close()
 
-	var transcriptID string
-	if err := pool.QueryRow(context.Background(), `SELECT id FROM transcripts WHERE note_id=$1`, note.ID).Scan(&transcriptID); err != nil {
-		t.Fatalf("query transcript: %v", err)
-	}
-	var provisional bool
-	if err := pool.QueryRow(context.Background(), `SELECT provisional FROM transcript_segments WHERE transcript_id=$1`, transcriptID).Scan(&provisional); err != nil {
-		t.Fatalf("query provisional: %v", err)
-	}
-	if !provisional {
-		t.Fatal("expected provisional transcript segment")
+	if got := countSegments(t, pool, note.ID, true); got != 2 {
+		t.Fatalf("provisional segments = %d, want 2", got)
 	}
 	got, err := st.GetNoteByID(context.Background(), note.ID)
 	if err != nil {
@@ -239,7 +274,11 @@ func TestNoteStreamHandlesPluginDropWithoutFailingNote(t *testing.T) {
 	}
 	defer conn.Close()
 
-	if err := conn.WriteMessage(websocket.BinaryMessage, []byte{9, 8, 7, 6}); err != nil {
+	frames := pcmFixtureAllFrames(t)
+	if len(frames) == 0 {
+		t.Fatal("pcm fixture must provide at least one frame")
+	}
+	if err := conn.WriteMessage(websocket.BinaryMessage, frames[0]); err != nil {
 		t.Fatalf("write audio: %v", err)
 	}
 

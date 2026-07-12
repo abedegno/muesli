@@ -27,8 +27,10 @@ type fakeStreamingPlugin struct {
 	segments        []fakeStreamingSegment
 	dropAfterFrames int
 
-	mu           sync.Mutex
-	binaryFrames int
+	mu              sync.Mutex
+	binaryFrames    int
+	frames          [][]byte
+	emittedSegments []fakeStreamingSegment
 }
 
 func newFakeStreamingPlugin(t *testing.T, token string, segments []fakeStreamingSegment, dropAfterFrames int) *fakeStreamingPlugin {
@@ -61,6 +63,24 @@ func (p *fakeStreamingPlugin) BinaryFrames() int {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	return p.binaryFrames
+}
+
+func (p *fakeStreamingPlugin) Frames() [][]byte {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([][]byte, len(p.frames))
+	for i, frame := range p.frames {
+		out[i] = append([]byte(nil), frame...)
+	}
+	return out
+}
+
+func (p *fakeStreamingPlugin) EmittedSegments() []fakeStreamingSegment {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	out := make([]fakeStreamingSegment, len(p.emittedSegments))
+	copy(out, p.emittedSegments)
+	return out
 }
 
 func (p *fakeStreamingPlugin) handleInfo(w http.ResponseWriter, r *http.Request) {
@@ -123,6 +143,7 @@ func (p *fakeStreamingPlugin) handleStream(w http.ResponseWriter, r *http.Reques
 		case websocket.BinaryMessage:
 			p.mu.Lock()
 			p.binaryFrames++
+			p.frames = append(p.frames, append([]byte(nil), payload...))
 			binaryFrames := p.binaryFrames
 			p.mu.Unlock()
 			if p.dropAfterFrames > 0 && binaryFrames >= p.dropAfterFrames {
@@ -135,6 +156,9 @@ func (p *fakeStreamingPlugin) handleStream(w http.ResponseWriter, r *http.Reques
 					if err := p.emitSegment(conn, seg); err != nil {
 						return
 					}
+					p.mu.Lock()
+					p.emittedSegments = append(p.emittedSegments, seg)
+					p.mu.Unlock()
 					nextSegment++
 					framesSinceEmit = 0
 				}
@@ -153,6 +177,9 @@ func (p *fakeStreamingPlugin) handleStream(w http.ResponseWriter, r *http.Reques
 				if err := p.emitSegment(conn, p.segments[nextSegment]); err != nil {
 					return
 				}
+				p.mu.Lock()
+				p.emittedSegments = append(p.emittedSegments, p.segments[nextSegment])
+				p.mu.Unlock()
 				nextSegment++
 			}
 			_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(2*time.Second))
@@ -162,13 +189,13 @@ func (p *fakeStreamingPlugin) handleStream(w http.ResponseWriter, r *http.Reques
 }
 
 func (p *fakeStreamingPlugin) emitSegment(conn *websocket.Conn, seg fakeStreamingSegment) error {
-	return conn.WriteJSON(map[string]any{
-		"type":    "segment",
-		"final":   true,
-		"text":    seg.Text,
-		"t0":      float64(seg.StartMS) / 1000,
-		"t1":      float64(seg.EndMS) / 1000,
-		"speaker": seg.Speaker,
+	return conn.WriteJSON(plugin.StreamingEvent{
+		Type:    "segment",
+		Final:   true,
+		Text:    seg.Text,
+		T0:      float64(seg.StartMS) / 1000,
+		T1:      float64(seg.EndMS) / 1000,
+		Speaker: seg.Speaker,
 	})
 }
 
@@ -177,16 +204,4 @@ func (p *fakeStreamingPlugin) checkAuth(r *http.Request) bool {
 		return true
 	}
 	return r.Header.Get("Authorization") == "Bearer "+p.token && r.Header.Get("X-Muesli-Plugin-API") == "1"
-}
-
-func mustPCMFixtureFrameBytes() []byte {
-	const repeat = 400
-	pattern := []int16{0, 8192, -8192, 16384, -16384, 24575, -24575, 32767}
-	out := make([]byte, 0, len(pattern)*repeat*2)
-	for i := 0; i < repeat; i++ {
-		for _, sample := range pattern {
-			out = append(out, byte(sample), byte(sample>>8))
-		}
-	}
-	return out
 }
