@@ -179,6 +179,7 @@ func (s *Server) routes() {
 
 		r.Get("/api/people", s.handleListPeople)
 		r.Get("/api/people/{id}", s.handleGetPerson)
+		r.Post("/api/people/refresh", s.handleRefreshPeople)
 		r.Get("/api/companies", s.handleListCompanies)
 		r.Get("/api/companies/{id}", s.handleGetCompany)
 

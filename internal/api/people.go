@@ -1,15 +1,23 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/abedegno/muesli/internal/model"
+	"github.com/abedegno/muesli/internal/people"
 	"github.com/abedegno/muesli/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 )
+
+// peopleRefreshKickTimeout bounds the background people derivation kicked
+// off by POST /api/people/refresh so a hung upstream fetch cannot leak a
+// goroutine forever.
+const peopleRefreshKickTimeout = 2 * time.Minute
 
 // personResponse is the composed JSON shape returned by the people read
 // endpoints: the person fields, plus the resolved company when available.
@@ -26,6 +34,19 @@ type companyResponse struct {
 type companyWithPeopleResponse struct {
 	model.Company
 	People []model.Person `json:"people"`
+}
+
+// kickPeopleRefresh runs people.DerivePeople in the background, logging and
+// swallowing its error: the HTTP response has already gone out by the time
+// this runs, so there is no one left to report the error to.
+func kickPeopleRefresh(st *store.Store, uid string) {
+	go func(uid string) {
+		ctx, cancel := context.WithTimeout(context.Background(), peopleRefreshKickTimeout)
+		defer cancel()
+		if err := people.DerivePeople(ctx, st, uid); err != nil {
+			log.Printf("people refresh %s: %v", uid, err)
+		}
+	}(uid)
 }
 
 func (s *Server) handleListPeople(w http.ResponseWriter, r *http.Request) {
@@ -159,6 +180,15 @@ func (s *Server) handleGetCompany(w http.ResponseWriter, r *http.Request) {
 		Company: company,
 		People:  people,
 	})
+}
+
+// handleRefreshPeople kicks an async re-derivation of the calling user's own
+// people records from calendar events. It responds immediately; the actual
+// derivation continues in the background.
+func (s *Server) handleRefreshPeople(w http.ResponseWriter, r *http.Request) {
+	uid, _ := userIDFromContext(r.Context())
+	kickPeopleRefresh(s.deps.Store, uid)
+	writeJSON(w, http.StatusAccepted, map[string]string{"status": "accepted"})
 }
 
 // validPersonID reports whether id is a syntactically valid UUID. People
