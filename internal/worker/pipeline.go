@@ -458,6 +458,28 @@ func (p *Processor) maybeExtractActionItems(ctx context.Context, noteID string, 
 		return
 	}
 	slog.DebugContext(ctx, "action items extracted", "note_id", noteID, "action_items", len(result.ActionItems), "decisions", len(result.Decisions))
+
+	ownerID, err := p.store.NoteOwnerID(ctx, noteID)
+	if err != nil {
+		slog.WarnContext(ctx, "action items persist: resolve note owner", "error", err, "note_id", noteID)
+		return
+	}
+
+	items := make([]model.ActionItem, len(result.ActionItems))
+	for i, item := range result.ActionItems {
+		items[i] = model.ActionItem{
+			Text:    item.Text,
+			DueHint: item.DueHint,
+		}
+	}
+	decisions := make([]model.Decision, len(result.Decisions))
+	for i, decision := range result.Decisions {
+		decisions[i] = model.Decision{Text: decision.Text}
+	}
+
+	if err := p.store.ReplaceActionItemsForNote(ctx, ownerID, noteID, items, decisions); err != nil {
+		slog.WarnContext(ctx, "action items persist failed", "error", err, "note_id", noteID)
+	}
 }
 
 func (p *Processor) readySummarySections(ctx context.Context, noteID string) ([]model.SummarySection, bool) {
