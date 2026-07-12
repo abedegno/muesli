@@ -4,10 +4,11 @@ package config
 // (taken verbatim from docker-compose.yml). An empty string as the default
 // value means the field has no known dev default (so it is never flagged).
 var devDefaults = map[string]string{
-	"MUESLI_MASTER_KEY":                "+kdb0f+R3nCdy80T2zDMmZm5lUxfWpzehijIE3Zvsw8=",
-	"MUESLI_STORAGE_SIGNING_KEY":       "dev-storage-signing-key-change-me",
-	"MUESLI_DEFAULT_TRANSCRIBER_TOKEN": "dev-whisper-token",
-	"MUESLI_DEFAULT_AGENT_TOKEN":       "dev-agent-token",
+	"MUESLI_MASTER_KEY":                          "+kdb0f+R3nCdy80T2zDMmZm5lUxfWpzehijIE3Zvsw8=",
+	"MUESLI_STORAGE_SIGNING_KEY":                 "dev-storage-signing-key-change-me",
+	"MUESLI_DEFAULT_TRANSCRIBER_TOKEN":           "dev-whisper-token",
+	"MUESLI_DEFAULT_STREAMING_TRANSCRIBER_TOKEN": "dev-streaming-token",
+	"MUESLI_DEFAULT_AGENT_TOKEN":                 "dev-agent-token",
 }
 
 // devDefaultOrder preserves a stable, predictable iteration order for the map
@@ -16,6 +17,7 @@ var devDefaultOrder = []string{
 	"MUESLI_MASTER_KEY",
 	"MUESLI_STORAGE_SIGNING_KEY",
 	"MUESLI_DEFAULT_TRANSCRIBER_TOKEN",
+	"MUESLI_DEFAULT_STREAMING_TRANSCRIBER_TOKEN",
 	"MUESLI_DEFAULT_AGENT_TOKEN",
 }
 
@@ -29,6 +31,8 @@ func fieldValue(cfg Config, envVar string) string {
 		return cfg.StorageSigningKey
 	case "MUESLI_DEFAULT_TRANSCRIBER_TOKEN":
 		return cfg.DefaultTranscriberToken
+	case "MUESLI_DEFAULT_STREAMING_TRANSCRIBER_TOKEN":
+		return cfg.DefaultStreamingTranscriberToken
 	case "MUESLI_DEFAULT_AGENT_TOKEN":
 		return cfg.DefaultAgentToken
 	default:

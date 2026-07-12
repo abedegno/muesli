@@ -25,6 +25,7 @@ within the `docs/` directory.
 | [`CONFIGURATION.md`](CONFIGURATION.md) | Complete reference for all `MUESLI_*` environment variables. |
 | [`DEPLOYMENT.md`](DEPLOYMENT.md)       | Production TLS and reverse-proxy guide.                      |
 | [`PLUGINS.md`](PLUGINS.md)             | How to write a transcriber or agent plugin.                  |
+| [`STREAMING-SMOKE.md`](STREAMING-SMOKE.md) | Manual smoke checklist for the optional streaming transcript path. |
 | [`BACKUP.md`](BACKUP.md)               | Backup and restore procedures for data and configuration.    |
 | [`UPGRADING.md`](UPGRADING.md)         | Step-by-step guide for upgrading an existing deployment.     |
 | [`API.md`](API.md)                     | HTTP API reference.                                          |

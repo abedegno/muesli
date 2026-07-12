@@ -94,6 +94,14 @@ func main() {
 		}
 		slog.Info("registered default transcriber plugin", "url", cfg.DefaultTranscriberURL)
 	}
+	if cfg.DefaultStreamingTranscriberURL != "" && cfg.DefaultStreamingTranscriberToken != "" {
+		if err := st.EnsureDefaultPlugin(ctx, cr, model.PluginStreamingTranscriber, "Default streaming transcriber",
+			cfg.DefaultStreamingTranscriberURL, cfg.DefaultStreamingTranscriberToken, cfg.DefaultStreamingTranscriberConfig); err != nil {
+			slog.Error("register default streaming transcriber", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("registered default streaming transcriber plugin", "url", cfg.DefaultStreamingTranscriberURL)
+	}
 	if cfg.DefaultAgentURL != "" && cfg.DefaultAgentToken != "" {
 		if err := st.EnsureDefaultPlugin(ctx, cr, model.PluginAgent, "Default agent",
 			cfg.DefaultAgentURL, cfg.DefaultAgentToken, cfg.DefaultAgentConfig); err != nil {

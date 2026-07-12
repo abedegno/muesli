@@ -476,6 +476,8 @@ auto-registers the plugins on boot and the operation is idempotent:
 | ---------------------------------- | ----------------------------------------------- |
 | `MUESLI_DEFAULT_TRANSCRIBER_URL`   | Base URL of the default transcriber plugin      |
 | `MUESLI_DEFAULT_TRANSCRIBER_TOKEN` | Bearer token for the default transcriber plugin |
+| `MUESLI_DEFAULT_STREAMING_TRANSCRIBER_URL`   | Base URL of the default streaming transcriber plugin |
+| `MUESLI_DEFAULT_STREAMING_TRANSCRIBER_TOKEN` | Bearer token for the default streaming transcriber plugin |
 | `MUESLI_DEFAULT_AGENT_URL`         | Base URL of the default agent plugin            |
 | `MUESLI_DEFAULT_AGENT_TOKEN`       | Bearer token for the default agent plugin       |
 
