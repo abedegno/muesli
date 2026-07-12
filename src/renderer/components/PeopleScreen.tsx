@@ -139,9 +139,10 @@ export function PeopleScreen() {
         <p className="text-sm text-muted-foreground">Browse people and companies from your workspace.</p>
       </div>
 
-      <label className="mb-4 block">
+      <label htmlFor="people-search" className="mb-4 block">
         <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-muted-foreground">Search</span>
         <Input
+          id="people-search"
           aria-label="Search people and companies"
           placeholder="Search people or companies"
           value={query}
