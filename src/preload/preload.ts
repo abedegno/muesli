@@ -32,6 +32,9 @@ const bridge: MuesliBridge = {
   permanentDeleteNote: (id) => ipcRenderer.invoke(IPC.permanentDeleteNote, id),
   getNoteAudioUrl: (noteId) => ipcRenderer.invoke(IPC.getNoteAudioUrl, noteId),
   uploadAudio: (req) => ipcRenderer.invoke(IPC.uploadAudio, req),
+  startNoteStream: (noteId) => ipcRenderer.invoke(IPC.startNoteStream, noteId),
+  stopNoteStream: (noteId) => ipcRenderer.invoke(IPC.stopNoteStream, noteId),
+  sendNoteStreamAudio: (noteId, audio) => ipcRenderer.invoke(IPC.sendNoteStreamAudio, noteId, audio),
   addTag: (noteId, name) => ipcRenderer.invoke(IPC.addTag, noteId, name),
   removeTag: (noteId, name) => ipcRenderer.invoke(IPC.removeTag, noteId, name),
   renameTag: (id, name) => ipcRenderer.invoke(IPC.renameTag, id, name),
@@ -88,6 +91,11 @@ const bridge: MuesliBridge = {
     const listener = (_e: unknown, p: UploadProgress) => cb(p)
     ipcRenderer.on(IPC.uploadProgress, listener)
     return () => ipcRenderer.removeListener(IPC.uploadProgress, listener)
+  },
+  onNoteStreamEvent: (cb) => {
+    const listener = (_e: unknown, event: Parameters<typeof cb>[0]) => cb(event)
+    ipcRenderer.on(IPC.noteStreamEvent, listener)
+    return () => ipcRenderer.removeListener(IPC.noteStreamEvent, listener)
   },
 }
 

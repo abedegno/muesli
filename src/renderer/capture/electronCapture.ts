@@ -1,4 +1,5 @@
 import type { AudioCapture, CaptureResult } from '../../main/capture/audioCapture'
+import { PcmFrameEncoder } from '../../shared/pcm'
 
 // ElectronCapture (v1): microphone via getUserMedia, system audio via
 // getDisplayMedia (Chromium loopback where the OS allows it). Both streams are
@@ -32,6 +33,8 @@ export interface ElectronCaptureConfig {
   deviceId?: string
   /** Linear gain multiplier applied to the mic (0 = silent, 1 = unity, 2 = double). Defaults to 1.0. */
   gainLinear?: number
+  /** Optional PCM callback used by the live transcript stream. */
+  onPcmFrame?: (frame: ArrayBuffer) => void
 }
 
 export class ElectronCapture implements AudioCapture {
@@ -39,16 +42,21 @@ export class ElectronCapture implements AudioCapture {
   private chunks: BlobPart[] = []
   private streams: MediaStream[] = []
   private audioCtx?: AudioContext
+  private pcmEncoder?: PcmFrameEncoder
+  private pcmTap?: ScriptProcessorNode
+  private pcmTapSink?: GainNode
   private startedAt = 0
   private hasSystem = false
   private hasMic = false
 
   private readonly deviceId?: string
   private readonly gainLinear: number
+  private readonly onPcmFrame?: (frame: ArrayBuffer) => void
 
   constructor(config: ElectronCaptureConfig = {}) {
     this.deviceId = config.deviceId
     this.gainLinear = config.gainLinear ?? 1.0
+    this.onPcmFrame = config.onPcmFrame
   }
 
   isRecording(): boolean {
@@ -61,6 +69,28 @@ export class ElectronCapture implements AudioCapture {
     const ctx = new AudioContext()
     this.audioCtx = ctx
     const destination = ctx.createMediaStreamDestination()
+    this.pcmEncoder = this.onPcmFrame ? new PcmFrameEncoder({ inputSampleRate: ctx.sampleRate }) : undefined
+    if (this.pcmEncoder && this.onPcmFrame) {
+      const tap = ctx.createScriptProcessor(4096, 2, 1)
+      const tapSink = ctx.createGain()
+      tapSink.gain.value = 0
+      tap.onaudioprocess = (event) => {
+        try {
+          const input = event.inputBuffer
+          const mono = mixAudioBufferToMono(input)
+          const frames = this.pcmEncoder?.push(mono) ?? []
+          for (const frame of frames) {
+            this.onPcmFrame?.(new Uint8Array(frame).buffer)
+          }
+        } catch {
+          // Best-effort live transcript only.
+        }
+      }
+      tap.connect(tapSink)
+      tapSink.connect(destination)
+      this.pcmTap = tap
+      this.pcmTapSink = tapSink
+    }
 
     // Microphone. If the user denies permission we surface a typed error so
     // the UI can show a helpful recovery hint instead of a generic message.
@@ -80,6 +110,7 @@ export class ElectronCapture implements AudioCapture {
       gainNode.gain.value = this.gainLinear
       micSource.connect(gainNode)
       gainNode.connect(destination)
+      if (this.pcmTap) gainNode.connect(this.pcmTap)
       this.hasMic = true
     } catch (err) {
       if (err instanceof Error && err.name === 'NotAllowedError') {
@@ -108,7 +139,9 @@ export class ElectronCapture implements AudioCapture {
         display.removeTrack(t)
       })
       if (display.getAudioTracks().length > 0) {
-        ctx.createMediaStreamSource(display).connect(destination)
+        const displaySource = ctx.createMediaStreamSource(display)
+        displaySource.connect(destination)
+        if (this.pcmTap) displaySource.connect(this.pcmTap)
         this.hasSystem = true
       }
     } catch {
@@ -141,7 +174,12 @@ export class ElectronCapture implements AudioCapture {
     })
 
     this.streams.forEach((s) => s.getTracks().forEach((t) => t.stop()))
+    this.pcmTap?.disconnect()
+    this.pcmTapSink?.disconnect()
     await this.audioCtx?.close()
+    this.pcmTap = undefined
+    this.pcmTapSink = undefined
+    this.pcmEncoder = undefined
 
     const bytes = new Uint8Array(await blob.arrayBuffer())
     return {
@@ -152,4 +190,21 @@ export class ElectronCapture implements AudioCapture {
       durationMs: Date.now() - this.startedAt,
     }
   }
+}
+
+function mixAudioBufferToMono(buffer: AudioBuffer): Float32Array {
+  const { length, numberOfChannels } = buffer
+  const mono = new Float32Array(length)
+  const channels: Float32Array[] = []
+  for (let i = 0; i < numberOfChannels; i++) {
+    channels.push(buffer.getChannelData(i))
+  }
+  for (let i = 0; i < length; i++) {
+    let sum = 0
+    for (let c = 0; c < channels.length; c++) {
+      sum += channels[c][i] ?? 0
+    }
+    mono[i] = channels.length > 0 ? sum / channels.length : 0
+  }
+  return mono
 }
