@@ -9,10 +9,15 @@ import (
 	"github.com/abedegno/muesli/internal/people"
 	"github.com/abedegno/muesli/internal/store"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
 
 type upsertAliasRequest struct {
 	AliasName string `json:"alias_name"`
+}
+
+type setSpeakerAliasPersonRequest struct {
+	PersonID *string `json:"person_id"`
 }
 
 // handleListSpeakerAliases returns all speaker aliases for a note as
@@ -104,4 +109,53 @@ func (s *Server) handleDeleteSpeakerAlias(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleSetSpeakerAliasPerson updates the person link for a speaker alias.
+func (s *Server) handleSetSpeakerAliasPerson(w http.ResponseWriter, r *http.Request) {
+	uid, _ := userIDFromContext(r.Context())
+	noteID := chi.URLParam(r, "id")
+	label := chi.URLParam(r, "label")
+	if !validNoteID(noteID) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+
+	var req setSpeakerAliasPersonRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+
+	if req.PersonID != nil {
+		if _, err := uuid.Parse(*req.PersonID); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid id")
+			return
+		}
+		if _, err := s.deps.Store.GetPerson(r.Context(), uid, *req.PersonID); errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		} else if err != nil {
+			log.Printf("handleSetSpeakerAliasPerson: get person: %v", err)
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+	}
+
+	if err := s.deps.Store.SetSpeakerAliasPerson(r.Context(), uid, noteID, label, req.PersonID); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+		log.Printf("handleSetSpeakerAliasPerson: set person: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	resp := map[string]any{
+		"note_id":       noteID,
+		"speaker_label": label,
+		"person_id":     req.PersonID,
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
