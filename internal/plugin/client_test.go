@@ -7,9 +7,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/plugin"
+	"github.com/gorilla/websocket"
 )
 
 func TestTranscribeSendsContractAndParsesResponse(t *testing.T) {
@@ -133,6 +135,102 @@ func TestHealthAndInfo(t *testing.T) {
 	info, err := c.Info(context.Background())
 	if err != nil || info.Name != "whisper" || info.PluginAPI != 1 {
 		t.Fatalf("info = %+v err=%v", info, err)
+	}
+}
+
+func TestStreamingOpenSendAndRecv(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	done := make(chan struct{})
+	var gotAuth, gotAPI string
+	var gotStart plugin.StreamingStartRequest
+	var gotAudio []byte
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/stream":
+			gotAuth = r.Header.Get("Authorization")
+			gotAPI = r.Header.Get("X-Muesli-Plugin-API")
+			conn, err := upgrader.Upgrade(w, r, nil)
+			if err != nil {
+				t.Fatalf("upgrade: %v", err)
+			}
+			defer conn.Close()
+
+			if _, payload, err := conn.ReadMessage(); err != nil {
+				t.Fatalf("read start: %v", err)
+			} else if err := json.Unmarshal(payload, &gotStart); err != nil {
+				t.Fatalf("start decode: %v", err)
+			}
+			if gotStart.Type != "start" || gotStart.SampleRate != 16000 || gotStart.Channels != 1 {
+				t.Fatalf("unexpected start %+v", gotStart)
+			}
+			if err := conn.WriteJSON(map[string]string{"type": "ready"}); err != nil {
+				t.Fatalf("write ready: %v", err)
+			}
+
+			if mt, payload, err := conn.ReadMessage(); err != nil {
+				t.Fatalf("read audio: %v", err)
+			} else if mt != websocket.BinaryMessage {
+				t.Fatalf("message type = %d, want binary", mt)
+			} else {
+				gotAudio = append([]byte(nil), payload...)
+			}
+			if err := conn.WriteJSON(map[string]any{
+				"type":    "segment",
+				"final":   true,
+				"text":    "hello",
+				"t0":      1.25,
+				"t1":      2.5,
+				"speaker": nil,
+			}); err != nil {
+				t.Fatalf("write segment: %v", err)
+			}
+
+			if mt, payload, err := conn.ReadMessage(); err != nil {
+				t.Fatalf("read stop: %v", err)
+			} else if mt != websocket.TextMessage || string(payload) != `{"type":"stop"}` {
+				t.Fatalf("stop payload = %s", payload)
+			}
+			close(done)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	c := plugin.NewStreaming(srv.URL, "tok")
+	sess, err := c.Open(context.Background(), plugin.StreamingStartRequest{
+		LanguageHint: "en",
+		Config:       json.RawMessage(`{"model":"base"}`),
+		SampleRate:   16000,
+		Channels:     1,
+	})
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if gotAuth != "Bearer tok" || gotAPI != "1" {
+		t.Fatalf("handshake headers auth=%q api=%q", gotAuth, gotAPI)
+	}
+	if err := sess.WriteAudio([]byte{1, 2, 3, 4}); err != nil {
+		t.Fatalf("write audio: %v", err)
+	}
+	ev, err := sess.Recv()
+	if err != nil {
+		t.Fatalf("recv: %v", err)
+	}
+	if ev.Type != "segment" || ev.Text != "hello" {
+		t.Fatalf("segment = %+v", ev)
+	}
+	if len(gotAudio) != 4 {
+		t.Fatalf("audio len = %d, want 4", len(gotAudio))
+	}
+	if err := sess.Stop(); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for stop")
 	}
 }
 

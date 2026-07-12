@@ -1,0 +1,2 @@
+ALTER TABLE transcript_segments
+  ADD COLUMN IF NOT EXISTS provisional BOOLEAN NOT NULL DEFAULT FALSE;
