@@ -197,9 +197,6 @@ func TestNoteStreamRelaysAndPersistsProvisionalSegments(t *testing.T) {
 	if err := conn.WriteMessage(websocket.BinaryMessage, frames[1]); err != nil {
 		t.Fatalf("write audio frame 1: %v", err)
 	}
-	if err := conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")); err != nil {
-		t.Fatalf("write close: %v", err)
-	}
 	_, payload, err = conn.ReadMessage()
 	if err != nil {
 		t.Fatalf("read second segment: %v", err)
@@ -207,9 +204,6 @@ func TestNoteStreamRelaysAndPersistsProvisionalSegments(t *testing.T) {
 	var secondSegment map[string]any
 	if err := json.Unmarshal(payload, &secondSegment); err != nil {
 		t.Fatalf("decode second segment: %v", err)
-	}
-	if _, _, err := conn.ReadMessage(); err == nil {
-		t.Fatal("expected clean websocket close after client disconnect")
 	}
 	segments := []map[string]any{firstSegment, secondSegment}
 	if got := pluginSrv.Frames(); len(got) != len(frames) {
@@ -234,7 +228,13 @@ func TestNoteStreamRelaysAndPersistsProvisionalSegments(t *testing.T) {
 		t.Fatalf("segment[1] timings = %v", segments[1])
 	}
 
-	_ = conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""))
+	// The client closes only after reading the expected segment stream.
+	if err := conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")); err != nil {
+		t.Fatalf("write close: %v", err)
+	}
+	if _, _, err := conn.ReadMessage(); err == nil {
+		t.Fatal("expected clean websocket close after client disconnect")
+	}
 	_ = conn.Close()
 
 	if got := countSegments(t, pool, note.ID, true); got != 2 {
