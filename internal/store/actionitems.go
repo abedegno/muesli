@@ -182,6 +182,24 @@ func (s *Store) UpdateActionItem(ctx context.Context, ownerID, id string, text *
 // AssignOwner updates an action item's owner_person_id. When personID is nil it
 // clears the owner; otherwise the person must exist and belong to ownerID.
 func (s *Store) AssignOwner(ctx context.Context, ownerID, id string, personID *string) (model.ActionItem, error) {
+	var exists bool
+	if err := s.pool.QueryRow(ctx,
+		`SELECT EXISTS(
+		   SELECT 1
+		     FROM action_items ai
+		     JOIN notes n ON n.id = ai.note_id
+		    WHERE ai.id=$1
+		      AND ai.owner_id=$2
+		      AND n.owner_id=$2
+		      AND n.deleted_at IS NULL
+		)`,
+		id, ownerID).Scan(&exists); err != nil {
+		return model.ActionItem{}, err
+	}
+	if !exists {
+		return model.ActionItem{}, ErrNotFound
+	}
+
 	if personID != nil {
 		if _, err := s.GetPerson(ctx, ownerID, *personID); err != nil {
 			if errors.Is(err, ErrNotFound) {

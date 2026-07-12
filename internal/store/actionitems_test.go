@@ -251,4 +251,7 @@ func TestActionItemsStoreUpdateAndAssignOwner(t *testing.T) {
 	if _, err := st.AssignOwner(ctx, ownerID, otherItemID, &ownerPerson.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("cross-owner assign = %v want ErrNotFound", err)
 	}
+	if _, err := st.AssignOwner(ctx, ownerID, otherItemID, &foreignPerson.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("cross-owner foreign assign = %v want ErrNotFound", err)
+	}
 }

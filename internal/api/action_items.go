@@ -165,17 +165,6 @@ func (s *Server) handleUpdateActionItemStatus(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if req.HasOwnerPersonID && req.OwnerPersonID != nil {
-		if _, err := s.deps.Store.GetPerson(r.Context(), uid, *req.OwnerPersonID); errors.Is(err, store.ErrNotFound) {
-			writeError(w, http.StatusBadRequest, "invalid owner")
-			return
-		} else if err != nil {
-			log.Printf("handleUpdateActionItemStatus: validate owner: %v", err)
-			writeError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-	}
-
 	var item model.ActionItem
 	var updated bool
 	if req.HasText || req.HasStatus {

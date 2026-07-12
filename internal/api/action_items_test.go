@@ -223,6 +223,10 @@ func TestActionItemsAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list other note: %v", err)
 	}
+	patchRec = doJSON(t, srv, http.MethodPatch, "/api/action-items/"+otherItems[0].ID, map[string]any{"owner_person_id": foreignPerson.ID}, hdr)
+	if patchRec.Code != http.StatusNotFound {
+		t.Fatalf("cross-owner foreign owner status=%d body=%s", patchRec.Code, patchRec.Body)
+	}
 	rec = doJSON(t, srv, http.MethodPatch, "/api/action-items/"+otherItems[0].ID, map[string]string{"status": "open"}, hdr)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("cross-owner patch status=%d body=%s", rec.Code, rec.Body)
