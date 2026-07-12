@@ -1,5 +1,5 @@
 import type { AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, DiarizationReview, FullNote, Folder, GoogleOAuthStatus, Message, MicrosoftOAuthStatus, Note, PersonWithCompany, PluginStatus, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection, UploadGrant } from '../shared/types'
-import type { CreateConversationRequest, CreateConversationResponse, SearchOptions, SendMessageRequest, SendMessageResponse } from '../shared/ipc'
+import type { CreateConversationRequest, CreateConversationResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdatePersonRequest } from '../shared/ipc'
 import { buildNoteExportRequest, parseContentDispositionFilename } from '../shared/export'
 import { buildCalendarEventsPath } from '../shared/calendar'
 
@@ -86,6 +86,21 @@ export class MuesliClient {
 
   async getPersonNotes(id: string): Promise<Note[]> {
     return this.json<Note[]>('GET', `/api/people/${id}/notes`)
+  }
+
+  async updatePerson(id: string, req: UpdatePersonRequest): Promise<PersonWithCompany> {
+    const body: Record<string, unknown> = {}
+    if (req.displayName !== undefined) body.display_name = req.displayName
+    if (req.companyId !== undefined) body.company_id = req.companyId
+    return this.json<PersonWithCompany>('PATCH', `/api/people/${id}`, body)
+  }
+
+  async mergePeople(fromId: string, intoId: string): Promise<PersonWithCompany> {
+    return this.json<PersonWithCompany>('POST', `/api/people/${fromId}/merge`, { into: intoId })
+  }
+
+  async deletePerson(id: string): Promise<void> {
+    await this.json('DELETE', `/api/people/${id}`)
   }
 
   async getCompany(id: string): Promise<CompanyWithPeople> {
