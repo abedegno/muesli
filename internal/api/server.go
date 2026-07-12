@@ -207,6 +207,8 @@ func (s *Server) routes() {
 		r.Post("/api/notes/{id}/folders", s.handleAddNoteFolder)
 		r.Delete("/api/notes/{id}/folders/{folderID}", s.handleRemoveNoteFolder)
 
+		r.Get("/api/notes/{id}/people", s.handleListNotePeople)
+		r.Post("/api/notes/{id}/relink-speakers", s.handleRelinkNoteSpeakers)
 		r.Get("/api/notes/{id}/speaker-aliases", s.handleListSpeakerAliases)
 		r.Put("/api/notes/{id}/speaker-aliases/{label}", s.handleUpsertSpeakerAlias)
 		r.Put("/api/notes/{id}/speaker-aliases/{label}/person", s.handleSetSpeakerAliasPerson)

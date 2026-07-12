@@ -175,6 +175,38 @@ func (s *Store) ListPeople(ctx context.Context, ownerID string) ([]model.Person,
 	return out, nil
 }
 
+func (s *Store) PeopleForNoteSpeakers(ctx context.Context, ownerID, noteID string) ([]model.Person, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT DISTINCT p.id, p.owner_id, p.primary_email, p.display_name, p.company_id, p.first_seen_at, p.updated_at
+		 FROM people p
+		 JOIN note_speaker_aliases nsa ON nsa.person_id = p.id
+		 WHERE nsa.owner_id = $1
+		   AND nsa.note_id = $2
+		   AND p.owner_id = $1
+		 ORDER BY p.display_name, p.primary_email`,
+		ownerID, noteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []model.Person{}
+	for rows.Next() {
+		var person model.Person
+		if err := rows.Scan(&person.ID, &person.OwnerID, &person.PrimaryEmail, &person.DisplayName, &person.CompanyID, &person.FirstSeenAt, &person.UpdatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, person)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if out == nil {
+		out = []model.Person{}
+	}
+	return out, nil
+}
+
 func (s *Store) GetPerson(ctx context.Context, ownerID, id string) (model.Person, error) {
 	var person model.Person
 	err := s.pool.QueryRow(ctx,
