@@ -151,7 +151,7 @@ Fields:
 Immediately after a valid `start` message, the plugin sends:
 
 ```json
-{"type":"ready"}
+{ "type": "ready" }
 ```
 
 ### `stop` message
@@ -159,7 +159,7 @@ Immediately after a valid `start` message, the plugin sends:
 The final control message is a JSON text frame:
 
 ```json
-{"type":"stop"}
+{ "type": "stop" }
 ```
 
 On `stop`, the plugin flushes any buffered speech as one last final segment and
@@ -171,7 +171,7 @@ If the `start` payload is invalid, the sample rate/channels are wrong, a binary
 frame arrives before `start`, or transcription fails, the plugin sends:
 
 ```json
-{"type":"error","message":"..."}
+{ "type": "error", "message": "..." }
 ```
 
 and closes the websocket.
