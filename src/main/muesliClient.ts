@@ -1,6 +1,6 @@
 import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, FullNote, Folder, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, Share, SmartList, SpeakerAlias, Template, TemplateSection, UploadGrant } from '../shared/types'
 import type { CreateConversationRequest, CreateConversationResponse, ListNoteActionItemsResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdateActionItemRequest, UpdatePersonRequest } from '../shared/ipc'
-import { buildNoteExportRequest, parseContentDispositionFilename } from '../shared/export'
+import { buildNoteExportRequest, parseContentDispositionFilename, type ExportOptions } from '../shared/export'
 import { buildCalendarEventsPath } from '../shared/calendar'
 
 export class ApiError extends Error {
@@ -187,32 +187,19 @@ export class MuesliClient {
     await this.json('DELETE', `/api/shares/${encodeURIComponent(token)}`)
   }
 
-  async exportNote(id: string, format: string): Promise<NoteExportData> {
-    const { path, method } = buildNoteExportRequest(id, format)
-    const headers: Record<string, string> = {}
-    if (this.token) headers.Authorization = `Bearer ${this.token}`
+  async exportNote(id: string, format: string, options?: ExportOptions): Promise<NoteExportData> {
+    const { path, method } = buildNoteExportRequest(id, format, options)
+    return this.downloadAttachment(path, method)
+  }
 
-    const res = await this.fetchImpl(`${this.baseUrl}${path}`, {
-      method,
-      headers,
-    })
-
-    const bytes = new Uint8Array(await res.arrayBuffer())
-    if (!res.ok) {
-      const text = bytes.length ? new TextDecoder().decode(bytes) : ''
-      const parsed = text ? safeParse(text) : undefined
-      const msg =
-        (parsed && typeof parsed === 'object' && 'error' in parsed
-          ? String((parsed as { error: unknown }).error)
-          : undefined) ?? `request failed: ${res.status}`
-      throw new ApiError(res.status, msg, parsed)
+  async exportFolder(folderId: string, format: string, options?: ExportOptions): Promise<NoteExportData> {
+    const body: Record<string, unknown> = {
+      folder_id: folderId,
+      format,
     }
-
-    return {
-      bytes,
-      filename: parseContentDispositionFilename(res.headers.get('content-disposition')),
-      contentType: res.headers.get('content-type'),
-    }
+    if (options?.includeTranscript !== undefined) body.include_transcript = options.includeTranscript
+    if (options?.redactSpeakers !== undefined) body.redact_speakers = options.redactSpeakers
+    return this.downloadAttachment('/api/export/batch', 'POST', body)
   }
 
   // Hybrid semantic + lexical search. Returns typed match objects (possibly
@@ -494,6 +481,35 @@ export class MuesliClient {
   // from a generic failure.
   async sendMessage(conversationId: string, body: SendMessageRequest): Promise<SendMessageResponse> {
     return this.json<SendMessageResponse>('POST', `/api/conversations/${conversationId}/messages`, body)
+  }
+
+  private async downloadAttachment(path: string, method: 'GET' | 'POST', body?: unknown): Promise<NoteExportData> {
+    const headers: Record<string, string> = {}
+    if (this.token) headers.Authorization = `Bearer ${this.token}`
+    if (body !== undefined) headers['Content-Type'] = 'application/json'
+
+    const res = await this.fetchImpl(`${this.baseUrl}${path}`, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    })
+
+    const bytes = new Uint8Array(await res.arrayBuffer())
+    if (!res.ok) {
+      const text = bytes.length ? new TextDecoder().decode(bytes) : ''
+      const parsed = text ? safeParse(text) : undefined
+      const msg =
+        (parsed && typeof parsed === 'object' && 'error' in parsed
+          ? String((parsed as { error: unknown }).error)
+          : undefined) ?? `request failed: ${res.status}`
+      throw new ApiError(res.status, msg, parsed)
+    }
+
+    return {
+      bytes,
+      filename: parseContentDispositionFilename(res.headers.get('content-disposition')),
+      contentType: res.headers.get('content-type'),
+    }
   }
 
   private async json<T>(

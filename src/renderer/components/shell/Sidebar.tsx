@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
 import { Plus, Search, FileText, MessageSquare, Settings, Tag as TagIcon, Filter, Sparkles, Folder as FolderIcon, ChevronRight, ChevronDown, Trash2, PanelLeft, PanelLeftClose, MoreHorizontal, Calendar, Users, CheckSquare2, BarChart3 } from 'lucide-react'
+import { muesli } from '@/api'
 import { cn } from '@/lib/cn'
 import { descendantIds } from '@/lib/folders'
 import { readStoredFolderCollapsed, writeStoredFolderCollapsed, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from '@/lib/sidebarPrefs'
@@ -8,6 +9,8 @@ import { describeRule } from '@/lib/smartList'
 import { Button } from '@/components/ui/Button'
 import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/ContextMenu'
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/DropdownMenu'
+import { useToast } from '@/components/ui/Toast'
+import { ExportOptionsDialog } from '../ExportOptionsDialog'
 import type { SmartList, Folder } from '../../../shared/types'
 import type { TagCount } from '@/lib/tagIndex'
 import type { RecurringSuggestion } from '@/lib/recurring'
@@ -82,6 +85,8 @@ export function Sidebar({
   // Keyboard-focus state: show ⋯ button when any element inside the row has focus.
   const [focusedListId, setFocusedListId] = useState<string | null>(null)
   const [focusedFolderId, setFocusedFolderId] = useState<string | null>(null)
+  const [exportFolderTarget, setExportFolderTarget] = useState<Folder | null>(null)
+  const { notify } = useToast()
 
   // Show the ⋯ button for a list/folder row when it is hovered, focused, OR its dropdown is open.
   const showListMore = (id: string) => hoveredListId === id || openListDropdownId === id || focusedListId === id
@@ -192,6 +197,7 @@ export function Sidebar({
                 <DropdownMenuContent align="end">
                   <DropdownMenuItem onSelect={() => onNewSubfolder(f.id)}>New subfolder…</DropdownMenuItem>
                   <DropdownMenuItem onSelect={() => onEditFolder(f)}>Rename…</DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setExportFolderTarget(f)}>Export folder…</DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem destructive onSelect={() => onDeleteFolder(f.id)}>Move to Trash</DropdownMenuItem>
                 </DropdownMenuContent>
@@ -202,6 +208,7 @@ export function Sidebar({
           <ContextMenuContent>
             <ContextMenuItem onSelect={() => onNewSubfolder(f.id)}>New subfolder…</ContextMenuItem>
             <ContextMenuItem onSelect={() => onEditFolder(f)}>Rename…</ContextMenuItem>
+            <ContextMenuItem onSelect={() => setExportFolderTarget(f)}>Export folder…</ContextMenuItem>
             <ContextMenuSeparator />
             <ContextMenuItem destructive onSelect={() => onDeleteFolder(f.id)}>Move to Trash</ContextMenuItem>
           </ContextMenuContent>
@@ -460,6 +467,35 @@ export function Sidebar({
       <NavLink to="/settings" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
         <Settings size={16} /> Settings
       </NavLink>
+      <ExportOptionsDialog
+        open={exportFolderTarget !== null}
+        title={exportFolderTarget ? `Export folder: ${exportFolderTarget.name}` : 'Export folder'}
+        description="Choose a format and whether to include the transcript and speaker names."
+        formats={[
+          { value: 'md', label: 'Markdown' },
+          { value: 'docx', label: 'Word' },
+          { value: 'pdf', label: 'PDF' },
+        ]}
+        confirmLabel="Export folder"
+        onCancel={() => setExportFolderTarget(null)}
+        onConfirm={async (value) => {
+          let failureMessage: string | null = null
+          try {
+            if (!exportFolderTarget) return
+            const result = await muesli.exportFolder(exportFolderTarget.id, value.format, {
+              includeTranscript: value.includeTranscript,
+              redactSpeakers: value.redactSpeakers,
+            })
+            if (!result.success && result.error !== 'cancelled') failureMessage = result.error
+          } catch (err) {
+            failureMessage = err instanceof Error ? err.message : 'Could not export folder'
+          }
+          if (failureMessage) {
+            notify(failureMessage, 'error')
+            throw new Error(failureMessage)
+          }
+        }}
+      />
 
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- focusable separator widget (ARIA 1.2 §6.24) */}
       <div role="separator" tabIndex={0} aria-label="Resize sidebar" aria-orientation="vertical"

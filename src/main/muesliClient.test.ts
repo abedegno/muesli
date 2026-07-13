@@ -169,12 +169,39 @@ describe('MuesliClient', () => {
       })
     }
     const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
-    const out = await client.exportNote('note-1', 'md')
-    expect(calls[0].url).toBe('http://x/api/notes/note-1/export?format=md')
+    const out = await client.exportNote('note-1', 'md', { includeTranscript: false, redactSpeakers: true })
+    expect(calls[0].url).toBe('http://x/api/notes/note-1/export?format=md&include_transcript=false&redact_speakers=true')
     expect(calls[0].init?.method).toBe('GET')
     expect(Buffer.from(out.bytes).toString('utf8')).toBe('exported markdown')
     expect(out.filename).toBe('Quarterly Review.md')
     expect(out.contentType).toBe('text/markdown; charset=utf-8')
+  })
+
+  it('exportFolder POSTs the batch export endpoint with the selected options', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    const fetchMock: FetchLike = async (url, init) => {
+      calls.push({ url: String(url), init })
+      return new Response('exported zip', {
+        status: 200,
+        headers: {
+          'Content-Disposition': 'attachment; filename="Client Notes.zip"',
+          'Content-Type': 'application/zip',
+        },
+      })
+    }
+    const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
+    const out = await client.exportFolder('folder-1', 'pdf', { includeTranscript: false, redactSpeakers: true })
+    expect(calls[0].url).toBe('http://x/api/export/batch')
+    expect(calls[0].init?.method).toBe('POST')
+    expect(JSON.parse(String(calls[0].init?.body))).toEqual({
+      folder_id: 'folder-1',
+      format: 'pdf',
+      include_transcript: false,
+      redact_speakers: true,
+    })
+    expect(Buffer.from(out.bytes).toString('utf8')).toBe('exported zip')
+    expect(out.filename).toBe('Client Notes.zip')
+    expect(out.contentType).toBe('application/zip')
   })
 
   it('exportNote throws ApiError when the export endpoint returns an error', async () => {

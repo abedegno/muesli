@@ -775,12 +775,40 @@ describe('ipc handlers', () => {
     tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
     const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
 
-    const out = await handlers.exportNote('note-123', 'md')
+    const out = await handlers.exportNote('note-123', 'md', { includeTranscript: false, redactSpeakers: true })
 
-    expect(seen[0]).toEqual({ method: 'GET', url: 'http://localhost/api/notes/note-123/export?format=md' })
+    expect(seen[0]).toEqual({ method: 'GET', url: 'http://localhost/api/notes/note-123/export?format=md&include_transcript=false&redact_speakers=true' })
     expect(Buffer.from(out.bytes).toString('utf8')).toBe('exported note body')
     expect(out.filename).toBe('Team Notes.md')
     expect(out.contentType).toBe('text/markdown; charset=utf-8')
+  })
+
+  it('exportFolder fetches the batch export and parses the suggested filename', async () => {
+    const seen: Array<{ url: string; method?: string; body?: string }> = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push({ url: String(url), method: init?.method, body: init?.body ? String(init.body) : undefined })
+      return new Response('exported zip body', {
+        status: 200,
+        headers: {
+          'Content-Disposition': 'attachment; filename="Team Notes.zip"',
+          'Content-Type': 'application/zip',
+        },
+      })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+
+    const out = await handlers.exportFolder('folder-123', 'pdf', { includeTranscript: false, redactSpeakers: true })
+
+    expect(seen[0]).toEqual({
+      method: 'POST',
+      url: 'http://localhost/api/export/batch',
+      body: JSON.stringify({ folder_id: 'folder-123', format: 'pdf', include_transcript: false, redact_speakers: true }),
+    })
+    expect(Buffer.from(out.bytes).toString('utf8')).toBe('exported zip body')
+    expect(out.filename).toBe('Team Notes.zip')
+    expect(out.contentType).toBe('application/zip')
   })
 
   describe('exportAllNotes', () => {

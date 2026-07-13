@@ -1,7 +1,7 @@
 import { basename, join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from 'electron'
-import { IPC, type ConnectRequest, type CreateConversationRequest, type DiarizationReviewUpdate, type SearchOptions, type SendMessageRequest, type UpdateActionItemRequest, type UpdatePersonRequest, type UploadAudioRequest } from '../shared/ipc'
+import { IPC, type ConnectRequest, type CreateConversationRequest, type DiarizationReviewUpdate, type ExportRequestOptions, type SearchOptions, type SendMessageRequest, type UpdateActionItemRequest, type UpdatePersonRequest, type UploadAudioRequest } from '../shared/ipc'
 import type { CreateShareRequest, DigestConfig, RetranscribeNoteRequest, RuleGroup, TemplateSection } from '../shared/types'
 import { createHandlers } from './ipcHandlers'
 import { NoteStreamRelay } from './noteStreamRelay'
@@ -150,15 +150,35 @@ app.whenReady().then(() => {
     return res.filePath
   })
 
-  ipcMain.handle(IPC.exportNote, async (_e, noteId: string, format: string) => {
+  ipcMain.handle(IPC.exportNote, async (_e, noteId: string, format: string, options?: ExportRequestOptions) => {
     try {
-      const exported = await handlers.exportNote(noteId, format)
+      const exported = await handlers.exportNote(noteId, format, options)
       const fallbackName = basename(`${noteId}.${format}`)
       const defaultPath = basename(exported.filename ?? fallbackName)
       const filterName = format === 'md' ? 'Markdown' : format.toUpperCase()
       const opts = {
         defaultPath,
         filters: [{ name: filterName, extensions: [format] }],
+      }
+      const res = mainWindow
+        ? await dialog.showSaveDialog(mainWindow, opts)
+        : await dialog.showSaveDialog(opts)
+      if (res.canceled || !res.filePath) return { success: false as const, error: 'cancelled' }
+      await writeFile(res.filePath, exported.bytes)
+      return { success: true as const, path: res.filePath }
+    } catch (err) {
+      return { success: false as const, error: err instanceof Error ? err.message : String(err) }
+    }
+  })
+
+  ipcMain.handle(IPC.exportFolder, async (_e, folderId: string, format: string, options?: ExportRequestOptions) => {
+    try {
+      const exported = await handlers.exportFolder(folderId, format, options)
+      const fallbackName = basename(`${folderId}.zip`)
+      const defaultPath = basename(exported.filename ?? fallbackName)
+      const opts = {
+        defaultPath,
+        filters: [{ name: 'Zip archive', extensions: ['zip'] }],
       }
       const res = mainWindow
         ? await dialog.showSaveDialog(mainWindow, opts)
