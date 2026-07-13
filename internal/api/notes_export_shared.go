@@ -49,14 +49,14 @@ func (s *Server) loadNoteExportParts(ctx context.Context, ownerID string, note m
 	return parts, nil
 }
 
-func renderNoteExport(note model.Note, parts noteExportParts, format string) ([]byte, string, string, error) {
+func renderNoteExport(note model.Note, parts noteExportParts, format string, opts noteexport.Options) ([]byte, string, string, error) {
 	filename := noteexport.SlugifyFilename(note.Title)
 	switch strings.ToLower(format) {
 	case "txt":
-		return []byte(noteexport.RenderNoteText(note, parts.summarySections, parts.segments, parts.aliases)),
+		return []byte(noteexport.RenderNoteText(note, parts.summarySections, parts.segments, parts.aliases, opts)),
 			"text/plain; charset=utf-8", filename + ".txt", nil
 	case "docx":
-		rendered, err := noteexport.RenderNoteDocx(note, parts.summarySections, parts.segments, parts.aliases)
+		rendered, err := noteexport.RenderNoteDocx(note, parts.summarySections, parts.segments, parts.aliases, opts)
 		if err != nil {
 			return nil, "", "", err
 		}
@@ -64,13 +64,13 @@ func renderNoteExport(note model.Note, parts noteExportParts, format string) ([]
 			"application/vnd.openxmlformats-officedocument.wordprocessingml.document",
 			filename + ".docx", nil
 	case "pdf":
-		rendered, err := noteexport.RenderNotePdf(note, parts.summarySections, parts.segments, parts.aliases)
+		rendered, err := noteexport.RenderNotePdf(note, parts.summarySections, parts.segments, parts.aliases, opts)
 		if err != nil {
 			return nil, "", "", err
 		}
 		return rendered, "application/pdf", filename + ".pdf", nil
 	default:
-		return []byte(noteexport.RenderNoteMarkdown(note, parts.summarySections, parts.segments, parts.aliases)),
+		return []byte(noteexport.RenderNoteMarkdown(note, parts.summarySections, parts.segments, parts.aliases, opts)),
 			"text/markdown; charset=utf-8", filename + ".md", nil
 	}
 }

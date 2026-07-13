@@ -9,8 +9,8 @@ import (
 )
 
 // RenderNoteDocx renders one note as a DOCX document with a title, zero or
-// more enhanced-summary sections, and a transcript section.
-func RenderNoteDocx(note model.Note, summarySections []model.SummarySection, segments []model.Segment, aliases map[string]string) ([]byte, error) {
+// more enhanced-summary sections, and an optional transcript section.
+func RenderNoteDocx(note model.Note, summarySections []model.SummarySection, segments []model.Segment, aliases map[string]string, opts Options) ([]byte, error) {
 	doc, err := godocx.NewDocument()
 	if err != nil {
 		return nil, err
@@ -29,11 +29,17 @@ func RenderNoteDocx(note model.Note, summarySections []model.SummarySection, seg
 		}
 	}
 
-	if _, err := doc.AddHeading("Transcript", 2); err != nil {
-		return nil, err
-	}
-	for _, segment := range segments {
-		doc.AddParagraph(renderTranscriptLine(segment, aliases))
+	if opts.IncludeTranscript {
+		if _, err := doc.AddHeading("Transcript", 2); err != nil {
+			return nil, err
+		}
+		redacted := map[string]string(nil)
+		if opts.RedactSpeakers {
+			redacted = buildRedactedSpeakerLabels(segments)
+		}
+		for _, segment := range segments {
+			doc.AddParagraph(renderTranscriptLine(segment, aliases, opts, redacted))
+		}
 	}
 
 	var buf bytes.Buffer

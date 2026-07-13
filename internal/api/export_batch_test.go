@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/abedegno/muesli/internal/auth"
@@ -240,5 +241,98 @@ func TestBatchExportNoteIDs(t *testing.T) {
 		map[string]any{"note_ids": []string{}, "format": "md"}, hdr)
 	if empty.Code != http.StatusBadRequest {
 		t.Fatalf("empty note_ids status=%d body=%s", empty.Code, empty.Body)
+	}
+}
+
+func TestBatchExportOptions(t *testing.T) {
+	t.Parallel()
+	srv, st := newTestServer(t)
+
+	_ = doJSON(t, srv, http.MethodPost, "/api/setup",
+		map[string]string{"email": "batch-options@example.com", "password": "password123"}, nil)
+	rec := doJSON(t, srv, http.MethodPost, "/api/login",
+		map[string]string{"email": "batch-options@example.com", "password": "password123"}, nil)
+	var login struct {
+		Token string `json:"token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &login)
+	hdr := map[string]string{"Authorization": "Bearer " + login.Token}
+
+	noteRec := doJSON(t, srv, http.MethodPost, "/api/notes",
+		map[string]any{"title": "Planning Review"}, hdr)
+	if noteRec.Code != http.StatusCreated {
+		t.Fatalf("create note status=%d body=%s", noteRec.Code, noteRec.Body)
+	}
+	var note struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(noteRec.Body.Bytes(), &note)
+	ownerID, err := st.NoteOwnerID(context.Background(), note.ID)
+	if err != nil {
+		t.Fatalf("note owner id: %v", err)
+	}
+	seedExportableNote(t, st, ownerID, note.ID)
+
+	exportRec := doJSON(t, srv, http.MethodPost, "/api/export/batch",
+		map[string]any{
+			"note_ids":           []string{note.ID},
+			"format":             "md",
+			"include_transcript": false,
+		}, hdr)
+	if exportRec.Code != http.StatusOK {
+		t.Fatalf("export status=%d body=%s", exportRec.Code, exportRec.Body)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(exportRec.Body.Bytes()), int64(exportRec.Body.Len()))
+	if err != nil {
+		t.Fatalf("zip reader: %v", err)
+	}
+	if len(zr.File) != 1 {
+		t.Fatalf("zip entries = %d, want 1", len(zr.File))
+	}
+	rc, err := zr.File[0].Open()
+	if err != nil {
+		t.Fatalf("open zip entry: %v", err)
+	}
+	body, err := io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil {
+		t.Fatalf("read zip entry: %v", err)
+	}
+	content := string(body)
+	if !strings.Contains(content, "Overview") || !strings.Contains(content, "Summary line.") {
+		t.Fatalf("batch export missing summary content:\n%s", content)
+	}
+	if strings.Contains(content, "Transcript") || strings.Contains(content, "Alice:") {
+		t.Fatalf("batch export unexpectedly included transcript:\n%s", content)
+	}
+
+	exportRec = doJSON(t, srv, http.MethodPost, "/api/export/batch",
+		map[string]any{
+			"note_ids":        []string{note.ID},
+			"format":          "md",
+			"redact_speakers": true,
+		}, hdr)
+	if exportRec.Code != http.StatusOK {
+		t.Fatalf("redacted export status=%d body=%s", exportRec.Code, exportRec.Body)
+	}
+	zr, err = zip.NewReader(bytes.NewReader(exportRec.Body.Bytes()), int64(exportRec.Body.Len()))
+	if err != nil {
+		t.Fatalf("zip reader: %v", err)
+	}
+	rc, err = zr.File[0].Open()
+	if err != nil {
+		t.Fatalf("open zip entry: %v", err)
+	}
+	body, err = io.ReadAll(rc)
+	_ = rc.Close()
+	if err != nil {
+		t.Fatalf("read zip entry: %v", err)
+	}
+	content = string(body)
+	if !strings.Contains(content, "Speaker 1: We should ship it.") || !strings.Contains(content, "Speaker 2: Then we can announce it.") {
+		t.Fatalf("batch export missing redacted speakers:\n%s", content)
+	}
+	if strings.Contains(content, "Alice:") || strings.Contains(content, "Bob:") {
+		t.Fatalf("batch export unexpectedly used aliases:\n%s", content)
 	}
 }
