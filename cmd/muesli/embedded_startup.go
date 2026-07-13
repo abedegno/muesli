@@ -15,6 +15,7 @@ type embeddedStartupHooks struct {
 	configure     func(*config.Config, string, bool)
 	pullEmbedding func(context.Context, string, string, embedded.PullProgressFunc) error
 	pullModel     func(context.Context, string, string, embedded.PullProgressFunc) error
+	onReady       func()
 }
 
 func runEmbeddedStartupPhases(ctx context.Context, cfg *config.Config, reporter *embedded.Reporter, ollamaURL string, hooks embeddedStartupHooks) (complete func(), err error) {
@@ -40,6 +41,9 @@ func runEmbeddedStartupPhases(ctx context.Context, cfg *config.Config, reporter 
 	if !detected {
 		return func() {
 			reporter.Advance(embedded.PhaseReady, "ready")
+			if hooks.onReady != nil {
+				hooks.onReady()
+			}
 		}, nil
 	}
 
@@ -51,6 +55,9 @@ func runEmbeddedStartupPhases(ctx context.Context, cfg *config.Config, reporter 
 		pulls.Wait()
 		<-startupDone
 		reporter.Advance(embedded.PhaseReady, "ready")
+		if hooks.onReady != nil {
+			hooks.onReady()
+		}
 	}()
 
 	go func() {

@@ -4,7 +4,6 @@ import (
 	"context"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/abedegno/muesli/internal/config"
 	"github.com/abedegno/muesli/internal/embedded"
@@ -29,6 +28,7 @@ func TestRunEmbeddedStartupPhases_OrderAndReadyGating(t *testing.T) {
 
 	pullsStarted := make(chan struct{}, 2)
 	allowPulls := make(chan struct{})
+	readyDone := make(chan struct{})
 
 	complete, err := runEmbeddedStartupPhases(context.Background(), &cfg, reporter, "http://127.0.0.1:11434", embeddedStartupHooks{
 		migrate: func(databaseURL string) error {
@@ -68,6 +68,9 @@ func TestRunEmbeddedStartupPhases_OrderAndReadyGating(t *testing.T) {
 			<-allowPulls
 			return nil
 		},
+		onReady: func() {
+			close(readyDone)
+		},
 	})
 	if err != nil {
 		t.Fatalf("runEmbeddedStartupPhases() error: %v", err)
@@ -102,13 +105,7 @@ func TestRunEmbeddedStartupPhases_OrderAndReadyGating(t *testing.T) {
 
 	close(allowPulls)
 
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if reporter.Snapshot().Ready {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
+	<-readyDone
 	if !reporter.Snapshot().Ready {
 		t.Fatal("ready did not flip after pulls completed and startup finished")
 	}
