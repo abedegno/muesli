@@ -29,12 +29,13 @@ const (
 
 // PG wraps a running embedded Postgres instance.
 type PG struct {
-	ep       *embeddedpostgres.EmbeddedPostgres
-	dataDir  string
-	port     int
-	password string
-	pid      int
-	mu       sync.Mutex
+	ep         *embeddedpostgres.EmbeddedPostgres
+	dataDir    string
+	runtimeDir string
+	port       int
+	password   string
+	pid        int
+	mu         sync.Mutex
 }
 
 // StartPostgres starts an embedded Postgres instance rooted at dataDir.
@@ -55,9 +56,10 @@ func StartPostgres(ctx context.Context, dataDir string, port int) (*PG, error) {
 	}
 
 	pg := &PG{
-		dataDir:  dataDir,
-		port:     port,
-		password: password,
+		dataDir:    dataDir,
+		runtimeDir: runtimePathForDataDir(dataDir),
+		port:       port,
+		password:   password,
 	}
 
 	if err := pg.start(ctx); err != nil {
@@ -70,6 +72,13 @@ func StartPostgres(ctx context.Context, dataDir string, port int) (*PG, error) {
 // URL returns the PostgreSQL connection string for the running instance.
 func (p *PG) URL() string {
 	return formatURL(p.password, p.port)
+}
+
+func (p *PG) runtimePath() string {
+	if p == nil {
+		return ""
+	}
+	return p.runtimeDir
 }
 
 // Stop shuts the server down gracefully, then force-kills it if needed.
@@ -187,13 +196,14 @@ func (p *PG) start(ctx context.Context) error {
 func newEmbeddedPostgres(dataDir string, port int, password string) *embeddedpostgres.EmbeddedPostgres {
 	cfg := embeddedpostgres.DefaultConfig().
 		DataPath(dataDir).
+		RuntimePath(runtimePathForDataDir(dataDir)).
 		Port(uint32(port)).
 		Password(password).
 		Version(embeddedpostgres.V17).
 		StartTimeout(pgStartTimeout)
 
 	if binaries := getenv(embeddedPGBinaryEnv); binaries != "" {
-		cfg = cfg.RuntimePath(runtimePathForDataDir(dataDir)).BinariesPath(binaries)
+		cfg = cfg.BinariesPath(binaries)
 	}
 
 	return embeddedpostgres.NewDatabase(cfg)
