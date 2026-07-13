@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/abedegno/muesli/internal/noteexport"
 	"github.com/abedegno/muesli/internal/store"
 	"github.com/go-chi/chi/v5"
 )
@@ -29,6 +30,17 @@ func (s *Server) handleGetNoteExport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	includeTranscript, ok := parseExportBoolQueryParam(r.URL.Query().Get("include_transcript"), true)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid option")
+		return
+	}
+	redactSpeakers, ok := parseExportBoolQueryParam(r.URL.Query().Get("redact_speakers"), false)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid option")
+		return
+	}
+
 	note, err := s.deps.Store.GetNote(r.Context(), uid, noteID)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
@@ -43,7 +55,10 @@ func (s *Server) handleGetNoteExport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	rendered, contentType, filename, err := renderNoteExport(note, parts, format)
+	rendered, contentType, filename, err := renderNoteExport(note, parts, format, noteexport.Options{
+		IncludeTranscript: includeTranscript,
+		RedactSpeakers:    redactSpeakers,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -53,4 +68,18 @@ func (s *Server) handleGetNoteExport(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(rendered)
+}
+
+func parseExportBoolQueryParam(raw string, defaultValue bool) (bool, bool) {
+	if strings.TrimSpace(raw) == "" {
+		return defaultValue, true
+	}
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "true", "1":
+		return true, true
+	case "false", "0":
+		return false, true
+	default:
+		return false, false
+	}
 }

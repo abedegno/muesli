@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/abedegno/muesli/internal/auth"
@@ -240,5 +241,104 @@ func TestBatchExportNoteIDs(t *testing.T) {
 		map[string]any{"note_ids": []string{}, "format": "md"}, hdr)
 	if empty.Code != http.StatusBadRequest {
 		t.Fatalf("empty note_ids status=%d body=%s", empty.Code, empty.Body)
+	}
+}
+
+func TestBatchExportOptions(t *testing.T) {
+	t.Parallel()
+
+	srv, st := newTestServer(t)
+	ctx := context.Background()
+
+	passwordHash, err := auth.HashPassword("password123")
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+	user, err := st.CreateUser(ctx, "batch-options@example.com", passwordHash)
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	raw, hash, err := auth.GenerateToken()
+	if err != nil {
+		t.Fatalf("generate token: %v", err)
+	}
+	if err := st.CreateToken(ctx, user.ID, "session", hash, "session"); err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+	hdr := map[string]string{"Authorization": "Bearer " + raw}
+
+	first := seedExportNote(t, st, user.ID, "Team Update")
+	second := seedExportNote(t, st, user.ID, "Team Update")
+
+	tests := []struct {
+		name           string
+		body           map[string]any
+		wantContains   []string
+		wantNotContain []string
+	}{
+		{
+			name: "omit transcript",
+			body: map[string]any{
+				"note_ids":           []string{first.ID, second.ID},
+				"format":             "md",
+				"include_transcript": false,
+			},
+			wantContains:   []string{"## Overview", "Summary body"},
+			wantNotContain: []string{"Transcript", "Speaker 1:", "Speaker 2:", "Alice:", "Bob:"},
+		},
+		{
+			name: "redact speakers",
+			body: map[string]any{
+				"note_ids":           []string{first.ID, second.ID},
+				"format":             "md",
+				"include_transcript": true,
+				"redact_speakers":    true,
+			},
+			wantContains:   []string{"Transcript", "Speaker 1: First line", "Speaker 2: Second line"},
+			wantNotContain: []string{"Alice:", "Bob:"},
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			rec := doJSON(t, srv, http.MethodPost, "/api/export/batch", tc.body, hdr)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("export status=%d body=%s", rec.Code, rec.Body)
+			}
+
+			zr, err := zip.NewReader(bytes.NewReader(rec.Body.Bytes()), int64(rec.Body.Len()))
+			if err != nil {
+				t.Fatalf("zip reader: %v", err)
+			}
+			if len(zr.File) != 2 {
+				t.Fatalf("zip entries = %d, want 2", len(zr.File))
+			}
+
+			for _, f := range zr.File {
+				rc, err := f.Open()
+				if err != nil {
+					t.Fatalf("open zip entry %s: %v", f.Name, err)
+				}
+				data, err := io.ReadAll(rc)
+				_ = rc.Close()
+				if err != nil {
+					t.Fatalf("read zip entry %s: %v", f.Name, err)
+				}
+				body := string(data)
+				for _, want := range tc.wantContains {
+					if !strings.Contains(body, want) {
+						t.Fatalf("zip entry %s missing %q\n%s", f.Name, want, body)
+					}
+				}
+				for _, want := range tc.wantNotContain {
+					if strings.Contains(body, want) {
+						t.Fatalf("zip entry %s unexpectedly contains %q\n%s", f.Name, want, body)
+					}
+				}
+			}
+		})
 	}
 }

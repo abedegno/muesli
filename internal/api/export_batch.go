@@ -16,9 +16,11 @@ import (
 )
 
 type batchExportRequest struct {
-	FolderID *string  `json:"folder_id"`
-	NoteIDs  []string `json:"note_ids"`
-	Format   string   `json:"format"`
+	FolderID          *string  `json:"folder_id"`
+	NoteIDs           []string `json:"note_ids"`
+	Format            string   `json:"format"`
+	IncludeTranscript *bool    `json:"include_transcript"`
+	RedactSpeakers    bool     `json:"redact_speakers"`
 }
 
 func (s *Server) handleBatchExport(w http.ResponseWriter, r *http.Request) {
@@ -34,6 +36,11 @@ func (s *Server) handleBatchExport(w http.ResponseWriter, r *http.Request) {
 	if format != "md" && format != "txt" && format != "docx" && format != "pdf" {
 		writeError(w, http.StatusBadRequest, "invalid format")
 		return
+	}
+
+	includeTranscript := true
+	if req.IncludeTranscript != nil {
+		includeTranscript = *req.IncludeTranscript
 	}
 
 	hasFolder := req.FolderID != nil
@@ -117,7 +124,10 @@ func (s *Server) handleBatchExport(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
-		rendered, _, filename, err := renderNoteExport(note, parts, format)
+		rendered, _, filename, err := renderNoteExport(note, parts, format, noteexport.Options{
+			IncludeTranscript: includeTranscript,
+			RedactSpeakers:    req.RedactSpeakers,
+		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
