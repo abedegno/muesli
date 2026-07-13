@@ -19,6 +19,7 @@ import (
 	"github.com/abedegno/muesli/internal/crypto"
 	"github.com/abedegno/muesli/internal/db"
 	"github.com/abedegno/muesli/internal/embed"
+	"github.com/abedegno/muesli/internal/embedded"
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/storage"
 	"github.com/abedegno/muesli/internal/store"
@@ -65,6 +66,21 @@ func main() {
 	if err != nil {
 		slog.Error("master key", "error", err, "hint", "set MUESLI_MASTER_KEY to a base64 32-byte key")
 		os.Exit(1)
+	}
+	if isEmbeddedMode(cfg, os.Args) {
+		databaseURL, embeddedStop, err := embedded.Start(ctx)
+		if err != nil {
+			slog.Error("embedded startup", "error", err)
+			os.Exit(1)
+		}
+		cfg.DatabaseURL = databaseURL
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := embeddedStop(shutdownCtx); err != nil {
+				slog.Error("embedded shutdown", "error", err)
+			}
+		}()
 	}
 	if err := db.Migrate(cfg.DatabaseURL); err != nil {
 		slog.Error("migrate", "error", err)
@@ -190,4 +206,16 @@ func storageSigningKey(cfg config.Config) []byte {
 		return sum[:]
 	}
 	return nil
+}
+
+func isEmbeddedMode(cfg config.Config, args []string) bool {
+	if cfg.Embedded {
+		return true
+	}
+	for _, arg := range args {
+		if arg == "--embedded" {
+			return true
+		}
+	}
+	return false
 }
