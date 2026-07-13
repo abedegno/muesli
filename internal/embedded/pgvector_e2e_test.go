@@ -33,10 +33,9 @@ func TestPgvectorIntegration(t *testing.T) {
 		}
 	}()
 
-	runtimePath := runtimePathForDataDir(dataDir)
 	if err := InstallPgvector(
-		filepath.Join(runtimePath, "lib"),
-		filepath.Join(runtimePath, "share", "extension"),
+		filepath.Join(pg.runtimePath(), "lib"),
+		filepath.Join(pg.runtimePath(), "share", "extension"),
 		os.Getenv("MUESLI_EMBEDDED_PGVECTOR_DIR"),
 	); err != nil {
 		t.Fatalf("InstallPgvector() error: %v", err)
