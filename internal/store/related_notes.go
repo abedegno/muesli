@@ -15,27 +15,32 @@ func (s *Store) RelatedNotes(ctx context.Context, ownerID, noteID, model string,
 	}
 
 	rows, err := s.pool.Query(ctx,
-		`SELECT other.note_id, 1 - (target.embedding <=> other.embedding) AS score
-		 FROM note_embeddings target
-		 JOIN notes target_note ON target_note.id = target.note_id
-		 JOIN note_embeddings other ON other.model = target.model AND other.dim = target.dim
+		`WITH target AS (
+		   SELECT e.embedding
+		   FROM note_embeddings e
+		   JOIN notes n ON n.id = e.note_id
+		   WHERE e.note_id = $3
+		     AND e.model = $4
+		     AND e.dim = $5
+		     AND n.owner_id = $1
+		     AND n.deleted_at IS NULL
+		   LIMIT 1
+		 )
+		 SELECT other.note_id, 1 - (target.embedding <=> other.embedding) AS score
+		 FROM target
+		 JOIN note_embeddings other ON other.model = $4 AND other.dim = $5
 		 JOIN notes other_note ON other_note.id = other.note_id
-		 WHERE target.note_id = $3
-		   AND target.model = $4
-		   AND target.dim = $5
-		   AND target_note.owner_id = $1
-		   AND target_note.deleted_at IS NULL
-		   AND other_note.owner_id = $1
+		 WHERE other_note.owner_id = $1
 		   AND other_note.deleted_at IS NULL
-		   AND other.note_id <> target.note_id
+		   AND other.note_id <> $3
 		   AND NOT EXISTS (
 		     SELECT 1
 		     FROM note_links nl
 		     WHERE nl.owner_id = $1
 		       AND (
-		         (nl.from_note_id = target.note_id AND nl.to_note_id = other.note_id)
+		         (nl.from_note_id = $3 AND nl.to_note_id = other.note_id)
 		         OR
-		         (nl.from_note_id = other.note_id AND nl.to_note_id = target.note_id)
+		         (nl.from_note_id = other.note_id AND nl.to_note_id = $3)
 		       )
 		   )
 		 ORDER BY target.embedding <=> other.embedding
