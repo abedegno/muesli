@@ -18,6 +18,7 @@ type digestDeliveryPayload struct {
 	WindowTo        time.Time          `json:"window_to"`
 	RecentMeetings  []model.Note       `json:"recent_meetings"`
 	OpenActionItems []model.ActionItem `json:"open_action_items"`
+	NeedsFollowUp   []model.ActionItem `json:"needs_follow_up"`
 	Text            string             `json:"text"`
 }
 
@@ -53,6 +54,7 @@ func SendDigest(ctx context.Context, st *store.Store, owner string, from, to tim
 		WindowTo:        d.WindowTo.UTC(),
 		RecentMeetings:  d.RecentMeetings,
 		OpenActionItems: d.OpenActionItems,
+		NeedsFollowUp:   d.NeedsFollowUp,
 		Text:            digest.Render(d),
 	}
 

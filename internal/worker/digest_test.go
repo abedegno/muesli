@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/abedegno/muesli/internal/digest"
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/store"
 	"github.com/abedegno/muesli/internal/testutil"
@@ -19,6 +20,15 @@ func setNoteStartedAt(t *testing.T, st *store.Store, noteID string, startedAt ti
 		`UPDATE notes SET started_at=$1, updated_at=$1 WHERE id=$2`,
 		startedAt, noteID); err != nil {
 		t.Fatalf("set note started_at: %v", err)
+	}
+}
+
+func setActionItemCreatedAt(t *testing.T, st *store.Store, itemID string, createdAt time.Time) {
+	t.Helper()
+	if _, err := st.Pool().Exec(context.Background(),
+		`UPDATE action_items SET created_at=$1 WHERE id=$2`,
+		createdAt, itemID); err != nil {
+		t.Fatalf("set action item created_at: %v", err)
 	}
 }
 
@@ -101,6 +111,94 @@ func TestSendDigestEnqueuesWebhookDelivery(t *testing.T) {
 	}
 	if !strings.Contains(payload.Text, "Weekly sync") {
 		t.Fatalf("text = %q, want rendered digest content", payload.Text)
+	}
+}
+
+func TestSendDigestIncludesNeedsFollowUpItems(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	st := store.New(testutil.NewPool(t))
+	owner, err := st.CreateUser(ctx, "owner@example.com", "h")
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	seedDigestWebhookRow(t, st, owner.ID, "https://example.test/digest", true)
+
+	note, err := st.CreateNote(ctx, owner.ID, "Weekly sync")
+	if err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+	if err := st.ReplaceActionItemsForNote(ctx, owner.ID, note.ID, []model.ActionItem{
+		{Text: "Stale item"},
+		{Text: "Fresh item"},
+	}, nil); err != nil {
+		t.Fatalf("ReplaceActionItemsForNote: %v", err)
+	}
+
+	items, err := st.ListForOwner(ctx, owner.ID, model.ActionItemOpen)
+	if err != nil {
+		t.Fatalf("ListForOwner: %v", err)
+	}
+	var staleID, freshID string
+	for _, item := range items {
+		switch item.Text {
+		case "Stale item":
+			staleID = item.ID
+		case "Fresh item":
+			freshID = item.ID
+		}
+	}
+	if staleID == "" || freshID == "" {
+		t.Fatalf("seeded action items not found: %+v", items)
+	}
+
+	anchor := time.Date(2024, 1, 8, 12, 0, 0, 0, time.UTC)
+	setNoteStartedAt(t, st, note.ID, anchor)
+	setActionItemCreatedAt(t, st, staleID, anchor.Add(-digest.FollowUpThreshold-time.Hour))
+	setActionItemCreatedAt(t, st, freshID, anchor.Add(-time.Hour))
+
+	from := anchor.Add(-2 * time.Hour)
+	to := anchor.Add(2 * time.Hour)
+	if err := worker.SendDigest(ctx, st, owner.ID, from, to); err != nil {
+		t.Fatalf("SendDigest: %v", err)
+	}
+
+	deliveries, err := st.ListDeliveriesForOwner(ctx, owner.ID, 10)
+	if err != nil {
+		t.Fatalf("ListDeliveriesForOwner: %v", err)
+	}
+	if len(deliveries) != 1 {
+		t.Fatalf("deliveries = %d, want 1", len(deliveries))
+	}
+
+	var payload struct {
+		Event           string             `json:"event"`
+		OwnerID         string             `json:"owner_id"`
+		WindowFrom      time.Time          `json:"window_from"`
+		WindowTo        time.Time          `json:"window_to"`
+		RecentMeetings  []model.Note       `json:"recent_meetings"`
+		OpenActionItems []model.ActionItem `json:"open_action_items"`
+		NeedsFollowUp   []model.ActionItem `json:"needs_follow_up"`
+		Text            string             `json:"text"`
+	}
+	if err := json.Unmarshal(deliveries[0].Payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if len(payload.OpenActionItems) != 2 {
+		t.Fatalf("open_action_items = %+v, want 2 items", payload.OpenActionItems)
+	}
+	if payload.OpenActionItems[0].ID != staleID || payload.OpenActionItems[1].ID != freshID {
+		t.Fatalf("open_action_items order = [%s %s], want [%s %s]", payload.OpenActionItems[0].ID, payload.OpenActionItems[1].ID, staleID, freshID)
+	}
+	if len(payload.NeedsFollowUp) != 1 {
+		t.Fatalf("needs_follow_up = %+v, want 1 item", payload.NeedsFollowUp)
+	}
+	if payload.NeedsFollowUp[0].ID != staleID || payload.NeedsFollowUp[0].Text != "Stale item" {
+		t.Fatalf("needs_follow_up[0] = %+v, want stale item %s", payload.NeedsFollowUp[0], staleID)
+	}
+	if payload.NeedsFollowUp[0].ID == freshID {
+		t.Fatalf("needs_follow_up unexpectedly includes fresh item %s", freshID)
 	}
 }
 
