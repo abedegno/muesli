@@ -42,6 +42,11 @@ export interface NoteLink {
   created_at: string
 }
 
+export interface RelatedNote {
+  note_id: string
+  score: number
+}
+
 export interface NoteLinksResponse {
   outgoing: NoteLink[]
   backlinks: NoteLink[]
