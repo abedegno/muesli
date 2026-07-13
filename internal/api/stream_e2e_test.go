@@ -14,6 +14,7 @@ import (
 	"github.com/abedegno/muesli/internal/config"
 	"github.com/abedegno/muesli/internal/crypto"
 	"github.com/abedegno/muesli/internal/model"
+	"github.com/abedegno/muesli/internal/plugin"
 	"github.com/abedegno/muesli/internal/plugintest"
 	"github.com/abedegno/muesli/internal/storage"
 	"github.com/abedegno/muesli/internal/store"
@@ -163,6 +164,146 @@ func setNoteAudioAndJob(t *testing.T, st *store.Store, noteID string) {
 	if _, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{"audio_key":"`+audioKey+`"}`)); err != nil {
 		t.Fatalf("enqueue transcribe job: %v", err)
 	}
+}
+
+func newSingleSegmentTranscriber(t *testing.T, segment model.Segment) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("/info", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(plugin.Info{Name: "single-segment-transcriber", Version: "0", PluginAPI: 1, Kind: model.PluginTranscriber})
+	})
+	mux.HandleFunc("/transcribe", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(plugin.TranscribeResponse{
+			Segments:   []model.Segment{segment},
+			Language:   "en",
+			Model:      "stub-single",
+			DurationMS: 2500,
+		})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func newBurstFloodStreamingPlugin(t *testing.T, token string, partialCount int, finalText string) *fakeStreamingPlugin {
+	t.Helper()
+	p := &fakeStreamingPlugin{
+		token: token,
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/info", p.handleInfo)
+	mux.HandleFunc("/health", p.handleHealth)
+	mux.HandleFunc("/stream", func(w http.ResponseWriter, r *http.Request) {
+		if !p.checkAuth(r) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		if _, payload, err := conn.ReadMessage(); err != nil {
+			return
+		} else {
+			var start struct {
+				Type       string `json:"type"`
+				SampleRate int    `json:"sample_rate"`
+				Channels   int    `json:"channels"`
+			}
+			if err := json.Unmarshal(payload, &start); err != nil {
+				_ = conn.WriteJSON(map[string]any{"type": "error", "message": "invalid start message"})
+				return
+			}
+			if start.Type != "start" || start.SampleRate != 16000 || start.Channels != 1 {
+				_ = conn.WriteJSON(map[string]any{"type": "error", "message": "invalid start parameters"})
+				return
+			}
+		}
+
+		if err := conn.WriteJSON(map[string]string{"type": "ready"}); err != nil {
+			return
+		}
+
+		emitted := false
+		for {
+			mt, payload, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			switch mt {
+			case websocket.BinaryMessage:
+				p.mu.Lock()
+				p.binaryFrames++
+				p.frames = append(p.frames, append([]byte(nil), payload...))
+				p.mu.Unlock()
+				if emitted {
+					if err := p.emitSegment(conn, fakeStreamingSegment{
+						AfterFrames: 1,
+						Text:        finalText,
+						StartMS:     1250,
+						EndMS:       2500,
+						Final:       boolPtr(true),
+					}); err != nil {
+						return
+					}
+					p.mu.Lock()
+					p.emittedSegments = append(p.emittedSegments, fakeStreamingSegment{Text: finalText, StartMS: 1250, EndMS: 2500, Final: boolPtr(true)})
+					p.mu.Unlock()
+					_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Time{})
+					return
+				}
+				emitted = true
+				for i := 0; i < partialCount; i++ {
+					seg := fakeStreamingSegment{
+						AfterFrames: 1,
+						Text:        "partial",
+						StartMS:     1250,
+						EndMS:       2500,
+						Final:       boolPtr(false),
+					}
+					if err := p.emitSegment(conn, seg); err != nil {
+						return
+					}
+					p.mu.Lock()
+					p.emittedSegments = append(p.emittedSegments, seg)
+					p.mu.Unlock()
+				}
+			case websocket.TextMessage:
+				var control struct {
+					Type string `json:"type"`
+				}
+				if err := json.Unmarshal(payload, &control); err != nil {
+					continue
+				}
+				if control.Type != "stop" {
+					continue
+				}
+				if err := p.emitSegment(conn, fakeStreamingSegment{
+					AfterFrames: 1,
+					Text:        finalText,
+					StartMS:     1250,
+					EndMS:       2500,
+					Final:       boolPtr(true),
+				}); err != nil {
+					return
+				}
+				p.mu.Lock()
+				p.emittedSegments = append(p.emittedSegments, fakeStreamingSegment{Text: finalText, StartMS: 1250, EndMS: 2500, Final: boolPtr(true)})
+				p.mu.Unlock()
+				_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Time{})
+				return
+			}
+		}
+	})
+	p.srv = httptest.NewServer(mux)
+	t.Cleanup(p.Close)
+	return p
 }
 
 func TestStreamingE2E_LiveSegmentsAndBatchFinalize(t *testing.T) {
@@ -471,6 +612,143 @@ func TestStreamingE2E_PartialThenFinalSegmentPersistsOnlyFinal(t *testing.T) {
 	}
 	if got, want := finalTranscript.Segments[1].Text, "Let's begin."; got != want {
 		t.Fatalf("segment[1] = %q, want %q", got, want)
+	}
+	note, err = fixture.st.GetNoteByID(context.Background(), noteID)
+	if err != nil {
+		t.Fatalf("get note after batch: %v", err)
+	}
+	if note.PartialTranscript {
+		t.Fatal("partial_transcript should be false after batch success")
+	}
+}
+
+func TestStreamingE2E_PartialFloodDoesNotBlockFinal(t *testing.T) {
+	fixture := newStreamingE2EFixture(t)
+	httpSrv := httptest.NewServer(fixture.srv.Handler())
+	t.Cleanup(httpSrv.Close)
+
+	const partialFloodCount = 64
+	finalText := "final survives flood"
+	// The fake plugin emits the segment burst from a small guaranteed frame count because the inbound audio buffer can drop older PCM frames under flood.
+	streamPlugin := newBurstFloodStreamingPlugin(t, "stream-token", partialFloodCount, finalText)
+	pluginID := registerPlugin(t, fixture.srv, fixture.hdr, model.PluginStreamingTranscriber, "streaming-fake", streamPlugin.URL(), "stream-token")
+	if err := fixture.st.SetDefaultPlugin(context.Background(), pluginID); err != nil {
+		t.Fatalf("set default streaming plugin: %v", err)
+	}
+
+	noteID := createStreamingNote(t, fixture.srv, fixture.hdr, "Partial flood")
+	setNoteAudioAndJob(t, fixture.st, noteID)
+
+	conn := openStream(t, httpSrv.URL, noteID, strings.TrimPrefix(fixture.hdr["Authorization"], "Bearer "))
+	frames := pcmFixtureAllFrames(t)
+	if len(frames) != 2 {
+		t.Fatalf("pcm fixture frames = %d, want 2", len(frames))
+	}
+
+	finalCh := make(chan map[string]any, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		defer close(finalCh)
+		for {
+			_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
+			_, payload, err := conn.ReadMessage()
+			if err != nil {
+				errCh <- err
+				return
+			}
+			var msg map[string]any
+			if err := json.Unmarshal(payload, &msg); err != nil {
+				errCh <- err
+				return
+			}
+			if msg["type"] != "segment" {
+				continue
+			}
+			if msg["final"] != true {
+				continue
+			}
+			finalCh <- msg
+			return
+		}
+	}()
+
+	for i := 0; i < 2; i++ {
+		if err := conn.WriteMessage(websocket.BinaryMessage, frames[i]); err != nil {
+			t.Fatalf("write pcm frame %d: %v", i, err)
+		}
+	}
+
+	var finalMsg map[string]any
+	select {
+	case finalMsg = <-finalCh:
+	case err := <-errCh:
+		t.Fatalf("read stream message: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for final segment")
+	}
+
+	if finalMsg["text"] != finalText {
+		t.Fatalf("final segment text = %v, want %q", finalMsg["text"], finalText)
+	}
+	if finalMsg["provisional"] != true || finalMsg["final"] != true {
+		t.Fatalf("final message flags = %v", finalMsg)
+	}
+
+	if got := countSegments(t, fixture.pool, noteID, true); got != 1 {
+		t.Fatalf("provisional segments before batch = %d, want 1", got)
+	}
+	note, err := fixture.st.GetNoteByID(context.Background(), noteID)
+	if err != nil {
+		t.Fatalf("get note after flood: %v", err)
+	}
+	if !note.PartialTranscript {
+		t.Fatal("partial_transcript should be true after finalized live segment")
+	}
+
+	if err := conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")); err != nil {
+		t.Fatalf("write close: %v", err)
+	}
+	_ = conn.Close()
+
+	if got := streamPlugin.BinaryFrames(); got != 2 {
+		t.Fatalf("plugin saw %d frames, want 2", got)
+	}
+
+	batchTranscriber := newSingleSegmentTranscriber(t, model.Segment{
+		StartMS: 1250,
+		EndMS:   2500,
+		Text:    finalText,
+		Source:  "mic",
+	})
+	batchPluginID := registerPlugin(t, fixture.srv, fixture.hdr, model.PluginTranscriber, "batch-fake", batchTranscriber.URL, "batch-token")
+	if err := fixture.st.SetDefaultPlugin(context.Background(), batchPluginID); err != nil {
+		t.Fatalf("set default batch plugin: %v", err)
+	}
+	agent := plugintest.NewAgent()
+	t.Cleanup(agent.Close)
+	agentPluginID := registerPlugin(t, fixture.srv, fixture.hdr, model.PluginAgent, "agent-fake", agent.URL(), "agent-token")
+	if err := fixture.st.SetDefaultPlugin(context.Background(), agentPluginID); err != nil {
+		t.Fatalf("set default agent plugin: %v", err)
+	}
+
+	proc := worker.NewProcessor(fixture.st, fixture.cr, fixture.prov, config.Config{}, nil)
+	claimAndProcessJobs(t, proc, fixture.st)
+
+	if got := countSegments(t, fixture.pool, noteID, true); got != 0 {
+		t.Fatalf("provisional segments after batch = %d, want 0", got)
+	}
+	if got := countSegments(t, fixture.pool, noteID, false); got != 1 {
+		t.Fatalf("final segments after batch = %d, want 1", got)
+	}
+	finalTranscript, err := fixture.st.GetTranscript(context.Background(), noteID)
+	if err != nil {
+		t.Fatalf("get transcript: %v", err)
+	}
+	if len(finalTranscript.Segments) != 1 {
+		t.Fatalf("segments = %d, want 1", len(finalTranscript.Segments))
+	}
+	if got, want := finalTranscript.Segments[0].Text, finalText; got != want {
+		t.Fatalf("segment[0] = %q, want %q", got, want)
 	}
 	note, err = fixture.st.GetNoteByID(context.Background(), noteID)
 	if err != nil {
