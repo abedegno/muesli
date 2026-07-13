@@ -78,7 +78,13 @@ func setInsightNoteCreatedAt(t *testing.T, st *store.Store, noteID string, creat
 	}
 }
 
-func seedInsightMeeting(t *testing.T, st *store.Store, ownerID, title string, createdAt time.Time, durationMS int64, personName, companyDomain, companyName, folderName string) {
+type insightFixture struct {
+	companyID string
+	personID  string
+	folderID  string
+}
+
+func newInsightFixture(t *testing.T, st *store.Store, ownerID, personName, companyDomain, companyName, folderName string) insightFixture {
 	t.Helper()
 	ctx := context.Background()
 
@@ -94,6 +100,16 @@ func seedInsightMeeting(t *testing.T, st *store.Store, ownerID, title string, cr
 	if err != nil {
 		t.Fatalf("create folder: %v", err)
 	}
+	return insightFixture{
+		companyID: company.ID,
+		personID:  person.ID,
+		folderID:  folder.ID,
+	}
+}
+
+func seedInsightMeeting(t *testing.T, st *store.Store, ownerID, title string, createdAt time.Time, durationMS int64, personName string, fixture insightFixture) {
+	t.Helper()
+	ctx := context.Background()
 	note, err := st.CreateNote(ctx, ownerID, title)
 	if err != nil {
 		t.Fatalf("create note: %v", err)
@@ -117,10 +133,10 @@ func seedInsightMeeting(t *testing.T, st *store.Store, ownerID, title string, cr
 	if err := st.UpsertSpeakerAlias(ctx, ownerID, note.ID, "SPEAKER_00", personName); err != nil {
 		t.Fatalf("upsert speaker alias: %v", err)
 	}
-	if err := st.SetSpeakerAliasPerson(ctx, ownerID, note.ID, "SPEAKER_00", &person.ID); err != nil {
+	if err := st.SetSpeakerAliasPerson(ctx, ownerID, note.ID, "SPEAKER_00", &fixture.personID); err != nil {
 		t.Fatalf("set speaker alias person: %v", err)
 	}
-	if err := st.AddNoteFolder(ctx, ownerID, note.ID, folder.ID); err != nil {
+	if err := st.AddNoteFolder(ctx, ownerID, note.ID, fixture.folderID); err != nil {
 		t.Fatalf("add note folder: %v", err)
 	}
 }
@@ -141,11 +157,15 @@ func TestInsightsOwnerScopingAndRangeFiltering(t *testing.T) {
 	ownerID, ownerHdr := insightsAuthHeader(t, st, "insights-owner@example.com")
 	otherID, _ := insightsAuthHeader(t, st, "insights-other@example.com")
 
-	seedInsightMeeting(t, st, ownerID, "Owner January A", time.Date(2026, 1, 5, 10, 0, 0, 0, time.UTC), 1800000, "Owner Alpha", "alpha.example", "Alpha", "Alpha Folder")
-	seedInsightMeeting(t, st, ownerID, "Owner January B", time.Date(2026, 1, 6, 11, 0, 0, 0, time.UTC), 3600000, "Owner Alpha", "alpha.example", "Alpha", "Alpha Folder")
-	seedInsightMeeting(t, st, ownerID, "Owner February", time.Date(2026, 2, 10, 12, 0, 0, 0, time.UTC), 2700000, "Owner Gamma", "gamma.example", "Gamma", "Gamma Folder")
+	ownerAlpha := newInsightFixture(t, st, ownerID, "Owner Alpha", "alpha.example", "Alpha", "Alpha Folder")
+	ownerGamma := newInsightFixture(t, st, ownerID, "Owner Gamma", "gamma.example", "Gamma", "Gamma Folder")
+	otherAlpha := newInsightFixture(t, st, otherID, "Other Alpha", "other.example", "Other", "Other Folder")
 
-	seedInsightMeeting(t, st, otherID, "Other January", time.Date(2026, 1, 5, 13, 0, 0, 0, time.UTC), 5400000, "Other Alpha", "other.example", "Other", "Other Folder")
+	seedInsightMeeting(t, st, ownerID, "Owner January A", time.Date(2026, 1, 5, 10, 0, 0, 0, time.UTC), 1800000, "Owner Alpha", ownerAlpha)
+	seedInsightMeeting(t, st, ownerID, "Owner January B", time.Date(2026, 1, 6, 11, 0, 0, 0, time.UTC), 3600000, "Owner Alpha", ownerAlpha)
+	seedInsightMeeting(t, st, ownerID, "Owner February", time.Date(2026, 2, 10, 12, 0, 0, 0, time.UTC), 2700000, "Owner Gamma", ownerGamma)
+
+	seedInsightMeeting(t, st, otherID, "Other January", time.Date(2026, 1, 5, 13, 0, 0, 0, time.UTC), 5400000, "Other Alpha", otherAlpha)
 
 	rec := doJSON(t, srv, http.MethodGet, "/api/insights?from=2026-01-05&to=2026-01-06T23:59:59Z", nil, ownerHdr)
 	if rec.Code != http.StatusOK {
