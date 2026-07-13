@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/signal"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -69,9 +68,11 @@ func main() {
 		os.Exit(1)
 	}
 	var embeddedAgent *embedded.AgentHandle
+	var completeEmbeddedStartup func()
 	var startupReporter *embedded.Reporter
 	ollamaURL := embedded.OllamaBaseURL()
-	if isEmbeddedMode(cfg, os.Args) {
+	embeddedMode := isEmbeddedMode(cfg, os.Args)
+	if embeddedMode {
 		startupReporter = embedded.NewReporter()
 		databaseURL, embeddedStop, err := embedded.Start(ctx, startupReporter)
 		if err != nil {
@@ -79,42 +80,6 @@ func main() {
 			os.Exit(1)
 		}
 		cfg.DatabaseURL = databaseURL
-		startupReporter.Advance(embedded.PhaseMigrate, "running migrations")
-		detected := embedded.DetectOllama(ctx, ollamaURL)
-		embedded.ConfigureEmbeddedOllama(&cfg, ollamaURL, detected)
-		startupReporter.SetDegraded(cfg.EmbeddedDegraded)
-		if detected {
-			startupReporter.Advance(embedded.PhaseOllamaCheck, "Ollama detected")
-		} else {
-			startupReporter.Advance(embedded.PhaseOllamaCheck, "Ollama unavailable")
-		}
-		if detected {
-			startupReporter.Advance(embedded.PhaseModelPull, "pulling Ollama models")
-			var pulls sync.WaitGroup
-			pulls.Add(2)
-			go func(url, model string) {
-				defer pulls.Done()
-				pullCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-				defer cancel()
-				if err := embedded.PullEmbeddingModel(pullCtx, url, model, func(percent int) {
-					startupReporter.SetPercent(percent)
-				}); err != nil {
-					slog.Warn("ollama pull embedding model", "error", err, "model", model, "url", url)
-				}
-			}(ollamaURL, cfg.EmbeddingsModel)
-			go func(url string) {
-				defer pulls.Done()
-				if err := embedded.PullModel(ctx, url, embedded.DefaultOllamaAgentModel, func(percent int) {
-					startupReporter.SetPercent(percent)
-				}); err != nil {
-					slog.Warn("ollama pull agent model", "error", err, "model", embedded.DefaultOllamaAgentModel, "url", url)
-				}
-			}(ollamaURL)
-			go func() {
-				pulls.Wait()
-				startupReporter.Advance(embedded.PhaseReady, "ready")
-			}()
-		}
 		defer func() {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -127,10 +92,35 @@ func main() {
 				slog.Error("embedded shutdown", "error", err)
 			}
 		}()
+		completeEmbeddedStartup, err = runEmbeddedStartupPhases(ctx, &cfg, startupReporter, ollamaURL, embeddedStartupHooks{
+			migrate:   db.Migrate,
+			detect:    embedded.DetectOllama,
+			configure: embedded.ConfigureEmbeddedOllama,
+			pullEmbedding: func(pullCtx context.Context, url, model string, onProgress embedded.PullProgressFunc) error {
+				if err := embedded.PullEmbeddingModel(pullCtx, url, model, onProgress); err != nil {
+					slog.Warn("ollama pull embedding model", "error", err, "model", model, "url", url)
+					return err
+				}
+				return nil
+			},
+			pullModel: func(pullCtx context.Context, url, model string, onProgress embedded.PullProgressFunc) error {
+				if err := embedded.PullModel(pullCtx, url, model, onProgress); err != nil {
+					slog.Warn("ollama pull agent model", "error", err, "model", model, "url", url)
+					return err
+				}
+				return nil
+			},
+		})
+		if err != nil {
+			slog.Error("embedded startup", "error", err)
+			os.Exit(1)
+		}
 	}
-	if err := db.Migrate(cfg.DatabaseURL); err != nil {
-		slog.Error("migrate", "error", err)
-		os.Exit(1)
+	if !embeddedMode {
+		if err := db.Migrate(cfg.DatabaseURL); err != nil {
+			slog.Error("migrate", "error", err)
+			os.Exit(1)
+		}
 	}
 	pool, err := db.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -244,13 +234,12 @@ func main() {
 		slog.Info("registered embedded ollama agent plugin", "url", embeddedAgent.EndpointURL)
 	}
 
-	if startupReporter != nil && !cfg.EmbeddedOllamaDetected {
-		startupReporter.Advance(embedded.PhaseReady, "ready")
-	}
-
 	srv := api.NewServer(api.Deps{Store: st, Storage: prov, Crypto: cr, Worker: wpool, Config: cfg, Embedder: emb, BackupRunner: backup.PgDumpRunner{}, EmbeddedProgress: startupReporter})
 	slog.Info("muesli listening", "addr", cfg.Addr)
 	fmt.Print(readyBanner(cfg.PublicURL))
+	if completeEmbeddedStartup != nil {
+		go completeEmbeddedStartup()
+	}
 	if err := srv.Run(ctx, cfg.Addr); err != nil {
 		slog.Error("server error", "error", err)
 		os.Exit(1)

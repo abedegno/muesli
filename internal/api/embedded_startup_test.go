@@ -55,6 +55,38 @@ func TestEmbeddedStartup(t *testing.T) {
 				Degraded: true,
 			},
 		},
+		{
+			name: "embedded db-init snapshot",
+			cfg:  config.Config{Embedded: true},
+			progress: func() *embedded.Reporter {
+				r := embedded.NewReporter()
+				r.Advance(embedded.PhaseDBInit, "starting embedded postgres")
+				return r
+			}(),
+			want: embedded.Progress{
+				Phase:    embedded.PhaseDBInit,
+				Detail:   "starting embedded postgres",
+				Percent:  0,
+				Ready:    false,
+				Degraded: false,
+			},
+		},
+		{
+			name: "embedded ready snapshot",
+			cfg:  config.Config{Embedded: true},
+			progress: func() *embedded.Reporter {
+				r := embedded.NewReporter()
+				r.Advance(embedded.PhaseReady, "ready")
+				return r
+			}(),
+			want: embedded.Progress{
+				Phase:    embedded.PhaseReady,
+				Detail:   "ready",
+				Percent:  100,
+				Ready:    true,
+				Degraded: false,
+			},
+		},
 	}
 
 	for _, tc := range tests {
