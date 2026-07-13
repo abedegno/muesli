@@ -1,4 +1,4 @@
-import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, Decision, DiarizationReview, FullNote, Folder, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection, UploadGrant } from '../shared/types'
+import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, Decision, DigestConfig, DiarizationReview, FullNote, Folder, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection, UploadGrant } from '../shared/types'
 import type { CreateConversationRequest, CreateConversationResponse, ListNoteActionItemsResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdateActionItemRequest, UpdatePersonRequest } from '../shared/ipc'
 import { buildNoteExportRequest, parseContentDispositionFilename } from '../shared/export'
 import { buildCalendarEventsPath } from '../shared/calendar'
@@ -156,6 +156,14 @@ export class MuesliClient {
 
   async getMicrosoftCalendarOAuthStatus(): Promise<MicrosoftOAuthStatus> {
     return this.json<MicrosoftOAuthStatus>('GET', '/api/calendar/oauth/microsoft/status')
+  }
+
+  async getDigestConfig(): Promise<DigestConfig> {
+    return this.json<DigestConfig>('GET', '/api/digest/config')
+  }
+
+  async updateDigestConfig(cadence: DigestConfig['cadence']): Promise<DigestConfig> {
+    return this.json<DigestConfig>('PUT', '/api/digest/config', { cadence })
   }
 
   async getNote(id: string): Promise<Note> {

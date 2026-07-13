@@ -205,6 +205,8 @@ func (s *Server) routes() {
 		r.Get("/api/calendar/events", s.handleListCalendarEvents)
 		r.Get("/api/calendar/oauth/google/status", s.handleGoogleOAuthStatus)
 		r.Get("/api/calendar/oauth/microsoft/status", s.handleMicrosoftOAuthStatus)
+		r.Get("/api/digest/config", s.handleGetDigestConfig)
+		r.Put("/api/digest/config", s.handleUpdateDigestConfig)
 
 		r.Post("/api/conversations", s.handleCreateConversation)
 		r.Get("/api/conversations", s.handleListConversations)

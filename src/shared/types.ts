@@ -165,6 +165,13 @@ export interface MicrosoftOAuthStatus {
   configured: boolean
 }
 
+export interface DigestConfig {
+  owner_id: string
+  cadence: 'off' | 'daily' | 'weekly'
+  last_sent_at?: string | null
+  updated_at?: string
+}
+
 export type RuleField = 'tag' | 'title' | 'status' | 'created' | 'folder'
 export type RuleOperator = 'is' | 'isNot' | 'contains' | 'equals' | 'withinLastDays'
 export interface RuleCondition { field: RuleField; operator: RuleOperator; value: string | number }

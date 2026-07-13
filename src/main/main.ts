@@ -2,7 +2,7 @@ import { basename, join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from 'electron'
 import { IPC, type ConnectRequest, type CreateConversationRequest, type DiarizationReviewUpdate, type SearchOptions, type SendMessageRequest, type UpdateActionItemRequest, type UpdatePersonRequest, type UploadAudioRequest } from '../shared/ipc'
-import type { RetranscribeNoteRequest, RuleGroup, TemplateSection } from '../shared/types'
+import type { DigestConfig, RetranscribeNoteRequest, RuleGroup, TemplateSection } from '../shared/types'
 import { createHandlers } from './ipcHandlers'
 import { NoteStreamRelay } from './noteStreamRelay'
 import { TokenStore } from './tokenStore'
@@ -69,6 +69,8 @@ app.whenReady().then(() => {
   ipcMain.handle(IPC.openGoogleCalendarOAuthStart, () => handlers.openGoogleCalendarOAuthStart())
   ipcMain.handle(IPC.getMicrosoftCalendarOAuthStatus, () => handlers.getMicrosoftCalendarOAuthStatus())
   ipcMain.handle(IPC.openMicrosoftCalendarOAuthStart, () => handlers.openMicrosoftCalendarOAuthStart())
+  ipcMain.handle(IPC.getDigestConfig, () => handlers.getDigestConfig())
+  ipcMain.handle(IPC.updateDigestConfig, (_e, cadence: DigestConfig['cadence']) => handlers.updateDigestConfig(cadence))
   ipcMain.handle(IPC.getFull, (_e, id: string) => handlers.getFull(id))
   ipcMain.handle(IPC.createNote, (_e, title: string) => handlers.createNote(title))
   ipcMain.handle(IPC.updateBody, (_e, id: string, content: string) => handlers.updateBody(id, content))

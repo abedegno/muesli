@@ -20,6 +20,12 @@ const (
 	ActionItemDone = "done"
 )
 
+const (
+	DigestCadenceOff    = "off"
+	DigestCadenceDaily  = "daily"
+	DigestCadenceWeekly = "weekly"
+)
+
 type Tag struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
@@ -91,6 +97,14 @@ type ActionItem struct {
 	Status        string    `json:"status"`
 	DueHint       string    `json:"due_hint"`
 	CreatedAt     time.Time `json:"created_at"`
+}
+
+// DigestConfig stores the per-owner digest cadence and delivery checkpoint.
+type DigestConfig struct {
+	OwnerID    string     `json:"owner_id"`
+	Cadence    string     `json:"cadence"`
+	LastSentAt *time.Time `json:"last_sent_at,omitempty"`
+	UpdatedAt  time.Time  `json:"updated_at,omitempty"`
 }
 
 // Decision is a structured decision extracted from a note.
