@@ -76,7 +76,7 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	audioCh := make(chan []byte, streamingAudioBuffer)
-	outboundCh := newStreamOutboundQueue()
+	outboundCh := newStreamOutboundMailbox()
 	var closeAudioOnce sync.Once
 	closeAudio := func() {
 		closeAudioOnce.Do(func() {
@@ -219,14 +219,59 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 		defer wg.Done()
 		defer closeSession()
 		defer closeSocket()
-		for {
-			msg, ok := outboundCh.next()
-			if !ok {
+		var partialTimer *time.Timer
+		stopTimer := func() {
+			if partialTimer == nil {
 				return
 			}
-			if err := writeStreamControl(conn, msg); err != nil {
-				closeAll()
+			if !partialTimer.Stop() {
+				select {
+				case <-partialTimer.C:
+				default:
+				}
+			}
+			partialTimer = nil
+		}
+		startTimer := func() {
+			stopTimer()
+			partialTimer = time.NewTimer(streamOutboundPartialDebounce)
+		}
+		for {
+			if msg, ok := outboundCh.nextPriority(); ok {
+				stopTimer()
+				if err := writeStreamControl(conn, msg); err != nil {
+					closeAll()
+					return
+				}
+				continue
+			}
+			if outboundCh.closedAndEmpty() {
+				stopTimer()
 				return
+			}
+			if outboundCh.hasPendingPartial() {
+				if partialTimer == nil {
+					startTimer()
+				}
+				select {
+				case <-outboundCh.notify:
+					stopTimer()
+				case <-partialTimer.C:
+					if msg, ok := outboundCh.nextWritablePartial(); ok {
+						stopTimer()
+						if err := writeStreamControl(conn, msg); err != nil {
+							closeAll()
+							return
+						}
+					} else {
+						stopTimer()
+					}
+				}
+				continue
+			}
+			stopTimer()
+			select {
+			case <-outboundCh.notify:
 			}
 		}
 	}()

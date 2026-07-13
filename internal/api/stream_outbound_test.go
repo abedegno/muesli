@@ -28,6 +28,12 @@ func TestDecideStreamOutboundAction(t *testing.T) {
 			want:  streamOutboundActionQueuePriority,
 		},
 		{
+			name:  "partial drops once final is pending",
+			state: streamOutboundQueueState{hasPendingFinal: true, hasPendingPartial: true},
+			kind:  streamOutboundMessagePartial,
+			want:  streamOutboundActionDropPartial,
+		},
+		{
 			name:  "final still prioritizes when idle",
 			state: streamOutboundQueueState{hasPendingPartial: false},
 			kind:  streamOutboundMessageFinal,
