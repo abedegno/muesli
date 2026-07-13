@@ -20,6 +20,7 @@ import { useAnnouncer } from '@/hooks/useAnnouncer'
 const NoteEditor = lazy(() => import('./NoteEditor').then((m) => ({ default: m.NoteEditor })))
 import { NoteView } from './NoteView'
 import { fullNoteToMarkdown, fullNoteToPlainText } from '@/lib/noteMarkdown'
+import { transcriptToPlainText } from '@/lib/transcriptText'
 import { renderFilenameTemplate } from '@/lib/filenameTemplate'
 import { buildSubtitleCues } from '@/lib/subtitleCues'
 import { cuesToSrt, cuesToAss, cuesToVtt } from '@/lib/subtitleFormats'
@@ -629,6 +630,7 @@ export function NoteScreen() {
   const [recordState, setRecordState] = useState<RecordState>('idle')
   const [elapsedMs, setElapsedMs] = useState(0)
   const [micError, setMicError] = useState<Error | null>(null)
+  const [transcriptCopied, setTranscriptCopied] = useState(false)
   const [pendingUpload, setPendingUpload] = useState<{
     audio: ArrayBuffer
     mimeType: string
@@ -641,6 +643,7 @@ export function NoteScreen() {
   const pollAbortRef = useRef<AbortController | null>(null)
   const tagAbortRef = useRef<AbortController | null>(null)
   const autostartConsumedRef = useRef(false)
+  const transcriptCopyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const mountedRef = useRef(true)
   // Stores the onUploadProgress unsubscribe function; cleaned up on unmount.
   const uploadProgressUnsubRef = useRef<(() => void) | null>(null)
@@ -713,10 +716,24 @@ export function NoteScreen() {
   }, [id])
 
   useEffect(() => {
+    setTranscriptCopied(false)
+    if (transcriptCopyTimerRef.current) {
+      clearTimeout(transcriptCopyTimerRef.current)
+      transcriptCopyTimerRef.current = null
+    }
+  }, [id])
+
+  useEffect(() => {
     return () => {
       tagAbortRef.current?.abort()
     }
   }, [id])
+
+  useEffect(() => {
+    return () => {
+      if (transcriptCopyTimerRef.current) clearTimeout(transcriptCopyTimerRef.current)
+    }
+  }, [])
 
   const retryPipeline = useCallback(async () => {
     if (!id) return
@@ -1048,6 +1065,22 @@ export function NoteScreen() {
   const rawSegmentIndex = params.get('segment_index')
   const parsedSegmentIndex = rawSegmentIndex != null ? Number(rawSegmentIndex) : NaN
   const initialSegmentIndex = Number.isFinite(parsedSegmentIndex) ? parsedSegmentIndex : undefined
+  const transcriptSegments = full?.transcript?.segments ?? []
+
+  const handleCopyTranscript = useCallback(async () => {
+    if (!transcriptSegments.length) return
+    try {
+      await writeClipboardText(transcriptToPlainText(transcriptSegments))
+      setTranscriptCopied(true)
+      if (transcriptCopyTimerRef.current) clearTimeout(transcriptCopyTimerRef.current)
+      transcriptCopyTimerRef.current = setTimeout(() => {
+        setTranscriptCopied(false)
+        transcriptCopyTimerRef.current = null
+      }, 2000)
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Could not copy transcript', 'error')
+    }
+  }, [notify, transcriptSegments])
 
   useEffect(() => {
     if (!autostart || autostartConsumedRef.current) return
@@ -1312,23 +1345,37 @@ export function NoteScreen() {
             <NoteEditor initialMarkdown={full.body_markdown} onSave={(md) => muesli.updateBody(id, md)} />
           </Suspense>
         ) : (
-          <NoteView
-            full={full}
-            initialSegmentId={initialSegmentId}
-            initialSegmentIndex={initialSegmentIndex}
-            onSaveBody={(md) => muesli.updateBody(id, md)}
-            onRenameSpeaker={async () => {
-              try {
-                setFull(await muesli.getFull(id))
-                refresh()
-              } catch (err) {
-                notify(err instanceof Error ? err.message : 'Could not refresh note', 'error')
-              }
-            }}
-            templates={templates}
-            onRegenerateTemplate={regenerateTemplate}
-            regeneratingTemplateId={regeneratingTemplateId}
-          />
+          <>
+            <div className="mb-2 flex justify-end">
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="h-7 px-3 text-xs"
+                disabled={transcriptSegments.length === 0}
+                onClick={() => void handleCopyTranscript()}
+              >
+                {transcriptCopied ? 'Copied' : 'Copy transcript'}
+              </Button>
+            </div>
+            <NoteView
+              full={full}
+              initialSegmentId={initialSegmentId}
+              initialSegmentIndex={initialSegmentIndex}
+              onSaveBody={(md) => muesli.updateBody(id, md)}
+              onRenameSpeaker={async () => {
+                try {
+                  setFull(await muesli.getFull(id))
+                  refresh()
+                } catch (err) {
+                  notify(err instanceof Error ? err.message : 'Could not refresh note', 'error')
+                }
+              }}
+              templates={templates}
+              onRegenerateTemplate={regenerateTemplate}
+              regeneratingTemplateId={regeneratingTemplateId}
+            />
+          </>
         )}
       </div>
     </div>
