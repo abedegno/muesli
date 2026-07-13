@@ -62,9 +62,9 @@ func DetectOllama(ctx context.Context, baseURL string) bool {
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
 }
 
-// PullEmbeddingModel requests the named embedding model from Ollama and drains
-// the streamed response to completion.
-func PullEmbeddingModel(ctx context.Context, baseURL, model string) error {
+// PullModel requests the named Ollama model and drains the streamed response
+// to completion.
+func PullModel(ctx context.Context, baseURL, model string) error {
 	baseURL = normalizeOllamaBaseURL(baseURL)
 	if baseURL == "" {
 		return fmt.Errorf("empty ollama base url")
@@ -94,6 +94,12 @@ func PullEmbeddingModel(ctx context.Context, baseURL, model string) error {
 		return err
 	}
 	return nil
+}
+
+// PullEmbeddingModel is the embedding-specific wrapper kept for existing call
+// sites.
+func PullEmbeddingModel(ctx context.Context, baseURL, model string) error {
+	return PullModel(ctx, baseURL, model)
 }
 
 // ConfigureEmbeddedOllama updates runtime config based on whether Ollama was

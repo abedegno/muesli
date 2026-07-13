@@ -14,6 +14,7 @@ build-admin:
 # the freshly compiled assets are what get embedded by `go build`.
 build: build-admin
 	go build -o bin/muesli ./cmd/muesli
+	go build -o bin/ollama-agent ./cmd/ollama-agent
 
 # Each test call gets its own PostgreSQL schema, so packages run in parallel safely.
 test:
