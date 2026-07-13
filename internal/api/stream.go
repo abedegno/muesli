@@ -31,6 +31,7 @@ type streamSegmentMessage struct {
 	EndMS       int     `json:"end_ms"`
 	Speaker     *string `json:"speaker"`
 	Provisional bool    `json:"provisional"`
+	Final       bool    `json:"final"`
 }
 
 func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
@@ -136,6 +137,7 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 		defer wg.Done()
 		defer closeBoth()
 		partialWritten := false
+		relayState := newStreamingSegmentRelayState()
 		for {
 			ev, err := sess.Recv()
 			if err != nil {
@@ -149,6 +151,9 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 			case "ready":
 				continue
 			case "segment":
+				if !relayState.shouldRelay(ev) {
+					continue
+				}
 				seg := model.Segment{
 					StartMS:    secondsToMS(ev.T0),
 					EndMS:      secondsToMS(ev.T1),
@@ -161,18 +166,20 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 				if ev.Speaker != nil {
 					seg.Speaker = *ev.Speaker
 				}
-				if err := s.deps.Store.AppendProvisionalTranscriptSegment(r.Context(), noteID, model.Transcript{
-					TranscriberPlugin: plug.Name,
-				}, seg); err != nil {
-					closeBoth()
-					return
-				}
-				if !partialWritten {
-					if err := s.deps.Store.SetNotePartialTranscript(r.Context(), noteID, true); err != nil {
+				if ev.Final {
+					if err := s.deps.Store.AppendProvisionalTranscriptSegment(r.Context(), noteID, model.Transcript{
+						TranscriberPlugin: plug.Name,
+					}, seg); err != nil {
 						closeBoth()
 						return
 					}
-					partialWritten = true
+					if !partialWritten {
+						if err := s.deps.Store.SetNotePartialTranscript(r.Context(), noteID, true); err != nil {
+							closeBoth()
+							return
+						}
+						partialWritten = true
+					}
 				}
 				if err := writeStreamControl(conn, streamSegmentMessage{
 					Type:        "segment",
@@ -181,6 +188,7 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 					EndMS:       seg.EndMS,
 					Speaker:     speakerPtr(seg.Speaker),
 					Provisional: true,
+					Final:       ev.Final,
 				}); err != nil {
 					closeBoth()
 					return

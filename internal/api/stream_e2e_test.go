@@ -226,6 +226,9 @@ func TestStreamingE2E_LiveSegmentsAndBatchFinalize(t *testing.T) {
 	if segments[0]["provisional"] != true || segments[1]["provisional"] != true {
 		t.Fatalf("segments must be provisional: %v", segments)
 	}
+	if segments[0]["final"] != true || segments[1]["final"] != true {
+		t.Fatalf("segments must be final on the wire: %v", segments)
+	}
 	if segments[0]["text"] != "hello world" || segments[1]["text"] != "and again" {
 		t.Fatalf("segment texts = %v", segments)
 	}

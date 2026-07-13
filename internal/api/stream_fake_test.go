@@ -19,6 +19,7 @@ type fakeStreamingSegment struct {
 	StartMS     int
 	EndMS       int
 	Speaker     *string
+	Final       *bool
 }
 
 type fakeStreamingPlugin struct {
@@ -189,14 +190,22 @@ func (p *fakeStreamingPlugin) handleStream(w http.ResponseWriter, r *http.Reques
 }
 
 func (p *fakeStreamingPlugin) emitSegment(conn *websocket.Conn, seg fakeStreamingSegment) error {
+	final := true
+	if seg.Final != nil {
+		final = *seg.Final
+	}
 	return conn.WriteJSON(plugin.StreamingEvent{
 		Type:    "segment",
-		Final:   true,
+		Final:   final,
 		Text:    seg.Text,
 		T0:      float64(seg.StartMS) / 1000,
 		T1:      float64(seg.EndMS) / 1000,
 		Speaker: seg.Speaker,
 	})
+}
+
+func boolPtr(v bool) *bool {
+	return &v
 }
 
 func (p *fakeStreamingPlugin) checkAuth(r *http.Request) bool {
