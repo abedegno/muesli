@@ -198,6 +198,20 @@ func (s *Store) ListFolders(ctx context.Context, ownerID string) ([]model.Folder
 	return out, rows.Err()
 }
 
+// GetFolder returns one live folder owned by ownerID.
+func (s *Store) GetFolder(ctx context.Context, ownerID, id string) (model.Folder, error) {
+	var f model.Folder
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, name, parent_id, created_at
+		 FROM folders
+		 WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL`,
+		id, ownerID).Scan(&f.ID, &f.Name, &f.ParentID, &f.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.Folder{}, ErrNotFound
+	}
+	return f, err
+}
+
 func (s *Store) UpdateFolder(ctx context.Context, ownerID, id, name string, parentID *string) (model.Folder, error) {
 	name, err := validateFolderName(name)
 	if err != nil {
