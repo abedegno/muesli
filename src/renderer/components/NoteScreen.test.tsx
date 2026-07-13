@@ -20,6 +20,7 @@ const testState = vi.hoisted(() => ({
     removeTag: null as null | (() => void),
   },
 }))
+const writeTextMock = vi.fn()
 vi.mock('react-router-dom', () => {
   // Stable context/searchParams identities: the mount effect depends on
   // `refresh`, so a fresh object per render would re-run it (and spawn extra
@@ -89,6 +90,12 @@ vi.mock('@/api', () => ({
     exportNote: vi.fn(),
     onUploadProgress: vi.fn(() => () => {}),
     checkAudioDedup: vi.fn(async () => ({})),
+  },
+}))
+
+vi.mock('@/lib/clipboard', () => ({
+  writeClipboardText: async (text: string) => {
+    await writeTextMock(text)
   },
 }))
 
@@ -163,9 +170,11 @@ beforeEach(() => {
   testState.navigate.mockClear()
   testState.refresh.mockClear()
   mockNotify.mockClear()
+  writeTextMock.mockReset()
   testState.currentNoteId = 'n1'
   testState.resolveTagMutation.addTag = null
   testState.resolveTagMutation.removeTag = null
+  fullNoteById.n1 = fullNote
   class TrackedAbortController extends RealAbortController {
     constructor() {
       super()
@@ -180,6 +189,7 @@ afterEach(() => {
   globalThis.AbortController = RealAbortController
   cleanup()
   vi.restoreAllMocks()
+  fullNoteById.n1 = fullNote
 })
 
 // Drive the component to the in-flight-upload point: render → record → stop,
@@ -296,6 +306,43 @@ describe('NoteScreen — export options dialog', () => {
       redactSpeakers: true,
     }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+  })
+})
+
+describe('NoteScreen — copy transcript', () => {
+  it('copies the transcript text and shows the button as disabled when there is no transcript', async () => {
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText: writeTextMock },
+    })
+    const user = userEvent.setup()
+
+    fullNoteById.n1 = {
+      ...fullNote,
+      transcript: {
+        segments: [
+          { start_ms: 0, end_ms: 1000, text: 'Hello', source: 'mixed', speaker: 'Alice' },
+          { start_ms: 1000, end_ms: 2000, text: 'World', source: 'mixed' },
+        ],
+      },
+    }
+
+    render(<NoteScreen />)
+    await screen.findByText('Standup')
+
+    const copyButton = await screen.findByRole('button', { name: /copy transcript/i })
+    expect(copyButton).toBeEnabled()
+
+    await user.click(copyButton)
+
+    await waitFor(() => expect(writeTextMock).toHaveBeenCalledWith('Alice: Hello\nWorld'))
+
+    fullNoteById.n1 = fullNote
+    cleanup()
+
+    render(<NoteScreen />)
+    await screen.findByText('Standup')
+    expect(screen.getByRole('button', { name: /copy transcript/i })).toBeDisabled()
   })
 })
 
