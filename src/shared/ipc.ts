@@ -1,4 +1,4 @@
-import type { ActionItem, ActionItemStatus, AudioUrlGrant, CalendarEvent, ChatSource, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from './types'
+import type { ActionItem, ActionItemStatus, AudioUrlGrant, CalendarEvent, ChatSource, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, EmbeddedStartupStatus, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from './types'
 import type { UploadProgress } from '../main/uploadMachine'
 import type { ExportOptions } from './export'
 
@@ -42,6 +42,7 @@ export const IPC = {
   getNoteAudioUrl: 'muesli:getNoteAudioUrl',
   uploadAudio: 'muesli:uploadAudio',
   uploadProgress: 'muesli:uploadProgress',
+  embeddedStartupStatus: 'muesli:embeddedStartupStatus',
   startNoteStream: 'muesli:startNoteStream',
   stopNoteStream: 'muesli:stopNoteStream',
   sendNoteStreamAudio: 'muesli:sendNoteStreamAudio',
@@ -252,6 +253,7 @@ export interface MuesliBridge {
   stopNoteStream(noteId: string): Promise<void>
   sendNoteStreamAudio(noteId: string, audio: ArrayBuffer): Promise<void>
   onNoteStreamEvent(cb: (event: NoteStreamEvent) => void): () => void
+  onEmbeddedStartupStatus?(cb: (status: EmbeddedStartupStatus) => void): () => void
   addTag(noteId: string, name: string): Promise<{ id: string; name: string }>
   removeTag(noteId: string, name: string): Promise<void>
   renameTag(id: string, name: string): Promise<{ id: string; name: string }>

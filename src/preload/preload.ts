@@ -110,6 +110,11 @@ const bridge: MuesliBridge = {
     ipcRenderer.on(IPC.noteStreamEvent, listener)
     return () => ipcRenderer.removeListener(IPC.noteStreamEvent, listener)
   },
+  onEmbeddedStartupStatus: (cb) => {
+    const listener = (_e: unknown, status: Parameters<typeof cb>[0]) => cb(status)
+    ipcRenderer.on(IPC.embeddedStartupStatus, listener)
+    return () => ipcRenderer.removeListener(IPC.embeddedStartupStatus, listener)
+  },
 }
 
 contextBridge.exposeInMainWorld('muesli', bridge)

@@ -244,6 +244,27 @@ export interface PluginStatus {
   model?: string
 }
 
+export interface EmbeddedStartupProgress {
+  status: 'progress'
+  phase: string
+  detail: string
+  percent?: number | null
+  degraded: boolean
+}
+
+export interface EmbeddedStartupReady {
+  status: 'ready'
+  degraded: boolean
+}
+
+export interface EmbeddedStartupError {
+  status: 'error'
+  message: string
+  logPath: string
+}
+
+export type EmbeddedStartupStatus = EmbeddedStartupProgress | EmbeddedStartupReady | EmbeddedStartupError
+
 // A client-facing rename of a raw diarization label (e.g. 'SPEAKER_00' -> 'Alice').
 // `speaker_label` is always the ORIGINAL/raw label used as the PUT/DELETE key on
 // the server — never a previously-assigned alias name (see DZ03a).
