@@ -15,6 +15,7 @@ class Settings:
     vad_aggressiveness: int = 2
     silence_threshold_ms: int = 600
     min_speech_ms: int = 120
+    partial_interval_ms: int = 400
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -26,4 +27,5 @@ class Settings:
             vad_aggressiveness=int(os.environ.get("STREAMING_TRANSCRIBER_VAD_AGGRESSIVENESS", "2")),
             silence_threshold_ms=int(os.environ.get("STREAMING_TRANSCRIBER_SILENCE_THRESHOLD_MS", "600")),
             min_speech_ms=int(os.environ.get("STREAMING_TRANSCRIBER_MIN_SPEECH_MS", "120")),
+            partial_interval_ms=int(os.environ.get("STREAMING_TRANSCRIBER_PARTIAL_INTERVAL_MS", "400")),
         )
