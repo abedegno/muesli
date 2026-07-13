@@ -115,7 +115,7 @@ func (s *Server) routes() {
 	s.router.With(limitBody).Post("/api/setup", s.handleSetup)
 	s.router.Get("/api/setup/status", s.handleSetupStatus)
 	s.router.With(limitBody, ratelimit.NewIPLimiter(s.deps.Config.RateLoginRPS, s.deps.Config.RateLoginBurst)).Post("/api/login", s.handleLogin)
-	s.router.Get("/api/shared/{token}", s.handleGetSharedNote)
+	s.router.With(ratelimit.NewIPLimiter(s.deps.Config.RateSharedRPS, s.deps.Config.RateSharedBurst)).Get("/api/shared/{token}", s.handleGetSharedNote)
 
 	// Embedded admin SPA (static assets + SPA fallback). No auth at the
 	// transport layer; the SPA authenticates against /api/* like any client.
