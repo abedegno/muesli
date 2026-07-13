@@ -438,6 +438,7 @@ export function InsightsScreen() {
   const [error, setError] = useState<string | null>(null)
   const [isFetching, setIsFetching] = useState(true)
   const [hasResolvedOnce, setHasResolvedOnce] = useState(false)
+  const [requestSequence, setRequestSequence] = useState(0)
   const [preset, setPreset] = useState<RangePreset>('30d')
   const initialRange = presetRange('30d')
   const [customFrom, setCustomFrom] = useState(initialRange.from)
@@ -469,7 +470,7 @@ export function InsightsScreen() {
     return () => {
       cancelled = true
     }
-  }, [requestedRange.from, requestedRange.to])
+  }, [requestedRange.from, requestedRange.to, requestSequence])
 
   const isInitialLoading = isFetching && !hasResolvedOnce
 
@@ -498,6 +499,7 @@ export function InsightsScreen() {
     setCustomFrom(nextRange.from)
     setCustomTo(nextRange.to)
     setRequestedRange(nextRange)
+    setRequestSequence((value) => value + 1)
   }
 
   function applyCustomRange() {
@@ -509,6 +511,7 @@ export function InsightsScreen() {
     setCustomError(null)
     setPreset('custom')
     setRequestedRange({ from: customFrom, to: customTo })
+    setRequestSequence((value) => value + 1)
   }
 
   const content = showEmptyState ? (
@@ -609,7 +612,7 @@ export function InsightsScreen() {
         </div>
       ) : null}
 
-      {isFetching && hasResolvedOnce ? <LoadingIndicator label="Updating insights…" /> : null}
+      {isFetching && hasResolvedOnce ? <LoadingIndicator label="Updating insights..." /> : null}
 
       {content}
     </div>
