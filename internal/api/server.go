@@ -138,6 +138,7 @@ func (s *Server) routes() {
 		r.Get("/api/notes/{id}", s.handleGetNote)
 		r.Delete("/api/notes/{id}", s.handleDeleteNote)
 		r.Post("/api/notes/{id}/duplicate", s.handleDuplicateNote)
+		r.Post("/api/export/batch", s.handleBatchExport)
 		r.Post("/api/notes/{id}/pin", s.handlePinNote)
 		r.Delete("/api/notes/{id}/pin", s.handleUnpinNote)
 		r.Post("/api/notes/{id}/event", s.handleSetNoteEvent)
