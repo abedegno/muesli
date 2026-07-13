@@ -8,7 +8,9 @@ def test_info_shape(client, auth_headers):
     assert isinstance(body["version"], str) and body["version"]
     schema = body["config_schema"]
     assert schema["type"] == "object"
-    assert set(["model", "device", "compute_type", "vad_aggressiveness", "silence_threshold_ms"]).issubset(
+    assert set(
+        ["model", "device", "compute_type", "vad_aggressiveness", "silence_threshold_ms", "partial_interval_ms"]
+    ).issubset(
         schema["properties"].keys()
     )
     assert schema["additionalProperties"] is False

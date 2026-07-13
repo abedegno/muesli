@@ -30,6 +30,7 @@ def settings() -> Settings:
         vad_aggressiveness=2,
         silence_threshold_ms=600,
         min_speech_ms=120,
+        partial_interval_ms=400,
     )
 
 
