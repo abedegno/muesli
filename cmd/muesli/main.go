@@ -74,6 +74,18 @@ func main() {
 			os.Exit(1)
 		}
 		cfg.DatabaseURL = databaseURL
+		ollamaURL := embedded.OllamaBaseURL()
+		detected := embedded.DetectOllama(ctx, ollamaURL)
+		embedded.ConfigureEmbeddedOllama(&cfg, ollamaURL, detected)
+		if detected {
+			go func(url, model string) {
+				pullCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				defer cancel()
+				if err := embedded.PullEmbeddingModel(pullCtx, url, model); err != nil {
+					slog.Warn("ollama pull embedding model", "error", err, "model", model, "url", url)
+				}
+			}(ollamaURL, cfg.EmbeddingsModel)
+		}
 		defer func() {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()

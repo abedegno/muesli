@@ -163,6 +163,94 @@ func TestReadyz_NoDepsConfigured(t *testing.T) {
 	}
 }
 
+func TestReadyz_EmbeddedStatus(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name         string
+		cfg          config.Config
+		wantPresent  bool
+		wantDetected bool
+		wantDegraded bool
+		wantReason   string
+	}{
+		{
+			name: "embedded detected",
+			cfg: config.Config{
+				Embedded:               true,
+				EmbeddedOllamaDetected: true,
+				EmbeddingsURL:          "http://ollama:11434",
+			},
+			wantPresent:  true,
+			wantDetected: true,
+			wantDegraded: false,
+		},
+		{
+			name: "embedded degraded",
+			cfg: config.Config{
+				Embedded:               true,
+				EmbeddedDegraded:       true,
+				EmbeddedDegradedReason: "summaries & semantic search need Ollama",
+			},
+			wantPresent:  true,
+			wantDegraded: true,
+			wantReason:   "summaries & semantic search need Ollama",
+		},
+		{
+			name: "non-embedded",
+			cfg: config.Config{
+				Embedded:               false,
+				EmbeddedOllamaDetected: true,
+				EmbeddedDegraded:       true,
+				EmbeddedDegradedReason: "ignored",
+			},
+			wantPresent: false,
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := NewServer(Deps{
+				Config: tc.cfg,
+				Prober: DepProber(func(_ context.Context, _ string) error { return nil }),
+			})
+
+			req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+			rec := httptest.NewRecorder()
+			srv.Handler().ServeHTTP(rec, req)
+
+			if rec.Code != http.StatusOK {
+				t.Fatalf("want 200, got %d", rec.Code)
+			}
+
+			var resp readyzResponse
+			if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+
+			if tc.wantPresent {
+				if resp.Embedded == nil {
+					t.Fatal("embedded response missing")
+				}
+				if resp.Embedded.OllamaDetected != tc.wantDetected {
+					t.Fatalf("ollamaDetected = %v, want %v", resp.Embedded.OllamaDetected, tc.wantDetected)
+				}
+				if resp.Embedded.Degraded != tc.wantDegraded {
+					t.Fatalf("degraded = %v, want %v", resp.Embedded.Degraded, tc.wantDegraded)
+				}
+				if resp.Embedded.DegradedReason != tc.wantReason {
+					t.Fatalf("degradedReason = %q, want %q", resp.Embedded.DegradedReason, tc.wantReason)
+				}
+			} else if resp.Embedded != nil {
+				t.Fatalf("embedded response present: %#v", resp.Embedded)
+			}
+		})
+	}
+}
+
 // TestReadyz_HealthzStillWorks verifies that the existing /healthz endpoint is
 // unaffected by the /readyz changes.
 func TestReadyz_HealthzStillWorks(t *testing.T) {

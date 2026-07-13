@@ -47,9 +47,16 @@ type depStatus struct {
 	Error      string `json:"error,omitempty"`
 }
 
+type embeddedStatus struct {
+	OllamaDetected bool   `json:"ollamaDetected"`
+	Degraded       bool   `json:"degraded"`
+	DegradedReason string `json:"degradedReason,omitempty"`
+}
+
 type readyzResponse struct {
-	Status string               `json:"status"`
-	Deps   map[string]depStatus `json:"deps"`
+	Status   string               `json:"status"`
+	Deps     map[string]depStatus `json:"deps"`
+	Embedded *embeddedStatus      `json:"embedded,omitempty"`
 }
 
 func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
@@ -91,5 +98,14 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		code = http.StatusServiceUnavailable
 	}
 
-	writeJSON(w, code, readyzResponse{Status: status, Deps: deps})
+	var embeddedResp *embeddedStatus
+	if cfg.Embedded {
+		embeddedResp = &embeddedStatus{
+			OllamaDetected: cfg.EmbeddedOllamaDetected,
+			Degraded:       cfg.EmbeddedDegraded,
+			DegradedReason: cfg.EmbeddedDegradedReason,
+		}
+	}
+
+	writeJSON(w, code, readyzResponse{Status: status, Deps: deps, Embedded: embeddedResp})
 }
