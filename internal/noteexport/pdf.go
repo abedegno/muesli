@@ -9,8 +9,8 @@ import (
 )
 
 // RenderNotePdf renders one note as a PDF document with a title, zero or more
-// enhanced-summary sections, and a transcript section.
-func RenderNotePdf(note model.Note, summarySections []model.SummarySection, segments []model.Segment, aliases map[string]string) ([]byte, error) {
+// enhanced-summary sections, and an optional transcript section.
+func RenderNotePdf(note model.Note, summarySections []model.SummarySection, segments []model.Segment, aliases map[string]string, options Options) ([]byte, error) {
 	pdf := fpdf.New("P", "mm", "A4", "")
 	pdf.SetMargins(18, 18, 18)
 	pdf.SetAutoPageBreak(true, 18)
@@ -40,10 +40,13 @@ func RenderNotePdf(note model.Note, summarySections []model.SummarySection, segm
 		pdf.Ln(2)
 	}
 
-	writeBlock("Transcript", 13)
-	pdf.Ln(1)
-	for _, segment := range segments {
-		writeParagraph(renderTranscriptLine(segment, aliases))
+	if options.IncludeTranscript {
+		speakerAliases := transcriptSpeakerAliases(segments, aliases, options)
+		writeBlock("Transcript", 13)
+		pdf.Ln(1)
+		for _, segment := range segments {
+			writeParagraph(renderTranscriptLine(segment, speakerAliases))
+		}
 	}
 
 	var buf bytes.Buffer

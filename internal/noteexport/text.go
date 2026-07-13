@@ -7,8 +7,8 @@ import (
 )
 
 // RenderNoteText renders one note as a plain-text document with a title,
-// zero or more enhanced-summary sections, and a transcript section.
-func RenderNoteText(note model.Note, summarySections []model.SummarySection, segments []model.Segment, aliases map[string]string) string {
+// zero or more enhanced-summary sections, and an optional transcript section.
+func RenderNoteText(note model.Note, summarySections []model.SummarySection, segments []model.Segment, aliases map[string]string, options Options) string {
 	var b strings.Builder
 	b.WriteString(note.Title)
 
@@ -19,10 +19,13 @@ func RenderNoteText(note model.Note, summarySections []model.SummarySection, seg
 		b.WriteString(section.ContentMarkdown)
 	}
 
-	b.WriteString("\n\nTranscript")
-	for _, segment := range segments {
-		b.WriteString("\n")
-		b.WriteString(renderTranscriptLine(segment, aliases))
+	if options.IncludeTranscript {
+		speakerAliases := transcriptSpeakerAliases(segments, aliases, options)
+		b.WriteString("\n\nTranscript")
+		for _, segment := range segments {
+			b.WriteString("\n")
+			b.WriteString(renderTranscriptLine(segment, speakerAliases))
+		}
 	}
 
 	return b.String()

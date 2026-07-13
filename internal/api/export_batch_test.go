@@ -11,14 +11,16 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/abedegno/muesli/internal/auth"
+	"github.com/abedegno/muesli/internal/model"
 )
 
 func TestBatchExportFolderZip(t *testing.T) {
 	t.Parallel()
-	srv, _ := newTestServer(t)
+	srv, st := newTestServer(t)
 
 	_ = doJSON(t, srv, http.MethodPost, "/api/setup",
 		map[string]string{"email": "batch@example.com", "password": "password123"}, nil)
@@ -56,8 +58,20 @@ func TestBatchExportFolderZip(t *testing.T) {
 		return note.ID
 	}
 
-	_ = mkNote("Team Update")
-	_ = mkNote("Team Update")
+	firstID := mkNote("Team Update")
+	secondID := mkNote("Team Update")
+	_ = secondID
+
+	if _, err := st.SaveTranscript(context.Background(), model.Transcript{
+		NoteID: firstID,
+		Segments: []model.Segment{
+			{Speaker: "SPEAKER_00", Text: "We should ship it."},
+			{Text: "No speaker here."},
+			{Speaker: "SPEAKER_01", Text: "Later."},
+		},
+	}); err != nil {
+		t.Fatalf("save transcript: %v", err)
+	}
 
 	exportRec := doJSON(t, srv, http.MethodPost, "/api/export/batch",
 		map[string]any{"folder_id": folder.ID, "format": "md"}, hdr)
@@ -97,6 +111,75 @@ func TestBatchExportFolderZip(t *testing.T) {
 	}
 	if !names["team-update.md"] || !names["team-update-2.md"] {
 		t.Fatalf("unexpected zip names: %v", names)
+	}
+
+	redactedRec := doJSON(t, srv, http.MethodPost, "/api/export/batch",
+		map[string]any{
+			"folder_id":          folder.ID,
+			"format":             "md",
+			"redact_speakers":    true,
+			"include_transcript": true,
+		}, hdr)
+	if redactedRec.Code != http.StatusOK {
+		t.Fatalf("redacted export status=%d body=%s", redactedRec.Code, redactedRec.Body)
+	}
+	redactedZip, err := zip.NewReader(bytes.NewReader(redactedRec.Body.Bytes()), int64(redactedRec.Body.Len()))
+	if err != nil {
+		t.Fatalf("redacted zip reader: %v", err)
+	}
+	foundRedacted := false
+	for _, f := range redactedZip.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("open redacted zip entry %s: %v", f.Name, err)
+		}
+		data, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			t.Fatalf("read redacted zip entry %s: %v", f.Name, err)
+		}
+		content := string(data)
+		if strings.Contains(content, "Speaker 1: We should ship it.") {
+			foundRedacted = true
+		}
+		if strings.Contains(content, "SPEAKER_00") {
+			t.Fatalf("redacted export still contains raw speaker label in %s: %s", f.Name, content)
+		}
+		if strings.Contains(content, "No speaker here.") && !strings.Contains(content, "Speaker 1: We should ship it.") {
+			t.Fatalf("unexpected transcript formatting in %s: %s", f.Name, content)
+		}
+	}
+	if !foundRedacted {
+		t.Fatal("redacted export did not contain sequential speaker labels")
+	}
+
+	omittedRec := doJSON(t, srv, http.MethodPost, "/api/export/batch",
+		map[string]any{
+			"folder_id":          folder.ID,
+			"format":             "md",
+			"include_transcript": false,
+		}, hdr)
+	if omittedRec.Code != http.StatusOK {
+		t.Fatalf("omitted export status=%d body=%s", omittedRec.Code, omittedRec.Body)
+	}
+	omittedZip, err := zip.NewReader(bytes.NewReader(omittedRec.Body.Bytes()), int64(omittedRec.Body.Len()))
+	if err != nil {
+		t.Fatalf("omitted zip reader: %v", err)
+	}
+	for _, f := range omittedZip.File {
+		rc, err := f.Open()
+		if err != nil {
+			t.Fatalf("open omitted zip entry %s: %v", f.Name, err)
+		}
+		data, err := io.ReadAll(rc)
+		_ = rc.Close()
+		if err != nil {
+			t.Fatalf("read omitted zip entry %s: %v", f.Name, err)
+		}
+		content := string(data)
+		if strings.Contains(content, "Transcript") || strings.Contains(content, "We should ship it.") {
+			t.Fatalf("transcript unexpectedly rendered in %s: %s", f.Name, content)
+		}
 	}
 }
 

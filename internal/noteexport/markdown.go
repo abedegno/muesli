@@ -7,12 +7,12 @@ import (
 )
 
 // RenderNoteMarkdown renders one note as a Markdown document with a title,
-// zero or more enhanced-summary sections, and a transcript section.
-func RenderNoteMarkdown(note model.Note, summarySections []model.SummarySection, segments []model.Segment, aliases map[string]string) string {
-	return renderNoteMarkdown(note, summarySections, segments, aliases)
+// zero or more enhanced-summary sections, and an optional transcript section.
+func RenderNoteMarkdown(note model.Note, summarySections []model.SummarySection, segments []model.Segment, aliases map[string]string, options Options) string {
+	return renderNoteMarkdown(note, summarySections, segments, aliases, options)
 }
 
-func renderNoteMarkdown(note model.Note, summarySections []model.SummarySection, segments []model.Segment, aliases map[string]string) string {
+func renderNoteMarkdown(note model.Note, summarySections []model.SummarySection, segments []model.Segment, aliases map[string]string, options Options) string {
 	var b strings.Builder
 	b.WriteString("# ")
 	b.WriteString(note.Title)
@@ -24,10 +24,13 @@ func renderNoteMarkdown(note model.Note, summarySections []model.SummarySection,
 		b.WriteString(section.ContentMarkdown)
 	}
 
-	b.WriteString("\n\n## Transcript")
-	for _, segment := range segments {
-		b.WriteString("\n")
-		b.WriteString(renderTranscriptLine(segment, aliases))
+	if options.IncludeTranscript {
+		speakerAliases := transcriptSpeakerAliases(segments, aliases, options)
+		b.WriteString("\n\n## Transcript")
+		for _, segment := range segments {
+			b.WriteString("\n")
+			b.WriteString(renderTranscriptLine(segment, speakerAliases))
+		}
 	}
 
 	return b.String()

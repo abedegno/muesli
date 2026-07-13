@@ -6,9 +6,25 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/abedegno/muesli/internal/noteexport"
 	"github.com/abedegno/muesli/internal/store"
 	"github.com/go-chi/chi/v5"
 )
+
+func parseExportBoolOption(value string, defaultValue bool) (bool, error) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return defaultValue, nil
+	}
+	switch {
+	case strings.EqualFold(value, "true"), value == "1":
+		return true, nil
+	case strings.EqualFold(value, "false"), value == "0":
+		return false, nil
+	default:
+		return false, fmt.Errorf("invalid option")
+	}
+}
 
 // handleGetNoteExport returns a note as a downloadable attachment.
 // It shares the same owner-scoped note lookup and 404 behavior as /full.
@@ -28,6 +44,16 @@ func (s *Server) handleGetNoteExport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid format")
 		return
 	}
+	includeTranscript, err := parseExportBoolOption(r.URL.Query().Get("include_transcript"), true)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid option")
+		return
+	}
+	redactSpeakers, err := parseExportBoolOption(r.URL.Query().Get("redact_speakers"), false)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid option")
+		return
+	}
 
 	note, err := s.deps.Store.GetNote(r.Context(), uid, noteID)
 	if errors.Is(err, store.ErrNotFound) {
@@ -43,7 +69,10 @@ func (s *Server) handleGetNoteExport(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	rendered, contentType, filename, err := renderNoteExport(note, parts, format)
+	rendered, contentType, filename, err := renderNoteExport(note, parts, format, noteexport.Options{
+		IncludeTranscript: includeTranscript,
+		RedactSpeakers:    redactSpeakers,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
