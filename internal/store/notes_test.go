@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/abedegno/muesli/internal/calendar"
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/store"
 	"github.com/abedegno/muesli/internal/testutil"
@@ -637,6 +638,101 @@ func TestListNotesFilterUnknownFolderIDReturnsEmpty(t *testing.T) {
 	}
 	if len(notes) != 0 {
 		t.Fatalf("want 0 notes for unknown folder, got %d", len(notes))
+	}
+}
+
+func TestListNotesFilterByPerson(t *testing.T) {
+	st, ownerID, pool := newStoreWithOwner(t)
+	ctx := context.Background()
+
+	person, err := st.UpsertPerson(ctx, ownerID, "speaker@example.com", "Speaker", nil)
+	if err != nil {
+		t.Fatalf("upsert person: %v", err)
+	}
+
+	attendeeNote, err := st.CreateNote(ctx, ownerID, "Alpha attendee note")
+	if err != nil {
+		t.Fatalf("create attendee note: %v", err)
+	}
+	aliasNote, err := st.CreateNote(ctx, ownerID, "Alpha alias note")
+	if err != nil {
+		t.Fatalf("create alias note: %v", err)
+	}
+	otherNote, err := st.CreateNote(ctx, ownerID, "Alpha unrelated note")
+	if err != nil {
+		t.Fatalf("create unrelated note: %v", err)
+	}
+
+	source, err := st.CreateSource(ctx, ownerID, "google", "Person filter source", "{}")
+	if err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+	if err := st.UpsertEvents(ctx, ownerID, source.ID, []calendar.NormalizedEvent{{
+		ExternalID: "event-attendee",
+		Title:      "Meeting",
+		StartsAt:   time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC),
+		EndsAt:     time.Date(2026, 1, 2, 13, 0, 0, 0, time.UTC),
+		Attendees:  []model.Attendee{{Email: person.PrimaryEmail}},
+	}}); err != nil {
+		t.Fatalf("upsert events: %v", err)
+	}
+	var eventID string
+	if err := pool.QueryRow(ctx, `SELECT id FROM calendar_events WHERE owner_id=$1 AND source_id=$2 AND external_id=$3`,
+		ownerID, source.ID, "event-attendee").Scan(&eventID); err != nil {
+		t.Fatalf("lookup event id: %v", err)
+	}
+	if err := st.SetNoteEvent(ctx, ownerID, attendeeNote.ID, eventID); err != nil {
+		t.Fatalf("set note event: %v", err)
+	}
+
+	if err := st.UpsertSpeakerAlias(ctx, ownerID, aliasNote.ID, "speaker", "Speaker"); err != nil {
+		t.Fatalf("upsert speaker alias: %v", err)
+	}
+	if err := st.SetSpeakerAliasPerson(ctx, ownerID, aliasNote.ID, "speaker", &person.ID); err != nil {
+		t.Fatalf("set speaker alias person: %v", err)
+	}
+
+	if _, err := pool.Exec(ctx, `UPDATE notes SET created_at=$1, updated_at=$1 WHERE id=$2`, time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC), attendeeNote.ID); err != nil {
+		t.Fatalf("set attendee created_at: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE notes SET created_at=$1, updated_at=$1 WHERE id=$2`, time.Date(2026, 1, 3, 10, 0, 0, 0, time.UTC), aliasNote.ID); err != nil {
+		t.Fatalf("set alias created_at: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE notes SET created_at=$1, updated_at=$1 WHERE id=$2`, time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC), otherNote.ID); err != nil {
+		t.Fatalf("set unrelated created_at: %v", err)
+	}
+
+	matches, err := st.ListNotes(ctx, ownerID, store.ListNotesFilter{
+		PersonID:    person.ID,
+		PersonIDSet: true,
+	})
+	if err != nil {
+		t.Fatalf("list notes by person: %v", err)
+	}
+	if len(matches) != 2 {
+		t.Fatalf("person filter len=%d, want 2", len(matches))
+	}
+	got := map[string]bool{matches[0].ID: true, matches[1].ID: true}
+	if !got[attendeeNote.ID] || !got[aliasNote.ID] {
+		t.Fatalf("person filter notes=%v, want attendee %s and alias %s", got, attendeeNote.ID, aliasNote.ID)
+	}
+	if got[otherNote.ID] {
+		t.Fatalf("person filter unexpectedly included unrelated note %s", otherNote.ID)
+	}
+
+	from := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	to := time.Date(2026, 1, 2, 23, 59, 59, 999999999, time.UTC)
+	ranged, err := st.ListNotes(ctx, ownerID, store.ListNotesFilter{
+		PersonID:    person.ID,
+		PersonIDSet: true,
+		CreatedFrom: &from,
+		CreatedTo:   &to,
+	})
+	if err != nil {
+		t.Fatalf("list notes by person + date: %v", err)
+	}
+	if len(ranged) != 1 || ranged[0].ID != attendeeNote.ID {
+		t.Fatalf("person + date filter = %+v, want only %s", ranged, attendeeNote.ID)
 	}
 }
 

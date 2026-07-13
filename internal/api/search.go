@@ -11,6 +11,7 @@ import (
 
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/store"
+	"github.com/google/uuid"
 )
 
 // SearchMatch is one typed search hit. Results are returned in ranked note order
@@ -48,16 +49,36 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	query := r.URL.Query()
+	f := store.ListNotesFilter{
+		Tag:         query.Get("tag"),
+		CreatedFrom: from,
+		CreatedTo:   to,
+	}
+	if folderIDStr := query.Get("folder_id"); folderIDStr != "" {
+		if _, err := uuid.Parse(folderIDStr); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid folder_id")
+			return
+		}
+		f.FolderID = folderIDStr
+		f.FolderIDSet = true
+	}
+	if personIDStr := query.Get("person_id"); personIDStr != "" {
+		if _, err := uuid.Parse(personIDStr); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid person_id")
+			return
+		}
+		f.PersonID = personIDStr
+		f.PersonIDSet = true
+	}
+
 	scores := map[string]float64{} // noteID -> blended score
 	noteByID := map[string]model.Note{}
 
 	// Lexical: load the owner's live notes and match title/snippet
 	// (case-insensitive substring). Each match adds a flat bonus so keyword
 	// hits always surface.
-	notes, err := s.deps.Store.ListNotes(ctx, uid, store.ListNotesFilter{
-		CreatedFrom: from,
-		CreatedTo:   to,
-	})
+	notes, err := s.deps.Store.ListNotes(ctx, uid, f)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "search failed")
 		return
