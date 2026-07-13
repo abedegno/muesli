@@ -76,22 +76,36 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	audioCh := make(chan []byte, streamingAudioBuffer)
+	outboundCh := newStreamOutboundQueue()
 	var closeAudioOnce sync.Once
 	closeAudio := func() {
 		closeAudioOnce.Do(func() {
 			close(audioCh)
 		})
 	}
-	var closeBothOnce sync.Once
-	closeBoth := func() {
-		closeBothOnce.Do(func() {
+	var closeSessionOnce sync.Once
+	closeSession := func() {
+		closeSessionOnce.Do(func() {
 			_ = sess.Close()
+		})
+	}
+	var closeSocketOnce sync.Once
+	closeSocket := func() {
+		closeSocketOnce.Do(func() {
 			_ = closeWebsocketCleanly(conn)
+		})
+	}
+	var closeAllOnce sync.Once
+	closeAll := func() {
+		closeAllOnce.Do(func() {
+			outboundCh.close()
+			closeSession()
+			closeSocket()
 		})
 	}
 
 	var wg sync.WaitGroup
-	wg.Add(3)
+	wg.Add(4)
 
 	// Client -> audio buffer.
 	go func() {
@@ -103,7 +117,7 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 				if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseNoStatusReceived) || errors.Is(err, io.EOF) {
 					return
 				}
-				closeBoth()
+				closeAll()
 				return
 			}
 			if msgType != websocket.BinaryMessage {
@@ -111,7 +125,7 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 			}
 			frame := append([]byte(nil), payload...)
 			if err := enqueueAudioFrame(r.Context(), audioCh, frame); err != nil {
-				closeBoth()
+				closeAll()
 				return
 			}
 		}
@@ -122,12 +136,12 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 		defer wg.Done()
 		for frame := range audioCh {
 			if err := sess.WriteAudio(frame); err != nil {
-				closeBoth()
+				closeAll()
 				return
 			}
 		}
 		if err := sess.Stop(); err != nil {
-			closeBoth()
+			closeAll()
 			return
 		}
 	}()
@@ -135,16 +149,17 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 	// Plugin -> client + persistence.
 	go func() {
 		defer wg.Done()
-		defer closeBoth()
+		defer closeSession()
 		partialWritten := false
 		relayState := newStreamingSegmentRelayState()
 		for {
 			ev, err := sess.Recv()
 			if err != nil {
 				if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseNoStatusReceived) || errors.Is(err, io.EOF) {
+					outboundCh.close()
 					return
 				}
-				closeBoth()
+				closeAll()
 				return
 			}
 			switch ev.Type {
@@ -170,18 +185,18 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 					if err := s.deps.Store.AppendProvisionalTranscriptSegment(r.Context(), noteID, model.Transcript{
 						TranscriberPlugin: plug.Name,
 					}, seg); err != nil {
-						closeBoth()
+						closeAll()
 						return
 					}
 					if !partialWritten {
 						if err := s.deps.Store.SetNotePartialTranscript(r.Context(), noteID, true); err != nil {
-							closeBoth()
+							closeAll()
 							return
 						}
 						partialWritten = true
 					}
 				}
-				if err := writeStreamControl(conn, streamSegmentMessage{
+				outboundCh.enqueue(streamSegmentMessage{
 					Type:        "segment",
 					Text:        seg.Text,
 					StartMS:     seg.StartMS,
@@ -189,15 +204,28 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 					Speaker:     speakerPtr(seg.Speaker),
 					Provisional: true,
 					Final:       ev.Final,
-				}); err != nil {
-					closeBoth()
-					return
-				}
+				})
 			case "error":
-				closeBoth()
+				closeAll()
 				return
 			default:
-				closeBoth()
+				closeAll()
+				return
+			}
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		defer closeSession()
+		defer closeSocket()
+		for {
+			msg, ok := outboundCh.next()
+			if !ok {
+				return
+			}
+			if err := writeStreamControl(conn, msg); err != nil {
+				closeAll()
 				return
 			}
 		}

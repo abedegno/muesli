@@ -165,6 +165,27 @@ func setNoteAudioAndJob(t *testing.T, st *store.Store, noteID string) {
 	}
 }
 
+func floodStreamingSegments(partialCount int, finalText string) []fakeStreamingSegment {
+	segments := make([]fakeStreamingSegment, 0, partialCount+1)
+	for i := 0; i < partialCount; i++ {
+		segments = append(segments, fakeStreamingSegment{
+			AfterFrames: 1,
+			Text:        "partial",
+			StartMS:     1250,
+			EndMS:       2500,
+			Final:       boolPtr(false),
+		})
+	}
+	segments = append(segments, fakeStreamingSegment{
+		AfterFrames: 1,
+		Text:        finalText,
+		StartMS:     1250,
+		EndMS:       2500,
+		Final:       boolPtr(true),
+	})
+	return segments
+}
+
 func TestStreamingE2E_LiveSegmentsAndBatchFinalize(t *testing.T) {
 	fixture := newStreamingE2EFixture(t)
 	httpSrv := httptest.NewServer(fixture.srv.Handler())
@@ -471,6 +492,139 @@ func TestStreamingE2E_PartialThenFinalSegmentPersistsOnlyFinal(t *testing.T) {
 	}
 	if got, want := finalTranscript.Segments[1].Text, "Let's begin."; got != want {
 		t.Fatalf("segment[1] = %q, want %q", got, want)
+	}
+	note, err = fixture.st.GetNoteByID(context.Background(), noteID)
+	if err != nil {
+		t.Fatalf("get note after batch: %v", err)
+	}
+	if note.PartialTranscript {
+		t.Fatal("partial_transcript should be false after batch success")
+	}
+}
+
+func TestStreamingE2E_PartialFloodDoesNotBlockFinal(t *testing.T) {
+	fixture := newStreamingE2EFixture(t)
+	httpSrv := httptest.NewServer(fixture.srv.Handler())
+	t.Cleanup(httpSrv.Close)
+
+	const partialFloodCount = 64
+	finalText := "final survives flood"
+	streamPlugin := newFakeStreamingPlugin(t, "stream-token", floodStreamingSegments(partialFloodCount, finalText), 0)
+	pluginID := registerPlugin(t, fixture.srv, fixture.hdr, model.PluginStreamingTranscriber, "streaming-fake", streamPlugin.URL(), "stream-token")
+	if err := fixture.st.SetDefaultPlugin(context.Background(), pluginID); err != nil {
+		t.Fatalf("set default streaming plugin: %v", err)
+	}
+
+	noteID := createStreamingNote(t, fixture.srv, fixture.hdr, "Partial flood")
+	setNoteAudioAndJob(t, fixture.st, noteID)
+
+	conn := openStream(t, httpSrv.URL, noteID, strings.TrimPrefix(fixture.hdr["Authorization"], "Bearer "))
+	frames := pcmFixtureAllFrames(t)
+	if len(frames) != 2 {
+		t.Fatalf("pcm fixture frames = %d, want 2", len(frames))
+	}
+
+	finalCh := make(chan map[string]any, 1)
+	errCh := make(chan error, 1)
+	go func() {
+		defer close(finalCh)
+		for {
+			_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			_, payload, err := conn.ReadMessage()
+			if err != nil {
+				errCh <- err
+				return
+			}
+			var msg map[string]any
+			if err := json.Unmarshal(payload, &msg); err != nil {
+				errCh <- err
+				return
+			}
+			if msg["type"] != "segment" {
+				continue
+			}
+			if msg["final"] != true {
+				time.Sleep(10 * time.Millisecond)
+				continue
+			}
+			finalCh <- msg
+			return
+		}
+	}()
+
+	for i := 0; i < partialFloodCount+1; i++ {
+		if err := conn.WriteMessage(websocket.BinaryMessage, frames[i%len(frames)]); err != nil {
+			t.Fatalf("write pcm frame %d: %v", i, err)
+		}
+	}
+
+	var finalMsg map[string]any
+	select {
+	case finalMsg = <-finalCh:
+	case err := <-errCh:
+		t.Fatalf("read stream message: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("timed out waiting for final segment")
+	}
+
+	if finalMsg["text"] != finalText {
+		t.Fatalf("final segment text = %v, want %q", finalMsg["text"], finalText)
+	}
+	if finalMsg["provisional"] != true || finalMsg["final"] != true {
+		t.Fatalf("final message flags = %v", finalMsg)
+	}
+
+	if got := countSegments(t, fixture.pool, noteID, true); got != 1 {
+		t.Fatalf("provisional segments before batch = %d, want 1", got)
+	}
+	note, err := fixture.st.GetNoteByID(context.Background(), noteID)
+	if err != nil {
+		t.Fatalf("get note after flood: %v", err)
+	}
+	if !note.PartialTranscript {
+		t.Fatal("partial_transcript should be true after finalized live segment")
+	}
+
+	if err := conn.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, "")); err != nil {
+		t.Fatalf("write close: %v", err)
+	}
+	_ = conn.Close()
+
+	if got := streamPlugin.BinaryFrames(); got != partialFloodCount+1 {
+		t.Fatalf("plugin saw %d frames, want %d", got, partialFloodCount+1)
+	}
+
+	batchTranscriber := plugintest.NewTranscriber()
+	t.Cleanup(batchTranscriber.Close)
+	batchPluginID := registerPlugin(t, fixture.srv, fixture.hdr, model.PluginTranscriber, "batch-fake", batchTranscriber.URL(), "batch-token")
+	if err := fixture.st.SetDefaultPlugin(context.Background(), batchPluginID); err != nil {
+		t.Fatalf("set default batch plugin: %v", err)
+	}
+	agent := plugintest.NewAgent()
+	t.Cleanup(agent.Close)
+	agentPluginID := registerPlugin(t, fixture.srv, fixture.hdr, model.PluginAgent, "agent-fake", agent.URL(), "agent-token")
+	if err := fixture.st.SetDefaultPlugin(context.Background(), agentPluginID); err != nil {
+		t.Fatalf("set default agent plugin: %v", err)
+	}
+
+	proc := worker.NewProcessor(fixture.st, fixture.cr, fixture.prov, config.Config{}, nil)
+	claimAndProcessJobs(t, proc, fixture.st)
+
+	if got := countSegments(t, fixture.pool, noteID, true); got != 0 {
+		t.Fatalf("provisional segments after batch = %d, want 0", got)
+	}
+	if got := countSegments(t, fixture.pool, noteID, false); got != 1 {
+		t.Fatalf("final segments after batch = %d, want 1", got)
+	}
+	finalTranscript, err := fixture.st.GetTranscript(context.Background(), noteID)
+	if err != nil {
+		t.Fatalf("get transcript: %v", err)
+	}
+	if len(finalTranscript.Segments) != 1 {
+		t.Fatalf("segments = %d, want 1", len(finalTranscript.Segments))
+	}
+	if got, want := finalTranscript.Segments[0].Text, finalText; got != want {
+		t.Fatalf("segment[0] = %q, want %q", got, want)
 	}
 	note, err = fixture.st.GetNoteByID(context.Background(), noteID)
 	if err != nil {
