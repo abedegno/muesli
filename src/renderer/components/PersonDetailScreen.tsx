@@ -18,11 +18,63 @@ function formatNoteDate(note: Note): string {
   return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
+function formatCount(count: number): string {
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(count)
+}
+
+function formatHours(hours: number): string {
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(hours)
+}
+
 function ErrorBlock({ message, subject }: { message: string; subject: string }) {
   return (
     <div className="rounded-[var(--radius)] border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
       <p className="font-medium">Could not load {subject}</p>
       <p className="mt-1 break-words">{message}</p>
+    </div>
+  )
+}
+
+function ActivityStat({
+  label,
+  value,
+}: {
+  label: string
+  value: string
+}) {
+  return (
+    <div className="rounded-[var(--radius)] border border-border bg-card px-3 py-2">
+      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mt-1 text-sm font-semibold text-foreground">{value}</p>
+    </div>
+  )
+}
+
+function ActivityRollup({
+  notes,
+}: {
+  notes: Note[]
+}) {
+  const meetingCount = notes.length
+  const totalHours = notes.reduce((sum, note) => {
+    if (!note.started_at || !note.ended_at) return sum
+    const startedAt = new Date(note.started_at).getTime()
+    const endedAt = new Date(note.ended_at).getTime()
+    return sum + (endedAt - startedAt) / (1000 * 60 * 60)
+  }, 0)
+
+  const lastSeen = notes.reduce<Note | null>((latest, note) => {
+    if (!latest) return note
+    const candidateTime = new Date(note.started_at ?? note.created_at).getTime()
+    const latestTime = new Date(latest.started_at ?? latest.created_at).getTime()
+    return candidateTime > latestTime ? note : latest
+  }, null)
+
+  return (
+    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+      <ActivityStat label="Meetings" value={formatCount(meetingCount)} />
+      <ActivityStat label="Hours" value={formatHours(totalHours)} />
+      <ActivityStat label="Last seen" value={lastSeen ? formatNoteDate(lastSeen) : 'Never'} />
     </div>
   )
 }
@@ -206,6 +258,8 @@ export function PersonDetailScreen() {
                 )}
               </div>
             </div>
+
+            {notes !== null ? <ActivityRollup notes={notes} /> : null}
 
             {optionsError ? (
               <div className="rounded-[var(--radius)] border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">

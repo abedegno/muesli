@@ -111,6 +111,7 @@ const note = (over: Partial<Note> = {}): Note => ({
 })
 
 const noteDate = new Date('2026-07-01T00:00:00Z').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+const formatDate = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
 
 describe('PersonDetailScreen', () => {
   it('renders the person details and notes', async () => {
@@ -130,6 +131,37 @@ describe('PersonDetailScreen', () => {
 
     await userEvent.click(screen.getByRole('button', { name: /back to people/i }))
     expect(navigateMock).toHaveBeenCalledWith('/people')
+  })
+
+  it('renders the activity rollup stats', async () => {
+    getPersonMock.mockResolvedValue(person())
+    getPersonNotesMock.mockResolvedValue([
+      note({
+        id: 'n1',
+        started_at: '2026-07-01T10:00:00Z',
+        ended_at: '2026-07-01T11:30:00Z',
+        created_at: '2026-07-01T09:00:00Z',
+      }),
+      note({
+        id: 'n2',
+        title: 'Design review',
+        started_at: '2026-07-03T12:00:00Z',
+        ended_at: '2026-07-03T13:00:00Z',
+        created_at: '2026-07-03T08:00:00Z',
+      }),
+    ])
+    listCompaniesMock.mockResolvedValue([company()])
+    listPeopleMock.mockResolvedValue([person(), person({ id: 'p2', display_name: 'Other Person', primary_email: 'other@example.com' })])
+
+    render(<PersonDetailScreen />)
+
+    const meetingsTile = await screen.findByText('Meetings')
+    const hoursTile = screen.getByText('Hours')
+    const lastSeenTile = screen.getByText('Last seen')
+
+    expect(within(meetingsTile.closest('div') as HTMLElement).getByText('2')).toBeInTheDocument()
+    expect(within(hoursTile.closest('div') as HTMLElement).getByText('2.5')).toBeInTheDocument()
+    expect(within(lastSeenTile.closest('div') as HTMLElement).getByText(formatDate('2026-07-03T12:00:00Z'))).toBeInTheDocument()
   })
 
   it('submits edits and updates the displayed name and company', async () => {
