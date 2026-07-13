@@ -158,3 +158,87 @@ func TestBatchExportFolderOwnerScopeAndValidation(t *testing.T) {
 		t.Fatalf("bad format status=%d body=%s", badFmt.Code, badFmt.Body)
 	}
 }
+
+func TestBatchExportNoteIDs(t *testing.T) {
+	t.Parallel()
+	srv, st := newTestServer(t)
+	ctx := context.Background()
+
+	_ = doJSON(t, srv, http.MethodPost, "/api/setup",
+		map[string]string{"email": "noteids@example.com", "password": "password123"}, nil)
+	rec := doJSON(t, srv, http.MethodPost, "/api/login",
+		map[string]string{"email": "noteids@example.com", "password": "password123"}, nil)
+	var login struct {
+		Token string `json:"token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &login)
+	hdr := map[string]string{"Authorization": "Bearer " + login.Token}
+
+	mkNote := func(title string) string {
+		rec := doJSON(t, srv, http.MethodPost, "/api/notes", map[string]any{"title": title}, hdr)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create note status=%d body=%s", rec.Code, rec.Body)
+		}
+		var note struct {
+			ID string `json:"id"`
+		}
+		_ = json.Unmarshal(rec.Body.Bytes(), &note)
+		return note.ID
+	}
+
+	firstID := mkNote("Alpha")
+	secondID := mkNote("Alpha")
+
+	exportRec := doJSON(t, srv, http.MethodPost, "/api/export/batch",
+		map[string]any{"note_ids": []string{firstID, secondID}, "format": "md"}, hdr)
+	if exportRec.Code != http.StatusOK {
+		t.Fatalf("export status=%d body=%s", exportRec.Code, exportRec.Body)
+	}
+
+	zr, err := zip.NewReader(bytes.NewReader(exportRec.Body.Bytes()), int64(exportRec.Body.Len()))
+	if err != nil {
+		t.Fatalf("zip reader: %v", err)
+	}
+	if len(zr.File) != 2 {
+		t.Fatalf("zip entries = %d, want 2", len(zr.File))
+	}
+
+	other, err := st.CreateUser(ctx, "other-noteids@example.com", "password123")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	raw, hash, err := auth.GenerateToken()
+	if err != nil {
+		t.Fatalf("generate token: %v", err)
+	}
+	if err := st.CreateToken(ctx, other.ID, "session", hash, "session"); err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+	otherHdr := map[string]string{"Authorization": "Bearer " + raw}
+	otherNoteRec := doJSON(t, srv, http.MethodPost, "/api/notes", map[string]any{"title": "Foreign"}, otherHdr)
+	if otherNoteRec.Code != http.StatusCreated {
+		t.Fatalf("create other note status=%d body=%s", otherNoteRec.Code, otherNoteRec.Body)
+	}
+	var otherNote struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(otherNoteRec.Body.Bytes(), &otherNote)
+
+	cross := doJSON(t, srv, http.MethodPost, "/api/export/batch",
+		map[string]any{"note_ids": []string{otherNote.ID}, "format": "md"}, hdr)
+	if cross.Code != http.StatusNotFound {
+		t.Fatalf("cross-owner note export status=%d body=%s", cross.Code, cross.Body)
+	}
+
+	missing := doJSON(t, srv, http.MethodPost, "/api/export/batch",
+		map[string]any{"note_ids": []string{"00000000-0000-0000-0000-000000000000"}, "format": "md"}, hdr)
+	if missing.Code != http.StatusNotFound {
+		t.Fatalf("missing note status=%d body=%s", missing.Code, missing.Body)
+	}
+
+	empty := doJSON(t, srv, http.MethodPost, "/api/export/batch",
+		map[string]any{"note_ids": []string{}, "format": "md"}, hdr)
+	if empty.Code != http.StatusBadRequest {
+		t.Fatalf("empty note_ids status=%d body=%s", empty.Code, empty.Body)
+	}
+}
