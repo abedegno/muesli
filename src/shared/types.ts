@@ -344,3 +344,34 @@ export interface CompanyWithCount extends Company {
 export interface CompanyWithPeople extends Company {
   people: Person[]
 }
+
+export interface MeetingCountByDay {
+  day: string
+  count: number
+}
+
+export interface MeetingHoursByWeek {
+  week_start: string
+  hours: number
+}
+
+export interface PersonWithMeetingCount extends Person {
+  count: number
+}
+
+export interface CompanyWithMeetingCount extends Company {
+  count: number
+}
+
+export interface FolderWithMeetingCount extends Folder {
+  count: number
+}
+
+export interface InsightsResponse {
+  meetings_per_day: MeetingCountByDay[]
+  total_hours: number
+  hours_per_week: MeetingHoursByWeek[]
+  top_people: PersonWithMeetingCount[]
+  top_companies: CompanyWithMeetingCount[]
+  top_folders: FolderWithMeetingCount[]
+}

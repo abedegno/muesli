@@ -14,6 +14,7 @@ const TagsPage = lazy(() => import('./components/TagsPage').then(m => ({ default
 const ChatScreen = lazy(() => import('./components/chat/ChatScreen').then(m => ({ default: m.ChatScreen })))
 const ComingUpScreen = lazy(() => import('./components/ComingUpScreen').then(m => ({ default: m.ComingUpScreen })))
 const PeopleScreen = lazy(() => import('./components/PeopleScreen').then(m => ({ default: m.PeopleScreen })))
+const InsightsScreen = lazy(() => import('./components/InsightsScreen').then(m => ({ default: m.InsightsScreen })))
 const ActionItemsScreen = lazy(() => import('./components/ActionItemsScreen').then(m => ({ default: m.ActionItemsScreen })))
 const PersonDetailScreen = lazy(() => import('./components/PersonDetailScreen').then(m => ({ default: m.PersonDetailScreen })))
 const CompanyDetailScreen = lazy(() => import('./components/CompanyDetailScreen').then(m => ({ default: m.CompanyDetailScreen })))
@@ -51,6 +52,7 @@ export function App() {
               <Route path="/people/:id" element={<PersonDetailScreen />} />
               <Route path="/companies/:id" element={<CompanyDetailScreen />} />
               <Route path="/people" element={<PeopleScreen />} />
+              <Route path="/insights" element={<InsightsScreen />} />
               <Route path="*" element={<Navigate to="/" replace />} />
             </Route>
           </Routes>

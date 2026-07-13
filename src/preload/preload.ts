@@ -10,6 +10,7 @@ const bridge: MuesliBridge = {
   listNotes: (folderId?: string) => ipcRenderer.invoke(IPC.listNotes, folderId),
   listPeople: () => ipcRenderer.invoke(IPC.listPeople),
   listCompanies: () => ipcRenderer.invoke(IPC.listCompanies),
+  getInsights: (from?: string, to?: string) => ipcRenderer.invoke(IPC.getInsights, from, to),
   listNoteActionItems: (noteId) => ipcRenderer.invoke(IPC.listNoteActionItems, noteId),
   listNoteLinks: (id) => ipcRenderer.invoke(IPC.listNoteLinks, id),
   listRelatedNotes: (id) => ipcRenderer.invoke(IPC.listRelatedNotes, id),
