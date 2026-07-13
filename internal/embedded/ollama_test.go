@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
-	"time"
 
 	"github.com/abedegno/muesli/internal/config"
 )
@@ -47,21 +46,32 @@ func TestDetectOllama(t *testing.T) {
 	t.Run("slow", func(t *testing.T) {
 		t.Parallel()
 
+		entered := make(chan struct{})
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			time.Sleep(200 * time.Millisecond)
-			w.WriteHeader(http.StatusOK)
+			close(entered)
+			<-r.Context().Done()
 		}))
 		defer srv.Close()
 
-		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 
-		start := time.Now()
-		if got := DetectOllama(ctx, srv.URL); got {
-			t.Fatal("DetectOllama() = true, want false for timeout")
+		result := make(chan bool, 1)
+		go func() {
+			result <- DetectOllama(ctx, srv.URL)
+		}()
+
+		<-entered
+		cancel()
+
+		if got := <-result; got {
+			t.Fatal("DetectOllama() = true, want false for timeout or cancellation")
 		}
-		if elapsed := time.Since(start); elapsed > 300*time.Millisecond {
-			t.Fatalf("DetectOllama() took %v, want fast timeout", elapsed)
+
+		select {
+		case <-entered:
+		default:
+			t.Fatal("slow handler was not entered")
 		}
 	})
 }
