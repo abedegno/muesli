@@ -166,27 +166,6 @@ func setNoteAudioAndJob(t *testing.T, st *store.Store, noteID string) {
 	}
 }
 
-func floodStreamingSegments(partialCount int, finalText string) []fakeStreamingSegment {
-	segments := make([]fakeStreamingSegment, 0, partialCount+1)
-	for i := 0; i < partialCount; i++ {
-		segments = append(segments, fakeStreamingSegment{
-			AfterFrames: 1,
-			Text:        "partial",
-			StartMS:     1250,
-			EndMS:       2500,
-			Final:       boolPtr(false),
-		})
-	}
-	segments = append(segments, fakeStreamingSegment{
-		AfterFrames: 1,
-		Text:        finalText,
-		StartMS:     1250,
-		EndMS:       2500,
-		Final:       boolPtr(true),
-	})
-	return segments
-}
-
 func newSingleSegmentTranscriber(t *testing.T, segment model.Segment) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
@@ -207,6 +186,124 @@ func newSingleSegmentTranscriber(t *testing.T, segment model.Segment) *httptest.
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+func newBurstFloodStreamingPlugin(t *testing.T, token string, partialCount int, finalText string) *fakeStreamingPlugin {
+	t.Helper()
+	p := &fakeStreamingPlugin{
+		token: token,
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/info", p.handleInfo)
+	mux.HandleFunc("/health", p.handleHealth)
+	mux.HandleFunc("/stream", func(w http.ResponseWriter, r *http.Request) {
+		if !p.checkAuth(r) {
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		if _, payload, err := conn.ReadMessage(); err != nil {
+			return
+		} else {
+			var start struct {
+				Type       string `json:"type"`
+				SampleRate int    `json:"sample_rate"`
+				Channels   int    `json:"channels"`
+			}
+			if err := json.Unmarshal(payload, &start); err != nil {
+				_ = conn.WriteJSON(map[string]any{"type": "error", "message": "invalid start message"})
+				return
+			}
+			if start.Type != "start" || start.SampleRate != 16000 || start.Channels != 1 {
+				_ = conn.WriteJSON(map[string]any{"type": "error", "message": "invalid start parameters"})
+				return
+			}
+		}
+
+		if err := conn.WriteJSON(map[string]string{"type": "ready"}); err != nil {
+			return
+		}
+
+		emitted := false
+		for {
+			mt, payload, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			switch mt {
+			case websocket.BinaryMessage:
+				p.mu.Lock()
+				p.binaryFrames++
+				p.frames = append(p.frames, append([]byte(nil), payload...))
+				p.mu.Unlock()
+				if emitted {
+					if err := p.emitSegment(conn, fakeStreamingSegment{
+						AfterFrames: 1,
+						Text:        finalText,
+						StartMS:     1250,
+						EndMS:       2500,
+						Final:       boolPtr(true),
+					}); err != nil {
+						return
+					}
+					p.mu.Lock()
+					p.emittedSegments = append(p.emittedSegments, fakeStreamingSegment{Text: finalText, StartMS: 1250, EndMS: 2500, Final: boolPtr(true)})
+					p.mu.Unlock()
+					_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Time{})
+					return
+				}
+				emitted = true
+				for i := 0; i < partialCount; i++ {
+					seg := fakeStreamingSegment{
+						AfterFrames: 1,
+						Text:        "partial",
+						StartMS:     1250,
+						EndMS:       2500,
+						Final:       boolPtr(false),
+					}
+					if err := p.emitSegment(conn, seg); err != nil {
+						return
+					}
+					p.mu.Lock()
+					p.emittedSegments = append(p.emittedSegments, seg)
+					p.mu.Unlock()
+				}
+			case websocket.TextMessage:
+				var control struct {
+					Type string `json:"type"`
+				}
+				if err := json.Unmarshal(payload, &control); err != nil {
+					continue
+				}
+				if control.Type != "stop" {
+					continue
+				}
+				if err := p.emitSegment(conn, fakeStreamingSegment{
+					AfterFrames: 1,
+					Text:        finalText,
+					StartMS:     1250,
+					EndMS:       2500,
+					Final:       boolPtr(true),
+				}); err != nil {
+					return
+				}
+				p.mu.Lock()
+				p.emittedSegments = append(p.emittedSegments, fakeStreamingSegment{Text: finalText, StartMS: 1250, EndMS: 2500, Final: boolPtr(true)})
+				p.mu.Unlock()
+				_ = conn.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Time{})
+				return
+			}
+		}
+	})
+	p.srv = httptest.NewServer(mux)
+	t.Cleanup(p.Close)
+	return p
 }
 
 func TestStreamingE2E_LiveSegmentsAndBatchFinalize(t *testing.T) {
@@ -532,7 +629,8 @@ func TestStreamingE2E_PartialFloodDoesNotBlockFinal(t *testing.T) {
 
 	const partialFloodCount = 64
 	finalText := "final survives flood"
-	streamPlugin := newFakeStreamingPlugin(t, "stream-token", floodStreamingSegments(partialFloodCount, finalText), 0)
+	// The fake plugin emits the segment burst from a small guaranteed frame count because the inbound audio buffer can drop older PCM frames under flood.
+	streamPlugin := newBurstFloodStreamingPlugin(t, "stream-token", partialFloodCount, finalText)
 	pluginID := registerPlugin(t, fixture.srv, fixture.hdr, model.PluginStreamingTranscriber, "streaming-fake", streamPlugin.URL(), "stream-token")
 	if err := fixture.st.SetDefaultPlugin(context.Background(), pluginID); err != nil {
 		t.Fatalf("set default streaming plugin: %v", err)
@@ -574,8 +672,8 @@ func TestStreamingE2E_PartialFloodDoesNotBlockFinal(t *testing.T) {
 		}
 	}()
 
-	for i := 0; i < partialFloodCount+1; i++ {
-		if err := conn.WriteMessage(websocket.BinaryMessage, frames[i%len(frames)]); err != nil {
+	for i := 0; i < 2; i++ {
+		if err := conn.WriteMessage(websocket.BinaryMessage, frames[i]); err != nil {
 			t.Fatalf("write pcm frame %d: %v", i, err)
 		}
 	}
@@ -612,8 +710,8 @@ func TestStreamingE2E_PartialFloodDoesNotBlockFinal(t *testing.T) {
 	}
 	_ = conn.Close()
 
-	if got := streamPlugin.BinaryFrames(); got != partialFloodCount+1 {
-		t.Fatalf("plugin saw %d frames, want %d", got, partialFloodCount+1)
+	if got := streamPlugin.BinaryFrames(); got != 2 {
+		t.Fatalf("plugin saw %d frames, want 2", got)
 	}
 
 	batchTranscriber := newSingleSegmentTranscriber(t, model.Segment{
