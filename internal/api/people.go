@@ -61,7 +61,8 @@ func kickPeopleRefresh(st *store.Store, uid string) {
 
 func (s *Server) handleListPeople(w http.ResponseWriter, r *http.Request) {
 	uid, _ := userIDFromContext(r.Context())
-	people, err := s.deps.Store.ListPeople(r.Context(), uid)
+	q := r.URL.Query().Get("q")
+	people, err := s.deps.Store.ListPeople(r.Context(), uid, q)
 	if err != nil {
 		log.Printf("handleListPeople: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -107,7 +108,8 @@ func (s *Server) handleListPeople(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListCompanies(w http.ResponseWriter, r *http.Request) {
 	uid, _ := userIDFromContext(r.Context())
-	companies, err := s.deps.Store.ListCompaniesWithPeopleCount(r.Context(), uid)
+	q := r.URL.Query().Get("q")
+	companies, err := s.deps.Store.ListCompaniesWithPeopleCount(r.Context(), uid, q)
 	if err != nil {
 		log.Printf("handleListCompanies: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")

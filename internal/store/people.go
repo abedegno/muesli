@@ -115,14 +115,30 @@ func (s *Store) ListCompanies(ctx context.Context, ownerID string) ([]model.Comp
 	return out, rows.Err()
 }
 
-func (s *Store) ListCompaniesWithPeopleCount(ctx context.Context, ownerID string) ([]CompanyWithPeopleCount, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT c.id, c.owner_id, c.domain, c.name, c.created_at, c.updated_at, COUNT(p.id) AS people_count
-		 FROM companies c
-		 LEFT JOIN people p ON p.company_id = c.id AND p.owner_id = c.owner_id
-		 WHERE c.owner_id=$1
-		 GROUP BY c.id, c.owner_id, c.domain, c.name, c.created_at, c.updated_at
-		 ORDER BY c.domain`, ownerID)
+func (s *Store) ListCompaniesWithPeopleCount(ctx context.Context, ownerID, q string) ([]CompanyWithPeopleCount, error) {
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if q == "" {
+		rows, err = s.pool.Query(ctx,
+			`SELECT c.id, c.owner_id, c.domain, c.name, c.created_at, c.updated_at, COUNT(p.id) AS people_count
+			 FROM companies c
+			 LEFT JOIN people p ON p.company_id = c.id AND p.owner_id = c.owner_id
+			 WHERE c.owner_id=$1
+			 GROUP BY c.id, c.owner_id, c.domain, c.name, c.created_at, c.updated_at
+			 ORDER BY c.domain`, ownerID)
+	} else {
+		pattern := "%" + q + "%"
+		rows, err = s.pool.Query(ctx,
+			`SELECT c.id, c.owner_id, c.domain, c.name, c.created_at, c.updated_at, COUNT(p.id) AS people_count
+			 FROM companies c
+			 LEFT JOIN people p ON p.company_id = c.id AND p.owner_id = c.owner_id
+			 WHERE c.owner_id=$1
+			   AND (c.name ILIKE $2 OR c.domain ILIKE $2)
+			 GROUP BY c.id, c.owner_id, c.domain, c.name, c.created_at, c.updated_at
+			 ORDER BY c.domain`, ownerID, pattern)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -319,12 +335,26 @@ func (s *Store) DeletePerson(ctx context.Context, ownerID, id string) error {
 	return nil
 }
 
-func (s *Store) ListPeople(ctx context.Context, ownerID string) ([]model.Person, error) {
-	rows, err := s.pool.Query(ctx,
-		`SELECT id, owner_id, primary_email, display_name, company_id, first_seen_at, updated_at
-		 FROM people
-		 WHERE owner_id=$1
-		 ORDER BY display_name, primary_email`, ownerID)
+func (s *Store) ListPeople(ctx context.Context, ownerID, q string) ([]model.Person, error) {
+	var (
+		rows pgx.Rows
+		err  error
+	)
+	if q == "" {
+		rows, err = s.pool.Query(ctx,
+			`SELECT id, owner_id, primary_email, display_name, company_id, first_seen_at, updated_at
+			 FROM people
+			 WHERE owner_id=$1
+			 ORDER BY display_name, primary_email`, ownerID)
+	} else {
+		pattern := "%" + q + "%"
+		rows, err = s.pool.Query(ctx,
+			`SELECT id, owner_id, primary_email, display_name, company_id, first_seen_at, updated_at
+			 FROM people
+			 WHERE owner_id=$1
+			   AND (display_name ILIKE $2 OR primary_email ILIKE $2)
+			 ORDER BY display_name, primary_email`, ownerID, pattern)
+	}
 	if err != nil {
 		return nil, err
 	}

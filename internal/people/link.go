@@ -15,7 +15,7 @@ func LinkNoteSpeakers(ctx context.Context, st *store.Store, ownerID, noteID stri
 
 	people, peopleErr := st.PeopleForNoteEvent(ctx, ownerID, noteID)
 	if peopleErr == nil && len(people) == 0 {
-		people, peopleErr = st.ListPeople(ctx, ownerID)
+		people, peopleErr = st.ListPeople(ctx, ownerID, "")
 	}
 
 	var firstErr error
