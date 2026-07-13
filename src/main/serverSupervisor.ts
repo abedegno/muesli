@@ -1,18 +1,25 @@
+import { createWriteStream, type WriteStream } from 'node:fs'
+import { mkdir } from 'node:fs/promises'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { dirname, join } from 'node:path'
 import { app } from 'electron'
 
 export interface ServerSupervisor {
   baseUrl: string
+  logPath: string
+  waitUntilHealthy(fetchImpl: typeof fetch): Promise<void>
   shutdown(): Promise<void>
 }
 
 export interface ServerSupervisorOptions {
   env?: NodeJS.ProcessEnv
   fetchImpl?: typeof fetch
+  logPath?: string
   healthPollIntervalMs?: number
   healthTimeoutMs?: number
   killTimeoutMs?: number
   onSecondInstance?: () => void
+  waitForHealthy?: boolean
   spawnImpl?: typeof spawn
 }
 
@@ -25,10 +32,12 @@ const DEFAULT_ADDR = '127.0.0.1:8080'
 const DEFAULT_HEALTH_POLL_INTERVAL_MS = 250
 const DEFAULT_HEALTH_TIMEOUT_MS = 30_000
 const DEFAULT_KILL_TIMEOUT_MS = 5_000
+const DEFAULT_LOG_FILENAME = 'server.log'
 const electronApp = app as unknown as {
   isPackaged: boolean
   on(event: 'second-instance' | 'before-quit', listener: (...args: any[]) => void): void
   off(event: 'second-instance' | 'before-quit', listener: (...args: any[]) => void): void
+  getPath(name: 'userData'): string
   quit(): void
   exit(code?: number): void
   requestSingleInstanceLock(): boolean
@@ -70,13 +79,17 @@ function makeHealthUrl(baseUrl: string): string {
   return new URL('/healthz', baseUrl).toString()
 }
 
+export function makeServerLogPath(userDataPath: string): string {
+  return join(userDataPath, 'logs', DEFAULT_LOG_FILENAME)
+}
+
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms)
   })
 }
 
-function logChildOutput(stream: 'stdout' | 'stderr', data: Buffer | string) {
+function logChildOutput(logStream: WriteStream | null, stream: 'stdout' | 'stderr', data: Buffer | string) {
   const text = typeof data === 'string' ? data : data.toString('utf8')
   const trimmed = text.trimEnd()
   if (!trimmed) return
@@ -86,34 +99,44 @@ function logChildOutput(stream: 'stdout' | 'stderr', data: Buffer | string) {
   } else {
     console.log(prefix, trimmed)
   }
+  if (!logStream) return
+  const normalized = trimmed.replace(/\r\n/g, '\n').replace(/\r/g, '\n')
+  for (const line of normalized.split('\n')) {
+    logStream.write(`${prefix} ${line}\n`)
+  }
 }
 
 class EmbeddedServerSupervisorImpl implements ServerSupervisor {
   readonly baseUrl: string
+  readonly logPath: string
   private readonly child: ChildProcessWithoutNullStreams
   private readonly healthUrl: string
   private readonly healthPollIntervalMs: number
   private readonly healthTimeoutMs: number
   private readonly killTimeoutMs: number
   private readonly onSecondInstance?: () => void
+  private readonly logStream: WriteStream | null
   private shutdownPromise: Promise<void> | null = null
   private quitting = false
   private childExited = false
 
-  constructor(child: ChildProcessWithoutNullStreams, baseUrl: string, opts: Required<Pick<ServerSupervisorOptions, 'healthPollIntervalMs' | 'healthTimeoutMs' | 'killTimeoutMs'>> & Pick<ServerSupervisorOptions, 'onSecondInstance'>) {
+  constructor(child: ChildProcessWithoutNullStreams, baseUrl: string, logPath: string, logStream: WriteStream | null, opts: Required<Pick<ServerSupervisorOptions, 'healthPollIntervalMs' | 'healthTimeoutMs' | 'killTimeoutMs'>> & Pick<ServerSupervisorOptions, 'onSecondInstance'>) {
     this.child = child
     this.baseUrl = baseUrl
+    this.logPath = logPath
     this.healthUrl = makeHealthUrl(baseUrl)
     this.healthPollIntervalMs = opts.healthPollIntervalMs
     this.healthTimeoutMs = opts.healthTimeoutMs
     this.killTimeoutMs = opts.killTimeoutMs
     this.onSecondInstance = opts.onSecondInstance
+    this.logStream = logStream
 
     this.child.once('exit', () => {
       this.childExited = true
+      this.logStream?.end()
     })
-    this.child.stdout.on('data', (chunk) => logChildOutput('stdout', chunk))
-    this.child.stderr.on('data', (chunk) => logChildOutput('stderr', chunk))
+    this.child.stdout.on('data', (chunk) => logChildOutput(this.logStream, 'stdout', chunk))
+    this.child.stderr.on('data', (chunk) => logChildOutput(this.logStream, 'stderr', chunk))
   }
 
   async waitUntilHealthy(fetchImpl: typeof fetch): Promise<void> {
@@ -179,6 +202,7 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
     const exitPromise = new Promise<void>((resolve) => {
       this.child.once('exit', () => {
         this.childExited = true
+        this.logStream?.end()
         resolve()
       })
     })
@@ -215,6 +239,17 @@ export async function startServerSupervisor(opts: ServerSupervisorOptions = {}):
   const binaryPath = resolveServerBinaryPath(env)
   const addr = parseLoopbackAddr(env.MUESLI_ADDR ?? DEFAULT_ADDR)
   const baseUrl = `http://${addr.host}:${addr.port}`
+  const logPath = opts.logPath ?? makeServerLogPath(electronApp.getPath('userData'))
+  await mkdir(dirname(logPath), { recursive: true })
+  let logStream: WriteStream | null = null
+  try {
+    logStream = createWriteStream(logPath, { flags: 'w' })
+    logStream.on('error', (err) => {
+      console.error('[muesli-server log]', err)
+    })
+  } catch (err) {
+    console.error('[muesli-server log]', err)
+  }
   const child = (opts.spawnImpl ?? spawn)(binaryPath, ['--embedded'], {
     env: {
       ...env,
@@ -223,7 +258,7 @@ export async function startServerSupervisor(opts: ServerSupervisorOptions = {}):
     stdio: ['ignore', 'pipe', 'pipe'],
   }) as unknown as ChildProcessWithoutNullStreams
 
-  const supervisor = new EmbeddedServerSupervisorImpl(child, baseUrl, {
+  const supervisor = new EmbeddedServerSupervisorImpl(child, baseUrl, logPath, logStream, {
     healthPollIntervalMs: opts.healthPollIntervalMs ?? DEFAULT_HEALTH_POLL_INTERVAL_MS,
     healthTimeoutMs: opts.healthTimeoutMs ?? DEFAULT_HEALTH_TIMEOUT_MS,
     killTimeoutMs: opts.killTimeoutMs ?? DEFAULT_KILL_TIMEOUT_MS,
@@ -231,6 +266,10 @@ export async function startServerSupervisor(opts: ServerSupervisorOptions = {}):
   })
 
   supervisor.installLifecycleHooks()
+
+  if (opts.waitForHealthy === false) {
+    return supervisor
+  }
 
   try {
     await supervisor.waitUntilHealthy(opts.fetchImpl ?? globalThis.fetch.bind(globalThis))

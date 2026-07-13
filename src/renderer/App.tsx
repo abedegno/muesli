@@ -1,6 +1,7 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { muesli } from './api'
+import { EmbeddedStartupGate } from './components/StartupScreen'
 import { AppLayout } from './components/shell/AppLayout'
 import { ConnectScreen } from './components/ConnectScreen'
 import { NotesListScreen } from './components/NotesListScreen'
@@ -21,7 +22,7 @@ const PersonDetailScreen = lazy(() => import('./components/PersonDetailScreen').
 const CompanyDetailScreen = lazy(() => import('./components/CompanyDetailScreen').then(m => ({ default: m.CompanyDetailScreen })))
 const NoteScreen = lazy(() => import('./components/NoteScreen').then((m) => ({ default: m.NoteScreen })))
 
-export function App() {
+function AppContent() {
   const [connected, setConnected] = useState<boolean | null>(null)
   useEffect(() => {
     muesli.getConfig?.()?.then((cfg) => setConnected(!!cfg)).catch(() => setConnected(false))
@@ -61,5 +62,13 @@ export function App() {
         </Suspense>
       )}
     </AnnouncerProvider>
+  )
+}
+
+export function App() {
+  return (
+    <EmbeddedStartupGate>
+      <AppContent />
+    </EmbeddedStartupGate>
   )
 }
