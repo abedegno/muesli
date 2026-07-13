@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { NoteView, summaryToMarkdown } from './NoteView'
 import type { FullNote, Template } from '../../shared/types'
@@ -169,44 +169,67 @@ describe('NoteView — template-picker dismissal', () => {
   // from breaking the "Copy as Markdown" tests that run after this describe.
 
   it('(i) closes the picker on outside mousedown', async () => {
-    render(<NoteView full={full} onSaveBody={async () => {}} />)
-    await userEvent.click(screen.getByRole('button', { name: /switch template/i }))
-    expect(screen.getByRole('option', { name: 'Action items' })).toBeInTheDocument()
-    // The mousedown listener is deferred via setTimeout(0); waitFor retries
-    // until the outside mousedown actually closes the picker.
-    await waitFor(() => {
+    vi.useFakeTimers()
+    try {
+      render(<NoteView full={full} onSaveBody={async () => {}} />)
+      fireEvent.click(screen.getByRole('button', { name: /switch template/i }))
+      await act(async () => {
+        vi.runOnlyPendingTimers()
+      })
+      expect(screen.getByRole('option', { name: 'Action items' })).toBeInTheDocument()
       fireEvent.mouseDown(document.body)
       expect(screen.queryByRole('option', { name: 'Action items' })).not.toBeInTheDocument()
-    })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('(ii) closes the picker on Escape keydown', async () => {
-    render(<NoteView full={full} onSaveBody={async () => {}} />)
-    await userEvent.click(screen.getByRole('button', { name: /switch template/i }))
-    expect(screen.getByRole('option', { name: 'Action items' })).toBeInTheDocument()
-    fireEvent.keyDown(document, { key: 'Escape' })
-    expect(screen.queryByRole('option', { name: 'Action items' })).not.toBeInTheDocument()
+    vi.useFakeTimers()
+    try {
+      render(<NoteView full={full} onSaveBody={async () => {}} />)
+      fireEvent.click(screen.getByRole('button', { name: /switch template/i }))
+      await act(async () => {
+        vi.runOnlyPendingTimers()
+      })
+      expect(screen.getByRole('option', { name: 'Action items' })).toBeInTheDocument()
+      fireEvent.keyDown(document, { key: 'Escape' })
+      expect(screen.queryByRole('option', { name: 'Action items' })).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('(iii) item pick closes the picker', async () => {
-    render(<NoteView full={full} onSaveBody={async () => {}} />)
-    await userEvent.click(screen.getByRole('button', { name: /switch template/i }))
-    expect(screen.getByRole('option', { name: 'Action items' })).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('option', { name: 'Action items' }))
-    expect(screen.queryByRole('option', { name: 'Action items' })).not.toBeInTheDocument()
+    vi.useFakeTimers()
+    try {
+      render(<NoteView full={full} onSaveBody={async () => {}} />)
+      fireEvent.click(screen.getByRole('button', { name: /switch template/i }))
+      await act(async () => {
+        vi.runOnlyPendingTimers()
+      })
+      expect(screen.getByRole('option', { name: 'Action items' })).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('option', { name: 'Action items' }))
+      expect(screen.queryByRole('option', { name: 'Action items' })).not.toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('(iv) click inside the dropdown does NOT close it', async () => {
-    render(<NoteView full={full} onSaveBody={async () => {}} />)
-    await userEvent.click(screen.getByRole('button', { name: /switch template/i }))
-    expect(screen.getByRole('option', { name: 'Action items' })).toBeInTheDocument()
-    // Fire mousedown on an element inside the dropdown (the document listener
-    // should see it as contained and not close the picker).
-    await waitFor(() => {
-      fireEvent.mouseDown(screen.getByRole('option', { name: 'Action items' }))
-      // Picker must remain open — inside click is not dismissed.
+    vi.useFakeTimers()
+    try {
+      render(<NoteView full={full} onSaveBody={async () => {}} />)
+      fireEvent.click(screen.getByRole('button', { name: /switch template/i }))
+      await act(async () => {
+        vi.runOnlyPendingTimers()
+      })
       expect(screen.getByRole('option', { name: 'Action items' })).toBeInTheDocument()
-    })
+      fireEvent.mouseDown(screen.getByRole('option', { name: 'Action items' }))
+      expect(screen.getByRole('option', { name: 'Action items' })).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
