@@ -612,7 +612,7 @@ describe('ipc handlers', () => {
       { note_id: 'id1', match_type: 'title' },
       { note_id: 'id2', match_type: 'transcript', segment_id: 'seg1', start_ms: 500, snippet: '…budget review…' },
     ])
-    expect(seen.some((s) => s.startsWith('GET') && s.includes('/api/search?q=budget%20review'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('GET') && s.includes('/api/search?q=budget+review'))).toBe(true)
   })
 
   it('search threads from/to onto the querystring when present', async () => {
@@ -626,6 +626,21 @@ describe('ipc handlers', () => {
     const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
     await handlers.search('budget', { from: '2024-01-01', to: '2024-02-01' })
     expect(seen.some((s) => s.includes('/api/search?q=budget&from=2024-01-01&to=2024-02-01'))).toBe(true)
+  })
+
+  it('search threads person/folder/tag filters onto the querystring when present', async () => {
+    const seen: string[] = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
+      return new Response('[]', { status: 200 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    await handlers.search('budget', { personId: 'p-1', folderId: 'f-1', tag: 'weekly sync' })
+    expect(
+      seen.some((s) => s.includes('/api/search?q=budget&person_id=p-1&folder_id=f-1&tag=weekly+sync')),
+    ).toBe(true)
   })
 
   it('addTag and removeTag call the client endpoints', async () => {
