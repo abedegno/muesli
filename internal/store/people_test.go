@@ -130,7 +130,7 @@ func TestPeopleStoreCompaniesWithPeopleCountAndCompanyLookup(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create other owner: %v", err)
 	}
-	otherCompany, err := st.UpsertCompany(ctx, otherOwner.ID, "other.example", "Other")
+	otherCompany, err := st.UpsertCompany(ctx, otherOwner.ID, "two.example", "Other")
 	if err != nil {
 		t.Fatalf("create other company: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestPeopleStoreCompaniesWithPeopleCountAndCompanyLookup(t *testing.T) {
 		t.Fatalf("seed other owner's person: %v", err)
 	}
 
-	listed, err := st.ListCompaniesWithPeopleCount(ctx, ownerID)
+	listed, err := st.ListCompaniesWithPeopleCount(ctx, ownerID, "")
 	if err != nil {
 		t.Fatalf("list companies with counts: %v", err)
 	}
@@ -158,6 +158,22 @@ func TestPeopleStoreCompaniesWithPeopleCountAndCompanyLookup(t *testing.T) {
 		if company.OwnerID != ownerID {
 			t.Fatalf("found company for wrong owner: %+v", company)
 		}
+	}
+
+	byName, err := st.ListCompaniesWithPeopleCount(ctx, ownerID, "tWo")
+	if err != nil {
+		t.Fatalf("list companies by name search: %v", err)
+	}
+	if len(byName) != 1 || byName[0].ID != companyTwo.ID {
+		t.Fatalf("expected name search to return company two, got %+v", byName)
+	}
+
+	byDomain, err := st.ListCompaniesWithPeopleCount(ctx, ownerID, "WO.EX")
+	if err != nil {
+		t.Fatalf("list companies by domain search: %v", err)
+	}
+	if len(byDomain) != 1 || byDomain[0].ID != companyTwo.ID {
+		t.Fatalf("expected domain search to return company two, got %+v", byDomain)
 	}
 
 	got, err := st.GetCompany(ctx, ownerID, companyTwo.ID)
@@ -357,11 +373,11 @@ func TestPeopleStorePeople(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create other owner: %v", err)
 	}
-	if _, err := st.UpsertPerson(ctx, otherOwner.ID, "outside@example.com", "Aaron", nil); err != nil {
+	if _, err := st.UpsertPerson(ctx, otherOwner.ID, "outside@example.com", "Amy Outside", nil); err != nil {
 		t.Fatalf("upsert other owner's person: %v", err)
 	}
 
-	listed, err := st.ListPeople(ctx, ownerID)
+	listed, err := st.ListPeople(ctx, ownerID, "")
 	if err != nil {
 		t.Fatalf("list people: %v", err)
 	}
@@ -386,7 +402,28 @@ func TestPeopleStorePeople(t *testing.T) {
 		}
 	}
 
-	otherList, err := st.ListPeople(ctx, otherOwner.ID)
+	byName, err := st.ListPeople(ctx, ownerID, "aMy")
+	if err != nil {
+		t.Fatalf("list people by name search: %v", err)
+	}
+	if len(byName) != 2 {
+		t.Fatalf("expected 2 amy matches, got %d: %+v", len(byName), byName)
+	}
+	for _, p := range byName {
+		if p.DisplayName != "Amy" {
+			t.Fatalf("unexpected name search result: %+v", p)
+		}
+	}
+
+	byEmail, err := st.ListPeople(ctx, ownerID, "mIxEd@ExAmPlE")
+	if err != nil {
+		t.Fatalf("list people by email search: %v", err)
+	}
+	if len(byEmail) != 1 || byEmail[0].PrimaryEmail != "mixed@example.com" {
+		t.Fatalf("expected mixed email match, got %+v", byEmail)
+	}
+
+	otherList, err := st.ListPeople(ctx, otherOwner.ID, "")
 	if err != nil {
 		t.Fatalf("list other owner's people: %v", err)
 	}
@@ -851,7 +888,7 @@ func TestPeopleForNoteEventScopesSpeakerMatching(t *testing.T) {
 		t.Fatalf("upsert speaker alias: %v", err)
 	}
 
-	fullPeople, err := st.ListPeople(ctx, owner.ID)
+	fullPeople, err := st.ListPeople(ctx, owner.ID, "")
 	if err != nil {
 		t.Fatalf("list people: %v", err)
 	}
