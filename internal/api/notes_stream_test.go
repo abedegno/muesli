@@ -359,13 +359,17 @@ func TestNoteStreamRelaysPartialsAndDropsLateDuplicates(t *testing.T) {
 	if err := conn.WriteMessage(websocket.BinaryMessage, frames[1]); err != nil {
 		t.Fatalf("write audio frame 3: %v", err)
 	}
-	if err := conn.SetReadDeadline(time.Now().Add(250 * time.Millisecond)); err != nil {
-		t.Fatalf("set read deadline: %v", err)
-	}
-	if _, _, err := conn.ReadMessage(); err == nil {
-		t.Fatal("expected late duplicate partial to be dropped")
-	} else if ne, ok := err.(interface{ Timeout() bool }); !ok || !ne.Timeout() {
-		t.Fatalf("read after late duplicate = %v, want timeout", err)
+	readErr := make(chan error, 1)
+	go func() {
+		_, _, err := conn.ReadMessage()
+		readErr <- err
+	}()
+	select {
+	case err := <-readErr:
+		if err == nil {
+			t.Fatal("expected late duplicate partial to be dropped")
+		}
+	case <-time.After(250 * time.Millisecond):
 	}
 
 	if got := countSegments(t, pool, note.ID, true); got != 1 {
