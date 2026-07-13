@@ -46,16 +46,20 @@ func decideStreamOutboundAction(state streamOutboundQueueState, kind streamOutbo
 }
 
 type streamOutboundMailbox struct {
-	mu      sync.Mutex
-	notify  chan struct{}
-	partial *streamSegmentMessage
-	finals  []streamSegmentMessage
-	closed  bool
+	mu          sync.Mutex
+	partialWake chan struct{}
+	finalWake   chan struct{}
+	closeWake   chan struct{}
+	partial     *streamSegmentMessage
+	finals      []streamSegmentMessage
+	closed      bool
 }
 
 func newStreamOutboundMailbox() *streamOutboundMailbox {
 	return &streamOutboundMailbox{
-		notify: make(chan struct{}, 1),
+		partialWake: make(chan struct{}, 1),
+		finalWake:   make(chan struct{}, 1),
+		closeWake:   make(chan struct{}, 1),
 	}
 }
 
@@ -68,21 +72,22 @@ func (q *streamOutboundMailbox) enqueue(msg streamSegmentMessage) {
 	case streamOutboundActionQueuePriority:
 		q.finals = append(q.finals, msg)
 		q.partial = nil
+		q.signalFinal()
 	case streamOutboundActionQueuePartial, streamOutboundActionCoalescePartial:
 		msgCopy := msg
 		q.partial = &msgCopy
+		q.signalPartial()
 	case streamOutboundActionDropPartial:
 		// A final is already pending. Drop the stale partial.
 	}
 	q.mu.Unlock()
-	q.signal()
 }
 
 func (q *streamOutboundMailbox) close() {
 	q.mu.Lock()
 	q.closed = true
 	q.mu.Unlock()
-	q.signal()
+	q.signalClose()
 }
 
 func (q *streamOutboundMailbox) closedAndEmpty() bool {
@@ -119,10 +124,91 @@ func (q *streamOutboundMailbox) hasPendingPartial() bool {
 	return q.partial != nil
 }
 
-func (q *streamOutboundMailbox) signal() {
+func (q *streamOutboundMailbox) signalPartial() {
 	select {
-	case q.notify <- struct{}{}:
+	case q.partialWake <- struct{}{}:
 	default:
+	}
+}
+
+func (q *streamOutboundMailbox) signalFinal() {
+	select {
+	case q.finalWake <- struct{}{}:
+	default:
+	}
+}
+
+func (q *streamOutboundMailbox) signalClose() {
+	select {
+	case q.closeWake <- struct{}{}:
+	default:
+	}
+}
+
+func (q *streamOutboundMailbox) runWriter(write func(streamSegmentMessage) error) error {
+	var partialTimer *time.Timer
+	stopTimer := func() {
+		if partialTimer == nil {
+			return
+		}
+		if !partialTimer.Stop() {
+			select {
+			case <-partialTimer.C:
+			default:
+			}
+		}
+		partialTimer = nil
+	}
+	startTimer := func() {
+		stopTimer()
+		partialTimer = time.NewTimer(streamOutboundPartialDebounce)
+	}
+	defer stopTimer()
+	for {
+		if msg, ok := q.nextPriority(); ok {
+			stopTimer()
+			if err := write(msg); err != nil {
+				return err
+			}
+			continue
+		}
+		if q.closedAndEmpty() {
+			return nil
+		}
+		if q.hasPendingPartial() {
+			if partialTimer == nil {
+				startTimer()
+			}
+			select {
+			case <-q.finalWake:
+				stopTimer()
+				continue
+			case <-q.partialWake:
+				continue
+			case <-partialTimer.C:
+				if msg, ok := q.nextWritablePartial(); ok {
+					stopTimer()
+					if err := write(msg); err != nil {
+						return err
+					}
+				} else {
+					stopTimer()
+				}
+			case <-q.closeWake:
+				stopTimer()
+				continue
+			}
+			continue
+		}
+		stopTimer()
+		select {
+		case <-q.finalWake:
+		case <-q.partialWake:
+		case <-q.closeWake:
+			if q.closedAndEmpty() {
+				return nil
+			}
+		}
 	}
 }
 

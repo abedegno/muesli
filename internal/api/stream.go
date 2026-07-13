@@ -219,60 +219,11 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 		defer wg.Done()
 		defer closeSession()
 		defer closeSocket()
-		var partialTimer *time.Timer
-		stopTimer := func() {
-			if partialTimer == nil {
-				return
-			}
-			if !partialTimer.Stop() {
-				select {
-				case <-partialTimer.C:
-				default:
-				}
-			}
-			partialTimer = nil
-		}
-		startTimer := func() {
-			stopTimer()
-			partialTimer = time.NewTimer(streamOutboundPartialDebounce)
-		}
-		for {
-			if msg, ok := outboundCh.nextPriority(); ok {
-				stopTimer()
-				if err := writeStreamControl(conn, msg); err != nil {
-					closeAll()
-					return
-				}
-				continue
-			}
-			if outboundCh.closedAndEmpty() {
-				stopTimer()
-				return
-			}
-			if outboundCh.hasPendingPartial() {
-				if partialTimer == nil {
-					startTimer()
-				}
-				select {
-				case <-outboundCh.notify:
-					stopTimer()
-				case <-partialTimer.C:
-					if msg, ok := outboundCh.nextWritablePartial(); ok {
-						stopTimer()
-						if err := writeStreamControl(conn, msg); err != nil {
-							closeAll()
-							return
-						}
-					} else {
-						stopTimer()
-					}
-				}
-				continue
-			}
-			stopTimer()
-			select {
-			case <-outboundCh.notify:
-			}
+		if err := outboundCh.runWriter(func(msg streamSegmentMessage) error {
+			return writeStreamControl(conn, msg)
+		}); err != nil {
+			closeAll()
+			return
 		}
 	}()
 
