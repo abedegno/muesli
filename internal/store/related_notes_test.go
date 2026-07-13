@@ -38,10 +38,6 @@ func TestRelatedNotesRankingAndFilters(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create far: %v", err)
 	}
-	self, err := st.CreateNote(ctx, owner.ID, "Self")
-	if err != nil {
-		t.Fatalf("create self: %v", err)
-	}
 	outgoing, err := st.CreateNote(ctx, owner.ID, "Outgoing linked")
 	if err != nil {
 		t.Fatalf("create outgoing: %v", err)
@@ -63,7 +59,7 @@ func TestRelatedNotesRankingAndFilters(t *testing.T) {
 		t.Fatalf("create missing: %v", err)
 	}
 
-	for _, id := range []string{target.ID, near.ID, far.ID, self.ID, outgoing.ID, incoming.ID, trashed.ID, foreign.ID, missing.ID} {
+	for _, id := range []string{target.ID, near.ID, far.ID, outgoing.ID, incoming.ID, trashed.ID, foreign.ID, missing.ID} {
 		if _, err := st.Pool().Exec(ctx, "UPDATE notes SET status='ready' WHERE id=$1", id); err != nil {
 			t.Fatalf("set ready %s: %v", id, err)
 		}
@@ -77,9 +73,6 @@ func TestRelatedNotesRankingAndFilters(t *testing.T) {
 	}
 	if err := st.UpsertEmbedding(ctx, far.ID, testModel, farVec()); err != nil {
 		t.Fatalf("upsert far: %v", err)
-	}
-	if err := st.UpsertEmbedding(ctx, self.ID, testModel, nearVec()); err != nil {
-		t.Fatalf("upsert self: %v", err)
 	}
 	if err := st.UpsertEmbedding(ctx, outgoing.ID, testModel, nearVec()); err != nil {
 		t.Fatalf("upsert outgoing: %v", err)
