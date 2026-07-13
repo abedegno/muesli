@@ -662,7 +662,7 @@ describe('MuesliClient', () => {
       { note_id: 'id2', match_type: 'summary', snippet: 'a b in context' },
     ])
     expect(calls[0].method).toBe('GET')
-    expect(calls[0].url).toBe('http://x/api/search?q=a%20b')
+    expect(calls[0].url).toBe('http://x/api/search?q=a+b')
   })
 
   it('search appends from/to onto the querystring when present, encoded', async () => {
@@ -673,7 +673,7 @@ describe('MuesliClient', () => {
     }
     const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
     await client.search('a b', { from: '2024-01-01T00:00:00Z', to: '2024-02-01' })
-    expect(calls[0].url).toBe('http://x/api/search?q=a%20b&from=2024-01-01T00%3A00%3A00Z&to=2024-02-01')
+    expect(calls[0].url).toBe('http://x/api/search?q=a+b&from=2024-01-01T00%3A00%3A00Z&to=2024-02-01')
   })
 
   it('search omits from/to from the querystring when absent', async () => {
@@ -684,7 +684,26 @@ describe('MuesliClient', () => {
     }
     const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
     await client.search('a b')
-    expect(calls[0].url).toBe('http://x/api/search?q=a%20b')
+    expect(calls[0].url).toBe('http://x/api/search?q=a+b')
+  })
+
+  it('search includes person/folder/tag filters when present, encoded', async () => {
+    const calls: Array<{ url: string; method?: string }> = []
+    const fetchMock: FetchLike = async (url, init) => {
+      calls.push({ url: String(url), method: init?.method })
+      return new Response('[]', { status: 200 })
+    }
+    const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
+    await client.search('budget review', {
+      from: '2024-01-01',
+      to: '2024-02-01T00:00:00Z',
+      personId: 'p-123',
+      folderId: 'f-123',
+      tag: 'weekly sync',
+    })
+    expect(calls[0].url).toBe(
+      'http://x/api/search?q=budget+review&from=2024-01-01&to=2024-02-01T00%3A00%3A00Z&person_id=p-123&folder_id=f-123&tag=weekly+sync',
+    )
   })
 
   it('getFull returns transcript + summaries once ready', async () => {

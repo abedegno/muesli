@@ -140,11 +140,14 @@ export interface DiarizationReviewUpdate {
   reviewState?: string
 }
 
-// Optional date-range narrowing for search (RFC3339 or YYYY-MM-DD); both ends
-// are optional and independent, mirroring the server's from/to query params.
+// Optional narrowing for search. `from`/`to` accept RFC3339 or YYYY-MM-DD,
+// while the other filters map directly to the server's query params.
 export interface SearchOptions {
   from?: string
   to?: string
+  personId?: string
+  folderId?: string
+  tag?: string
 }
 
 // Body accepted by MuesliBridge.createConversation / POST /api/conversations.

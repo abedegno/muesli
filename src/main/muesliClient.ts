@@ -197,13 +197,17 @@ export class MuesliClient {
   // Hybrid semantic + lexical search. Returns typed match objects (possibly
   // several per note, e.g. a title hit AND a transcript hit); the renderer
   // dedupes onto its already-loaded notes (no re-fetch). Degrades to
-  // lexical-only server-side when embeddings are disabled. `from`/`to` narrow
-  // by note creation date (RFC3339 or YYYY-MM-DD) and are omitted from the
-  // querystring when absent.
+  // lexical-only server-side when embeddings are disabled. Optional filters are
+  // omitted from the querystring when absent.
   async search(q: string, opts?: SearchOptions): Promise<SearchMatch[]> {
-    let path = `/api/search?q=${encodeURIComponent(q)}`
-    if (opts?.from) path += `&from=${encodeURIComponent(opts.from)}`
-    if (opts?.to) path += `&to=${encodeURIComponent(opts.to)}`
+    const params = new URLSearchParams()
+    params.set('q', q)
+    if (opts?.from) params.set('from', opts.from)
+    if (opts?.to) params.set('to', opts.to)
+    if (opts?.personId) params.set('person_id', opts.personId)
+    if (opts?.folderId) params.set('folder_id', opts.folderId)
+    if (opts?.tag) params.set('tag', opts.tag)
+    const path = `/api/search?${params.toString()}`
     return this.json<SearchMatch[]>('GET', path)
   }
 
