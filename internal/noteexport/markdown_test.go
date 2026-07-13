@@ -9,45 +9,42 @@ import (
 func TestRenderNoteMarkdown(t *testing.T) {
 	t.Parallel()
 
+	note, summaries, segments, aliases := exportTestFixture()
+
 	tests := []struct {
 		name      string
 		note      model.Note
 		summaries []model.SummarySection
 		segments  []model.Segment
 		aliases   map[string]string
+		opts      Options
 		want      string
 	}{
 		{
-			name: "title only",
-			note: model.Note{Title: "Weekly Sync"},
-			want: "# Weekly Sync\n\n## Transcript",
+			name:     "redacted transcript is stable",
+			note:     note,
+			segments: segments,
+			aliases:  aliases,
+			opts:     Options{IncludeTranscript: true, RedactSpeakers: true},
+			want:     "# Planning Review\n\n## Transcript\nSpeaker 1: We should ship it.\nSpeaker 2: Then we can announce it.\nSpeaker 1: Agreed.",
 		},
 		{
-			name: "multi-section summary",
-			note: model.Note{Title: "Planning"},
-			summaries: []model.SummarySection{
-				{Heading: "Overview", ContentMarkdown: "It was a meeting."},
-				{Heading: "Decisions", ContentMarkdown: "- Ship it"},
-			},
-			want: "# Planning\n\n## Overview\nIt was a meeting.\n\n## Decisions\n- Ship it\n\n## Transcript",
+			name:      "summary is preserved when transcript is omitted",
+			note:      note,
+			summaries: summaries,
+			segments:  segments,
+			aliases:   aliases,
+			opts:      Options{IncludeTranscript: false},
+			want:      "# Planning Review\n\n## Overview\nFirst paragraph.\n\nSecond line of the same section.",
 		},
 		{
-			name: "speaker attributed transcript",
-			note: model.Note{Title: "Standup"},
-			segments: []model.Segment{
-				{Text: "Hello", Speaker: "SPEAKER_00"},
-				{Text: "Hi there"},
-			},
-			aliases: map[string]string{"SPEAKER_00": "Alice"},
-			want:    "# Standup\n\n## Transcript\nAlice: Hello\nHi there",
-		},
-		{
-			name: "not ready note omits summaries",
-			note: model.Note{Title: "Draft"},
-			segments: []model.Segment{
-				{Text: "Working note"},
-			},
-			want: "# Draft\n\n## Transcript\nWorking note",
+			name:      "summary remains present with transcript enabled",
+			note:      note,
+			summaries: summaries,
+			segments:  segments,
+			aliases:   aliases,
+			opts:      Options{IncludeTranscript: true},
+			want:      "# Planning Review\n\n## Overview\nFirst paragraph.\n\nSecond line of the same section.\n\n## Transcript\nAlice: We should ship it.\nBob: Then we can announce it.\nAlice: Agreed.",
 		},
 	}
 
@@ -55,7 +52,7 @@ func TestRenderNoteMarkdown(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := RenderNoteMarkdown(tc.note, tc.summaries, tc.segments, tc.aliases)
+			got := RenderNoteMarkdown(tc.note, tc.summaries, tc.segments, tc.aliases, tc.opts)
 			if got != tc.want {
 				t.Fatalf("rendered markdown mismatch\nwant:\n%s\n\ngot:\n%s", tc.want, got)
 			}

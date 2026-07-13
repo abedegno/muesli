@@ -603,6 +603,8 @@ Returns a note export as a downloadable attachment.
 - Auth: required
 - Query params:
   - `format` (optional): `md`, `txt`, `docx`, or `pdf` case-insensitively; defaults to `md` when omitted or blank
+  - `include_transcript` (optional): `false` or `0` disables the transcript section; any other value, including omission, keeps it enabled by default
+  - `redact_speakers` (optional): `true` or `1` replaces speaker names in the transcript with stable `Speaker N` labels; any other value, including omission, leaves aliases and raw labels unchanged
 - Response `200`:
   - `Content-Type` matches the selected format
   - `Content-Disposition` uses `attachment; filename="<slugified-title>.<ext>"`
@@ -610,12 +612,45 @@ Returns a note export as a downloadable attachment.
 - Notes:
   - The export uses the same owner-scoped note lookup and `404` behavior as `GET /api/notes/{id}/full`
   - `md` returns Markdown, `txt` returns plain text, `docx` returns a DOCX document, and `pdf` returns a PDF document
-  - Transcript segments and speaker aliases are included when a transcript exists
+  - Transcript segments and speaker aliases are included when a transcript exists unless `include_transcript=false`/`0`
+  - When `redact_speakers=true`/`1`, the transcript uses stable `Speaker N` labels in first-appearance order for the note's raw transcript speakers
   - Summary sections are included only when the note is ready and the stored summaries are ready
 - Errors:
   - `404`: invalid UUID or note not found
   - `400`: invalid `format` value
   - `500`: internal error while rendering the export
+
+#### `POST /api/export/batch`
+
+Exports a set of notes as a ZIP archive.
+
+- Auth: required
+- Request body:
+  ```json
+  {
+    "folder_id": "<uuid, optional>",
+    "note_ids": ["<uuid>", "..."],
+    "format": "md|txt|docx|pdf",
+    "include_transcript": <bool, optional>,
+    "redact_speakers": <bool, optional>
+  }
+  ```
+  - Supply exactly one of `folder_id` or `note_ids`
+  - `folder_id` exports all live notes in that folder; `note_ids` exports the listed notes in the order supplied
+  - `format` defaults to `md` when omitted or blank
+  - `include_transcript` defaults to `true` when omitted; set it to `false` to omit transcript sections from every exported note
+  - `redact_speakers` defaults to `false`; set it to `true` to replace transcript speaker names with stable `Speaker N` labels
+- Response `200`:
+  - `Content-Type: application/zip`
+  - `Content-Disposition` uses `attachment; filename="<folder-or-selection>-export.zip"`
+  - Each archive entry is one rendered note using the selected format
+- Notes:
+  - The batch export uses the same owner-scoped note lookup and `404` behavior as the single-note export path
+  - `include_transcript` and `redact_speakers` apply to every exported note in the batch
+- Errors:
+  - `400`: invalid body, invalid or missing export selection, or invalid `format`
+  - `404`: invalid UUID, note not found, or folder not found
+  - `500`: internal error while rendering or building the archive
 
 ### Audio Upload Flow
 

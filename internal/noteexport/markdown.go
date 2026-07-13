@@ -7,12 +7,12 @@ import (
 )
 
 // RenderNoteMarkdown renders one note as a Markdown document with a title,
-// zero or more enhanced-summary sections, and a transcript section.
-func RenderNoteMarkdown(note model.Note, summarySections []model.SummarySection, segments []model.Segment, aliases map[string]string) string {
-	return renderNoteMarkdown(note, summarySections, segments, aliases)
+// zero or more enhanced-summary sections, and an optional transcript section.
+func RenderNoteMarkdown(note model.Note, summarySections []model.SummarySection, segments []model.Segment, aliases map[string]string, opts Options) string {
+	return renderNoteMarkdown(note, summarySections, segments, aliases, opts)
 }
 
-func renderNoteMarkdown(note model.Note, summarySections []model.SummarySection, segments []model.Segment, aliases map[string]string) string {
+func renderNoteMarkdown(note model.Note, summarySections []model.SummarySection, segments []model.Segment, aliases map[string]string, opts Options) string {
 	var b strings.Builder
 	b.WriteString("# ")
 	b.WriteString(note.Title)
@@ -24,26 +24,19 @@ func renderNoteMarkdown(note model.Note, summarySections []model.SummarySection,
 		b.WriteString(section.ContentMarkdown)
 	}
 
-	b.WriteString("\n\n## Transcript")
-	for _, segment := range segments {
-		b.WriteString("\n")
-		b.WriteString(renderTranscriptLine(segment, aliases))
+	if opts.IncludeTranscript {
+		b.WriteString("\n\n## Transcript")
+		redacted := map[string]string(nil)
+		if opts.RedactSpeakers {
+			redacted = buildRedactedSpeakerLabels(segments)
+		}
+		for _, segment := range segments {
+			b.WriteString("\n")
+			b.WriteString(renderTranscriptLine(segment, aliases, opts, redacted))
+		}
 	}
 
 	return b.String()
-}
-
-func renderTranscriptLine(segment model.Segment, aliases map[string]string) string {
-	speaker := segment.Speaker
-	if aliases != nil {
-		if alias, ok := aliases[speaker]; ok && alias != "" {
-			speaker = alias
-		}
-	}
-	if speaker != "" {
-		return speaker + ": " + segment.Text
-	}
-	return segment.Text
 }
 
 // SlugifyFilename converts a note title into a filesystem-safe attachment
