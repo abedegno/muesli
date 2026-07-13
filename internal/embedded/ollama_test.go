@@ -108,7 +108,7 @@ func TestPullEmbeddingModel(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		if err := PullEmbeddingModel(context.Background(), srv.URL, "nomic-embed-text"); err != nil {
+		if err := PullEmbeddingModel(context.Background(), srv.URL, "nomic-embed-text", nil); err != nil {
 			t.Fatalf("PullEmbeddingModel() error: %v", err)
 		}
 		if gotName != "nomic-embed-text" {
@@ -124,10 +124,91 @@ func TestPullEmbeddingModel(t *testing.T) {
 		}))
 		defer srv.Close()
 
-		if err := PullEmbeddingModel(context.Background(), srv.URL, "nomic-embed-text"); err == nil {
+		if err := PullEmbeddingModel(context.Background(), srv.URL, "nomic-embed-text", nil); err == nil {
 			t.Fatal("PullEmbeddingModel() error = nil, want non-nil")
 		}
 	})
+}
+
+func TestPullModelProgress(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		lines    []string
+		wantPcts []int
+	}{
+		{
+			name: "monotonic progress",
+			lines: []string{
+				`{"status":"pulling","total":100,"completed":25}`,
+				`{"status":"pulling","total":100,"completed":50}`,
+				`{"status":"pulling","total":100,"completed":100,"done":true}`,
+			},
+			wantPcts: []int{25, 50, 100},
+		},
+		{
+			name: "duplicate percent is suppressed",
+			lines: []string{
+				`{"status":"pulling","total":200,"completed":10}`,
+				`{"status":"pulling","total":200,"completed":10}`,
+				`{"status":"success","done":true}`,
+			},
+			wantPcts: []int{5, 100},
+		},
+	}
+
+	for _, tc := range tests {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var gotName string
+			var gotPcts []int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost {
+					t.Fatalf("method = %s, want POST", r.Method)
+				}
+				if r.URL.Path != "/api/pull" {
+					t.Fatalf("path = %q, want /api/pull", r.URL.Path)
+				}
+				defer r.Body.Close()
+
+				var reqBody map[string]string
+				if err := json.NewDecoder(r.Body).Decode(&reqBody); err != nil {
+					t.Fatalf("decode request body: %v", err)
+				}
+				gotName = reqBody["name"]
+
+				w.Header().Set("Content-Type", "application/x-ndjson")
+				w.WriteHeader(http.StatusOK)
+				for _, line := range tc.lines {
+					_, _ = io.WriteString(w, line+"\n")
+					if flusher, ok := w.(http.Flusher); ok {
+						flusher.Flush()
+					}
+				}
+			}))
+			defer srv.Close()
+
+			if err := PullModel(context.Background(), srv.URL, "nomic-embed-text", func(percent int) {
+				gotPcts = append(gotPcts, percent)
+			}); err != nil {
+				t.Fatalf("PullModel() error: %v", err)
+			}
+			if gotName != "nomic-embed-text" {
+				t.Fatalf("model name = %q, want %q", gotName, "nomic-embed-text")
+			}
+			if len(gotPcts) != len(tc.wantPcts) {
+				t.Fatalf("progress count = %d, want %d (%v)", len(gotPcts), len(tc.wantPcts), gotPcts)
+			}
+			for i := range tc.wantPcts {
+				if gotPcts[i] != tc.wantPcts[i] {
+					t.Fatalf("progress[%d] = %d, want %d (all=%v)", i, gotPcts[i], tc.wantPcts[i], gotPcts)
+				}
+			}
+		})
+	}
 }
 
 func TestConfigureEmbeddedOllama(t *testing.T) {
