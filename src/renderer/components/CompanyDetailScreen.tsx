@@ -6,7 +6,7 @@ import { Button } from '@/components/ui/Button'
 import { EmptyState } from './EmptyState'
 import { MonogramAvatar } from './MonogramAvatar'
 import { Skeleton } from '@/components/ui/Skeleton'
-import type { CompanyWithPeople, Person } from '../../shared/types'
+import type { CompanyWithPeople, Note, Person } from '../../shared/types'
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
@@ -17,6 +17,63 @@ function ErrorBlock({ message, subject }: { message: string; subject: string }) 
     <div className="rounded-[var(--radius)] border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
       <p className="font-medium">Could not load {subject}</p>
       <p className="mt-1 break-words">{message}</p>
+    </div>
+  )
+}
+
+function formatCount(count: number): string {
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(count)
+}
+
+function formatHours(hours: number): string {
+  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(hours)
+}
+
+function formatNoteDate(note: Note): string {
+  const iso = note.started_at ?? note.created_at
+  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+}
+
+function ActivityStat({
+  label,
+  value,
+}: {
+  label: string
+  value: string
+}) {
+  return (
+    <div className="rounded-[var(--radius)] border border-border bg-card px-3 py-2">
+      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="mt-1 text-sm font-semibold text-foreground">{value}</p>
+    </div>
+  )
+}
+
+function ActivityRollup({
+  notes,
+}: {
+  notes: Note[]
+}) {
+  const meetingCount = notes.length
+  const totalHours = notes.reduce((sum, note) => {
+    if (!note.started_at || !note.ended_at) return sum
+    const startedAt = new Date(note.started_at).getTime()
+    const endedAt = new Date(note.ended_at).getTime()
+    return sum + (endedAt - startedAt) / (1000 * 60 * 60)
+  }, 0)
+
+  const lastSeen = notes.reduce<Note | null>((latest, note) => {
+    if (!latest) return note
+    const candidateTime = new Date(note.started_at ?? note.created_at).getTime()
+    const latestTime = new Date(latest.started_at ?? latest.created_at).getTime()
+    return candidateTime > latestTime ? note : latest
+  }, null)
+
+  return (
+    <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
+      <ActivityStat label="Meetings" value={formatCount(meetingCount)} />
+      <ActivityStat label="Hours" value={formatHours(totalHours)} />
+      <ActivityStat label="Last seen" value={lastSeen ? formatNoteDate(lastSeen) : 'Never'} />
     </div>
   )
 }
@@ -39,11 +96,15 @@ export function CompanyDetailScreen() {
   const { id = '' } = useParams()
   const navigate = useNavigate()
   const [company, setCompany] = useState<CompanyWithPeople | null>(null)
+  const [activityNotes, setActivityNotes] = useState<Note[] | null>(null)
+  const [activityError, setActivityError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
     setCompany(null)
+    setActivityNotes(null)
+    setActivityError(null)
     setError(null)
 
     void muesli.getCompany(id)
@@ -61,6 +122,41 @@ export function CompanyDetailScreen() {
       cancelled = true
     }
   }, [id])
+
+  useEffect(() => {
+    let cancelled = false
+
+    if (!company) return
+    if (company.people.length === 0) {
+      setActivityNotes(null)
+      setActivityError(null)
+      return
+    }
+
+    setActivityNotes(null)
+    setActivityError(null)
+
+    void Promise.all(company.people.map((person) => muesli.getPersonNotes(person.id)))
+      .then((notesByPerson) => {
+        if (cancelled) return
+        const byId = new Map<string, Note>()
+        for (const notes of notesByPerson) {
+          for (const note of notes) {
+            byId.set(note.id, note)
+          }
+        }
+        setActivityNotes(Array.from(byId.values()))
+      })
+      .catch((err) => {
+        if (cancelled) return
+        setActivityError(errorMessage(err))
+        setActivityNotes(null)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [company])
 
   const loading = company === null && error === null
   const isEmpty = company !== null && company.people.length === 0 && error === null
@@ -93,6 +189,12 @@ export function CompanyDetailScreen() {
               <p className="truncate text-sm text-muted-foreground">{company.domain}</p>
             </div>
           </section>
+
+          {activityError ? (
+            <ErrorBlock message={activityError} subject="company activity" />
+          ) : null}
+
+          {activityNotes !== null ? <ActivityRollup notes={activityNotes} /> : null}
 
           {isEmpty ? (
             <EmptyState title="No people yet" hint="No people are associated with this company." />
