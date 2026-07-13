@@ -44,6 +44,21 @@ func Render(d Digest) string {
 		}
 	}
 
+	b.WriteString("\n\nNeeds Follow-up")
+	if len(d.NeedsFollowUp) == 0 {
+		b.WriteString("\nNo items need follow-up.")
+	} else {
+		for _, item := range d.NeedsFollowUp {
+			b.WriteString("\n- ")
+			b.WriteString(item.Text)
+			if item.DueHint != "" {
+				b.WriteString(" [")
+				b.WriteString(item.DueHint)
+				b.WriteString("]")
+			}
+		}
+	}
+
 	return b.String()
 }
 
