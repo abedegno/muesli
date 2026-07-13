@@ -85,7 +85,8 @@ func TestShareActiveLookupRevokedExpiredAndActive(t *testing.T) {
 		t.Fatalf("revoked lookup = (%+v, %v), want (nil, ErrNotFound)", got, err)
 	}
 
-	expiredAt := time.Now().Add(-time.Hour)
+	base := testutil.NewFakeClock(time.Date(2026, 7, 13, 12, 0, 0, 0, time.UTC)).Now()
+	expiredAt := base.Add(-time.Hour)
 	expired, err := st.CreateShare(ctx, owner.ID, note.ID, &expiredAt)
 	if err != nil {
 		t.Fatalf("create expired share: %v", err)
