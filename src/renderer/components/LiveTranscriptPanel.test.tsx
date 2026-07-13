@@ -43,6 +43,7 @@ describe('LiveTranscriptPanel', () => {
       end_ms: 200,
       speaker: null,
       provisional: true,
+      final: true,
     }
     const secondSegment: NoteStreamSegmentEvent = {
       noteId: 'note-1',
@@ -52,6 +53,7 @@ describe('LiveTranscriptPanel', () => {
       end_ms: 400,
       speaker: null,
       provisional: true,
+      final: true,
     }
 
     act(() => {
@@ -69,6 +71,7 @@ describe('LiveTranscriptPanel', () => {
       end_ms: 200,
       speaker: null,
       provisional: true,
+      final: true,
     })
 
     expect(await screen.findByTestId('live-transcript-panel')).toBeInTheDocument()
@@ -80,6 +83,63 @@ describe('LiveTranscriptPanel', () => {
     await waitFor(() => {
       expect(scrollIntoView).toHaveBeenCalled()
     })
+  })
+
+  it('keeps only the latest interim segment until a final commit arrives', async () => {
+    const source = createSource()
+    render(<LiveTranscriptPanel noteId="note-1" isRecording source={source} />)
+
+    const partial = (text: string): NoteStreamSegmentEvent => ({
+      noteId: 'note-1',
+      type: 'segment',
+      text,
+      start_ms: 0,
+      end_ms: 100,
+      speaker: null,
+      provisional: true,
+      final: false,
+    })
+
+    act(() => {
+      source.emit({ noteId: 'note-1', type: 'connecting' })
+      source.emit({ noteId: 'note-1', type: 'live' })
+      source.emit(partial('he'))
+    })
+
+    expect(await screen.findByTestId('live-transcript-interim')).toHaveTextContent('he')
+    expect(screen.queryAllByText('he')).toHaveLength(1)
+    expect(screen.queryAllByText('he', { selector: 'p' })).toHaveLength(1)
+
+    act(() => {
+      source.emit(partial('hel'))
+    })
+
+    expect(screen.getByTestId('live-transcript-interim')).toHaveTextContent('hel')
+    expect(screen.queryAllByText('hel', { selector: 'p' })).toHaveLength(1)
+    expect(screen.queryByText('he')).not.toBeInTheDocument()
+
+    act(() => {
+      source.emit(partial('hello'))
+    })
+
+    expect(screen.getByTestId('live-transcript-interim')).toHaveTextContent('hello')
+    expect(screen.queryAllByText('hello', { selector: 'p' })).toHaveLength(1)
+
+    act(() => {
+      source.emit({
+        noteId: 'note-1',
+        type: 'segment',
+        text: 'hello',
+        start_ms: 0,
+        end_ms: 100,
+        speaker: null,
+        provisional: true,
+        final: true,
+      })
+    })
+
+    expect(screen.queryByTestId('live-transcript-interim')).not.toBeInTheDocument()
+    expect(screen.getAllByText('hello', { selector: 'p' })).toHaveLength(1)
   })
 
   it('shows the quiet degradation note and hides the live panel when unavailable', async () => {

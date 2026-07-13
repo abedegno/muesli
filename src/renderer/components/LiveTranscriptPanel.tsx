@@ -19,15 +19,23 @@ export function LiveTranscriptPanel({
 }) {
   const [status, setStatus] = useState<LiveState>('idle')
   const [segments, setSegments] = useState<Extract<NoteStreamEvent, { type: 'segment' }>[]>([])
+  const [interimSegment, setInterimSegment] = useState<{
+    text: string
+    start_ms: number
+    end_ms: number
+    speaker: string | null
+  } | null>(null)
   const bottomRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     if (!isRecording) {
       setStatus('idle')
       setSegments([])
+      setInterimSegment(null)
     } else {
       setStatus('connecting')
       setSegments([])
+      setInterimSegment(null)
     }
   }, [isRecording])
 
@@ -37,16 +45,28 @@ export function LiveTranscriptPanel({
       if (event.noteId !== noteId) return
       if (event.type === 'segment') {
         setStatus('live')
+        if (event.final === false) {
+          setInterimSegment({
+            text: event.text,
+            start_ms: event.start_ms,
+            end_ms: event.end_ms,
+            speaker: event.speaker,
+          })
+          return
+        }
         setSegments((current) => [...current, event])
+        setInterimSegment(null)
         return
       }
       if (event.type === 'connecting') {
         setStatus('connecting')
         setSegments([])
+        setInterimSegment(null)
         return
       }
       setStatus(event.type)
       setSegments([])
+      setInterimSegment(null)
     })
     return unsubscribe
   }, [noteId, source])
@@ -54,7 +74,7 @@ export function LiveTranscriptPanel({
   useEffect(() => {
     if (status !== 'live') return
     bottomRef.current?.scrollIntoView({ block: 'end', behavior: 'smooth' })
-  }, [segments, status])
+  }, [interimSegment, segments, status])
 
   if (!isRecording || status === 'idle') return null
 
@@ -80,14 +100,24 @@ export function LiveTranscriptPanel({
         <span>Live</span>
       </div>
       <div className="mt-3 space-y-3 text-sm leading-6 text-foreground">
-        {segments.length === 0 ? (
+        {segments.length === 0 && interimSegment === null ? (
           <p className="text-muted-foreground">Listening for the first finalized segment…</p>
         ) : (
-          segments.map((segment) => (
-            <p key={`${segment.start_ms}-${segment.end_ms}-${segment.text}`} className="whitespace-pre-wrap">
-              {segment.text}
-            </p>
-          ))
+          <>
+            {segments.map((segment) => (
+              <p key={`${segment.start_ms}-${segment.end_ms}-${segment.text}`} className="whitespace-pre-wrap">
+                {segment.text}
+              </p>
+            ))}
+            {interimSegment !== null ? (
+              <p
+                data-testid="live-transcript-interim"
+                className="whitespace-pre-wrap italic text-muted-foreground/80"
+              >
+                {interimSegment.text}
+              </p>
+            ) : null}
+          </>
         )}
         <div ref={bottomRef} />
       </div>

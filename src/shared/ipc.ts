@@ -125,6 +125,7 @@ export interface NoteStreamSegmentEvent {
   end_ms: number
   speaker: string | null
   provisional: true
+  final: boolean
 }
 
 export interface NoteStreamConnectionEvent {
