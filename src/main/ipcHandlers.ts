@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import JSZip from 'jszip'
 import { fullNoteToMarkdown } from '../renderer/lib/noteMarkdown'
-import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, ServerConfig, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection } from '../shared/types'
+import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, DigestConfig, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, ServerConfig, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection } from '../shared/types'
 import type { ConnectRequest, CreateConversationRequest, CreateConversationResponse, DiarizationReviewUpdate, ListNoteActionItemsResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdateActionItemRequest, UpdatePersonRequest, UploadAudioRequest } from '../shared/ipc'
 import { INSECURE_CONNECTION_CODE, isInsecureRemote } from '../shared/url'
 import type { UploadProgress } from './uploadMachine'
@@ -104,6 +104,8 @@ interface Handlers {
   openGoogleCalendarOAuthStart(): Promise<void>
   getMicrosoftCalendarOAuthStatus(): Promise<MicrosoftOAuthStatus>
   openMicrosoftCalendarOAuthStart(): Promise<void>
+  getDigestConfig(): Promise<DigestConfig>
+  updateDigestConfig(cadence: DigestConfig['cadence']): Promise<DigestConfig>
 }
 
 // Electron's ipcMain.handle rejection path only round-trips an Error's
@@ -256,6 +258,14 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       url.searchParams.set('token', cfg.token)
       if (!openExternal) throw new Error('openExternal unavailable')
       await openExternal(url.toString())
+    },
+
+    async getDigestConfig() {
+      return withApiError(() => authedClient().getDigestConfig())
+    },
+
+    async updateDigestConfig(cadence) {
+      return withApiError(() => authedClient().updateDigestConfig(cadence))
     },
 
     async getFull(id) {

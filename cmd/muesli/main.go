@@ -137,6 +137,7 @@ func main() {
 	wpool := worker.NewPool(st, proc, 4)
 	go wpool.Run(ctx)
 	go worker.RunTrashPurger(ctx, st, prov, time.Duration(cfg.TrashRetentionDays)*24*time.Hour)
+	go worker.RunDigestScheduler(ctx, st, time.Hour)
 	go worker.StartCalendarScheduler(ctx, st, cr, cfg.GoogleOAuthClientID, cfg.GoogleOAuthClientSecret, cfg.MicrosoftOAuthClientID, cfg.MicrosoftOAuthClientSecret)
 	defer wpool.Stop()
 

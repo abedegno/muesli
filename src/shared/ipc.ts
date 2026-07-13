@@ -1,4 +1,4 @@
-import type { ActionItem, ActionItemStatus, AudioUrlGrant, CalendarEvent, ChatSource, CompanyWithCount, CompanyWithPeople, Conversation, Decision, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, ServerConfig, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection } from './types'
+import type { ActionItem, ActionItemStatus, AudioUrlGrant, CalendarEvent, ChatSource, CompanyWithCount, CompanyWithPeople, Conversation, Decision, DigestConfig, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, ServerConfig, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection } from './types'
 import type { UploadProgress } from '../main/uploadMachine'
 
 export const IPC = {
@@ -94,6 +94,8 @@ export const IPC = {
   openGoogleCalendarOAuthStart: 'muesli:openGoogleCalendarOAuthStart',
   getMicrosoftCalendarOAuthStatus: 'muesli:getMicrosoftCalendarOAuthStatus',
   openMicrosoftCalendarOAuthStart: 'muesli:openMicrosoftCalendarOAuthStart',
+  getDigestConfig: 'muesli:getDigestConfig',
+  updateDigestConfig: 'muesli:updateDigestConfig',
 } as const
 
 export interface ConnectRequest {
@@ -294,4 +296,6 @@ export interface MuesliBridge {
   openGoogleCalendarOAuthStart(): Promise<void>
   getMicrosoftCalendarOAuthStatus(): Promise<MicrosoftOAuthStatus>
   openMicrosoftCalendarOAuthStart(): Promise<void>
+  getDigestConfig(): Promise<DigestConfig>
+  updateDigestConfig(cadence: DigestConfig['cadence']): Promise<DigestConfig>
 }

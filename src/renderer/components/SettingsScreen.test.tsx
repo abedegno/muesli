@@ -10,6 +10,8 @@ const getGoogleCalendarOAuthStatus = vi.fn()
 const openGoogleCalendarOAuthStart = vi.fn()
 const getMicrosoftCalendarOAuthStatus = vi.fn()
 const openMicrosoftCalendarOAuthStart = vi.fn()
+const getDigestConfig = vi.fn()
+const updateDigestConfig = vi.fn()
 
 vi.mock('@/api', () => ({
   muesli: {
@@ -19,6 +21,8 @@ vi.mock('@/api', () => ({
     openGoogleCalendarOAuthStart: () => openGoogleCalendarOAuthStart(),
     getMicrosoftCalendarOAuthStatus: () => getMicrosoftCalendarOAuthStatus(),
     openMicrosoftCalendarOAuthStart: () => openMicrosoftCalendarOAuthStart(),
+    getDigestConfig: () => getDigestConfig(),
+    updateDigestConfig: (cadence: string) => updateDigestConfig(cadence),
   },
 }))
 
@@ -36,6 +40,8 @@ afterEach(() => {
 beforeEach(() => {
   getGoogleCalendarOAuthStatus.mockResolvedValue({ configured: false })
   getMicrosoftCalendarOAuthStatus.mockResolvedValue({ configured: false })
+  getDigestConfig.mockResolvedValue({ owner_id: 'owner-1', cadence: 'off' })
+  updateDigestConfig.mockResolvedValue({ owner_id: 'owner-1', cadence: 'off' })
 })
 
 function renderScreen(serverUrl = 'http://localhost:8080') {
@@ -101,6 +107,20 @@ describe('SettingsScreen', () => {
 
     await user.click(await screen.findByRole('button', { name: 'Connect Microsoft Calendar' }))
     expect(openMicrosoftCalendarOAuthStart).toHaveBeenCalledTimes(1)
+  })
+
+  it('loads and updates the digest cadence', async () => {
+    const user = userEvent.setup()
+    getDigestConfig.mockResolvedValue({ owner_id: 'owner-1', cadence: 'daily' })
+
+    renderScreen()
+
+    const cadence = await screen.findByRole('combobox', { name: 'Cadence' })
+    expect(cadence).toHaveValue('daily')
+
+    await user.selectOptions(cadence, 'weekly')
+
+    await waitFor(() => expect(updateDigestConfig).toHaveBeenCalledWith('weekly'))
   })
 
   it('shows Connected for an ok health response', async () => {

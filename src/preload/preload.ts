@@ -94,6 +94,8 @@ const bridge: MuesliBridge = {
   openGoogleCalendarOAuthStart: () => ipcRenderer.invoke(IPC.openGoogleCalendarOAuthStart),
   getMicrosoftCalendarOAuthStatus: () => ipcRenderer.invoke(IPC.getMicrosoftCalendarOAuthStatus),
   openMicrosoftCalendarOAuthStart: () => ipcRenderer.invoke(IPC.openMicrosoftCalendarOAuthStart),
+  getDigestConfig: () => ipcRenderer.invoke(IPC.getDigestConfig),
+  updateDigestConfig: (cadence) => ipcRenderer.invoke(IPC.updateDigestConfig, cadence),
   onUploadProgress: (cb: (p: UploadProgress) => void) => {
     const listener = (_e: unknown, p: UploadProgress) => cb(p)
     ipcRenderer.on(IPC.uploadProgress, listener)
