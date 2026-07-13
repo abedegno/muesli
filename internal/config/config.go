@@ -79,9 +79,18 @@ type Config struct {
 	MicrosoftOAuthClientSecret string
 	MicrosoftOAuthRedirectURL  string
 
-	Embedded   bool   // MUESLI_MODE=embedded
-	AppDataDir string // embedded desktop app-data root; populated by the embedded runtime slice
-	Production bool   // MUESLI_PRODUCTION; refuse to start with dev secrets
+	Embedded bool // MUESLI_MODE=embedded
+	// EmbeddedOllamaDetected is set by the embedded startup path when Ollama
+	// is reachable. It is not populated by Load or read from env.
+	EmbeddedOllamaDetected bool
+	// EmbeddedDegraded is set by the embedded startup path when Ollama is not
+	// reachable. It is not populated by Load or read from env.
+	EmbeddedDegraded bool
+	// EmbeddedDegradedReason explains why embedded mode is degraded. It is
+	// only set by the embedded startup path and is empty when not degraded.
+	EmbeddedDegradedReason string
+	AppDataDir             string // embedded desktop app-data root; populated by the embedded runtime slice
+	Production             bool   // MUESLI_PRODUCTION; refuse to start with dev secrets
 
 	Diarization bool // MUESLI_DIARIZATION; enable speaker diarization in transcribe requests
 
