@@ -84,30 +84,32 @@ export function ExportOptionsDialog({
             ))}
           </select>
         </label>
-        <label className="flex items-start gap-3 rounded-[var(--radius)] border border-border bg-background/70 px-3 py-2 text-sm">
+        <div className="flex items-start gap-3 rounded-[var(--radius)] border border-border bg-background/70 px-3 py-2 text-sm">
           <input
+            id="export-include-transcript"
             type="checkbox"
             checked={includeTranscript}
             onChange={(e) => setIncludeTranscript(e.target.checked)}
             className="mt-1 h-4 w-4 rounded border-border text-primary focus:ring-primary"
           />
-          <span>
-            <span className="block font-medium">Include transcript</span>
-            <span className="block text-xs text-muted-foreground">Export the transcript along with the note body.</span>
-          </span>
-        </label>
-        <label className="flex items-start gap-3 rounded-[var(--radius)] border border-border bg-background/70 px-3 py-2 text-sm">
+          <div>
+            <label htmlFor="export-include-transcript" className="block font-medium">Include transcript</label>
+            <p className="text-xs text-muted-foreground">Export the transcript along with the note body.</p>
+          </div>
+        </div>
+        <div className="flex items-start gap-3 rounded-[var(--radius)] border border-border bg-background/70 px-3 py-2 text-sm">
           <input
+            id="export-redact-speakers"
             type="checkbox"
             checked={redactSpeakers}
             onChange={(e) => setRedactSpeakers(e.target.checked)}
             className="mt-1 h-4 w-4 rounded border-border text-primary focus:ring-primary"
           />
-          <span>
-            <span className="block font-medium">Redact speaker names</span>
-            <span className="block text-xs text-muted-foreground">Replace speaker labels with neutral placeholders.</span>
-          </span>
-        </label>
+          <div>
+            <label htmlFor="export-redact-speakers" className="block font-medium">Redact speaker names</label>
+            <p className="text-xs text-muted-foreground">Replace speaker labels with neutral placeholders.</p>
+          </div>
+        </div>
         <div className="flex justify-end gap-2 pt-2">
           <Button type="button" variant="secondary" size="sm" onClick={onCancel} disabled={submitting}>
             Cancel
