@@ -99,6 +99,8 @@ func Effective(cfg Config, lookup func(string) (string, bool)) []ConfigEntry {
 		entry(lookup, "Login rate limit burst", "MUESLI_RATE_LOGIN_BURST", strconv.Itoa(cfg.RateLoginBurst)),
 		entry(lookup, "Upload rate limit (rps)", "MUESLI_RATE_UPLOAD_RPS", formatFloat(cfg.RateUploadRPS)),
 		entry(lookup, "Upload rate limit burst", "MUESLI_RATE_UPLOAD_BURST", strconv.Itoa(cfg.RateUploadBurst)),
+		entry(lookup, "Shared note rate limit (rps)", "MUESLI_RATE_SHARED_RPS", formatFloat(cfg.RateSharedRPS)),
+		entry(lookup, "Shared note rate limit burst", "MUESLI_RATE_SHARED_BURST", strconv.Itoa(cfg.RateSharedBurst)),
 		entry(lookup, "Embeddings URL", "MUESLI_EMBEDDINGS_URL", cfg.EmbeddingsURL),
 		entry(lookup, "Embeddings model", "MUESLI_EMBEDDINGS_MODEL", cfg.EmbeddingsModel),
 		entry(lookup, "Embeddings dimension", "MUESLI_EMBEDDINGS_DIM", strconv.Itoa(cfg.EmbeddingsDim)),
