@@ -20,6 +20,8 @@ type ListNotesFilter struct {
 	Status      string // filter to notes with this exact status
 	FolderID    string // UUID of folder; applies only when FolderIDSet is true
 	FolderIDSet bool   // true when FolderID was explicitly supplied
+	PersonID    string // UUID of person; applies only when PersonIDSet is true
+	PersonIDSet bool   // true when PersonID was explicitly supplied
 	CreatedFrom *time.Time
 	CreatedTo   *time.Time
 }
@@ -456,6 +458,30 @@ func (s *Store) ListNotes(ctx context.Context, ownerID string, f ListNotesFilter
 	if f.FolderIDSet {
 		args = append(args, f.FolderID)
 		joinFolder = fmt.Sprintf(`JOIN note_folders nf ON nf.note_id = n.id AND nf.folder_id = $%d`, len(args))
+	}
+	if f.PersonIDSet {
+		args = append(args, f.PersonID)
+		where = append(where, fmt.Sprintf(`(
+			EXISTS (
+				SELECT 1
+				FROM calendar_events ce
+				JOIN people p ON p.id = $%d AND p.owner_id = n.owner_id
+				WHERE ce.id = n.event_id
+				  AND ce.owner_id = n.owner_id
+				  AND EXISTS (
+					SELECT 1
+					FROM jsonb_array_elements(COALESCE(ce.attendees, '[]'::jsonb)) attendee
+					WHERE lower(attendee->>'email') = lower(p.primary_email)
+				  )
+			)
+			OR EXISTS (
+				SELECT 1
+				FROM note_speaker_aliases nsa
+				WHERE nsa.note_id = n.id
+				  AND nsa.owner_id = n.owner_id
+				  AND nsa.person_id = $%d
+			)
+		)`, len(args), len(args)))
 	}
 	if f.CreatedFrom != nil {
 		args = append(args, *f.CreatedFrom)

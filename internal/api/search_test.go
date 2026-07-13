@@ -12,6 +12,7 @@ import (
 
 	"github.com/abedegno/muesli/internal/api"
 	"github.com/abedegno/muesli/internal/auth"
+	"github.com/abedegno/muesli/internal/calendar"
 	"github.com/abedegno/muesli/internal/config"
 	"github.com/abedegno/muesli/internal/embed"
 	"github.com/abedegno/muesli/internal/model"
@@ -190,6 +191,68 @@ func userIDByEmail(t *testing.T, st *store.Store, email string) string {
 		t.Fatalf("lookup owner id: %v", err)
 	}
 	return ownerID
+}
+
+func createFolder(t *testing.T, st *store.Store, ownerID, name string) string {
+	t.Helper()
+	folder, err := st.CreateFolder(context.Background(), ownerID, name, nil)
+	if err != nil {
+		t.Fatalf("CreateFolder(%q): %v", name, err)
+	}
+	return folder.ID
+}
+
+func seedSearchEvent(t *testing.T, st *store.Store, ownerID, noteID, externalID, title, attendeeEmail string) string {
+	t.Helper()
+	ctx := context.Background()
+	source, err := st.CreateSource(ctx, ownerID, "google", "Search source", "{}")
+	if err != nil {
+		t.Fatalf("CreateSource: %v", err)
+	}
+	ev := calendar.NormalizedEvent{
+		ExternalID: externalID,
+		Title:      title,
+		StartsAt:   time.Date(2026, 1, 2, 12, 0, 0, 0, time.UTC),
+		EndsAt:     time.Date(2026, 1, 2, 13, 0, 0, 0, time.UTC),
+		Attendees: []model.Attendee{
+			{Email: attendeeEmail},
+		},
+	}
+	if err := st.UpsertEvents(ctx, ownerID, source.ID, []calendar.NormalizedEvent{ev}); err != nil {
+		t.Fatalf("UpsertEvents: %v", err)
+	}
+	var eventID string
+	if err := st.Pool().QueryRow(ctx,
+		`SELECT id FROM calendar_events WHERE owner_id=$1 AND source_id=$2 AND external_id=$3`,
+		ownerID, source.ID, externalID).Scan(&eventID); err != nil {
+		t.Fatalf("lookup event id: %v", err)
+	}
+	if err := st.SetNoteEvent(ctx, ownerID, noteID, eventID); err != nil {
+		t.Fatalf("SetNoteEvent: %v", err)
+	}
+	return eventID
+}
+
+func assertSearchNoteIDs(t *testing.T, matches []api.SearchMatch, want ...string) {
+	t.Helper()
+	got := map[string]int{}
+	for _, m := range matches {
+		got[m.NoteID]++
+	}
+	if len(got) != len(want) {
+		t.Fatalf("note ids = %v, want %v", got, want)
+	}
+	for _, id := range want {
+		if got[id] == 0 {
+			t.Fatalf("note ids = %v, want %v", got, want)
+		}
+		got[id]--
+	}
+	for id, n := range got {
+		if n != 0 {
+			t.Fatalf("note ids = %v, want %v (extra %s count %d)", got, want, id, n)
+		}
+	}
 }
 
 func TestSearchEmptyQuery(t *testing.T) {
@@ -378,6 +441,107 @@ func TestSearchDateFiltering(t *testing.T) {
 	outOfRange := searchMatches(t, srv, hdr, "daily", map[string]string{"from": "2026-01-03"})
 	if got := len(outOfRange); got != 0 {
 		t.Fatalf("out-of-range search = %+v, want 0 notes", outOfRange)
+	}
+}
+
+func TestSearchTagFolderFilters(t *testing.T) {
+	t.Parallel()
+	srv, st := newSearchServer(t, nil)
+	hdr := authHeader(t, srv, "o@example.com")
+	ownerID := userIDByEmail(t, st, "o@example.com")
+	folderID := createFolder(t, st, ownerID, "Projects")
+
+	both := createNote(t, srv, hdr, "Alpha both")
+	tagOnly := createNote(t, srv, hdr, "Alpha tag only")
+	folderOnly := createNote(t, srv, hdr, "Alpha folder only")
+	untouched := createNote(t, srv, hdr, "Beta unrelated")
+
+	if _, err := st.AddNoteTag(context.Background(), ownerID, both, "work"); err != nil {
+		t.Fatalf("AddNoteTag both: %v", err)
+	}
+	if _, err := st.AddNoteTag(context.Background(), ownerID, tagOnly, "work"); err != nil {
+		t.Fatalf("AddNoteTag tagOnly: %v", err)
+	}
+	if err := st.AddNoteFolder(context.Background(), ownerID, both, folderID); err != nil {
+		t.Fatalf("AddNoteFolder both: %v", err)
+	}
+	if err := st.AddNoteFolder(context.Background(), ownerID, folderOnly, folderID); err != nil {
+		t.Fatalf("AddNoteFolder folderOnly: %v", err)
+	}
+
+	base := searchMatches(t, srv, hdr, "alpha", nil)
+	assertSearchNoteIDs(t, base, both, tagOnly, folderOnly)
+
+	tagged := searchMatches(t, srv, hdr, "alpha", map[string]string{"tag": "work"})
+	assertSearchNoteIDs(t, tagged, both, tagOnly)
+
+	foldered := searchMatches(t, srv, hdr, "alpha", map[string]string{"folder_id": folderID})
+	assertSearchNoteIDs(t, foldered, both, folderOnly)
+
+	combined := searchMatches(t, srv, hdr, "alpha", map[string]string{"tag": "work", "folder_id": folderID})
+	assertSearchNoteIDs(t, combined, both)
+
+	if len(matchesForNote(base, untouched)) != 0 {
+		t.Fatalf("baseline search unexpectedly included untouched note %s", untouched)
+	}
+}
+
+func TestSearchPersonFilterAndDateRange(t *testing.T) {
+	t.Parallel()
+	srv, st := newSearchServer(t, nil)
+	hdr := authHeader(t, srv, "o@example.com")
+	ownerID := userIDByEmail(t, st, "o@example.com")
+	ctx := context.Background()
+
+	person, err := st.UpsertPerson(ctx, ownerID, "speaker@example.com", "Speaker", nil)
+	if err != nil {
+		t.Fatalf("UpsertPerson: %v", err)
+	}
+
+	attendeeNote := createNote(t, srv, hdr, "Alpha attendee note")
+	aliasNote := createNote(t, srv, hdr, "Alpha alias note")
+	otherNote := createNote(t, srv, hdr, "Alpha unrelated note")
+
+	seedSearchEvent(t, st, ownerID, attendeeNote, "event-attendee", "Meeting", person.PrimaryEmail)
+	if err := st.UpsertSpeakerAlias(ctx, ownerID, aliasNote, "speaker", "Speaker"); err != nil {
+		t.Fatalf("UpsertSpeakerAlias: %v", err)
+	}
+	if err := st.SetSpeakerAliasPerson(ctx, ownerID, aliasNote, "speaker", &person.ID); err != nil {
+		t.Fatalf("SetSpeakerAliasPerson: %v", err)
+	}
+
+	setNoteCreatedAt(t, st, attendeeNote, time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC))
+	setNoteCreatedAt(t, st, aliasNote, time.Date(2026, 1, 3, 10, 0, 0, 0, time.UTC))
+	setNoteCreatedAt(t, st, otherNote, time.Date(2026, 1, 2, 10, 0, 0, 0, time.UTC))
+
+	personMatches := searchMatches(t, srv, hdr, "alpha", map[string]string{"person_id": person.ID})
+	assertSearchNoteIDs(t, personMatches, attendeeNote, aliasNote)
+
+	ranged := searchMatches(t, srv, hdr, "alpha", map[string]string{
+		"person_id": person.ID,
+		"from":      "2026-01-02",
+		"to":        "2026-01-02",
+	})
+	assertSearchNoteIDs(t, ranged, attendeeNote)
+
+	if len(matchesForNote(personMatches, otherNote)) != 0 {
+		t.Fatalf("person search unexpectedly included unrelated note %s", otherNote)
+	}
+}
+
+func TestSearchInvalidFilterIDs(t *testing.T) {
+	t.Parallel()
+	srv, _ := newSearchServer(t, nil)
+	hdr := authHeader(t, srv, "o@example.com")
+
+	rec := doJSON(t, srv, http.MethodGet, "/api/search?q=alpha&folder_id=not-a-uuid", nil, hdr)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid folder_id status = %d, want 400", rec.Code)
+	}
+
+	rec = doJSON(t, srv, http.MethodGet, "/api/search?q=alpha&person_id=not-a-uuid", nil, hdr)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid person_id status = %d, want 400", rec.Code)
 	}
 }
 
