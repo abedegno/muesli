@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -68,29 +69,51 @@ func main() {
 		os.Exit(1)
 	}
 	var embeddedAgent *embedded.AgentHandle
+	var startupReporter *embedded.Reporter
 	ollamaURL := embedded.OllamaBaseURL()
 	if isEmbeddedMode(cfg, os.Args) {
-		databaseURL, embeddedStop, err := embedded.Start(ctx)
+		startupReporter = embedded.NewReporter()
+		databaseURL, embeddedStop, err := embedded.Start(ctx, startupReporter)
 		if err != nil {
 			slog.Error("embedded startup", "error", err)
 			os.Exit(1)
 		}
 		cfg.DatabaseURL = databaseURL
+		startupReporter.Advance(embedded.PhaseMigrate, "running migrations")
 		detected := embedded.DetectOllama(ctx, ollamaURL)
 		embedded.ConfigureEmbeddedOllama(&cfg, ollamaURL, detected)
+		startupReporter.SetDegraded(cfg.EmbeddedDegraded)
 		if detected {
+			startupReporter.Advance(embedded.PhaseOllamaCheck, "Ollama detected")
+		} else {
+			startupReporter.Advance(embedded.PhaseOllamaCheck, "Ollama unavailable")
+		}
+		if detected {
+			startupReporter.Advance(embedded.PhaseModelPull, "pulling Ollama models")
+			var pulls sync.WaitGroup
+			pulls.Add(2)
 			go func(url, model string) {
+				defer pulls.Done()
 				pullCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 				defer cancel()
-				if err := embedded.PullEmbeddingModel(pullCtx, url, model); err != nil {
+				if err := embedded.PullEmbeddingModel(pullCtx, url, model, func(percent int) {
+					startupReporter.SetPercent(percent)
+				}); err != nil {
 					slog.Warn("ollama pull embedding model", "error", err, "model", model, "url", url)
 				}
 			}(ollamaURL, cfg.EmbeddingsModel)
 			go func(url string) {
-				if err := embedded.PullModel(ctx, url, embedded.DefaultOllamaAgentModel); err != nil {
+				defer pulls.Done()
+				if err := embedded.PullModel(ctx, url, embedded.DefaultOllamaAgentModel, func(percent int) {
+					startupReporter.SetPercent(percent)
+				}); err != nil {
 					slog.Warn("ollama pull agent model", "error", err, "model", embedded.DefaultOllamaAgentModel, "url", url)
 				}
 			}(ollamaURL)
+			go func() {
+				pulls.Wait()
+				startupReporter.Advance(embedded.PhaseReady, "ready")
+			}()
 		}
 		defer func() {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -221,7 +244,11 @@ func main() {
 		slog.Info("registered embedded ollama agent plugin", "url", embeddedAgent.EndpointURL)
 	}
 
-	srv := api.NewServer(api.Deps{Store: st, Storage: prov, Crypto: cr, Worker: wpool, Config: cfg, Embedder: emb, BackupRunner: backup.PgDumpRunner{}})
+	if startupReporter != nil && !cfg.EmbeddedOllamaDetected {
+		startupReporter.Advance(embedded.PhaseReady, "ready")
+	}
+
+	srv := api.NewServer(api.Deps{Store: st, Storage: prov, Crypto: cr, Worker: wpool, Config: cfg, Embedder: emb, BackupRunner: backup.PgDumpRunner{}, EmbeddedProgress: startupReporter})
 	slog.Info("muesli listening", "addr", cfg.Addr)
 	fmt.Print(readyBanner(cfg.PublicURL))
 	if err := srv.Run(ctx, cfg.Addr); err != nil {

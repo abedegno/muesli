@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,6 +30,10 @@ var ollamaHTTPClient = &http.Client{
 func normalizeOllamaBaseURL(baseURL string) string {
 	return strings.TrimRight(strings.TrimSpace(baseURL), "/")
 }
+
+// PullProgressFunc receives the current percent complete for streamed Ollama
+// model pulls.
+type PullProgressFunc func(percent int)
 
 // OllamaBaseURL returns the configured Ollama base URL, or the default local
 // loopback address when the environment variable is unset or blank.
@@ -63,8 +68,9 @@ func DetectOllama(ctx context.Context, baseURL string) bool {
 }
 
 // PullModel requests the named Ollama model and drains the streamed response
-// to completion.
-func PullModel(ctx context.Context, baseURL, model string) error {
+// to completion. When onProgress is non-nil, it is called with parsed
+// percentage updates from Ollama's streamed NDJSON response.
+func PullModel(ctx context.Context, baseURL, model string, onProgress PullProgressFunc) error {
 	baseURL = normalizeOllamaBaseURL(baseURL)
 	if baseURL == "" {
 		return fmt.Errorf("empty ollama base url")
@@ -90,16 +96,50 @@ func PullModel(ctx context.Context, baseURL, model string) error {
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("ollama pull returned %s", resp.Status)
 	}
-	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
-		return err
+
+	type pullLine struct {
+		Status    string `json:"status"`
+		Total     int64  `json:"total"`
+		Completed int64  `json:"completed"`
+		Done      bool   `json:"done"`
+	}
+
+	dec := json.NewDecoder(resp.Body)
+	lastPercent := -1
+	for {
+		var line pullLine
+		if err := dec.Decode(&line); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return err
+		}
+
+		percent := lastPercent
+		switch {
+		case line.Done:
+			percent = 100
+		case line.Total > 0 && line.Completed >= 0:
+			percent = int(line.Completed * 100 / line.Total)
+		}
+		if percent < 0 {
+			continue
+		}
+		if percent > 100 {
+			percent = 100
+		}
+		if onProgress != nil && percent != lastPercent {
+			onProgress(percent)
+		}
+		lastPercent = percent
 	}
 	return nil
 }
 
 // PullEmbeddingModel is the embedding-specific wrapper kept for existing call
 // sites.
-func PullEmbeddingModel(ctx context.Context, baseURL, model string) error {
-	return PullModel(ctx, baseURL, model)
+func PullEmbeddingModel(ctx context.Context, baseURL, model string, onProgress PullProgressFunc) error {
+	return PullModel(ctx, baseURL, model, onProgress)
 }
 
 // ConfigureEmbeddedOllama updates runtime config based on whether Ollama was

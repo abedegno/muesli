@@ -12,6 +12,7 @@ import (
 	"github.com/abedegno/muesli/internal/config"
 	"github.com/abedegno/muesli/internal/crypto"
 	"github.com/abedegno/muesli/internal/embed"
+	"github.com/abedegno/muesli/internal/embedded"
 	"github.com/abedegno/muesli/internal/ratelimit"
 	"github.com/abedegno/muesli/internal/storage"
 	"github.com/abedegno/muesli/internal/store"
@@ -55,6 +56,9 @@ type Deps struct {
 	// endpoint (ADM08). If nil, the default implementation
 	// (backup.PgRestoreListRunner, which shells out to pg_restore) is used.
 	BackupListRunner backup.ListRunner
+	// EmbeddedProgress reports embedded startup progress for the public startup
+	// feed. If nil, the endpoint falls back to a zero-value snapshot.
+	EmbeddedProgress *embedded.Reporter
 	// PluginHealthProber is used by GET /api/admin/health to probe each
 	// enabled plugin's /health endpoint server-side (ADM05). If nil, the
 	// default implementation (plugin.New(url, token).Health, bounded by
@@ -110,6 +114,7 @@ func (s *Server) routes() {
 
 	s.router.Get("/healthz", s.handleHealthz)
 	s.router.Get("/readyz", s.handleReadyz)
+	s.router.Get("/api/embedded/startup", s.handleEmbeddedStartup)
 
 	// Public JSON routes — body limit applied.
 	s.router.With(limitBody).Post("/api/setup", s.handleSetup)
