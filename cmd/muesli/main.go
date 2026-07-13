@@ -87,9 +87,7 @@ func main() {
 				}
 			}(ollamaURL, cfg.EmbeddingsModel)
 			go func(url string) {
-				pullCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-				defer cancel()
-				if err := embedded.PullModel(pullCtx, url, embedded.DefaultOllamaAgentModel); err != nil {
+				if err := embedded.PullModel(ctx, url, embedded.DefaultOllamaAgentModel); err != nil {
 					slog.Warn("ollama pull agent model", "error", err, "model", embedded.DefaultOllamaAgentModel, "url", url)
 				}
 			}(ollamaURL)
@@ -213,6 +211,8 @@ func main() {
 			slog.Error("start embedded ollama agent", "error", err)
 			os.Exit(1)
 		}
+		// Embedded Ollama takes precedence over any hosted default agent so the
+		// desktop-first path stays local when Ollama is available.
 		if err := st.EnsureDefaultPlugin(ctx, cr, model.PluginAgent, embedded.DefaultOllamaAgentName,
 			embeddedAgent.EndpointURL, embeddedAgent.Token, embeddedAgent.ConfigJSON); err != nil {
 			slog.Error("register embedded ollama agent", "error", err)

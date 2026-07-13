@@ -71,6 +71,7 @@ type pluginConfig struct {
 type sectionOutput struct {
 	ContentMarkdown string `json:"content_markdown"`
 	Refs            []int  `json:"refs,omitempty"`
+	Model           string `json:"-"`
 }
 
 type ollamaChatRequest struct {
@@ -148,6 +149,7 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sections := make([]model.SummarySection, 0, len(req.Template.Sections))
+	reportedModel := ""
 	for idx, section := range req.Template.Sections {
 		out, err := s.generateSection(r.Context(), cfg, idx, section, transcript, req.NotesMarkdown, req.Options)
 		if err != nil {
@@ -159,9 +161,15 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request) {
 			ContentMarkdown: out.ContentMarkdown,
 			Refs:            out.Refs,
 		})
+		if reportedModel == "" && out.Model != "" {
+			reportedModel = out.Model
+		}
 	}
 
 	resp := GenerateResponse{Model: cfg.Model}
+	if reportedModel != "" {
+		resp.Model = reportedModel
+	}
 	resp.Summary.Sections = sections
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -221,6 +229,7 @@ func (s *Server) generateSection(ctx context.Context, cfg pluginConfig, index in
 	if err != nil {
 		return sectionOutput{}, err
 	}
+	out.Model = strings.TrimSpace(upstream.Model)
 	return out, nil
 }
 
