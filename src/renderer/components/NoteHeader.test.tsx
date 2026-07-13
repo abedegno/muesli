@@ -121,6 +121,32 @@ describe('NoteHeader', () => {
     expect(screen.queryByRole('menuitem', { name: /^markdown…$/i })).not.toBeInTheDocument()
   })
 
+  it('shows an Export with options action in the server export submenu', async () => {
+    const onExportWithOptions = vi.fn()
+    render(<NoteHeader
+      noteId="n1"
+      title="Sprint planning"
+      recordState="idle"
+      elapsedMs={0}
+      onStart={vi.fn()}
+      onStop={vi.fn()}
+      onTitleSaved={vi.fn()}
+      onDeleteNote={vi.fn()}
+      onDuplicate={vi.fn()}
+      onExport={vi.fn()}
+      pinned={false}
+      onTogglePinned={vi.fn()}
+      onExportWithOptions={onExportWithOptions}
+      serverExportFormats={[
+        { id: 'md', label: 'Markdown', onSelect: vi.fn() },
+      ]}
+    />)
+    await userEvent.click(screen.getByRole('button', { name: /note actions/i }))
+    await userEvent.click(screen.getByRole('menuitem', { name: /^export$/i }))
+    await userEvent.click(await screen.findByRole('menuitem', { name: /export with options/i }))
+    expect(onExportWithOptions).toHaveBeenCalledTimes(1)
+  })
+
   it('closes the menu when Escape is pressed', async () => {
     renderHeader()
     await userEvent.click(screen.getByRole('button', { name: /note actions/i }))

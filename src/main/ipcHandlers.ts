@@ -3,7 +3,7 @@ import { writeFile } from 'node:fs/promises'
 import JSZip from 'jszip'
 import { fullNoteToMarkdown } from '../renderer/lib/noteMarkdown'
 import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, DigestConfig, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from '../shared/types'
-import type { ConnectRequest, CreateConversationRequest, CreateConversationResponse, DiarizationReviewUpdate, ListNoteActionItemsResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdateActionItemRequest, UpdatePersonRequest, UploadAudioRequest } from '../shared/ipc'
+import type { ConnectRequest, CreateConversationRequest, CreateConversationResponse, DiarizationReviewUpdate, ExportRequestOptions, ListNoteActionItemsResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdateActionItemRequest, UpdatePersonRequest, UploadAudioRequest } from '../shared/ipc'
 import { INSECURE_CONNECTION_CODE, isInsecureRemote } from '../shared/url'
 import type { UploadProgress } from './uploadMachine'
 import { ApiError, MuesliClient, type FetchLike, type NoteExportData } from './muesliClient'
@@ -83,7 +83,8 @@ interface Handlers {
   createTemplate(name: string, sections: TemplateSection[]): Promise<Template>
   updateTemplate(id: string, name: string, sections: TemplateSection[]): Promise<void>
   deleteTemplate(id: string): Promise<void>
-  exportNote(noteId: string, format: string): Promise<NoteExportData>
+  exportNote(noteId: string, format: string, options?: ExportRequestOptions): Promise<NoteExportData>
+  exportFolder(folderId: string, format: string, options?: ExportRequestOptions): Promise<NoteExportData>
   retryNote(id: string): Promise<void>
   processNextNote(id: string): Promise<void>
   resummarize(id: string): Promise<void>
@@ -442,8 +443,12 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       await authedClient().deleteTemplate(id)
     },
 
-    async exportNote(noteId, format) {
-      return authedClient().exportNote(noteId, format)
+    async exportNote(noteId, format, options) {
+      return authedClient().exportNote(noteId, format, options)
+    },
+
+    async exportFolder(folderId, format, options) {
+      return authedClient().exportFolder(folderId, format, options)
     },
 
     async retryNote(id) {

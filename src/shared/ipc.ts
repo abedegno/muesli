@@ -1,5 +1,6 @@
 import type { ActionItem, ActionItemStatus, AudioUrlGrant, CalendarEvent, ChatSource, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from './types'
 import type { UploadProgress } from '../main/uploadMachine'
+import type { ExportOptions } from './export'
 
 export const IPC = {
   getConfig: 'muesli:getConfig',
@@ -74,6 +75,7 @@ export const IPC = {
   deleteTemplate: 'muesli:deleteTemplate',
   exportFile: 'muesli:exportFile',
   exportNote: 'muesli:exportNote',
+  exportFolder: 'muesli:exportFolder',
   exportAllNotes: 'muesli:exportAllNotes',
   resummarize: 'muesli:resummarize',
   regenerateSummary: 'muesli:regenerateSummary',
@@ -193,6 +195,8 @@ export interface UpdateActionItemRequest {
   ownerPersonId?: string | null
 }
 
+export type ExportRequestOptions = ExportOptions
+
 export interface ListNoteActionItemsResponse {
   actionItems: ActionItem[]
   decisions: Decision[]
@@ -276,7 +280,8 @@ export interface MuesliBridge {
   updateTemplate(id: string, name: string, sections: TemplateSection[]): Promise<void>
   deleteTemplate(id: string): Promise<void>
   exportFile(defaultName: string, content: string): Promise<string | null>
-  exportNote(noteId: string, format: string): Promise<{ success: true; path: string } | { success: false; error: string }>
+  exportNote(noteId: string, format: string, options?: ExportRequestOptions): Promise<{ success: true; path: string } | { success: false; error: string }>
+  exportFolder(folderId: string, format: string, options?: ExportRequestOptions): Promise<{ success: true; path: string } | { success: false; error: string }>
   exportAllNotes(): Promise<{ success: true; path: string } | { success: false; error: string }>
   resummarize(id: string): Promise<void>
   regenerateSummary(noteId: string, templateId: string): Promise<void>

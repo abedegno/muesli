@@ -31,6 +31,7 @@ import { isTerminal } from '../../shared/types'
 import { Skeleton } from './ui/Skeleton'
 import type { RecordState } from './RecordControl'
 import { DuplicateAudioDialog } from './DuplicateAudioDialog'
+import { ExportOptionsDialog, type ExportOptionsValue } from './ExportOptionsDialog'
 
 interface Ctx { notes: Note[]; allNotes: Note[]; folders: Folder[]; refresh: () => void }
 
@@ -624,6 +625,7 @@ export function NoteScreen() {
   const [loadError, setLoadError] = useState(false)
   const [retryCount, setRetryCount] = useState(0)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [exportOptionsOpen, setExportOptionsOpen] = useState(false)
   const [recordState, setRecordState] = useState<RecordState>('idle')
   const [elapsedMs, setElapsedMs] = useState(0)
   const [micError, setMicError] = useState<Error | null>(null)
@@ -1018,9 +1020,9 @@ export function NoteScreen() {
     await doUpload(audio, result.mimeType)
   }
 
-  const exportServerNote = useCallback(async (format: string) => {
+  const exportServerNote = useCallback(async (format: string, options?: ExportOptionsValue) => {
     try {
-      const result = await muesli.exportNote(id, format)
+      const result = await muesli.exportNote(id, format, options)
       if (!result.success && result.error !== 'cancelled') {
         notify(result.error, 'error')
       }
@@ -1209,6 +1211,7 @@ export function NoteScreen() {
             await muesli.exportFile(name, vtt)
           } catch (err) { notify(err instanceof Error ? err.message : 'Could not export subtitles', 'error') }
         }}
+        onExportWithOptions={() => setExportOptionsOpen(true)}
       />
       {confirmDelete && (
         <Dialog open onOpenChange={(o) => !o && setConfirmDelete(false)} title="Move to Trash?">
@@ -1222,6 +1225,34 @@ export function NoteScreen() {
           </div>
         </Dialog>
       )}
+      <ExportOptionsDialog
+        open={exportOptionsOpen}
+        title="Export note"
+        description="Choose a format and whether to include the transcript and speaker names."
+        formats={[
+          { value: 'md', label: 'Markdown' },
+          { value: 'docx', label: 'Word' },
+          { value: 'pdf', label: 'PDF' },
+        ]}
+        confirmLabel="Export note"
+        onCancel={() => setExportOptionsOpen(false)}
+        onConfirm={async (value) => {
+          let failureMessage: string | null = null
+          try {
+            const result = await muesli.exportNote(id, value.format, {
+              includeTranscript: value.includeTranscript,
+              redactSpeakers: value.redactSpeakers,
+            })
+            if (!result.success && result.error !== 'cancelled') failureMessage = result.error
+          } catch (err) {
+            failureMessage = err instanceof Error ? err.message : 'Could not export note'
+          }
+          if (failureMessage) {
+            notify(failureMessage, 'error')
+            throw new Error(failureMessage)
+          }
+        }}
+      />
       {pendingUpload && (
         <DuplicateAudioDialog
           existingNoteTitle={pendingUpload.existingNoteTitle}

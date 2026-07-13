@@ -38,6 +38,7 @@ export function NoteHeader({
   onExportSrt,
   onExportAss,
   onExportVtt,
+  onExportWithOptions,
   serverExportFormats,
   onResummarize,
   onRetranscribe,
@@ -67,6 +68,7 @@ export function NoteHeader({
   onExportSrt?: () => void
   onExportAss?: () => void
   onExportVtt?: () => void
+  onExportWithOptions?: () => void
   serverExportFormats?: ExportFormatAction[]
   onResummarize?: () => void
   onRetranscribe?: (options: RetranscribeNoteRequest) => Promise<void>
@@ -359,6 +361,15 @@ export function NoteHeader({
                     aria-label="Export formats"
                     className="absolute left-full top-0 z-20 ml-1 w-48 rounded-[var(--radius)] border border-border bg-popover p-1 shadow-md"
                   >
+                    {onExportWithOptions && (
+                      <button
+                        role="menuitem"
+                        onClick={() => { closeMenu(); onExportWithOptions() }}
+                        className="block w-full rounded px-2 py-1 text-left text-sm hover:bg-muted"
+                      >
+                        Export with options…
+                      </button>
+                    )}
                     {serverExportFormats.map((format) => (
                       <button
                         key={format.id}
