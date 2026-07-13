@@ -87,6 +87,17 @@ type NoteLink struct {
 	CreatedAt  time.Time `json:"created_at"`
 }
 
+// Share is a revocable read-only token for a note.
+type Share struct {
+	ID        string     `json:"id"`
+	Token     string     `json:"token"`
+	NoteID    string     `json:"note_id"`
+	OwnerID   string     `json:"owner_id"`
+	CreatedAt time.Time  `json:"created_at"`
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	RevokedAt *time.Time `json:"revoked_at,omitempty"`
+}
+
 // ActionItem is a structured action item extracted from a note.
 type ActionItem struct {
 	ID            string    `json:"id"`
