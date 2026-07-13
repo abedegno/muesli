@@ -8,6 +8,10 @@ import (
 	"github.com/abedegno/muesli/internal/model"
 )
 
+// FollowUpThreshold is the minimum age an open action item must reach before
+// it is considered a follow-up reminder candidate.
+const FollowUpThreshold = 7 * 24 * time.Hour
+
 // Digest is a pure in-memory assembly of a periodic owner digest.
 type Digest struct {
 	OwnerID         string
@@ -15,6 +19,7 @@ type Digest struct {
 	WindowTo        time.Time
 	RecentMeetings  []model.Note
 	OpenActionItems []model.ActionItem
+	NeedsFollowUp   []model.ActionItem
 }
 
 // Build assembles a digest from already-fetched notes and action items.
@@ -66,12 +71,20 @@ func Build(ownerID string, from, to time.Time, notes []model.Note, actionItems [
 		return openActionItems[i].ID < openActionItems[j].ID
 	})
 
+	needsFollowUp := make([]model.ActionItem, 0, len(openActionItems))
+	for _, item := range openActionItems {
+		if to.Sub(item.CreatedAt) >= FollowUpThreshold {
+			needsFollowUp = append(needsFollowUp, item)
+		}
+	}
+
 	return Digest{
 		OwnerID:         ownerID,
 		WindowFrom:      from,
 		WindowTo:        to,
 		RecentMeetings:  recentMeetings,
 		OpenActionItems: openActionItems,
+		NeedsFollowUp:   needsFollowUp,
 	}, nil
 }
 

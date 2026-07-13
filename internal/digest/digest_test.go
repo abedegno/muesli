@@ -16,6 +16,9 @@ func TestBuild(t *testing.T) {
 	earlier := from.Add(-time.Hour)
 	mid := from.Add(6 * time.Hour)
 	later := from.Add(12 * time.Hour)
+	underThreshold := to.Add(-FollowUpThreshold + time.Second)
+	atThreshold := to.Add(-FollowUpThreshold)
+	overThreshold := to.Add(-FollowUpThreshold - time.Second)
 	boundary := to
 
 	tests := []struct {
@@ -28,6 +31,7 @@ func TestBuild(t *testing.T) {
 		wantErr         bool
 		wantMeetings    []string
 		wantActionIDs   []string
+		wantFollowUpIDs []string
 		wantEmptySlices bool
 	}{
 		{
@@ -81,6 +85,19 @@ func TestBuild(t *testing.T) {
 				{ID: "a2", OwnerID: "owner-1", Text: "Done item", Status: model.ActionItemDone, CreatedAt: earlier},
 			},
 			wantActionIDs: []string{"a1"},
+		},
+		{
+			name:    "follow-up threshold includes boundary and older items only",
+			ownerID: "owner-1",
+			from:    from,
+			to:      to,
+			actionItems: []model.ActionItem{
+				{ID: "a1", OwnerID: "owner-1", Text: "Under threshold", Status: model.ActionItemOpen, CreatedAt: underThreshold},
+				{ID: "a2", OwnerID: "owner-1", Text: "At threshold", Status: model.ActionItemOpen, CreatedAt: atThreshold},
+				{ID: "a3", OwnerID: "owner-1", Text: "Older than threshold", Status: model.ActionItemOpen, CreatedAt: overThreshold},
+			},
+			wantActionIDs:   []string{"a3", "a2", "a1"},
+			wantFollowUpIDs: []string{"a3", "a2"},
 		},
 		{
 			name:    "deterministic ordering and deleted notes excluded",
@@ -180,6 +197,14 @@ func TestBuild(t *testing.T) {
 					t.Fatalf("OpenActionItems[%d].ID = %q, want %q", i, got.OpenActionItems[i].ID, wantID)
 				}
 			}
+			if len(got.NeedsFollowUp) != len(tc.wantFollowUpIDs) {
+				t.Fatalf("NeedsFollowUp len = %d, want %d", len(got.NeedsFollowUp), len(tc.wantFollowUpIDs))
+			}
+			for i, wantID := range tc.wantFollowUpIDs {
+				if got.NeedsFollowUp[i].ID != wantID {
+					t.Fatalf("NeedsFollowUp[%d].ID = %q, want %q", i, got.NeedsFollowUp[i].ID, wantID)
+				}
+			}
 		})
 	}
 }
@@ -198,6 +223,9 @@ func TestRender(t *testing.T) {
 		OpenActionItems: []model.ActionItem{
 			{ID: "a1", Text: "Ship the doc", DueHint: "Friday"},
 		},
+		NeedsFollowUp: []model.ActionItem{
+			{ID: "a2", Text: "Nudge the owner", DueHint: "Monday"},
+		},
 	}
 
 	body := Render(d)
@@ -209,6 +237,9 @@ func TestRender(t *testing.T) {
 		"Friday",
 		"Recent Meetings",
 		"Open Action Items",
+		"Needs Follow-up",
+		"Nudge the owner",
+		"Monday",
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("render output missing %q:\n%s", want, body)
@@ -216,7 +247,7 @@ func TestRender(t *testing.T) {
 	}
 
 	empty := Render(Digest{OwnerID: "owner-1", WindowFrom: d.WindowFrom, WindowTo: d.WindowTo})
-	for _, want := range []string{"No recent meetings.", "No open action items."} {
+	for _, want := range []string{"No recent meetings.", "No open action items.", "No items need follow-up."} {
 		if !strings.Contains(empty, want) {
 			t.Fatalf("empty render output missing %q:\n%s", want, empty)
 		}
