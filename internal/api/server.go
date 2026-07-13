@@ -164,6 +164,7 @@ func (s *Server) routes() {
 		r.Post("/api/notes/{id}/links", s.handleAddNoteLink)
 		r.Delete("/api/notes/{id}/links", s.handleRemoveNoteLink)
 		r.Get("/api/notes/{id}/links", s.handleListNoteLinks)
+		r.Get("/api/notes/{id}/related", s.handleRelatedNotes)
 
 		r.Get("/api/smart-lists", s.handleListSmartLists)
 		r.Get("/api/smart-lists/trash", s.handleListTrashedSmartLists)
