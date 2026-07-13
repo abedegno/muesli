@@ -1,14 +1,17 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { MessageSquare, PanelRight, X, Sparkles, Copy, Check, RefreshCw } from 'lucide-react'
+import { MessageSquare, PanelRight, X, Sparkles, Copy, Check, RefreshCw, Search, ChevronUp, ChevronDown } from 'lucide-react'
 import { muesli } from '@/api'
 import { Badge } from '@/components/ui/Badge'
+import { Button } from '@/components/ui/Button'
 import { SegmentedControl } from '@/components/ui/SegmentedControl'
 import { cn } from '@/lib/cn'
+import { countCaseInsensitiveMatches, highlightSearchText } from '@/lib/searchHighlight'
 import { segmentIndexAtTime } from '@/lib/transcriptPlayback'
 const NoteChatPanel = lazy(() => import('./chat/NoteChatPanel').then((m) => ({ default: m.NoteChatPanel })))
 import { DiarizationReviewPanel } from './DiarizationReviewPanel'
 import { Markdown } from './Markdown'
 import { TranscriptView } from './TranscriptView'
+import { useAnnouncer } from '@/hooks/useAnnouncer'
 
 // The Markdown editor pulls in TipTap (the bulk of the renderer bundle); load it
 // lazily so it's only fetched when the user opens the My-notes tab.
@@ -22,6 +25,42 @@ export function summaryToMarkdown(title: string, sections: SummarySection[]): st
   if (!sections.length) return `# ${title}`
   const body = sections.map((s) => `## ${s.heading}\n\n${s.content_markdown}\n\n`).join('')
   return `# ${title}\n\n${body}`
+}
+
+function renderMarkdownLine(line: string): string | null {
+  if (line.startsWith('### ')) return line.slice(4)
+  if (line.startsWith('## ')) return line.slice(3)
+  if (line.startsWith('# ')) return line.slice(2)
+  if (line.startsWith('- ')) return line.slice(2)
+  if (line.trim() === '') return null
+  return line
+}
+
+function countSummaryMatches(query: string, tab: Tab, selectedSummary: FullNote['summaries'][number] | undefined): number {
+  if (tab !== 'enhanced' || !selectedSummary) return 0
+  const needle = query.trim()
+  if (!needle) return 0
+
+  let count = 0
+  for (const section of selectedSummary.sections) {
+    count += countCaseInsensitiveMatches(section.heading, needle)
+    for (const line of section.content_markdown.split('\n')) {
+      const rendered = renderMarkdownLine(line)
+      if (rendered != null) count += countCaseInsensitiveMatches(rendered, needle)
+    }
+  }
+  return count
+}
+
+function countTranscriptMatches(full: FullNote, query: string, showTranscript: boolean): number {
+  if (!showTranscript) return 0
+  const needle = query.trim()
+  if (!needle) return 0
+  let count = 0
+  for (const seg of full.transcript?.segments ?? []) {
+    count += countCaseInsensitiveMatches(seg.text, needle)
+  }
+  return count
 }
 
 interface SpeakerRow {
@@ -189,12 +228,16 @@ export function NoteView({
   // is needed, just the same jumpToCitation used for summary refs.
   initialSegmentIndex?: number
 }) {
+  const { announce } = useAnnouncer()
   const [tab, setTab] = useState<Tab>('enhanced')
   const [showTranscript, setShowTranscript] = useState(false)
   const [showChat, setShowChat] = useState(false)
+  const [findQuery, setFindQuery] = useState('')
+  const [currentMatchIndex, setCurrentMatchIndex] = useState(0)
   const [transcriptAudioUrl, setTranscriptAudioUrl] = useState<string | null>(null)
   const [audioCurrentTime, setAudioCurrentTime] = useState(0)
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const noteViewRef = useRef<HTMLDivElement | null>(null)
   // 0-based transcript segment index to scroll to + highlight when a citation chip is clicked.
   const [citationTarget, setCitationTarget] = useState<number | null>(null)
   // Local speaker-rename overrides, keyed by the CURRENTLY-DISPLAYED transcript
@@ -334,6 +377,54 @@ export function NoteView({
   const currentEntry = entries.find((e) => e.templateId === selectedTemplateId)
   const active = currentEntry?.summary
   const isRegeneratingCurrent = !!currentEntry && regeneratingTemplateId === currentEntry.templateId
+  const findQueryTrimmed = findQuery.trim()
+  const summaryMatchCount = useMemo(
+    () => countSummaryMatches(findQueryTrimmed, tab, active),
+    [active, findQueryTrimmed, full, tab],
+  )
+  const transcriptMatchCount = useMemo(
+    () => countTranscriptMatches(full, findQueryTrimmed, showTranscript),
+    [findQueryTrimmed, full, showTranscript],
+  )
+  const totalFindMatches = summaryMatchCount + transcriptMatchCount
+  const currentFindIndex = totalFindMatches > 0 ? Math.min(currentMatchIndex, totalFindMatches - 1) : 0
+
+  useEffect(() => {
+    if (totalFindMatches === 0) {
+      if (currentMatchIndex !== 0) setCurrentMatchIndex(0)
+      return
+    }
+    if (currentMatchIndex >= totalFindMatches) {
+      setCurrentMatchIndex(totalFindMatches - 1)
+    }
+  }, [currentMatchIndex, totalFindMatches])
+
+  useEffect(() => {
+    if (!findQueryTrimmed) return
+    announce(totalFindMatches === 0 ? '0 matches' : `${currentFindIndex + 1}/${totalFindMatches}`)
+  }, [announce, currentFindIndex, findQueryTrimmed, totalFindMatches])
+
+  useEffect(() => {
+    if (!findQueryTrimmed || totalFindMatches === 0) return
+    const current = noteViewRef.current?.querySelector('[data-note-search-current="true"]') as HTMLElement | null
+    if (!current || typeof current.scrollIntoView !== 'function') return
+    current.scrollIntoView({ block: 'center', inline: 'nearest' })
+  }, [currentFindIndex, findQueryTrimmed, showTranscript, tab, totalFindMatches])
+
+  const updateFindQuery = (value: string) => {
+    setFindQuery(value)
+    setCurrentMatchIndex(0)
+  }
+
+  const goToNextMatch = () => {
+    if (totalFindMatches === 0) return
+    setCurrentMatchIndex((cur) => (cur + 1) % totalFindMatches)
+  }
+
+  const goToPrevMatch = () => {
+    if (totalFindMatches === 0) return
+    setCurrentMatchIndex((cur) => (cur - 1 + totalFindMatches) % totalFindMatches)
+  }
 
   // Move focus into the picker when it opens; focus first option automatically.
   useEffect(() => {
@@ -377,8 +468,15 @@ export function NoteView({
     copyTimer.current = setTimeout(() => setCopied(false), 1500)
   }
 
+  let summarySearchCursor = 0
+  const renderSearchableSummaryText = (text: string) => {
+    const rendered = highlightSearchText(text, findQueryTrimmed, summarySearchCursor, currentFindIndex)
+    summarySearchCursor += rendered.matchCount
+    return rendered.nodes
+  }
+
   return (
-    <div className="flex gap-4">
+    <div ref={noteViewRef} className="flex gap-4">
       <div className="min-w-0 flex-1">
         <div className="mx-auto flex max-w-[72ch] items-center justify-between">
           <SegmentedControl
@@ -391,6 +489,52 @@ export function NoteView({
             ]}
           />
           <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 rounded-[var(--radius)] border border-border bg-background px-2 py-1">
+              <label className="relative block">
+                <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <input
+                  aria-label="Find in note"
+                  value={findQuery}
+                  onChange={(e) => updateFindQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && e.shiftKey) {
+                      e.preventDefault()
+                      goToPrevMatch()
+                    } else if (e.key === 'Enter') {
+                      e.preventDefault()
+                      goToNextMatch()
+                    }
+                  }}
+                  placeholder="Find in note…"
+                  className="h-7 w-40 rounded-[var(--radius)] border border-input bg-background pl-7 pr-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              </label>
+              <span aria-live="polite" aria-atomic="true" className="min-w-16 text-center text-xs text-muted-foreground">
+                {totalFindMatches === 0 ? '0 matches' : `${currentFindIndex + 1}/${totalFindMatches}`}
+              </span>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                aria-label="Previous match"
+                disabled={totalFindMatches === 0}
+                onClick={goToPrevMatch}
+              >
+                <ChevronUp size={14} />
+              </Button>
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                className="h-7 px-2 text-xs"
+                aria-label="Next match"
+                disabled={totalFindMatches === 0}
+                onClick={goToNextMatch}
+              >
+                <ChevronDown size={14} />
+              </Button>
+            </div>
             {tab === 'enhanced' && entries.length > 1 && (
               <div className="relative" ref={pickerRef}>
                 <button
@@ -484,8 +628,8 @@ export function NoteView({
                 )}
                 {active.sections.map((sec, i) => (
                   <section key={i} className="mb-6">
-                    <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-muted-foreground">{sec.heading}</h3>
-                    <Markdown source={sec.content_markdown} />
+                    <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-muted-foreground">{renderSearchableSummaryText(sec.heading)}</h3>
+                    <Markdown source={sec.content_markdown} renderText={renderSearchableSummaryText} />
                     {sec.refs && sec.refs.length > 0 && (
                       <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
                         <span>Sources:</span>
@@ -553,6 +697,10 @@ export function NoteView({
             onSeek={seekTranscript}
             playingIndex={playingIndex}
             speakerAliases={speakerOverrides}
+            searchQuery={showTranscript ? findQueryTrimmed : undefined}
+            searchCurrentIndex={showTranscript ? currentFindIndex : null}
+            searchStartIndex={summaryMatchCount}
+            hideSearchInput
           />
         </aside>
       )}
