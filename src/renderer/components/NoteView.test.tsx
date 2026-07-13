@@ -333,27 +333,43 @@ describe('summaryToMarkdown', () => {
 
 describe('NoteView — Copy as Markdown', () => {
   it('copies the active enhanced panel as markdown to the clipboard', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.assign(navigator, { clipboard: { writeText } })
-    render(<NoteView full={full} onSaveBody={async () => {}} />)
-    await userEvent.click(screen.getByRole('button', { name: /copy/i }))
-    expect(writeText).toHaveBeenCalledTimes(1)
-    const md = writeText.mock.calls[0][0]
-    expect(typeof md).toBe('string')
-    expect(md).toContain('# Standup')
-    expect(md).toContain('## Overview')
-    expect(md).toContain('Ship v2')
+    vi.useFakeTimers()
+    try {
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      Object.assign(navigator, { clipboard: { writeText } })
+      render(<NoteView full={full} onSaveBody={async () => {}} />)
+      fireEvent.click(screen.getByRole('button', { name: /copy/i }))
+      expect(writeText).toHaveBeenCalledTimes(1)
+      const md = writeText.mock.calls[0][0]
+      expect(typeof md).toBe('string')
+      expect(md).toContain('# Standup')
+      expect(md).toContain('## Overview')
+      expect(md).toContain('Ship v2')
+      await act(async () => {
+        vi.runOnlyPendingTimers()
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('copies My notes body as markdown', async () => {
-    const writeText = vi.fn().mockResolvedValue(undefined)
-    Object.assign(navigator, { clipboard: { writeText } })
-    render(<NoteView full={full} onSaveBody={async () => {}} />)
-    await userEvent.click(screen.getByRole('radio', { name: 'My notes' }))
-    await userEvent.click(screen.getByRole('button', { name: /copy/i }))
-    const md = writeText.mock.calls[0][0]
-    expect(md).toContain('# Standup')
-    expect(md).toContain('my raw notes')
+    vi.useFakeTimers()
+    try {
+      const writeText = vi.fn().mockResolvedValue(undefined)
+      Object.assign(navigator, { clipboard: { writeText } })
+      render(<NoteView full={full} onSaveBody={async () => {}} />)
+      fireEvent.click(screen.getByRole('radio', { name: 'My notes' }))
+      fireEvent.click(screen.getByRole('button', { name: /copy/i }))
+      const md = writeText.mock.calls[0][0]
+      expect(md).toContain('# Standup')
+      expect(md).toContain('my raw notes')
+      await act(async () => {
+        vi.runOnlyPendingTimers()
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
