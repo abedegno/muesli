@@ -1,30 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Search } from 'lucide-react'
-import type { CSSProperties, ReactNode } from 'react'
+import type { CSSProperties } from 'react'
 import { cn } from '@/lib/cn'
+import { highlightSearchText } from '@/lib/searchHighlight'
 import type { TranscriptSegment } from '../../shared/types'
 
 function ts(ms: number): string {
   const s = Math.floor(ms / 1000)
   return `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, '0')}`
-}
-
-// highlight wraps case-insensitive matches of `q` in <mark>. Returns the text unchanged when q is empty.
-function highlight(text: string, q: string): ReactNode[] {
-  if (!q) return [text]
-  const out: ReactNode[] = []
-  const lower = text.toLowerCase()
-  const needle = q.toLowerCase()
-  let i = 0
-  let k = 0
-  while (i < text.length) {
-    const hit = lower.indexOf(needle, i)
-    if (hit === -1) { out.push(text.slice(i)); break }
-    if (hit > i) out.push(text.slice(i, hit))
-    out.push(<mark key={k++} className="bg-primary/20 text-foreground">{text.slice(hit, hit + needle.length)}</mark>)
-    i = hit + needle.length
-  }
-  return out
 }
 
 // Golden-angle colour generation — gives maximally perceptually distinct hues for any
@@ -63,6 +46,10 @@ export function TranscriptView({
   onSeek,
   playingIndex,
   speakerAliases,
+  searchQuery,
+  searchCurrentIndex,
+  searchStartIndex = 0,
+  hideSearchInput = false,
 }: {
   segments: TranscriptSegment[]
   /** 0-based index of a segment to scroll to and highlight (e.g. a summary citation). */
@@ -77,15 +64,25 @@ export function TranscriptView({
    * Pass this from DZ03b to rename speakers without restructuring the component.
    */
   speakerAliases?: Record<string, string>
+  /** Optional note-level search query; when present, the component highlights but does not filter. */
+  searchQuery?: string
+  /** Global 0-based index of the current search match. */
+  searchCurrentIndex?: number | null
+  /** Global 0-based index to start counting matches from for this transcript block. */
+  searchStartIndex?: number
+  /** Hide the standalone transcript search box when a note-level search widget is handling find. */
+  hideSearchInput?: boolean
 }) {
   const [q, setQ] = useState('')
-  // Track original indices so search-filtered rendering still maps back to the cited segment.
+  const externalSearch = searchQuery != null
+  const effectiveQuery = (searchQuery ?? q).trim()
+
   const filtered = useMemo(() => {
-    const needle = q.trim().toLowerCase()
+    const needle = effectiveQuery.toLowerCase()
     return segments
       .map((seg, idx) => ({ seg, idx }))
-      .filter(({ seg }) => (needle ? seg.text.toLowerCase().includes(needle) : true))
-  }, [q, segments])
+      .filter(({ seg }) => (externalSearch ? true : (needle ? seg.text.toLowerCase().includes(needle) : true)))
+  }, [effectiveQuery, externalSearch, segments])
 
   // Whether diarization is on: any segment in the FULL array has a non-empty speaker.
   const hasSpeakers = useMemo(
@@ -139,11 +136,15 @@ export function TranscriptView({
     return <p className="text-sm text-muted-foreground">No transcript yet.</p>
   }
 
+  let searchCursor = searchStartIndex
+
   // Renders a list of individual segment items (shared by both paths).
   const renderItems = (items: FilteredItem[]) =>
     items.map(({ seg, idx }) => {
       const cited = hasHighlight && idx === highlightIndex
       const playing = playingIndex != null && idx === playingIndex
+      const highlighted = highlightSearchText(seg.text, effectiveQuery, searchCursor, searchCurrentIndex ?? null)
+      searchCursor += highlighted.matchCount
       const interactiveClass = cn(
         'flex w-full gap-3 rounded-[var(--radius)] text-sm text-left',
         onSeek && 'cursor-pointer',
@@ -153,7 +154,7 @@ export function TranscriptView({
       const content = (
         <>
           <span className="shrink-0 font-mono tabular-nums text-muted-foreground">{ts(seg.start_ms)}</span>
-          <span>{highlight(seg.text, q.trim())}</span>
+          <span>{highlighted.nodes}</span>
         </>
       )
       return (
@@ -188,17 +189,19 @@ export function TranscriptView({
 
   return (
     <div className="flex flex-col gap-2">
-      <label className="relative block">
-        <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-        <input
-          aria-label="Search transcript"
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder="Search transcript…"
-          className="h-8 w-full rounded-[var(--radius)] border border-input bg-background pl-7 pr-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        />
-      </label>
-      {filtered.length === 0 ? (
+      {!externalSearch && !hideSearchInput ? (
+        <label className="relative block">
+          <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <input
+            aria-label="Search transcript"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder="Search transcript…"
+            className="h-8 w-full rounded-[var(--radius)] border border-input bg-background pl-7 pr-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          />
+        </label>
+      ) : null}
+      {!externalSearch && filtered.length === 0 ? (
         <p className="text-sm text-muted-foreground">No matching lines.</p>
       ) : hasSpeakers ? (
         <div className="flex flex-col gap-4">
