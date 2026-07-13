@@ -1,4 +1,4 @@
-import type { ActionItem, ActionItemStatus, AudioUrlGrant, CalendarEvent, ChatSource, CompanyWithCount, CompanyWithPeople, Conversation, Decision, DigestConfig, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, ServerConfig, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection } from './types'
+import type { ActionItem, ActionItemStatus, AudioUrlGrant, CalendarEvent, ChatSource, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from './types'
 import type { UploadProgress } from '../main/uploadMachine'
 
 export const IPC = {
@@ -34,6 +34,9 @@ export const IPC = {
   listTrash: 'muesli:listTrash',
   restoreNote: 'muesli:restoreNote',
   retranscribeNote: 'muesli:retranscribeNote',
+  createShare: 'muesli:createShare',
+  listNoteShares: 'muesli:listNoteShares',
+  revokeShare: 'muesli:revokeShare',
   permanentDeleteNote: 'muesli:permanentDeleteNote',
   getNoteAudioUrl: 'muesli:getNoteAudioUrl',
   uploadAudio: 'muesli:uploadAudio',
@@ -234,6 +237,9 @@ export interface MuesliBridge {
   listTrash(): Promise<Note[]>
   restoreNote(id: string): Promise<void>
   retranscribeNote(id: string, options?: RetranscribeNoteRequest): Promise<RetranscribeNoteResponse>
+  createShare(noteId: string, options?: CreateShareRequest): Promise<CreateShareResponse>
+  listNoteShares(noteId: string): Promise<Share[]>
+  revokeShare(token: string): Promise<void>
   permanentDeleteNote(id: string): Promise<void>
   getNoteAudioUrl(noteId: string): Promise<AudioUrlGrant | null>
   uploadAudio(req: UploadAudioRequest): Promise<{ noteId: string }>

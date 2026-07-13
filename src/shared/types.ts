@@ -52,6 +52,25 @@ export interface NoteLinksResponse {
   backlinks: NoteLink[]
 }
 
+export interface Share {
+  id: string
+  token: string
+  note_id: string
+  owner_id: string
+  created_at: string
+  expires_at?: string | null
+  revoked_at?: string | null
+}
+
+export interface CreateShareRequest {
+  expires_at?: string
+}
+
+export interface CreateShareResponse {
+  token: string
+  url: string
+}
+
 export interface UploadGrant {
   url: string
   method: 'PUT'

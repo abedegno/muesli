@@ -420,6 +420,46 @@ describe('MuesliClient', () => {
     expect(out).toEqual({ status: 'transcribing' })
   })
 
+  it('createShare POSTs /api/notes/{id}/share and omits an empty expiry', async () => {
+    const calls: Array<{ url: string; init?: RequestInit }> = []
+    const fetchMock: FetchLike = async (url, init) => {
+      calls.push({ url: String(url), init })
+      return new Response(JSON.stringify({ token: 'share-token', url: 'http://x/shared/share-token' }), { status: 201 })
+    }
+    const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
+
+    const out = await client.createShare('note-1', { expires_at: '   ' })
+
+    expect(calls[0].init?.method).toBe('POST')
+    expect(calls[0].url).toBe('http://x/api/notes/note-1/share')
+    expect(calls[0].init?.body).toBeUndefined()
+    expect(out).toEqual({ token: 'share-token', url: 'http://x/shared/share-token' })
+  })
+
+  it('listNoteShares GETs /api/notes/{id}/shares', async () => {
+    const calls: Array<{ url: string; method?: string }> = []
+    const fetchMock: FetchLike = async (url, init) => {
+      calls.push({ url: String(url), method: init?.method })
+      return new Response(JSON.stringify([]), { status: 200 })
+    }
+    const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
+    await client.listNoteShares('note-1')
+    expect(calls[0].method).toBe('GET')
+    expect(calls[0].url).toBe('http://x/api/notes/note-1/shares')
+  })
+
+  it('revokeShare DELETEs /api/shares/{token} with encoding', async () => {
+    const calls: Array<{ url: string; method?: string }> = []
+    const fetchMock: FetchLike = async (url, init) => {
+      calls.push({ url: String(url), method: init?.method })
+      return new Response(null, { status: 204 })
+    }
+    const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
+    await client.revokeShare('share token/1')
+    expect(calls[0].method).toBe('DELETE')
+    expect(calls[0].url).toBe('http://x/api/shares/share%20token%2F1')
+  })
+
   it('permanentDeleteNote DELETEs /api/notes/{id}/permanent', async () => {
     const calls: Array<{ url: string; method?: string }> = []
     const fetchMock: FetchLike = async (url, init) => {

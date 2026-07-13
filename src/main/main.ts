@@ -2,7 +2,7 @@ import { basename, join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from 'electron'
 import { IPC, type ConnectRequest, type CreateConversationRequest, type DiarizationReviewUpdate, type SearchOptions, type SendMessageRequest, type UpdateActionItemRequest, type UpdatePersonRequest, type UploadAudioRequest } from '../shared/ipc'
-import type { DigestConfig, RetranscribeNoteRequest, RuleGroup, TemplateSection } from '../shared/types'
+import type { CreateShareRequest, DigestConfig, RetranscribeNoteRequest, RuleGroup, TemplateSection } from '../shared/types'
 import { createHandlers } from './ipcHandlers'
 import { NoteStreamRelay } from './noteStreamRelay'
 import { TokenStore } from './tokenStore'
@@ -84,6 +84,9 @@ app.whenReady().then(() => {
   ipcMain.handle(IPC.listTrash, () => handlers.listTrash())
   ipcMain.handle(IPC.restoreNote, (_e, id: string) => handlers.restoreNote(id))
   ipcMain.handle(IPC.retranscribeNote, (_e, id: string, options?: RetranscribeNoteRequest) => handlers.retranscribeNote(id, options))
+  ipcMain.handle(IPC.createShare, (_e, noteId: string, options?: CreateShareRequest) => handlers.createShare(noteId, options))
+  ipcMain.handle(IPC.listNoteShares, (_e, noteId: string) => handlers.listNoteShares(noteId))
+  ipcMain.handle(IPC.revokeShare, (_e, token: string) => handlers.revokeShare(token))
   ipcMain.handle(IPC.permanentDeleteNote, (_e, id: string) => handlers.permanentDeleteNote(id))
   ipcMain.handle(IPC.getNoteAudioUrl, (_e, noteId: string) => handlers.getNoteAudioUrl(noteId))
   ipcMain.handle(IPC.uploadAudio, (_e, req: UploadAudioRequest) => handlers.uploadAudio(req))
