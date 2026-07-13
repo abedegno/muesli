@@ -6,6 +6,7 @@ const { appMock, spawnMock } = vi.hoisted(() => {
   const listeners = new Map<string, Set<(...args: any[]) => void>>()
   const app = {
     isPackaged: false,
+    getPath: vi.fn((name: string) => `/tmp/${name}`),
     quit: vi.fn(),
     exit: vi.fn(),
     requestSingleInstanceLock: vi.fn(),
@@ -85,6 +86,7 @@ describe('serverSupervisor', () => {
     appMock.quit.mockClear()
     appMock.exit.mockClear()
     appMock.requestSingleInstanceLock.mockReset()
+    appMock.getPath.mockClear()
     appMock.removeAllListeners()
     spawnMock.mockReset()
   })
@@ -96,6 +98,7 @@ describe('serverSupervisor', () => {
   })
 
   it('resolves the loopback URL after health checks eventually pass', async () => {
+    vi.useRealTimers()
     appMock.requestSingleInstanceLock.mockReturnValue(true)
     const child = createFakeChild()
     spawnMock.mockReturnValue(child)
@@ -112,15 +115,15 @@ describe('serverSupervisor', () => {
         MUESLI_SERVER_BIN: '/tmp/muesli',
         MUESLI_ADDR: '127.0.0.1:4567',
       },
-      healthPollIntervalMs: 100,
-      healthTimeoutMs: 1_000,
+      fetchImpl: fetchMock,
+      healthPollIntervalMs: 10,
+      healthTimeoutMs: 100,
       killTimeoutMs: 1_000,
     })
-
-    await vi.advanceTimersByTimeAsync(200)
     const supervisor = await supervisorPromise
 
     expect(supervisor?.baseUrl).toBe('http://127.0.0.1:4567')
+    expect(supervisor?.logPath).toBe('/tmp/userData/logs/server.log')
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:4567/healthz')
     expect(spawnMock).toHaveBeenCalledWith('/tmp/muesli', ['--embedded'], expect.objectContaining({
       env: expect.objectContaining({ MUESLI_ADDR: '127.0.0.1:4567' }),
@@ -129,6 +132,7 @@ describe('serverSupervisor', () => {
   })
 
   it('rejects when the health check never becomes ready', async () => {
+    vi.useRealTimers()
     appMock.requestSingleInstanceLock.mockReturnValue(true)
     const child = createFakeChild()
     spawnMock.mockReturnValue(child)
@@ -142,15 +146,14 @@ describe('serverSupervisor', () => {
         MUESLI_SERVER_BIN: '/tmp/muesli',
         MUESLI_ADDR: '127.0.0.1:4568',
       },
-      healthPollIntervalMs: 100,
-      healthTimeoutMs: 300,
+      fetchImpl: fetchMock,
+      healthPollIntervalMs: 10,
+      healthTimeoutMs: 30,
       killTimeoutMs: 1,
     }).then(
       () => new Error('expected rejection'),
       (err: unknown) => err,
     )
-
-    await vi.advanceTimersByTimeAsync(400)
     const err = await supervisorPromise
     expect(err).toBeInstanceOf(Error)
     expect((err as Error).message).toMatch(/timed out waiting for http:\/\/127\.0\.0\.1:4568\/healthz/i)
@@ -183,6 +186,7 @@ describe('serverSupervisor', () => {
         MUESLI_SERVER_BIN: '/tmp/muesli',
         MUESLI_ADDR: '127.0.0.1:4569',
       },
+      fetchImpl: fetchMock,
       healthPollIntervalMs: 100,
       healthTimeoutMs: 1_000,
       killTimeoutMs: 250,
@@ -214,5 +218,45 @@ describe('serverSupervisor', () => {
     expect(supervisor).toBeNull()
     expect(appMock.quit).toHaveBeenCalledTimes(1)
     expect(spawnMock).not.toHaveBeenCalled()
+  })
+
+  it('surfaces an embedded-startup error payload instead of force-exiting when health times out', async () => {
+    appMock.requestSingleInstanceLock.mockReturnValue(true)
+    const child = createFakeChild()
+    spawnMock.mockReturnValue(child)
+
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockRejectedValue(new Error('still starting'))
+
+    const { startServerSupervisor } = await loadSupervisor()
+    const supervisor = await startServerSupervisor({
+      env: {
+        MUESLI_SERVER_BIN: '/tmp/muesli',
+        MUESLI_ADDR: '127.0.0.1:4571',
+      },
+      waitForHealthy: false,
+      healthPollIntervalMs: 10,
+      healthTimeoutMs: 40,
+      killTimeoutMs: 1,
+    })
+
+    expect(supervisor).not.toBeNull()
+    const { startEmbeddedStartupMonitor } = await import('./embeddedStartupMonitor')
+    const onStatus = vi.fn()
+    startEmbeddedStartupMonitor({
+      supervisor: supervisor!,
+      onStatus,
+      fetchImpl: fetchMock,
+      statusPollIntervalMs: 10,
+      readyHoldMs: 1,
+    })
+
+    await vi.advanceTimersByTimeAsync(60)
+
+    expect(onStatus).toHaveBeenCalledWith(expect.objectContaining({
+      status: 'error',
+      logPath: supervisor!.logPath,
+    }))
+    expect(appMock.exit).not.toHaveBeenCalled()
   })
 })

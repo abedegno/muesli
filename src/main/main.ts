@@ -2,10 +2,11 @@ import { basename, join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from 'electron'
 import { IPC, type ConnectRequest, type CreateConversationRequest, type DiarizationReviewUpdate, type ExportRequestOptions, type SearchOptions, type SendMessageRequest, type UpdateActionItemRequest, type UpdatePersonRequest, type UploadAudioRequest } from '../shared/ipc'
-import type { CreateShareRequest, DigestConfig, RetranscribeNoteRequest, RuleGroup, TemplateSection } from '../shared/types'
+import type { CreateShareRequest, DigestConfig, EmbeddedStartupStatus, RetranscribeNoteRequest, RuleGroup, TemplateSection } from '../shared/types'
 import { createHandlers } from './ipcHandlers'
+import { startEmbeddedStartupMonitor } from './embeddedStartupMonitor'
 import { NoteStreamRelay } from './noteStreamRelay'
-import { startServerSupervisor } from './serverSupervisor'
+import { makeServerLogPath, startServerSupervisor } from './serverSupervisor'
 import { TokenStore } from './tokenStore'
 
 let mainWindow: BrowserWindow | null = null
@@ -47,11 +48,29 @@ function focusMainWindow() {
 
 app.whenReady().then(async () => {
   try {
+    if (!app.requestSingleInstanceLock()) {
+      app.quit()
+      return
+    }
+
+    createWindow()
+
     const supervisor = await startServerSupervisor({
       onSecondInstance: focusMainWindow,
+      logPath: makeServerLogPath(app.getPath('userData')),
+      waitForHealthy: false,
     })
     if (!supervisor) return
     process.env.MUESLI_SERVER_URL = supervisor.baseUrl
+
+    const pushStartupStatus = (status: EmbeddedStartupStatus) => {
+      mainWindow?.webContents.send(IPC.embeddedStartupStatus, status)
+    }
+
+    startEmbeddedStartupMonitor({
+      supervisor,
+      onStatus: pushStartupStatus,
+    })
 
     const tokenStore = new TokenStore(app.getPath('userData'), safeStorage)
     const noteStream = new NoteStreamRelay({
@@ -226,14 +245,18 @@ app.whenReady().then(async () => {
       return handlers.exportAllNotes(res.filePath)
     })
 
-    createWindow()
-    app.on('activate', () => {
-      if (BrowserWindow.getAllWindows().length === 0) createWindow()
-    })
   } catch (err) {
     console.error('failed to start embedded supervisor', err)
-    app.exit(1)
+    mainWindow?.webContents.send(IPC.embeddedStartupStatus, {
+      status: 'error',
+      message: err instanceof Error ? err.message : String(err),
+      logPath: makeServerLogPath(app.getPath('userData')),
+    })
   }
+})
+
+app.on('activate', () => {
+  if (BrowserWindow.getAllWindows().length === 0) createWindow()
 })
 
 app.on('window-all-closed', () => {

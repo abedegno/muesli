@@ -10,6 +10,8 @@ describe('IPC channels', () => {
     expect(IPC.openMicrosoftCalendarOAuthStart).toBe('muesli:openMicrosoftCalendarOAuthStart')
     expect(IPC.startNoteStream).toBe('muesli:startNoteStream')
     expect(IPC.noteStreamEvent).toBe('muesli:noteStreamEvent')
+    expect(IPC.embeddedStartupStatus).toBe('muesli:embeddedStartupStatus')
+    expect(IPC.embeddedStartupStatus).toBe('muesli:embeddedStartupStatus')
 
     for (const [key, value] of entries) {
       expect(value).toBe(`muesli:${key}`)
