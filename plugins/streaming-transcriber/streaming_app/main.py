@@ -66,6 +66,12 @@ CONFIG_SCHEMA = {
             "minimum": 20,
             "default": 120,
         },
+        "partial_interval_ms": {
+            "type": "integer",
+            "title": "Partial segment interval (ms)",
+            "minimum": 100,
+            "default": 400,
+        },
     },
     "additionalProperties": False,
 }
@@ -79,6 +85,7 @@ class _SegmenterState:
     frame_ms: int = 20
     silence_threshold_ms: int = 600
     min_speech_ms: int = 120
+    partial_interval_ms: int = 400
 
     def __post_init__(self) -> None:
         self.frame_bytes = self.sample_rate * 2 * self.frame_ms // 1000
@@ -88,6 +95,7 @@ class _SegmenterState:
         self._last_speech_frame_end: int | None = None
         self._silence_ms = 0
         self._speech_ms = 0
+        self._speech_since_partial_ms = 0
         self._utterance = bytearray()
 
     def feed(self, chunk: bytes) -> list[StreamSegmentResponse]:
@@ -111,18 +119,45 @@ class _SegmenterState:
                 self._segment_start_frame = frame_index
                 self._speech_ms = 0
                 self._silence_ms = 0
+                self._speech_since_partial_ms = 0
                 self._utterance.clear()
             self._utterance.extend(frame)
             self._last_speech_frame_end = frame_index + 1
             self._silence_ms = 0
             self._speech_ms += self.frame_ms
-            return []
+            self._speech_since_partial_ms += self.frame_ms
+            events = []
+            if self.partial_interval_ms > 0 and self._speech_since_partial_ms >= self.partial_interval_ms:
+                events.extend(self._emit_partial())
+            return events
         if self._segment_start_frame is None:
             return []
         self._silence_ms += self.frame_ms
         if self._silence_ms >= self.silence_threshold_ms:
             return self._flush(force=False)
         return []
+
+    def _emit_partial(self) -> list[StreamSegmentResponse]:
+        if self._segment_start_frame is None:
+            return []
+        text = transcribe_module.transcribe_utterance(
+            bytes(self._utterance), self.sample_rate, self.settings
+        ).strip()
+        self._speech_since_partial_ms = 0
+        if not text:
+            return []
+        t0 = self._segment_start_frame * self.frame_ms / 1000.0
+        end_frame = self._last_speech_frame_end or self._frame_index
+        t1 = end_frame * self.frame_ms / 1000.0
+        return [
+            StreamSegmentResponse(
+                text=text,
+                t0=t0,
+                t1=t1,
+                speaker=None,
+                final=False,
+            )
+        ]
 
     def _flush(self, force: bool) -> list[StreamSegmentResponse]:
         if self._segment_start_frame is None:
@@ -154,6 +189,7 @@ class _SegmenterState:
         self._last_speech_frame_end = None
         self._silence_ms = 0
         self._speech_ms = 0
+        self._speech_since_partial_ms = 0
         self._utterance.clear()
 
 
@@ -195,6 +231,9 @@ def create_app(settings: Settings) -> FastAPI:
                     start.config.get("silence_threshold_ms", app.state.settings.silence_threshold_ms)
                 ),
                 min_speech_ms=int(start.config.get("min_speech_ms", app.state.settings.min_speech_ms)),
+                partial_interval_ms=int(
+                    start.config.get("partial_interval_ms", app.state.settings.partial_interval_ms)
+                ),
             )
             await websocket.send_json(StreamReadyResponse().model_dump(exclude_none=True))
             while True:

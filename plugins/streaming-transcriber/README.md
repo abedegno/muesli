@@ -27,6 +27,8 @@ The plugin reads these environment variables:
   flush a segment.
 - `STREAMING_TRANSCRIBER_MIN_SPEECH_MS` - minimum speech duration before a
   buffered utterance is emitted.
+- `STREAMING_TRANSCRIBER_PARTIAL_INTERVAL_MS` - speech duration between
+  interim partial segment emissions.
 
 Defaults are chosen for local CPU use and testability. Production deployments
 can override them per environment.
@@ -58,7 +60,7 @@ Response body:
 
 `config_schema` is a JSON Schema object describing the plugin config stored by
 the server. The schema in this reference plugin includes model, device, compute
-type, and VAD tuning knobs.
+type, VAD tuning knobs, and the partial-emission cadence knob.
 
 ### `GET /health`
 
@@ -86,11 +88,13 @@ handshake.
    `{"type":"ready"}`.
 5. Server sends binary websocket frames containing raw 16 kHz mono PCM
    `s16le` audio.
-6. When the plugin sees trailing silence beyond the configured threshold, it
+6. While speech is still buffered, the plugin may emit interim `segment`
+   messages with `final: false` at the configured partial interval.
+7. When the plugin sees trailing silence beyond the configured threshold, it
    finalizes the current utterance, transcribes it, and sends a
-   `segment` message.
-7. Server sends a final JSON `stop` message.
-8. Plugin flushes any buffered speech as one final segment, then closes the
+   `segment` message with `final: true`.
+8. Server sends a final JSON `stop` message.
+9. Plugin flushes any buffered speech as one final segment, then closes the
    websocket cleanly.
 
 ### `start` message
@@ -139,9 +143,9 @@ When an utterance is complete, the plugin sends:
 Fields:
 
 - `type` - `"segment"`.
-- `final` - boolean. This slice only emits `true`, but `false` is reserved and
-  remains schema-compatible.
-- `text` - transcription text for the utterance.
+- `final` - boolean. `true` marks the authoritative flush for an utterance.
+  `false` marks an interim partial while speech is still being buffered.
+- `text` - transcription text for the utterance or buffered partial.
 - `t0` - float start time in seconds from stream start.
 - `t1` - float end time in seconds from stream start.
 - `speaker` - null in this slice.
