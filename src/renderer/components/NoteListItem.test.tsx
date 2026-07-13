@@ -12,13 +12,16 @@ const note: Note = {
 }
 
 describe('NoteListItem', () => {
-  it('renders the monogram initial, title, snippet, status and time', () => {
-    render(<NoteListItem note={note} />)
+  it('renders the monogram initial, title, snippet, status and relative time', () => {
+    const recent = { ...note, created_at: new Date(Date.now() - 30_000).toISOString() }
+    render(<NoteListItem note={recent} />)
     expect(screen.getByText('S')).toBeInTheDocument()       // monogram
     expect(screen.getByText('Standup')).toBeInTheDocument()
     expect(screen.getByText('auth to prod')).toBeInTheDocument()
     expect(screen.getByText(/ready/i)).toBeInTheDocument()
-    expect(screen.getByText(/5:15/)).toBeInTheDocument()    // time
+    const timestamp = screen.getByText('just now')
+    expect(timestamp).toBeInTheDocument()
+    expect(timestamp.getAttribute('title')).toMatch(/\d{1,2}:\d{2}/)
   })
 
   it('renders a chip per tag when the note has tags', () => {
