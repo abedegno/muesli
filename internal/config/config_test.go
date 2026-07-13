@@ -550,6 +550,31 @@ func TestLoadDiarization(t *testing.T) {
 	}
 }
 
+func TestLoadEmbeddedMode(t *testing.T) {
+	get := func(m map[string]string) func(string) string {
+		return func(k string) string { return m[k] }
+	}
+
+	cfg, err := Load(get(map[string]string{"DATABASE_URL": "postgres://localhost/muesli"}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Embedded {
+		t.Fatalf("default Embedded = %v, want false", cfg.Embedded)
+	}
+
+	cfg, err = Load(get(map[string]string{
+		"DATABASE_URL": "postgres://localhost/muesli",
+		"MUESLI_MODE":  "embedded",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.Embedded {
+		t.Fatalf("Embedded = %v, want true (MUESLI_MODE=embedded)", cfg.Embedded)
+	}
+}
+
 // TestLoadBackupConfig covers MUESLI_BACKUP_DIR, MUESLI_BACKUP_SCHEDULE_INTERVAL,
 // and MUESLI_BACKUP_RETENTION_COUNT (BAK01).
 func TestLoadBackupConfig(t *testing.T) {

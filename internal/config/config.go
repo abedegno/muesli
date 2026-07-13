@@ -79,7 +79,9 @@ type Config struct {
 	MicrosoftOAuthClientSecret string
 	MicrosoftOAuthRedirectURL  string
 
-	Production bool // MUESLI_PRODUCTION; refuse to start with dev secrets
+	Embedded   bool   // MUESLI_MODE=embedded
+	AppDataDir string // embedded desktop app-data root; populated by the embedded runtime slice
+	Production bool   // MUESLI_PRODUCTION; refuse to start with dev secrets
 
 	Diarization bool // MUESLI_DIARIZATION; enable speaker diarization in transcribe requests
 
@@ -120,6 +122,7 @@ func Load(get func(string) string) (Config, error) {
 	cfg.MicrosoftOAuthClientID = get("MUESLI_MICROSOFT_OAUTH_CLIENT_ID")
 	cfg.MicrosoftOAuthClientSecret = get("MUESLI_MICROSOFT_OAUTH_CLIENT_SECRET")
 	cfg.MicrosoftOAuthRedirectURL = def(get("MUESLI_MICROSOFT_OAUTH_REDIRECT_URL"), "")
+	cfg.Embedded = get("MUESLI_MODE") == "embedded"
 	cfg.Production = get("MUESLI_PRODUCTION") == "true" || get("MUESLI_PRODUCTION") == "1"
 	cfg.Diarization = get("MUESLI_DIARIZATION") == "true" || get("MUESLI_DIARIZATION") == "1"
 	cfg.EmbeddingsURL = get("MUESLI_EMBEDDINGS_URL")
