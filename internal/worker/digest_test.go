@@ -13,6 +13,15 @@ import (
 	"github.com/abedegno/muesli/internal/worker"
 )
 
+func setNoteStartedAt(t *testing.T, st *store.Store, noteID string, startedAt time.Time) {
+	t.Helper()
+	if _, err := st.Pool().Exec(context.Background(),
+		`UPDATE notes SET started_at=$1, updated_at=$1 WHERE id=$2`,
+		startedAt, noteID); err != nil {
+		t.Fatalf("set note started_at: %v", err)
+	}
+}
+
 func seedDigestWebhookRow(t *testing.T, st *store.Store, ownerID, url string, enabled bool) string {
 	t.Helper()
 	var id string
@@ -45,8 +54,11 @@ func TestSendDigestEnqueuesWebhookDelivery(t *testing.T) {
 		t.Fatalf("ReplaceActionItemsForNote: %v", err)
 	}
 
-	from := time.Now().Add(-2 * time.Hour)
-	to := time.Now().Add(2 * time.Hour)
+	anchor := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	setNoteStartedAt(t, st, note.ID, anchor)
+
+	from := anchor.Add(-2 * time.Hour)
+	to := anchor.Add(2 * time.Hour)
 	if err := worker.SendDigest(ctx, st, owner.ID, from, to); err != nil {
 		t.Fatalf("SendDigest: %v", err)
 	}
@@ -112,8 +124,11 @@ func TestSendDigestNoEnabledWebhooksIsNoOp(t *testing.T) {
 		t.Fatalf("ReplaceActionItemsForNote: %v", err)
 	}
 
-	from := time.Now().Add(-2 * time.Hour)
-	to := time.Now().Add(2 * time.Hour)
+	anchor := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+	setNoteStartedAt(t, st, note.ID, anchor)
+
+	from := anchor.Add(-2 * time.Hour)
+	to := anchor.Add(2 * time.Hour)
 	if err := worker.SendDigest(ctx, st, owner.ID, from, to); err != nil {
 		t.Fatalf("SendDigest: %v", err)
 	}
