@@ -150,14 +150,14 @@ func TestGenerateMultiSectionAndNilTranscript(t *testing.T) {
 	})
 
 	reqBody := GenerateRequest{
-		Transcript: nil,
+		Transcript:    nil,
 		NotesMarkdown: "notes",
 		Template: Template{Sections: []model.TemplateSection{
 			{Heading: "Summary", Instruction: "Summarize the conversation."},
 			{Heading: "Decisions", Instruction: "List decisions."},
 		}},
 		Options: json.RawMessage(`{"temperature":0.7}`),
-		Config:   json.RawMessage(`{"model":"test-model","ollama_url":"` + ollama.URL + `","temperature":0.7}`),
+		Config:  json.RawMessage(`{"model":"test-model","ollama_url":"` + ollama.URL + `","temperature":0.7}`),
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
@@ -231,7 +231,7 @@ func TestGenerateNilTranscriptUsesEmptyList(t *testing.T) {
 	})
 
 	reqBody := GenerateRequest{
-		Transcript: nil,
+		Transcript:    nil,
 		NotesMarkdown: "",
 		Template: Template{Sections: []model.TemplateSection{
 			{Heading: "Summary", Instruction: "Summarize."},

@@ -20,7 +20,7 @@ const (
 	DefaultModel   = "llama3.2:3b"
 
 	defaultOllamaURL = "http://127.0.0.1:11434"
-	pluginAPIVersion  = "1"
+	pluginAPIVersion = "1"
 )
 
 var configSchema = json.RawMessage(`{"type":"object","properties":{"model":{"type":"string","title":"Model","description":"Model name to send to Ollama","default":"llama3.2:3b"},"ollama_url":{"type":"string","title":"Ollama URL","description":"Base URL for the Ollama server","default":"http://127.0.0.1:11434"},"temperature":{"type":"number","title":"Temperature","minimum":0,"maximum":2,"default":0.2}},"additionalProperties":false}`)
