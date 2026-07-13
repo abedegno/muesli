@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import JSZip from 'jszip'
 import { fullNoteToMarkdown } from '../renderer/lib/noteMarkdown'
-import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, DigestConfig, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, ServerConfig, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection } from '../shared/types'
+import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, DigestConfig, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from '../shared/types'
 import type { ConnectRequest, CreateConversationRequest, CreateConversationResponse, DiarizationReviewUpdate, ListNoteActionItemsResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdateActionItemRequest, UpdatePersonRequest, UploadAudioRequest } from '../shared/ipc'
 import { INSECURE_CONNECTION_CODE, isInsecureRemote } from '../shared/url'
 import type { UploadProgress } from './uploadMachine'
@@ -50,6 +50,9 @@ interface Handlers {
   listTrash(): Promise<Note[]>
   restoreNote(id: string): Promise<void>
   retranscribeNote(id: string, options?: RetranscribeNoteRequest): Promise<RetranscribeNoteResponse>
+  createShare(noteId: string, options?: CreateShareRequest): Promise<CreateShareResponse>
+  listNoteShares(noteId: string): Promise<Share[]>
+  revokeShare(token: string): Promise<void>
   permanentDeleteNote(id: string): Promise<void>
   getNoteAudioUrl(noteId: string): Promise<AudioUrlGrant | null>
   uploadAudio(req: UploadAudioRequest): Promise<{ noteId: string }>
@@ -316,6 +319,15 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     },
     async retranscribeNote(id, options) {
       return authedClient().retranscribeNote(id, options)
+    },
+    async createShare(noteId, options) {
+      return authedClient().createShare(noteId, options)
+    },
+    async listNoteShares(noteId) {
+      return authedClient().listNoteShares(noteId)
+    },
+    async revokeShare(token) {
+      await authedClient().revokeShare(token)
     },
     async permanentDeleteNote(id) {
       await authedClient().permanentDeleteNote(id)

@@ -582,6 +582,50 @@ describe('ipc handlers', () => {
     })
   })
 
+  it('share handlers call the note share endpoints', async () => {
+    const seen: Array<{ method: string; path: string; body?: unknown }> = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      const parsedUrl = new URL(String(url))
+      seen.push({
+        method: (init?.method ?? 'GET').toUpperCase(),
+        path: parsedUrl.pathname,
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      })
+      if (parsedUrl.pathname.endsWith('/share')) {
+        return new Response(JSON.stringify({ token: 'share-token', url: 'http://localhost/shared/share-token' }), { status: 201 })
+      }
+      if (parsedUrl.pathname.endsWith('/shares')) {
+        return new Response(JSON.stringify([]), { status: 200 })
+      }
+      return new Response(null, { status: 204 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+
+    const created = await handlers.createShare('n1', { expires_at: '2026-07-13T00:00:00.000Z' })
+    const shares = await handlers.listNoteShares('n1')
+    await handlers.revokeShare('share-token')
+
+    expect(created).toEqual({ token: 'share-token', url: 'http://localhost/shared/share-token' })
+    expect(shares).toEqual([])
+    expect(seen).toContainEqual({
+      method: 'POST',
+      path: '/api/notes/n1/share',
+      body: { expires_at: '2026-07-13T00:00:00.000Z' },
+    })
+    expect(seen).toContainEqual({
+      method: 'GET',
+      path: '/api/notes/n1/shares',
+      body: undefined,
+    })
+    expect(seen).toContainEqual({
+      method: 'DELETE',
+      path: '/api/shares/share-token',
+      body: undefined,
+    })
+  })
+
   it('regenerateSummary calls POST /api/notes/{id}/templates/{templateId}/summarize', async () => {
     const seen: string[] = []
     const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {

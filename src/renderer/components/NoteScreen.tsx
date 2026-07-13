@@ -15,6 +15,7 @@ import { NoteActionItemsPanel } from './NoteActionItemsPanel'
 import { LiveTranscriptPanel } from './LiveTranscriptPanel'
 import { tagIndex } from '@/lib/tagIndex'
 import { loadAudioPrefs, saveAudioPrefs } from '@/lib/audioPrefs'
+import { useAnnouncer } from '@/hooks/useAnnouncer'
 // Lazy so TipTap (the renderer-bundle bulk) is only fetched when an editor mounts.
 const NoteEditor = lazy(() => import('./NoteEditor').then((m) => ({ default: m.NoteEditor })))
 import { NoteView } from './NoteView'
@@ -22,9 +23,10 @@ import { fullNoteToMarkdown, fullNoteToPlainText } from '@/lib/noteMarkdown'
 import { renderFilenameTemplate } from '@/lib/filenameTemplate'
 import { buildSubtitleCues } from '@/lib/subtitleCues'
 import { cuesToSrt, cuesToAss, cuesToVtt } from '@/lib/subtitleFormats'
+import { writeClipboardText } from '@/lib/clipboard'
 import { Dialog } from '@/components/ui/Dialog'
 import { Button } from '@/components/ui/Button'
-import type { Folder, FullNote, Note, NoteLink, NoteLinksResponse, RelatedNote, Template } from '../../shared/types'
+import type { CreateShareRequest, FullNote, Folder, Note, NoteLink, NoteLinksResponse, RelatedNote, Share, Template } from '../../shared/types'
 import { isTerminal } from '../../shared/types'
 import { Skeleton } from './ui/Skeleton'
 import type { RecordState } from './RecordControl'
@@ -42,6 +44,27 @@ function noteTitleForId(allNotes: Note[], noteId: string): string {
   return allNotes.find((note) => note.id === noteId)?.title || noteId
 }
 
+function isActiveShare(share: Share): boolean {
+  if (share.revoked_at) return false
+  if (!share.expires_at) return true
+  const expiresAt = new Date(share.expires_at).getTime()
+  return Number.isNaN(expiresAt) ? true : expiresAt > Date.now()
+}
+
+function formatShareDate(iso?: string | null): string {
+  if (!iso) return 'No expiry'
+  const date = new Date(iso)
+  if (Number.isNaN(date.getTime())) return iso
+  return date.toLocaleString()
+}
+
+function toRfc3339(value: string): string | undefined {
+  if (!value.trim()) return undefined
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return undefined
+  return date.toISOString()
+}
+
 type LinkRefreshHandler = () => void
 
 interface NoteLinksPanelProps {
@@ -49,6 +72,144 @@ interface NoteLinksPanelProps {
   allNotes: Note[]
   onOpenNote: (id: string) => void
   refreshToken: number
+}
+
+function NoteSharesPanel({ noteId }: { noteId: string }) {
+  const [shares, setShares] = useState<Share[] | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [expiresAt, setExpiresAt] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [statusMessage, setStatusMessage] = useState<string | null>(null)
+  const { announce, announceAssertive } = useAnnouncer()
+
+  const loadShares = useCallback(async () => {
+    if (!noteId) return
+    setShares(null)
+    setError(null)
+    try {
+      const res = await muesli.listNoteShares(noteId)
+      setShares(res ?? [])
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load shares')
+    }
+  }, [noteId])
+
+  useEffect(() => {
+    void loadShares()
+  }, [loadShares])
+
+  useEffect(() => {
+    setExpiresAt('')
+    setStatusMessage(null)
+  }, [noteId])
+
+  if (!noteId) return null
+
+  const activeShares = (shares ?? [])
+    .filter(isActiveShare)
+    .slice()
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())
+
+  const createShare = async () => {
+    try {
+      setCreating(true)
+      setError(null)
+      const expiresAtValue = toRfc3339(expiresAt)
+      const request: CreateShareRequest | undefined = expiresAtValue ? { expires_at: expiresAtValue } : undefined
+      const created = await muesli.createShare(noteId, request)
+      await writeClipboardText(created.url)
+      setStatusMessage(`Share link copied to clipboard: ${created.url}`)
+      setExpiresAt('')
+      announce('Share link copied to clipboard')
+      await loadShares()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Could not create share link'
+      setError(message)
+      announceAssertive(message)
+    } finally {
+      setCreating(false)
+    }
+  }
+
+  const revokeShare = async (token: string) => {
+    const previous = shares
+    setShares((current) => current?.filter((share) => share.token !== token) ?? current)
+    try {
+      await muesli.revokeShare(token)
+      announce('Share revoked')
+    } catch (err) {
+      setShares(previous)
+      setError(err instanceof Error ? err.message : 'Could not revoke share')
+    }
+  }
+
+  return (
+    <section className="border-b border-border px-6 py-4">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Sharing</h2>
+      </div>
+
+      <p className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-foreground">
+        Public link: anyone who has it can read this note.
+      </p>
+
+      {error ? (
+        <div role="alert" className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          Could not update shares.
+          <div className="mt-1 text-xs text-destructive/80">{error}</div>
+        </div>
+      ) : null}
+
+      <div className="mt-4 rounded-lg border border-border bg-background/70 p-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
+          <label className="flex-1 text-sm font-medium">
+            Expires at
+            <input
+              type="datetime-local"
+              value={expiresAt}
+              onChange={(e) => setExpiresAt(e.target.value)}
+              className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
+            />
+          </label>
+          <Button type="button" size="sm" onClick={() => { void createShare() }} disabled={creating}>
+            {creating ? 'Creating...' : 'Create share link'}
+          </Button>
+        </div>
+        <p className="mt-2 text-xs text-muted-foreground">
+          Leave blank for no expiry. The link is public to anyone with the URL.
+        </p>
+      </div>
+
+      {statusMessage ? (
+        <div role="status" className="mt-3 rounded-lg border border-border bg-background/70 px-3 py-2 text-sm text-foreground">
+          {statusMessage}
+        </div>
+      ) : null}
+
+      {shares === null && error === null ? (
+        <div role="status" className="mt-3 text-sm text-muted-foreground">
+          Loading shares...
+        </div>
+      ) : activeShares.length === 0 ? (
+        <p className="mt-3 text-sm text-muted-foreground">No active shares</p>
+      ) : (
+        <ul className="mt-4 space-y-2">
+          {activeShares.map((share) => (
+            <li key={share.id} className="flex items-start justify-between gap-3 rounded-lg border border-border bg-background/70 px-3 py-2">
+              <div className="min-w-0">
+                <p className="text-sm font-medium">Public share</p>
+                <p className="mt-1 text-xs text-muted-foreground">Created: {formatShareDate(share.created_at)}</p>
+                <p className="text-xs text-muted-foreground">Expires: {formatShareDate(share.expires_at)}</p>
+              </div>
+              <Button type="button" variant="secondary" size="sm" onClick={() => { void revokeShare(share.token) }}>
+                Revoke
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
 }
 
 function NoteLinksPanel({ noteId, allNotes, onOpenNote, refreshToken }: NoteLinksPanelProps) {
@@ -1099,6 +1260,7 @@ export function NoteScreen() {
           catch (err) { notify(err instanceof Error ? err.message : 'Could not remove from folder', 'error') }
         }}
       />
+      <NoteSharesPanel noteId={id} />
       <NoteLinksPanel
         noteId={id}
         allNotes={allNotes}
