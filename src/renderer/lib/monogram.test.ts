@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { monogram, MONOGRAM_TONES } from './monogram'
+import { monogram, MONOGRAM_TONES, monogramColor } from './monogram'
 
 describe('monogram', () => {
   it('takes the first alphanumeric of the title, uppercased', () => {
@@ -16,5 +16,15 @@ describe('monogram', () => {
     const b = monogram({ id: 'note-123', title: 'Different title' })
     expect(MONOGRAM_TONES).toContain(a.tone)
     expect(a.tone).toBe(b.tone) // same id → same tone, regardless of title
+  })
+
+  it('derives deterministic avatar colors from a seed', () => {
+    const first = monogramColor('Alex Doe')
+    const second = monogramColor('Alex Doe')
+    const other = monogramColor('Example Inc')
+
+    expect(first).toEqual(second)
+    expect(first.bg).not.toBe(other.bg)
+    expect(first.bg).not.toBe(first.fg)
   })
 })

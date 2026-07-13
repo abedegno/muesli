@@ -1,4 +1,4 @@
-import { monogram, type MonogramTone } from '@/lib/monogram'
+import { monogram, monogramColor, type MonogramTone } from '@/lib/monogram'
 
 const TILE: Record<MonogramTone, string> = {
   teal: 'bg-primary/15 text-primary',
@@ -19,8 +19,12 @@ export function MonogramAvatar({
   className?: string
 }) {
   const { initial, tone } = monogram({ id, label })
+  const { bg, fg } = monogramColor(label)
   return (
-    <div className={`flex shrink-0 items-center justify-center rounded-[var(--radius)] font-semibold ${TILE[tone]} ${className}`}>
+    <div
+      className={`flex shrink-0 items-center justify-center rounded-[var(--radius)] font-semibold ${TILE[tone]} ${className}`}
+      style={{ backgroundColor: bg, color: fg }}
+    >
       {initial}
     </div>
   )

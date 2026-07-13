@@ -79,7 +79,11 @@ describe('PeopleScreen', () => {
     render(<PeopleScreen />)
 
     expect(await screen.findByText('Alex Doe')).toBeInTheDocument()
-    expect(within(screen.getByText('Alex Doe').closest('li') as HTMLElement).getByText('A')).toBeInTheDocument()
+    const avatar = within(screen.getByText('Alex Doe').closest('li') as HTMLElement).getByText('A')
+    expect(avatar).toBeInTheDocument()
+    const avatarTile = avatar.closest('div') as HTMLElement
+    expect(avatarTile.style.backgroundColor).not.toBe('')
+    expect(avatarTile.style.color).not.toBe('')
     expect(screen.getByText('alex@example.com')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'Example Inc' })).toHaveAttribute('href', '/companies/c1')
 
