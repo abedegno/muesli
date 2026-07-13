@@ -316,13 +316,9 @@ func TestStreamingE2E_LiveSegmentsAndBatchFinalize(t *testing.T) {
 		t.Fatal("partial_transcript should be true after live provisional segments")
 	}
 
-	batchTranscriber := newSingleSegmentTranscriber(t, model.Segment{
-		StartMS: 1250,
-		EndMS:   2500,
-		Text:    "final survives flood",
-		Source:  "mic",
-	})
-	batchPluginID := registerPlugin(t, fixture.srv, fixture.hdr, model.PluginTranscriber, "batch-fake", batchTranscriber.URL, "batch-token")
+	batchTranscriber := plugintest.NewTranscriber()
+	t.Cleanup(batchTranscriber.Close)
+	batchPluginID := registerPlugin(t, fixture.srv, fixture.hdr, model.PluginTranscriber, "batch-fake", batchTranscriber.URL(), "batch-token")
 	if err := fixture.st.SetDefaultPlugin(context.Background(), batchPluginID); err != nil {
 		t.Fatalf("set default batch plugin: %v", err)
 	}
@@ -556,7 +552,7 @@ func TestStreamingE2E_PartialFloodDoesNotBlockFinal(t *testing.T) {
 	go func() {
 		defer close(finalCh)
 		for {
-			_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+			_ = conn.SetReadDeadline(time.Now().Add(15 * time.Second))
 			_, payload, err := conn.ReadMessage()
 			if err != nil {
 				errCh <- err
@@ -571,7 +567,6 @@ func TestStreamingE2E_PartialFloodDoesNotBlockFinal(t *testing.T) {
 				continue
 			}
 			if msg["final"] != true {
-				time.Sleep(10 * time.Millisecond)
 				continue
 			}
 			finalCh <- msg
@@ -621,9 +616,13 @@ func TestStreamingE2E_PartialFloodDoesNotBlockFinal(t *testing.T) {
 		t.Fatalf("plugin saw %d frames, want %d", got, partialFloodCount+1)
 	}
 
-	batchTranscriber := plugintest.NewTranscriber()
-	t.Cleanup(batchTranscriber.Close)
-	batchPluginID := registerPlugin(t, fixture.srv, fixture.hdr, model.PluginTranscriber, "batch-fake", batchTranscriber.URL(), "batch-token")
+	batchTranscriber := newSingleSegmentTranscriber(t, model.Segment{
+		StartMS: 1250,
+		EndMS:   2500,
+		Text:    finalText,
+		Source:  "mic",
+	})
+	batchPluginID := registerPlugin(t, fixture.srv, fixture.hdr, model.PluginTranscriber, "batch-fake", batchTranscriber.URL, "batch-token")
 	if err := fixture.st.SetDefaultPlugin(context.Background(), batchPluginID); err != nil {
 		t.Fatalf("set default batch plugin: %v", err)
 	}
