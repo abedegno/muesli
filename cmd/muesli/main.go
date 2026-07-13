@@ -68,30 +68,18 @@ func main() {
 		os.Exit(1)
 	}
 	var embeddedAgent *embedded.AgentHandle
+	var completeEmbeddedStartup func()
+	var startupReporter *embedded.Reporter
 	ollamaURL := embedded.OllamaBaseURL()
-	if isEmbeddedMode(cfg, os.Args) {
-		databaseURL, embeddedStop, err := embedded.Start(ctx)
+	embeddedMode := isEmbeddedMode(cfg, os.Args)
+	if embeddedMode {
+		startupReporter = embedded.NewReporter()
+		databaseURL, embeddedStop, err := embedded.Start(ctx, startupReporter)
 		if err != nil {
 			slog.Error("embedded startup", "error", err)
 			os.Exit(1)
 		}
 		cfg.DatabaseURL = databaseURL
-		detected := embedded.DetectOllama(ctx, ollamaURL)
-		embedded.ConfigureEmbeddedOllama(&cfg, ollamaURL, detected)
-		if detected {
-			go func(url, model string) {
-				pullCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-				defer cancel()
-				if err := embedded.PullEmbeddingModel(pullCtx, url, model); err != nil {
-					slog.Warn("ollama pull embedding model", "error", err, "model", model, "url", url)
-				}
-			}(ollamaURL, cfg.EmbeddingsModel)
-			go func(url string) {
-				if err := embedded.PullModel(ctx, url, embedded.DefaultOllamaAgentModel); err != nil {
-					slog.Warn("ollama pull agent model", "error", err, "model", embedded.DefaultOllamaAgentModel, "url", url)
-				}
-			}(ollamaURL)
-		}
 		defer func() {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
@@ -104,10 +92,35 @@ func main() {
 				slog.Error("embedded shutdown", "error", err)
 			}
 		}()
+		completeEmbeddedStartup, err = runEmbeddedStartupPhases(ctx, &cfg, startupReporter, ollamaURL, embeddedStartupHooks{
+			migrate:   db.Migrate,
+			detect:    embedded.DetectOllama,
+			configure: embedded.ConfigureEmbeddedOllama,
+			pullEmbedding: func(pullCtx context.Context, url, model string, onProgress embedded.PullProgressFunc) error {
+				if err := embedded.PullEmbeddingModel(pullCtx, url, model, onProgress); err != nil {
+					slog.Warn("ollama pull embedding model", "error", err, "model", model, "url", url)
+					return err
+				}
+				return nil
+			},
+			pullModel: func(pullCtx context.Context, url, model string, onProgress embedded.PullProgressFunc) error {
+				if err := embedded.PullModel(pullCtx, url, model, onProgress); err != nil {
+					slog.Warn("ollama pull agent model", "error", err, "model", model, "url", url)
+					return err
+				}
+				return nil
+			},
+		})
+		if err != nil {
+			slog.Error("embedded startup", "error", err)
+			os.Exit(1)
+		}
 	}
-	if err := db.Migrate(cfg.DatabaseURL); err != nil {
-		slog.Error("migrate", "error", err)
-		os.Exit(1)
+	if !embeddedMode {
+		if err := db.Migrate(cfg.DatabaseURL); err != nil {
+			slog.Error("migrate", "error", err)
+			os.Exit(1)
+		}
 	}
 	pool, err := db.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
@@ -221,9 +234,12 @@ func main() {
 		slog.Info("registered embedded ollama agent plugin", "url", embeddedAgent.EndpointURL)
 	}
 
-	srv := api.NewServer(api.Deps{Store: st, Storage: prov, Crypto: cr, Worker: wpool, Config: cfg, Embedder: emb, BackupRunner: backup.PgDumpRunner{}})
+	srv := api.NewServer(api.Deps{Store: st, Storage: prov, Crypto: cr, Worker: wpool, Config: cfg, Embedder: emb, BackupRunner: backup.PgDumpRunner{}, EmbeddedProgress: startupReporter})
 	slog.Info("muesli listening", "addr", cfg.Addr)
 	fmt.Print(readyBanner(cfg.PublicURL))
+	if completeEmbeddedStartup != nil {
+		go completeEmbeddedStartup()
+	}
 	if err := srv.Run(ctx, cfg.Addr); err != nil {
 		slog.Error("server error", "error", err)
 		os.Exit(1)
