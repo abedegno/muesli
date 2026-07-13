@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import JSZip from 'jszip'
 import { fullNoteToMarkdown } from '../renderer/lib/noteMarkdown'
-import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, ServerConfig, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection } from '../shared/types'
+import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, ServerConfig, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection } from '../shared/types'
 import type { ConnectRequest, CreateConversationRequest, CreateConversationResponse, DiarizationReviewUpdate, ListNoteActionItemsResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdateActionItemRequest, UpdatePersonRequest, UploadAudioRequest } from '../shared/ipc'
 import { INSECURE_CONNECTION_CODE, isInsecureRemote } from '../shared/url'
 import type { UploadProgress } from './uploadMachine'
@@ -24,6 +24,7 @@ interface Handlers {
   listNotes(folderId?: string): Promise<Note[]>
   listPeople(): Promise<PersonWithCompany[]>
   listCompanies(): Promise<CompanyWithCount[]>
+  getInsights(from?: string, to?: string): Promise<InsightsResponse>
   listNoteActionItems(noteId: string): Promise<ListNoteActionItemsResponse>
   listNoteLinks(id: string): Promise<NoteLinksResponse>
   listRelatedNotes(id: string): Promise<RelatedNote[]>
@@ -173,6 +174,10 @@ export function createHandlers(deps: HandlerDeps): Handlers {
 
     async listCompanies() {
       return authedClient().listCompanies()
+    },
+
+    async getInsights(from, to) {
+      return authedClient().getInsights(from, to)
     },
 
     async listNoteActionItems(noteId) {
