@@ -2,6 +2,7 @@ import { Badge } from '@/components/ui/Badge'
 import { statusLabel, statusTone } from '@/lib/status'
 import { monogram, type MonogramTone } from '@/lib/monogram'
 import { formatTime } from '@/lib/datetime'
+import { relativeTime } from '@/lib/relativeTime'
 import { Pin } from 'lucide-react'
 import type { Note, Folder } from '../../shared/types'
 
@@ -56,7 +57,12 @@ export function NoteListItem({ note, folders }: { note: Note; folders?: Folder[]
         )}
         <Badge tone={statusTone(note.status)}>{statusLabel(note.status)}</Badge>
         {note.created_at && (
-          <span className="font-mono text-xs tabular-nums text-muted-foreground">{formatTime(note.created_at)}</span>
+          <span
+            className="font-mono text-xs tabular-nums text-muted-foreground"
+            title={formatTime(note.created_at) || undefined}
+          >
+            {relativeTime(note.created_at)}
+          </span>
         )}
       </div>
     </div>
