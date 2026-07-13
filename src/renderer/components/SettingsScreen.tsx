@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { muesli } from '@/api'
 import { Button } from '@/components/ui/Button'
 import { loadCalendarPrefs, saveCalendarPrefs } from '@/lib/calendarPrefs'
+import type { DigestConfig } from '../../shared/types'
 
 type Theme = 'system' | 'light' | 'dark'
 type HealthState = { status: 'idle' } | { status: 'checking' } | { status: 'connected'; version?: string } | { status: 'unreachable' }
@@ -26,6 +27,7 @@ export function SettingsScreen({ onDisconnected }: { onDisconnected: () => void 
   const [autoRecordDetectedMeetings, setAutoRecordDetectedMeetings] = useState<boolean>(
     () => loadCalendarPrefs().autoRecordDetectedMeetings,
   )
+  const [digestCadence, setDigestCadence] = useState<DigestConfig['cadence']>('off')
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -71,6 +73,21 @@ export function SettingsScreen({ onDisconnected }: { onDisconnected: () => void 
       cancelled = true
     }
   }, [serverUrl])
+
+  useEffect(() => {
+    let cancelled = false
+    void muesli.getDigestConfig()
+      .then((cfg) => {
+        if (!cancelled) setDigestCadence(cfg.cadence)
+      })
+      .catch(() => {
+        if (!cancelled) setDigestCadence('off')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   function applyTheme(t: Theme) {
     setTheme(t)
@@ -149,6 +166,31 @@ export function SettingsScreen({ onDisconnected }: { onDisconnected: () => void 
             ) : null}
           </div>
         ) : null}
+      </section>
+      <section className="mb-6">
+        <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">Digest</h2>
+        <label className="flex items-center gap-2 text-sm">
+          <span className="min-w-24">Cadence</span>
+          <select
+            className="rounded border px-2 py-1"
+            value={digestCadence}
+            onChange={async (e) => {
+              const next = e.target.value as DigestConfig['cadence']
+              const prev = digestCadence
+              setDigestCadence(next)
+              try {
+                await muesli.updateDigestConfig(next)
+              } catch (err) {
+                console.error('failed to update digest cadence', err)
+                setDigestCadence(prev)
+              }
+            }}
+          >
+            <option value="off">off</option>
+            <option value="daily">daily</option>
+            <option value="weekly">weekly</option>
+          </select>
+        </label>
       </section>
       <section className="mb-6">
         <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">Tags</h2>
