@@ -1,4 +1,4 @@
-import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, Decision, DigestConfig, DiarizationReview, FullNote, Folder, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, SearchMatch, SmartList, RuleGroup, SpeakerAlias, Template, TemplateSection, UploadGrant } from '../shared/types'
+import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, FullNote, Folder, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, Share, SmartList, SpeakerAlias, Template, TemplateSection, UploadGrant } from '../shared/types'
 import type { CreateConversationRequest, CreateConversationResponse, ListNoteActionItemsResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdateActionItemRequest, UpdatePersonRequest } from '../shared/ipc'
 import { buildNoteExportRequest, parseContentDispositionFilename } from '../shared/export'
 import { buildCalendarEventsPath } from '../shared/calendar'
@@ -172,6 +172,19 @@ export class MuesliClient {
 
   async getNoteAudioUrl(id: string): Promise<AudioUrlGrant> {
     return this.json<AudioUrlGrant>('GET', `/api/notes/${id}/audio-url`)
+  }
+
+  async createShare(id: string, options?: CreateShareRequest): Promise<CreateShareResponse> {
+    const expiresAt = options?.expires_at?.trim()
+    return this.json<CreateShareResponse>('POST', `/api/notes/${id}/share`, expiresAt ? { expires_at: expiresAt } : undefined)
+  }
+
+  async listNoteShares(id: string): Promise<Share[]> {
+    return this.json<Share[]>('GET', `/api/notes/${id}/shares`)
+  }
+
+  async revokeShare(token: string): Promise<void> {
+    await this.json('DELETE', `/api/shares/${encodeURIComponent(token)}`)
   }
 
   async exportNote(id: string, format: string): Promise<NoteExportData> {
