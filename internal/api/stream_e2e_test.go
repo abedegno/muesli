@@ -14,6 +14,7 @@ import (
 	"github.com/abedegno/muesli/internal/config"
 	"github.com/abedegno/muesli/internal/crypto"
 	"github.com/abedegno/muesli/internal/model"
+	"github.com/abedegno/muesli/internal/plugin"
 	"github.com/abedegno/muesli/internal/plugintest"
 	"github.com/abedegno/muesli/internal/storage"
 	"github.com/abedegno/muesli/internal/store"
@@ -186,6 +187,28 @@ func floodStreamingSegments(partialCount int, finalText string) []fakeStreamingS
 	return segments
 }
 
+func newSingleSegmentTranscriber(t *testing.T, segment model.Segment) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	mux.HandleFunc("/info", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(plugin.Info{Name: "single-segment-transcriber", Version: "0", PluginAPI: 1, Kind: model.PluginTranscriber})
+	})
+	mux.HandleFunc("/transcribe", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(plugin.TranscribeResponse{
+			Segments:   []model.Segment{segment},
+			Language:   "en",
+			Model:      "stub-single",
+			DurationMS: 2500,
+		})
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
 func TestStreamingE2E_LiveSegmentsAndBatchFinalize(t *testing.T) {
 	fixture := newStreamingE2EFixture(t)
 	httpSrv := httptest.NewServer(fixture.srv.Handler())
@@ -293,9 +316,13 @@ func TestStreamingE2E_LiveSegmentsAndBatchFinalize(t *testing.T) {
 		t.Fatal("partial_transcript should be true after live provisional segments")
 	}
 
-	batchTranscriber := plugintest.NewTranscriber()
-	t.Cleanup(batchTranscriber.Close)
-	batchPluginID := registerPlugin(t, fixture.srv, fixture.hdr, model.PluginTranscriber, "batch-fake", batchTranscriber.URL(), "batch-token")
+	batchTranscriber := newSingleSegmentTranscriber(t, model.Segment{
+		StartMS: 1250,
+		EndMS:   2500,
+		Text:    "final survives flood",
+		Source:  "mic",
+	})
+	batchPluginID := registerPlugin(t, fixture.srv, fixture.hdr, model.PluginTranscriber, "batch-fake", batchTranscriber.URL, "batch-token")
 	if err := fixture.st.SetDefaultPlugin(context.Background(), batchPluginID); err != nil {
 		t.Fatalf("set default batch plugin: %v", err)
 	}
