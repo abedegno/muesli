@@ -21,14 +21,17 @@ type Config struct {
 	AudioRetention     string // "keep" (default) or "discard"
 	TrashRetentionDays int    // MUESLI_TRASH_RETENTION_DAYS; default 30
 
-	// Rate limiting for auth and upload endpoints.
+	// Rate limiting for auth, upload, and public share endpoints.
 	// Login: default 5 req/min (0.0833 rps), burst 3.
 	// Upload: default 20 req/min (0.333 rps), burst 5.
+	// Shared: default 10 req/min (0.1667 rps), burst 5.
 	// Set to 0 to disable rate limiting on that endpoint.
 	RateLoginRPS    float64 // MUESLI_RATE_LOGIN_RPS
 	RateLoginBurst  int     // MUESLI_RATE_LOGIN_BURST
 	RateUploadRPS   float64 // MUESLI_RATE_UPLOAD_RPS
 	RateUploadBurst int     // MUESLI_RATE_UPLOAD_BURST
+	RateSharedRPS   float64 // MUESLI_RATE_SHARED_RPS
+	RateSharedBurst int     // MUESLI_RATE_SHARED_BURST
 
 	// Semantic-search embeddings (optional, config-gated). When EmbeddingsURL is
 	// empty, semantic embeddings are disabled and the system runs lexical-only.
@@ -140,6 +143,8 @@ func Load(get func(string) string) (Config, error) {
 	cfg.RateLoginBurst = parseIntDef(get("MUESLI_RATE_LOGIN_BURST"), 3)
 	cfg.RateUploadRPS = parseFloatDef(get("MUESLI_RATE_UPLOAD_RPS"), 20.0/60.0)
 	cfg.RateUploadBurst = parseIntDef(get("MUESLI_RATE_UPLOAD_BURST"), 5)
+	cfg.RateSharedRPS = parseFloatDef(get("MUESLI_RATE_SHARED_RPS"), 10.0/60.0)
+	cfg.RateSharedBurst = parseIntDef(get("MUESLI_RATE_SHARED_BURST"), 5)
 	cfg.AllowedOrigins = parseStringSlice(get("MUESLI_ALLOWED_ORIGINS"))
 	cfg.UploadAllowedContentTypes = parseStringSlice(get("MUESLI_UPLOAD_ALLOWED_CONTENT_TYPES"))
 	cfg.WebhookURL = get("MUESLI_WEBHOOK_URL")

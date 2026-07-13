@@ -129,9 +129,7 @@ func TestGetSharedNote(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
 		t.Fatalf("decode shared note: %v", err)
 	}
-	if len(body) != 4 {
-		t.Fatalf("shared response keys = %v, want title/date/transcript/summary only", keysOf(body))
-	}
+	assertSharedNoteShape(t, rec.Body.Bytes())
 	if _, ok := body["title"]; !ok {
 		t.Fatal("missing title")
 	}
@@ -186,6 +184,12 @@ func TestGetSharedNote(t *testing.T) {
 		"Foreign transcript content",
 		"Foreign summary content",
 		"pending",
+		"owner_id",
+		"ownerId",
+		"email",
+		"note_id",
+		"id",
+		"deleted_at",
 	} {
 		if strings.Contains(raw, unwanted) {
 			t.Fatalf("response leaked %q in %s", unwanted, raw)
@@ -217,12 +221,4 @@ func TestGetSharedNote(t *testing.T) {
 			t.Fatalf("%s token body = %q, want identical not-found body", name, rec.Body.String())
 		}
 	}
-}
-
-func keysOf(m map[string]json.RawMessage) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	return out
 }
