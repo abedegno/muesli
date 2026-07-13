@@ -67,6 +67,8 @@ func main() {
 		slog.Error("master key", "error", err, "hint", "set MUESLI_MASTER_KEY to a base64 32-byte key")
 		os.Exit(1)
 	}
+	var embeddedAgent *embedded.AgentHandle
+	ollamaURL := embedded.OllamaBaseURL()
 	if isEmbeddedMode(cfg, os.Args) {
 		databaseURL, embeddedStop, err := embedded.Start(ctx)
 		if err != nil {
@@ -74,7 +76,6 @@ func main() {
 			os.Exit(1)
 		}
 		cfg.DatabaseURL = databaseURL
-		ollamaURL := embedded.OllamaBaseURL()
 		detected := embedded.DetectOllama(ctx, ollamaURL)
 		embedded.ConfigureEmbeddedOllama(&cfg, ollamaURL, detected)
 		if detected {
@@ -85,10 +86,22 @@ func main() {
 					slog.Warn("ollama pull embedding model", "error", err, "model", model, "url", url)
 				}
 			}(ollamaURL, cfg.EmbeddingsModel)
+			go func(url string) {
+				pullCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+				defer cancel()
+				if err := embedded.PullModel(pullCtx, url, embedded.DefaultOllamaAgentModel); err != nil {
+					slog.Warn("ollama pull agent model", "error", err, "model", embedded.DefaultOllamaAgentModel, "url", url)
+				}
+			}(ollamaURL)
 		}
 		defer func() {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
+			if embeddedAgent != nil {
+				if err := embeddedAgent.Stop(shutdownCtx); err != nil {
+					slog.Error("embedded agent shutdown", "error", err)
+				}
+			}
 			if err := embeddedStop(shutdownCtx); err != nil {
 				slog.Error("embedded shutdown", "error", err)
 			}
@@ -138,7 +151,6 @@ func main() {
 		}
 		slog.Info("registered default agent plugin", "url", cfg.DefaultAgentURL)
 	}
-
 	// Derive a stable signing key for presigned upload URLs. Prefer the
 	// dedicated config value; otherwise fall back to deriving one from the
 	// master key. If neither is set, refuse to start so signatures can't
@@ -192,6 +204,21 @@ func main() {
 				slog.Warn("embed backfill", "error", err)
 			}
 		}()
+	}
+
+	if cfg.EmbeddedOllamaDetected {
+		var err error
+		embeddedAgent, err = embedded.StartOllamaAgent(ctx, ollamaURL)
+		if err != nil {
+			slog.Error("start embedded ollama agent", "error", err)
+			os.Exit(1)
+		}
+		if err := st.EnsureDefaultPlugin(ctx, cr, model.PluginAgent, embedded.DefaultOllamaAgentName,
+			embeddedAgent.EndpointURL, embeddedAgent.Token, embeddedAgent.ConfigJSON); err != nil {
+			slog.Error("register embedded ollama agent", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("registered embedded ollama agent plugin", "url", embeddedAgent.EndpointURL)
 	}
 
 	srv := api.NewServer(api.Deps{Store: st, Storage: prov, Crypto: cr, Worker: wpool, Config: cfg, Embedder: emb, BackupRunner: backup.PgDumpRunner{}})
