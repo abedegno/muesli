@@ -1,0 +1,218 @@
+import { EventEmitter } from 'node:events'
+import { PassThrough } from 'node:stream'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const { appMock, spawnMock } = vi.hoisted(() => {
+  const listeners = new Map<string, Set<(...args: any[]) => void>>()
+  const app = {
+    isPackaged: false,
+    quit: vi.fn(),
+    exit: vi.fn(),
+    requestSingleInstanceLock: vi.fn(),
+    on(event: string, listener: (...args: any[]) => void) {
+      const set = listeners.get(event) ?? new Set()
+      set.add(listener)
+      listeners.set(event, set)
+      return this
+    },
+    off(event: string, listener: (...args: any[]) => void) {
+      listeners.get(event)?.delete(listener)
+      return this
+    },
+    emit(event: string, ...args: any[]) {
+      for (const listener of listeners.get(event) ?? []) listener(...args)
+      return true
+    },
+    removeAllListeners() {
+      listeners.clear()
+      return this
+    },
+  }
+  return {
+    appMock: app,
+    spawnMock: vi.fn(),
+  }
+})
+
+vi.mock('electron', () => ({
+  app: appMock,
+}))
+
+vi.mock('node:child_process', () => ({
+  spawn: spawnMock,
+}))
+
+type FakeChild = EventEmitter & {
+  pid: number
+  stdout: PassThrough
+  stderr: PassThrough
+  exitCode: number | null
+  signalCode: NodeJS.Signals | null
+  kill: ReturnType<typeof vi.fn>
+}
+
+function createFakeChild(): FakeChild {
+  const child = new EventEmitter() as FakeChild
+  child.pid = 4242
+  child.stdout = new PassThrough()
+  child.stderr = new PassThrough()
+  child.exitCode = null
+  child.signalCode = null
+  child.kill = vi.fn((signal?: NodeJS.Signals | number) => {
+    if (signal === 'SIGKILL') {
+      child.signalCode = 'SIGKILL'
+      child.exitCode = 0
+      queueMicrotask(() => child.emit('exit', 0, 'SIGKILL'))
+      return true
+    }
+    if (signal === 'SIGTERM') {
+      child.signalCode = 'SIGTERM'
+      return true
+    }
+    return true
+  })
+  return child
+}
+
+async function loadSupervisor() {
+  return await import('./serverSupervisor')
+}
+
+describe('serverSupervisor', () => {
+  beforeEach(() => {
+    vi.useFakeTimers()
+    vi.stubGlobal('fetch', vi.fn())
+    appMock.quit.mockClear()
+    appMock.exit.mockClear()
+    appMock.requestSingleInstanceLock.mockReset()
+    appMock.removeAllListeners()
+    spawnMock.mockReset()
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+    appMock.removeAllListeners()
+  })
+
+  it('resolves the loopback URL after health checks eventually pass', async () => {
+    appMock.requestSingleInstanceLock.mockReturnValue(true)
+    const child = createFakeChild()
+    spawnMock.mockReturnValue(child)
+
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock
+      .mockRejectedValueOnce(new Error('connect ECONNREFUSED'))
+      .mockResolvedValueOnce(new Response('not ready', { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
+
+    const { startServerSupervisor } = await loadSupervisor()
+    const supervisorPromise = startServerSupervisor({
+      env: {
+        MUESLI_SERVER_BIN: '/tmp/muesli',
+        MUESLI_ADDR: '127.0.0.1:4567',
+      },
+      healthPollIntervalMs: 100,
+      healthTimeoutMs: 1_000,
+      killTimeoutMs: 1_000,
+    })
+
+    await vi.advanceTimersByTimeAsync(200)
+    const supervisor = await supervisorPromise
+
+    expect(supervisor?.baseUrl).toBe('http://127.0.0.1:4567')
+    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:4567/healthz')
+    expect(spawnMock).toHaveBeenCalledWith('/tmp/muesli', ['--embedded'], expect.objectContaining({
+      env: expect.objectContaining({ MUESLI_ADDR: '127.0.0.1:4567' }),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }))
+  })
+
+  it('rejects when the health check never becomes ready', async () => {
+    appMock.requestSingleInstanceLock.mockReturnValue(true)
+    const child = createFakeChild()
+    spawnMock.mockReturnValue(child)
+
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockRejectedValue(new Error('still starting'))
+
+    const { startServerSupervisor } = await loadSupervisor()
+    const supervisorPromise = startServerSupervisor({
+      env: {
+        MUESLI_SERVER_BIN: '/tmp/muesli',
+        MUESLI_ADDR: '127.0.0.1:4568',
+      },
+      healthPollIntervalMs: 100,
+      healthTimeoutMs: 300,
+      killTimeoutMs: 1,
+    }).then(
+      () => new Error('expected rejection'),
+      (err: unknown) => err,
+    )
+
+    await vi.advanceTimersByTimeAsync(400)
+    const err = await supervisorPromise
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).toMatch(/timed out waiting for http:\/\/127\.0\.0\.1:4568\/healthz/i)
+  })
+
+  it('sends SIGTERM on shutdown and escalates to SIGKILL after the kill timeout', async () => {
+    appMock.requestSingleInstanceLock.mockReturnValue(true)
+    const child = createFakeChild()
+    child.kill.mockImplementation((signal?: NodeJS.Signals | number) => {
+      if (signal === 'SIGTERM') {
+        child.signalCode = 'SIGTERM'
+        return true
+      }
+      if (signal === 'SIGKILL') {
+        child.signalCode = 'SIGKILL'
+        child.exitCode = 0
+        queueMicrotask(() => child.emit('exit', 0, 'SIGKILL'))
+        return true
+      }
+      return true
+    })
+    spawnMock.mockReturnValue(child)
+
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
+
+    const { startServerSupervisor } = await loadSupervisor()
+    const supervisor = await startServerSupervisor({
+      env: {
+        MUESLI_SERVER_BIN: '/tmp/muesli',
+        MUESLI_ADDR: '127.0.0.1:4569',
+      },
+      healthPollIntervalMs: 100,
+      healthTimeoutMs: 1_000,
+      killTimeoutMs: 250,
+    })
+
+    expect(supervisor).not.toBeNull()
+
+    const shutdownPromise = supervisor!.shutdown()
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+
+    await vi.advanceTimersByTimeAsync(251)
+    await shutdownPromise
+
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL')
+    expect(child.kill.mock.calls.map((call) => call[0])).toEqual(['SIGTERM', 'SIGKILL'])
+  })
+
+  it('quits immediately without spawning when the single-instance lock is not acquired', async () => {
+    appMock.requestSingleInstanceLock.mockReturnValue(false)
+
+    const { startServerSupervisor } = await loadSupervisor()
+    const supervisor = await startServerSupervisor({
+      env: {
+        MUESLI_SERVER_BIN: '/tmp/muesli',
+        MUESLI_ADDR: '127.0.0.1:4570',
+      },
+    })
+
+    expect(supervisor).toBeNull()
+    expect(appMock.quit).toHaveBeenCalledTimes(1)
+    expect(spawnMock).not.toHaveBeenCalled()
+  })
+})
