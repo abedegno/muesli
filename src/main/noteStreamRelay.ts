@@ -54,7 +54,7 @@ class ActiveStream {
         return
       }
       if (!payload || typeof payload !== 'object') return
-      const message = payload as { type?: string; text?: string; start_ms?: number; end_ms?: number; speaker?: string | null; provisional?: boolean }
+      const message = payload as { type?: string; text?: string; start_ms?: number; end_ms?: number; speaker?: string | null; provisional?: boolean; final?: boolean }
       if (message.type === 'unavailable') {
         this.status = 'unavailable'
         this.pendingFrames.length = 0
@@ -71,6 +71,7 @@ class ActiveStream {
           end_ms: message.end_ms ?? 0,
           speaker: message.speaker ?? null,
           provisional: true,
+          final: message.final ?? true,
         })
       }
     })
