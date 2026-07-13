@@ -1,12 +1,20 @@
+export interface ExportOptions {
+  includeTranscript?: boolean
+  redactSpeakers?: boolean
+}
+
 export interface NoteExportRequest {
   path: string
   method: 'GET'
 }
 
-export function buildNoteExportRequest(noteId: string, format: string): NoteExportRequest {
+export function buildNoteExportRequest(noteId: string, format: string, options?: ExportOptions): NoteExportRequest {
+  const params = new URLSearchParams({ format })
+  if (options?.includeTranscript !== undefined) params.set('include_transcript', String(options.includeTranscript))
+  if (options?.redactSpeakers !== undefined) params.set('redact_speakers', String(options.redactSpeakers))
   return {
     method: 'GET',
-    path: `/api/notes/${encodeURIComponent(noteId)}/export?format=${encodeURIComponent(format)}`,
+    path: `/api/notes/${encodeURIComponent(noteId)}/export?${params.toString()}`,
   }
 }
 

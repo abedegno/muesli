@@ -1,14 +1,27 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
-import { render, screen, cleanup, fireEvent } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
 import type { SmartList } from '../../../shared/types'
 
+const { exportFolderMock } = vi.hoisted(() => ({
+  exportFolderMock: vi.fn(),
+}))
+
+vi.mock('@/api', () => ({
+  muesli: {
+    exportFolder: exportFolderMock,
+  },
+}))
+
 afterEach(cleanup)
 // Folder collapse state persists to localStorage; clear it so tests stay isolated.
-beforeEach(() => localStorage.clear())
+beforeEach(() => {
+  localStorage.clear()
+  exportFolderMock.mockReset()
+})
 
 const lists: SmartList[] = [{ id: 'l1', name: 'Ready', created_at: '', rule: { op: 'and', children: [{ field: 'status', operator: 'is', value: 'ready' }] } }]
 
@@ -81,6 +94,29 @@ describe('Sidebar', () => {
     // text/folder-id is empty (note drag), text/note-id carries the id.
     fireEvent.drop(row, { dataTransfer: { getData: (t: string) => (t === 'text/note-id' ? 'note-9' : '') } })
     expect(onDropNote).toHaveBeenCalledWith('f1', 'note-9')
+  })
+
+  it('exports a folder with the selected format and export options', async () => {
+    const user = userEvent.setup()
+    exportFolderMock.mockResolvedValue({ success: true, path: '/tmp/clients.zip' })
+    renderSidebar({ folders: [{ id: 'f1', name: 'Clients', created_at: '' }] })
+
+    const row = screen.getByRole('button', { name: /Clients/ }).closest('div')!
+    fireEvent.mouseEnter(row)
+    await user.click(screen.getByRole('button', { name: /more actions for clients/i }))
+    await user.click(await screen.findByRole('menuitem', { name: /export folder/i }))
+    expect(screen.getByRole('dialog')).toHaveTextContent('Export folder: Clients')
+
+    await user.selectOptions(screen.getByLabelText('Export format'), 'pdf')
+    await user.click(screen.getByLabelText(/include transcript/i))
+    await user.click(screen.getByLabelText(/redact speaker names/i))
+    await user.click(screen.getByRole('button', { name: /^export folder$/i }))
+
+    await waitFor(() => expect(exportFolderMock).toHaveBeenCalledWith('f1', 'pdf', {
+      includeTranscript: false,
+      redactSpeakers: true,
+    }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 
   it('dropping folder B onto folder A re-parents B under A', () => {

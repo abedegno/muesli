@@ -106,13 +106,14 @@ vi.mock('../capture/electronCapture', () => ({ ElectronCapture: class {} }))
 // Child components reduced to inert stand-ins. NoteHeader exposes the start/stop
 // and duplicate callbacks as buttons so the test can drive the lifecycle.
 vi.mock('./NoteHeader', () => ({
-  NoteHeader: (props: { title: string; onStart: () => void; onStop: () => void; onDeleteNote: () => void; onDuplicate: () => void }) => (
+  NoteHeader: (props: { title: string; onStart: () => void; onStop: () => void; onDeleteNote: () => void; onDuplicate: () => void; onExportWithOptions?: () => void }) => (
     <div>
       <span data-testid="note-title">{props.title}</span>
       <button onClick={props.onStart}>start-rec</button>
       <button onClick={props.onStop}>stop-rec</button>
       <button onClick={props.onDeleteNote}>delete-note</button>
       <button onClick={props.onDuplicate}>duplicate-note</button>
+      {props.onExportWithOptions && <button onClick={props.onExportWithOptions}>export-with-options</button>}
     </div>
   ),
 }))
@@ -270,6 +271,31 @@ describe('NoteScreen — duplicate note action', () => {
     const { muesli } = await import('@/api')
     await waitFor(() => expect(muesli.duplicateNote).toHaveBeenCalledWith('n1'))
     expect(testState.navigate).toHaveBeenCalledWith('/notes/n2')
+  })
+})
+
+describe('NoteScreen — export options dialog', () => {
+  it('calls exportNote with the selected format and export options', async () => {
+    const user = userEvent.setup()
+    const { muesli } = await import('@/api')
+    vi.mocked(muesli.exportNote).mockResolvedValue({ success: true, path: '/tmp/n1.pdf' })
+
+    render(<NoteScreen />)
+    await screen.findByText('start-rec')
+
+    await user.click(screen.getByText('export-with-options'))
+    expect(screen.getByRole('dialog')).toHaveTextContent('Export note')
+
+    await user.selectOptions(screen.getByLabelText('Export format'), 'pdf')
+    await user.click(screen.getByLabelText(/include transcript/i))
+    await user.click(screen.getByLabelText(/redact speaker names/i))
+    await user.click(screen.getByRole('button', { name: /^export note$/i }))
+
+    await waitFor(() => expect(muesli.exportNote).toHaveBeenCalledWith('n1', 'pdf', {
+      includeTranscript: false,
+      redactSpeakers: true,
+    }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 })
 
