@@ -56,6 +56,7 @@ vi.mock('@/api', () => ({
     resummarize: vi.fn(),
     listNoteActionItems: vi.fn(async () => ({ actionItems: [], decisions: [] })),
     listNoteLinks: vi.fn(async () => ({ outgoing: [], backlinks: [] })),
+    listRelatedNotes: vi.fn(async () => []),
     updateActionItem: vi.fn(),
     deleteNote: vi.fn(),
     exportFile: vi.fn(),

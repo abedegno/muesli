@@ -24,7 +24,7 @@ import { buildSubtitleCues } from '@/lib/subtitleCues'
 import { cuesToSrt, cuesToAss, cuesToVtt } from '@/lib/subtitleFormats'
 import { Dialog } from '@/components/ui/Dialog'
 import { Button } from '@/components/ui/Button'
-import type { Folder, FullNote, Note, NoteLink, NoteLinksResponse, Template } from '../../shared/types'
+import type { Folder, FullNote, Note, NoteLink, NoteLinksResponse, RelatedNote, Template } from '../../shared/types'
 import { isTerminal } from '../../shared/types'
 import { Skeleton } from './ui/Skeleton'
 import type { RecordState } from './RecordControl'
@@ -42,7 +42,16 @@ function noteTitleForId(allNotes: Note[], noteId: string): string {
   return allNotes.find((note) => note.id === noteId)?.title || noteId
 }
 
-function NoteLinksPanel({ noteId, allNotes, onOpenNote }: { noteId: string; allNotes: Note[]; onOpenNote: (id: string) => void }) {
+type LinkRefreshHandler = () => void
+
+interface NoteLinksPanelProps {
+  noteId: string
+  allNotes: Note[]
+  onOpenNote: (id: string) => void
+  refreshToken: number
+}
+
+function NoteLinksPanel({ noteId, allNotes, onOpenNote, refreshToken }: NoteLinksPanelProps) {
   const [links, setLinks] = useState<NoteLinksResponse | null>(null)
   const [linksError, setLinksError] = useState<string | null>(null)
   const [addLinkError, setAddLinkError] = useState<string | null>(null)
@@ -67,7 +76,7 @@ function NoteLinksPanel({ noteId, allNotes, onOpenNote }: { noteId: string; allN
     } catch (err) {
       setLinksError(err instanceof Error ? err.message : 'Could not load links')
     }
-  }, [noteId])
+  }, [noteId, refreshToken])
 
   useEffect(() => {
     void loadLinks()
@@ -330,6 +339,115 @@ function NoteLinksPanel({ noteId, allNotes, onOpenNote }: { noteId: string; allN
   )
 }
 
+interface RelatedNotesPanelProps {
+  noteId: string
+  allNotes: Note[]
+  onOpenNote: (id: string) => void
+  refreshToken: number
+  onLinked?: LinkRefreshHandler
+}
+
+export function RelatedNotesPanel({ noteId, allNotes, onOpenNote, refreshToken, onLinked }: RelatedNotesPanelProps) {
+  const [related, setRelated] = useState<RelatedNote[] | null>(null)
+  const [relatedError, setRelatedError] = useState<string | null>(null)
+  const [relatedLinkError, setRelatedLinkError] = useState<string | null>(null)
+
+  const loadRelated = useCallback(async () => {
+    if (!noteId) return
+    setRelated(null)
+    setRelatedError(null)
+    setRelatedLinkError(null)
+    try {
+      const res = await muesli.listRelatedNotes(noteId)
+      setRelated(res ?? [])
+    } catch (err) {
+      setRelatedError(err instanceof Error ? err.message : 'Could not load related notes')
+    }
+  }, [noteId, refreshToken])
+
+  useEffect(() => {
+    void loadRelated()
+  }, [loadRelated])
+
+  if (!noteId) return null
+
+  const loading = related === null && relatedError === null
+
+  const linkSuggestion = async (candidate: RelatedNote) => {
+    try {
+      setRelatedLinkError(null)
+      await muesli.addNoteLink(noteId, candidate.note_id)
+      setRelated((current) => current?.filter((item) => item.note_id !== candidate.note_id) ?? current)
+      onLinked?.()
+    } catch (err) {
+      setRelatedLinkError(err instanceof Error ? err.message : 'Could not add link')
+    }
+  }
+
+  return (
+    <section className="border-b border-border px-6 py-4">
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Related</h2>
+      </div>
+
+      {relatedLinkError ? (
+        <div role="alert" className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          Could not add link.
+          <div className="mt-1 text-xs text-destructive/80">{relatedLinkError}</div>
+        </div>
+      ) : null}
+
+      {relatedError ? (
+        <div role="alert" className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          Could not load related notes.
+          <div className="mt-1 text-xs text-destructive/80">{relatedError}</div>
+        </div>
+      ) : loading ? (
+        <div role="status" className="mt-3 space-y-2">
+          <p className="text-sm text-muted-foreground">Loading related notes...</p>
+          <Skeleton className="h-10 w-full" />
+          <Skeleton className="h-10 w-full" />
+        </div>
+      ) : (related ?? []).length === 0 ? (
+        <p className="mt-3 text-sm text-muted-foreground">No related suggestions</p>
+      ) : (
+        <ul className="mt-4 space-y-2">
+          {(related ?? []).map((candidate) => (
+            <li key={candidate.note_id}>
+              <div className="flex items-center justify-between gap-3 rounded-lg border border-border bg-background/70 px-3 py-2">
+                <button
+                  type="button"
+                  className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  onClick={() => onOpenNote(candidate.note_id)}
+                >
+                  <span className="block truncate text-sm font-medium">{noteTitleForId(allNotes, candidate.note_id)}</span>
+                  <span className="text-xs text-muted-foreground">Score {candidate.score.toFixed(2)}</span>
+                </button>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => {
+                    void linkSuggestion(candidate)
+                  }}
+                >
+                  Link
+                </Button>
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {relatedLinkError ? (
+        <div role="alert" className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+          Could not add link.
+          <div className="mt-1 text-xs text-destructive/80">{relatedLinkError}</div>
+        </div>
+      ) : null}
+    </section>
+  )
+}
+
 export function NoteScreen() {
   const { id = '' } = useParams()
   const [params] = useSearchParams()
@@ -341,6 +459,7 @@ export function NoteScreen() {
   const [full, setFull] = useState<FullNote | null>(null)
   const [templates, setTemplates] = useState<Template[]>([])
   const [regeneratingTemplateId, setRegeneratingTemplateId] = useState<string | null>(null)
+  const [linkRefreshToken, setLinkRefreshToken] = useState(0)
   const [loadError, setLoadError] = useState(false)
   const [retryCount, setRetryCount] = useState(0)
   const [confirmDelete, setConfirmDelete] = useState(false)
@@ -984,6 +1103,14 @@ export function NoteScreen() {
         noteId={id}
         allNotes={allNotes}
         onOpenNote={(noteId) => navigate(`/notes/${noteId}`)}
+        refreshToken={linkRefreshToken}
+      />
+      <RelatedNotesPanel
+        noteId={id}
+        allNotes={allNotes}
+        onOpenNote={(noteId) => navigate(`/notes/${noteId}`)}
+        refreshToken={linkRefreshToken}
+        onLinked={() => setLinkRefreshToken((value) => value + 1)}
       />
       <NoteActionItemsPanel noteId={id} />
       <div className="flex-1 overflow-y-auto px-6 py-4">

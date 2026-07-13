@@ -53,6 +53,7 @@ app.whenReady().then(() => {
   ipcMain.handle(IPC.listCompanies, () => handlers.listCompanies())
   ipcMain.handle(IPC.listNoteActionItems, (_e, noteId: string) => handlers.listNoteActionItems(noteId))
   ipcMain.handle(IPC.listNoteLinks, (_e, id: string) => handlers.listNoteLinks(id))
+  ipcMain.handle(IPC.listRelatedNotes, (_e, id: string) => handlers.listRelatedNotes(id))
   ipcMain.handle(IPC.addNoteLink, (_e, id: string, toNoteId: string) => handlers.addNoteLink(id, toNoteId))
   ipcMain.handle(IPC.listActionItems, (_e, status?: string) => handlers.listActionItems(status))
   ipcMain.handle(IPC.getPerson, (_e, id: string) => handlers.getPerson(id))

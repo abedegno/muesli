@@ -4,11 +4,12 @@ import { cleanup, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { FullNote, Note, NoteLinksResponse } from '../../shared/types'
 
-const { addNoteLinkMock, getFullMock, listNoteLinksMock, listNotesMock, navigateMock, refreshMock } = vi.hoisted(() => ({
+const { addNoteLinkMock, getFullMock, listNoteLinksMock, listNotesMock, listRelatedNotesMock, navigateMock, refreshMock } = vi.hoisted(() => ({
   addNoteLinkMock: vi.fn(),
   getFullMock: vi.fn(),
   listNoteLinksMock: vi.fn(),
   listNotesMock: vi.fn(),
+  listRelatedNotesMock: vi.fn(),
   navigateMock: vi.fn(),
   refreshMock: vi.fn(),
 }))
@@ -44,6 +45,7 @@ vi.mock('@/api', () => ({
     getFull: (...args: Parameters<typeof getFullMock>) => getFullMock(...args),
     listNoteLinks: (...args: Parameters<typeof listNoteLinksMock>) => listNoteLinksMock(...args),
     listNotes: (...args: Parameters<typeof listNotesMock>) => listNotesMock(...args),
+    listRelatedNotes: (...args: Parameters<typeof listRelatedNotesMock>) => listRelatedNotesMock(...args),
     addNoteLink: (...args: Parameters<typeof addNoteLinkMock>) => addNoteLinkMock(...args),
     listTemplates: vi.fn(async () => []),
     listNoteActionItems: vi.fn(async () => ({ actionItems: [], decisions: [] })),
@@ -91,6 +93,7 @@ beforeEach(() => {
   getFullMock.mockReset()
   listNoteLinksMock.mockReset()
   listNotesMock.mockReset()
+  listRelatedNotesMock.mockReset()
   addNoteLinkMock.mockReset()
   navigateMock.mockReset()
   refreshMock.mockReset()
@@ -101,6 +104,7 @@ beforeEach(() => {
     { id: 'n2', title: 'Project Plan', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
     { id: 'n3', title: 'Weekly Retro', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
   ] satisfies Note[])
+  listRelatedNotesMock.mockResolvedValue([])
 })
 
 afterEach(() => {
@@ -114,7 +118,7 @@ describe('NoteScreen links panel', () => {
     const addedLink = { id: 'l1', owner_id: 'u1', from_note_id: 'n1', to_note_id: 'n2', created_at: '2026-07-12T00:00:00Z' }
     listNoteLinksMock
       .mockResolvedValueOnce({ outgoing: [], backlinks: [] })
-      .mockResolvedValueOnce({ outgoing: [addedLink], backlinks: [] })
+      .mockResolvedValue({ outgoing: [addedLink], backlinks: [] })
     addNoteLinkMock.mockResolvedValue(addedLink)
 
     render(<NoteScreen />)
