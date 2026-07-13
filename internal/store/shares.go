@@ -87,6 +87,29 @@ func (s *Store) RevokeShare(ctx context.Context, ownerID, shareID string) error 
 	return nil
 }
 
+// RevokeShareByToken marks one owner-scoped share as revoked using its public
+// token. Returns ErrNotFound when the share is absent, not owned, or already
+// revoked.
+func (s *Store) RevokeShareByToken(ctx context.Context, ownerID, token string) error {
+	ct, err := s.pool.Exec(ctx,
+		`UPDATE note_shares AS ns
+		 SET revoked_at = now()
+		 FROM notes AS n
+		 WHERE ns.token = $2
+		   AND ns.note_id = n.id
+		   AND n.owner_id = $1
+		   AND n.deleted_at IS NULL
+		   AND ns.revoked_at IS NULL`,
+		ownerID, token)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // ListSharesForNote returns all shares for the owner's live note, including
 // revoked and expired tokens.
 func (s *Store) ListSharesForNote(ctx context.Context, ownerID, noteID string) ([]model.Share, error) {
