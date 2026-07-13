@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/abedegno/muesli/internal/api"
 	"github.com/abedegno/muesli/internal/auth"
@@ -221,6 +222,9 @@ func TestNoteStreamRelaysAndPersistsProvisionalSegments(t *testing.T) {
 	if segments[0]["provisional"] != true || segments[1]["provisional"] != true {
 		t.Fatalf("segments must be provisional: %v", segments)
 	}
+	if segments[0]["final"] != true || segments[1]["final"] != true {
+		t.Fatalf("segments must be final on the wire: %v", segments)
+	}
 	if segments[0]["start_ms"] != float64(1250) || segments[0]["end_ms"] != float64(2500) {
 		t.Fatalf("segment[0] timings = %v", segments[0])
 	}
@@ -246,6 +250,129 @@ func TestNoteStreamRelaysAndPersistsProvisionalSegments(t *testing.T) {
 	}
 	if got.Status == model.NoteFailed {
 		t.Fatal("streaming should not mark note failed")
+	}
+}
+
+func TestNoteStreamRelaysPartialsAndDropsLateDuplicates(t *testing.T) {
+	srv, st, pool, hdr := streamTestServer(t)
+	httpSrv := httptest.NewServer(srv.Handler())
+	defer httpSrv.Close()
+
+	pluginSrv := newFakeStreamingPlugin(t, "plugin-token", []fakeStreamingSegment{
+		{
+			AfterFrames: 1,
+			Text:        "hel",
+			StartMS:     1200,
+			EndMS:       1500,
+			Final:       boolPtr(false),
+		},
+		{
+			AfterFrames: 1,
+			Text:        "hello",
+			StartMS:     1200,
+			EndMS:       2100,
+			Final:       boolPtr(false),
+		},
+		{
+			AfterFrames: 1,
+			Text:        "hello world",
+			StartMS:     1200,
+			EndMS:       2600,
+			Final:       boolPtr(true),
+		},
+		{
+			AfterFrames: 1,
+			Text:        "late duplicate",
+			StartMS:     1200,
+			EndMS:       2700,
+			Final:       boolPtr(false),
+		},
+	}, 0)
+	pluginID := registerPlugin(t, srv, hdr, model.PluginStreamingTranscriber, "streaming-partials", pluginSrv.URL(), "plugin-token")
+	if err := st.SetDefaultPlugin(context.Background(), pluginID); err != nil {
+		t.Fatalf("set default plugin: %v", err)
+	}
+
+	noteRec := doJSON(t, srv, http.MethodPost, "/api/notes", map[string]string{"title": "Streaming Partials"}, hdr)
+	var note struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(noteRec.Body.Bytes(), &note)
+
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURLFromHTTP(httpSrv.URL)+"/api/notes/"+note.ID+"/stream", http.Header{
+		"Authorization": []string{hdr["Authorization"]},
+	})
+	if err != nil {
+		t.Fatalf("dial: %v resp=%v", err, resp)
+	}
+	defer conn.Close()
+
+	frames := pcmFixtureAllFrames(t)
+	if len(frames) != 2 {
+		t.Fatalf("pcm fixture frames = %d, want 2", len(frames))
+	}
+	if err := conn.WriteMessage(websocket.BinaryMessage, frames[0]); err != nil {
+		t.Fatalf("write audio frame 0: %v", err)
+	}
+	_, payload, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read partial 0: %v", err)
+	}
+	var partial0 map[string]any
+	if err := json.Unmarshal(payload, &partial0); err != nil {
+		t.Fatalf("decode partial 0: %v", err)
+	}
+	if partial0["text"] != "hel" || partial0["final"] != false {
+		t.Fatalf("partial 0 payload = %v", partial0)
+	}
+
+	if err := conn.WriteMessage(websocket.BinaryMessage, frames[1]); err != nil {
+		t.Fatalf("write audio frame 1: %v", err)
+	}
+	_, payload, err = conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read partial 1: %v", err)
+	}
+	var partial1 map[string]any
+	if err := json.Unmarshal(payload, &partial1); err != nil {
+		t.Fatalf("decode partial 1: %v", err)
+	}
+	if partial1["text"] != "hello" || partial1["final"] != false {
+		t.Fatalf("partial 1 payload = %v", partial1)
+	}
+
+	if err := conn.WriteMessage(websocket.BinaryMessage, frames[0]); err != nil {
+		t.Fatalf("write audio frame 2: %v", err)
+	}
+	_, payload, err = conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read final: %v", err)
+	}
+	var finalMsg map[string]any
+	if err := json.Unmarshal(payload, &finalMsg); err != nil {
+		t.Fatalf("decode final: %v", err)
+	}
+	if finalMsg["text"] != "hello world" || finalMsg["final"] != true {
+		t.Fatalf("final payload = %v", finalMsg)
+	}
+
+	if err := conn.WriteMessage(websocket.BinaryMessage, frames[1]); err != nil {
+		t.Fatalf("write audio frame 3: %v", err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(250 * time.Millisecond)); err != nil {
+		t.Fatalf("set read deadline: %v", err)
+	}
+	if _, _, err := conn.ReadMessage(); err == nil {
+		t.Fatal("expected late duplicate partial to be dropped")
+	} else if ne, ok := err.(interface{ Timeout() bool }); !ok || !ne.Timeout() {
+		t.Fatalf("read after late duplicate = %v, want timeout", err)
+	}
+
+	if got := countSegments(t, pool, note.ID, true); got != 1 {
+		t.Fatalf("provisional segments = %d, want 1", got)
+	}
+	if got := countSegments(t, pool, note.ID, false); got != 0 {
+		t.Fatalf("final segments = %d, want 0", got)
 	}
 }
 
