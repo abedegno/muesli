@@ -193,7 +193,7 @@ func newEmbeddedPostgres(dataDir string, port int, password string) *embeddedpos
 		StartTimeout(pgStartTimeout)
 
 	if binaries := getenv(embeddedPGBinaryEnv); binaries != "" {
-		cfg = cfg.RuntimePath(binaries).BinariesPath(binaries)
+		cfg = cfg.RuntimePath(runtimePathForDataDir(dataDir)).BinariesPath(binaries)
 	}
 
 	return embeddedpostgres.NewDatabase(cfg)
@@ -235,6 +235,10 @@ func formatURL(password string, port int) string {
 
 func passwordFilePath(dataDir string) string {
 	return filepath.Join(filepath.Dir(dataDir), embeddedPGPassFile)
+}
+
+func runtimePathForDataDir(dataDir string) string {
+	return filepath.Join(filepath.Dir(dataDir), filepath.Base(dataDir)+"-runtime")
 }
 
 func readPostmasterPID(dataDir string) (int, error) {

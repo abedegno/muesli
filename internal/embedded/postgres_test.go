@@ -38,6 +38,26 @@ func TestGeneratePassword(t *testing.T) {
 	}
 }
 
+func TestLoadOrCreatePasswordReusesExistingPassword(t *testing.T) {
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("MkdirAll(%q) error: %v", dataDir, err)
+	}
+
+	first, err := loadOrCreatePassword(dataDir)
+	if err != nil {
+		t.Fatalf("first loadOrCreatePassword() error: %v", err)
+	}
+	second, err := loadOrCreatePassword(dataDir)
+	if err != nil {
+		t.Fatalf("second loadOrCreatePassword() error: %v", err)
+	}
+	if first != second {
+		t.Fatalf("password rotated between calls: first=%q second=%q", first, second)
+	}
+}
+
 func TestRemoveStalePostmasterPID(t *testing.T) {
 	dataDir := t.TempDir()
 	pidPath := filepath.Join(dataDir, postmasterPIDFile)
