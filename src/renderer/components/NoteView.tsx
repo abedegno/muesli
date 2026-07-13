@@ -436,6 +436,12 @@ export function NoteView({
   const [copied, setCopied] = useState(false)
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  useEffect(() => {
+    return () => {
+      if (copyTimer.current) clearTimeout(copyTimer.current)
+    }
+  }, [])
+
   // Close the template picker on outside mousedown or Escape — same pattern as
   // FolderBar and NoteHeader overflow menu.
   useEffect(() => {
