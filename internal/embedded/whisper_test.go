@@ -55,6 +55,41 @@ func TestBuildWhisperCppTranscriberCmd(t *testing.T) {
 	}
 }
 
+func TestBuildWhisperCppTranscriberCmdForwardsWhisperModelEnv(t *testing.T) {
+	t.Run("forwarded when set", func(t *testing.T) {
+		t.Setenv("MUESLI_WHISPER_MODEL_DIR", "/bundle/models")
+		t.Setenv("MUESLI_WHISPER_MODEL_URL", "file:///bundle/models/model.bin")
+		t.Setenv("MUESLI_WHISPER_MODEL", "model.bin")
+
+		cmd := buildWhisperCppTranscriberCmd("/bin/whisper-cpp-transcriber", "127.0.0.1:42124", "secret-token")
+		for _, want := range []string{
+			"MUESLI_WHISPER_MODEL_DIR=/bundle/models",
+			"MUESLI_WHISPER_MODEL_URL=file:///bundle/models/model.bin",
+			"MUESLI_WHISPER_MODEL=model.bin",
+		} {
+			if !hasEnvEntry(cmd.Env, want) {
+				t.Fatalf("env missing %q", want)
+			}
+		}
+	})
+
+	t.Run("omitted when unset", func(t *testing.T) {
+		restore := clearWhisperModelEnv(t)
+		defer restore()
+
+		cmd := buildWhisperCppTranscriberCmd("/bin/whisper-cpp-transcriber", "127.0.0.1:42124", "secret-token")
+		for _, key := range []string{
+			"MUESLI_WHISPER_MODEL_DIR",
+			"MUESLI_WHISPER_MODEL_URL",
+			"MUESLI_WHISPER_MODEL",
+		} {
+			if hasEnvPrefix(cmd.Env, key+"=") {
+				t.Fatalf("env unexpectedly contains %s", key)
+			}
+		}
+	})
+}
+
 func TestLocateWhisperCppTranscriberBinaryOverride(t *testing.T) {
 	tmpDir := t.TempDir()
 	bin := filepath.Join(tmpDir, "whisper-cpp-transcriber")
@@ -130,6 +165,52 @@ func TestLocateWhisperCppTranscriberBinaryCandidateSearch(t *testing.T) {
 	if got != bin {
 		t.Fatalf("binary = %q, want %q", got, bin)
 	}
+}
+
+func clearWhisperModelEnv(t *testing.T) func() {
+	t.Helper()
+
+	keys := []string{
+		"MUESLI_WHISPER_MODEL_DIR",
+		"MUESLI_WHISPER_MODEL_URL",
+		"MUESLI_WHISPER_MODEL",
+	}
+	restores := make([]func(), 0, len(keys))
+	for _, key := range keys {
+		old, had := os.LookupEnv(key)
+		if err := os.Unsetenv(key); err != nil {
+			t.Fatalf("unset %s: %v", key, err)
+		}
+		if had {
+			k, v := key, old
+			restores = append(restores, func() {
+				_ = os.Setenv(k, v)
+			})
+		}
+	}
+	return func() {
+		for i := len(restores) - 1; i >= 0; i-- {
+			restores[i]()
+		}
+	}
+}
+
+func hasEnvEntry(env []string, want string) bool {
+	for _, entry := range env {
+		if entry == want {
+			return true
+		}
+	}
+	return false
+}
+
+func hasEnvPrefix(env []string, prefix string) bool {
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // newFakeWhisperHandle spawns the current test binary re-invoked as
