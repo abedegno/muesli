@@ -33,10 +33,22 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /muesli ./cm
 
 # ---- Stage 3: minimal runtime ----------------------------------------------
 FROM debian:bookworm-slim AS runtime
+ARG VERSION=dev
 # CA certs for any outbound TLS (and good hygiene for a server image).
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
+LABEL org.opencontainers.image.source="https://github.com/abedegno/muesli" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.licenses="AGPL-3.0-only" \
+      org.opencontainers.image.title="muesli"
+RUN groupadd --system --gid 65532 muesli \
+    && useradd --system --uid 65532 --gid 65532 --create-home --home-dir /app --shell /usr/sbin/nologin muesli \
+    && mkdir -p /app \
+    && chown -R muesli:muesli /app
+WORKDIR /app
 COPY --from=build /muesli /usr/local/bin/muesli
 EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 CMD curl --fail --silent --show-error http://127.0.0.1:8080/readyz || exit 1
+USER muesli:muesli
 ENTRYPOINT ["/usr/local/bin/muesli"]
