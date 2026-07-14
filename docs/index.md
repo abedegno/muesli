@@ -25,6 +25,7 @@ within the `docs/` directory.
 | [`CONFIGURATION.md`](CONFIGURATION.md)                       | Complete reference for all `MUESLI_*` environment variables.        |
 | [`EMBEDDED-POSTGRES-BUNDLE.md`](EMBEDDED-POSTGRES-BUNDLE.md) | Vendored embedded Postgres bundle, pinned checksum, and bump steps. |
 | [`DEPLOYMENT.md`](DEPLOYMENT.md)                             | Production TLS and reverse-proxy guide.                             |
+| [`PUBLISHED-IMAGES.md`](PUBLISHED-IMAGES.md)                 | GHCR image names for hosted deployments and a compose pull example. |
 | [`PLUGINS.md`](PLUGINS.md)                                   | How to write a transcriber or agent plugin.                         |
 | [`STREAMING-SMOKE.md`](STREAMING-SMOKE.md)                   | Manual smoke checklist for the optional streaming transcript path.  |
 | [`BACKUP.md`](BACKUP.md)                                     | Backup and restore procedures for data and configuration.           |
