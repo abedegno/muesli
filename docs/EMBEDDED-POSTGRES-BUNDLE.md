@@ -12,6 +12,10 @@ the embedded desktop backend in CI and local integration tests.
   `https://github.com/boomship/postgres-vector-embedded/releases/download/v0.2.2/postgres-full-linux-x64.tar.gz`
 - SHA256:
   `5b62bbc684d8d8fc813b42b88613c3ed631fbbe18440a6f68be873f406337a83`
+- macOS arm64 asset (desktop app):
+  `https://github.com/boomship/postgres-vector-embedded/releases/download/v0.2.2/postgres-full-darwin-arm64.tar.gz`
+- SHA256:
+  `cfb6621b3fa9fb36b558d5004ee4d0acec122c01fa84691d39b4004a69d2ceaf`
 
 ## Bump Process
 
