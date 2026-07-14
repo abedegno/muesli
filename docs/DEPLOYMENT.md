@@ -87,6 +87,65 @@ docker compose -f docker-compose.prod.yml up -d
 
 ---
 
+## Production resource controls
+
+The production compose file sets two classes of safeguards on every service:
+
+- `logging` uses the `json-file` driver with bounded rotation
+- `mem_limit` and `mem_reservation` cap each container's RAM footprint
+
+These settings are there to keep a small self-hosted box stable. The default
+`llama3.2:3b` Ollama model is the heaviest part of the stack, and the README
+recommends at least 8 GB of system RAM for the full deployment.
+
+### Log rotation
+
+Each service writes to the Docker `json-file` log driver with a small rotation
+window. That keeps one noisy container from filling the disk over time while
+still preserving enough recent history for debugging.
+
+If you want more or less retention, edit the per-service logging block in
+[`docker-compose.prod.yml`](../docker-compose.prod.yml):
+
+```yaml
+logging:
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+```
+
+- Increase `max-size` when you want larger individual log files.
+- Increase `max-file` when you want more rotated history.
+- Decrease either value when disk space is tighter.
+
+### Memory limits
+
+The production stack uses Compose's `mem_limit` and `mem_reservation` keys.
+Those are the limits honored by plain `docker compose`; the Swarm-only
+`deploy.resources` section is not used here.
+
+Current sizing is intentionally conservative:
+
+- `ollama` gets the most headroom because it has to keep the model and context
+  in memory.
+- `postgres`, `server`, `whisper`, `streaming-transcriber`, and `agent` get
+  smaller caps sized for a modest single-box deployment.
+- The one-shot `ollama-pull` jobs use very little RAM and exit once the model
+  download finishes.
+
+If you move to a larger box or a larger Ollama model, raise the values in
+[`docker-compose.prod.yml`](../docker-compose.prod.yml) directly:
+
+- Increase `ollama` first if you switch to a bigger model or need a larger
+  context window.
+- Increase `server`, `agent`, or the transcribers only if they start hitting
+  their limits in practice.
+- Keep the reservation below the hard limit so Docker can still reclaim memory
+  under pressure.
+
+---
+
 ## Operator Makefile targets
 
 The root `Makefile` adds convenience targets for the production compose stack.

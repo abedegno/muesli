@@ -22,6 +22,13 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    mem_limit: 256m
+    mem_reservation: 128m
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
 
   ollama:
     image: ollama/ollama
@@ -33,6 +40,13 @@ services:
       interval: 5s
       timeout: 10s
       retries: 20
+    mem_limit: 5g
+    mem_reservation: 4g
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
 
   # One-shot: pull the default model into the ollama volume, then exit.
   ollama-pull:
@@ -47,6 +61,13 @@ services:
     entrypoint: ['/bin/sh', '/ollama-pull.sh']
     command: ['llama3.2:3b']
     restart: 'no'
+    mem_limit: 128m
+    mem_reservation: 64m
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
 
   # One-shot: pull the embedding model (semantic search) into the ollama volume.
   ollama-pull-embed:
@@ -61,6 +82,13 @@ services:
     entrypoint: ['/bin/sh', '/ollama-pull.sh']
     command: ['nomic-embed-text']
     restart: 'no'
+    mem_limit: 128m
+    mem_reservation: 64m
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
 
   whisper:
     image: ghcr.io/abedegno/muesli-whisper-transcriber:${MUESLI_IMAGE_TAG}
@@ -78,6 +106,13 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+    mem_limit: 384m
+    mem_reservation: 192m
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
 
   streaming-transcriber:
     image: ghcr.io/abedegno/muesli-streaming-transcriber:${MUESLI_IMAGE_TAG}
@@ -95,6 +130,13 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+    mem_limit: 384m
+    mem_reservation: 192m
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
 
   agent:
     image: ghcr.io/abedegno/muesli-ollama-agent:${MUESLI_IMAGE_TAG}
@@ -115,6 +157,13 @@ services:
       timeout: 5s
       retries: 10
       start_period: 20s
+    mem_limit: 512m
+    mem_reservation: 256m
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
 
   server:
     image: ghcr.io/abedegno/muesli-server:${MUESLI_IMAGE_TAG}
@@ -167,6 +216,13 @@ services:
       timeout: 5s
       retries: 12
       start_period: 10s
+    mem_limit: 384m
+    mem_reservation: 192m
+    logging:
+      driver: json-file
+      options:
+        max-size: '10m'
+        max-file: '3'
 
 volumes:
   pgdata:
