@@ -72,10 +72,14 @@ jobs:
             # Makefile hardcodes the host arch in its cmake call, so invoke cmake
             # directly with the same flags plus CMAKE_OSX_ARCHITECTURES=x86_64.
             # Output lands in wcpp/build_go, matching the artifact glob below.
+            # GGML_NATIVE=OFF: ggml otherwise detects the host CPU (apple-m1) and
+            # passes -mcpu=apple-m1, which is invalid for the x86_64 target. OFF
+            # builds a portable x86-64 baseline, correct for a distributable lib.
             cmake -S wcpp -B wcpp/build_go \
               -DCMAKE_BUILD_TYPE=Release \
               -DBUILD_SHARED_LIBS=OFF \
-              -DCMAKE_OSX_ARCHITECTURES=x86_64
+              -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+              -DGGML_NATIVE=OFF
             cmake --build wcpp/build_go --target whisper
           else
             cd wcpp/bindings/go && make whisper
