@@ -74,8 +74,8 @@ curl -fsSL https://raw.githubusercontent.com/abedegno/muesli/main/scripts/instal
 
 This is separate from the dev `docker compose up` quickstart above. The
 installer writes the production files into `./muesli` by default; set
-`MUESLI_INSTALL_REF` to fetch a different tag, branch, or commit, and use
-`--up` if you want the script to start the stack after installation.
+`MUESLI_RELEASE_TAG` to fetch a different release, and use `--up` if you want
+the script to start the stack after installation.
 
 ### GPU acceleration
 

@@ -3,7 +3,7 @@ set -eu
 
 repo_owner='abedegno'
 repo_name='muesli'
-install_ref=${MUESLI_INSTALL_REF:-main}
+release_tag=${MUESLI_RELEASE_TAG:-latest}
 image_tag=${MUESLI_IMAGE_TAG:-latest}
 install_dir='./muesli'
 run_up=0
@@ -16,21 +16,23 @@ usage() {
 Usage: install.sh [OPTIONS] [DIR]
 
 Install the production Muesli stack into DIR (default: ./muesli) by fetching
-docker-compose.prod.yml and .env.example from an explicit git ref.
+docker-compose.prod.yml and .env.example from a GitHub release.
 
 Options:
   -d, --dir DIR   Target install directory.
+  -r, --release TAG
+                   GitHub release tag to install (default: latest release).
   --force         Regenerate .env even if one already exists.
   --up            Run "docker compose -f docker-compose.prod.yml up -d" after install.
   -h, --help      Show this help text and exit.
 
 Environment:
-  MUESLI_INSTALL_REF   Git ref to fetch from (default: main).
+  MUESLI_RELEASE_TAG   GitHub release tag to fetch (default: latest release).
   MUESLI_IMAGE_TAG     Image tag to write into .env (default: latest).
 
 Examples:
   curl -fsSL https://raw.githubusercontent.com/abedegno/muesli/main/scripts/install.sh | sh
-  MUESLI_INSTALL_REF=main sh scripts/install.sh --dir /opt/muesli --up
+  MUESLI_RELEASE_TAG=v1.2.3 sh scripts/install.sh --dir /opt/muesli --up
 EOF
 }
 
@@ -60,6 +62,14 @@ while [ $# -gt 0 ]; do
       ;;
     --force)
       force=1
+      ;;
+    -r|--release)
+      [ $# -gt 0 ] || die "--release requires a value"
+      release_tag=$1
+      shift
+      ;;
+    --release=*)
+      release_tag=${arg#*=}
       ;;
     -d|--dir)
       [ $# -gt 0 ] || die "--dir requires a value"
@@ -98,7 +108,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-for cmd in docker curl openssl awk mktemp mv mkdir rm; do
+for cmd in docker curl openssl awk mktemp mv mkdir rm sha256sum python3; do
   command -v "$cmd" >/dev/null 2>&1 || die "Missing required command: $cmd"
 done
 
@@ -114,14 +124,46 @@ tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/muesli-install.XXXXXX")
 
 mkdir -p "$install_dir"
 
-# Fetch individual files from raw.githubusercontent.com at an explicit git ref
-# so the install is pinned without cloning the whole repository.
-compose_url="https://raw.githubusercontent.com/$repo_owner/$repo_name/$install_ref/docker-compose.prod.yml"
-env_example_url="https://raw.githubusercontent.com/$repo_owner/$repo_name/$install_ref/.env.example"
+release_api_url="https://api.github.com/repos/$repo_owner/$repo_name/releases"
+if [ "$release_tag" = "latest" ]; then
+  release_api_url="$release_api_url/latest"
+else
+  release_api_url="$release_api_url/tags/$release_tag"
+fi
 
-printf '%s\n' "Fetching production files from ref: $install_ref"
+get_asset_url() {
+  asset_name=$1
+  python3 - "$tmpdir/release.json" "$asset_name" <<'PY'
+import json
+import sys
+
+release_path = sys.argv[1]
+asset_name = sys.argv[2]
+
+with open(release_path, encoding='utf-8') as fh:
+    release = json.load(fh)
+
+for asset in release.get('assets', []):
+    if asset.get('name') == asset_name:
+        print(asset['browser_download_url'])
+        raise SystemExit(0)
+
+raise SystemExit(f"Missing release asset: {asset_name}")
+PY
+}
+
+printf '%s\n' "Fetching release assets for: $release_tag"
+curl -fsSL -H 'Accept: application/vnd.github+json' -H 'X-GitHub-Api-Version: 2022-11-28' "$release_api_url" -o "$tmpdir/release.json"
+
+compose_url=$(get_asset_url 'docker-compose.prod.yml')
+env_example_url=$(get_asset_url '.env.example')
+checksums_url=$(get_asset_url 'SHA256SUMS')
+
 curl -fsSL "$compose_url" -o "$tmpdir/docker-compose.prod.yml"
 curl -fsSL "$env_example_url" -o "$tmpdir/.env.example"
+curl -fsSL "$checksums_url" -o "$tmpdir/SHA256SUMS"
+
+(cd "$tmpdir" && awk '$2 == "docker-compose.prod.yml" || $2 == ".env.example" { print }' SHA256SUMS | sha256sum -c -) || die "Checksum verification failed for release assets"
 
 mv "$tmpdir/docker-compose.prod.yml" "$install_dir/docker-compose.prod.yml"
 mv "$tmpdir/.env.example" "$install_dir/.env.example"

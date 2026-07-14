@@ -200,13 +200,13 @@ compose stack picks it up automatically on the next `docker compose up`.
 For a fresh production box, the recommended path is the one-line installer in
 [`scripts/install.sh`](../scripts/install.sh) (see the README's One-line
 install section). It fetches `docker-compose.prod.yml` and `.env.example` from
-the git ref you choose, writes fresh `MUESLI_MASTER_KEY` and
+the selected GitHub release, writes fresh `MUESLI_MASTER_KEY` and
 `MUESLI_STORAGE_SIGNING_KEY` values into `.env`, and can optionally start the
 stack with `--up`.
 
-Use `MUESLI_INSTALL_REF` to pin the files you fetch and `MUESLI_IMAGE_TAG` to
-pin the image tag written into `.env`. `--force` regenerates `.env` even if one
-already exists, and `--dir` / `-d` choose the install directory.
+Use `MUESLI_RELEASE_TAG` to pin the release you fetch and `MUESLI_IMAGE_TAG`
+to pin the image tag written into `.env`. `--force` regenerates `.env` even if
+one already exists, and `--dir` / `-d` choose the install directory.
 
 The installer handles the two secrets that are most error-prone to generate by
 hand, but you still need to review the remaining production values before the
