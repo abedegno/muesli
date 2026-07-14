@@ -62,6 +62,21 @@ transcription. Expect a few minutes before the stack is fully ready. CPU
 inference is slow — this is a local-first dev setup, not a tuned production
 deployment. (For GPU acceleration, use the override described in the [GPU acceleration](#gpu-acceleration) section below.)
 
+### One-line install
+
+Use this for a production/hosted deployment. It fetches pinned copies of
+`docker-compose.prod.yml` and `.env.example`, generates real secrets in `.env`,
+and uses the GHCR-hosted images referenced by the production compose stack.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/abedegno/muesli/main/scripts/install.sh | sh
+```
+
+This is separate from the dev `docker compose up` quickstart above. The
+installer writes the production files into `./muesli` by default; set
+`MUESLI_INSTALL_REF` to fetch a different tag, branch, or commit, and use
+`--up` if you want the script to start the stack after installation.
+
 ### GPU acceleration
 
 An optional Compose override adds NVIDIA GPU support for Ollama and Whisper.
