@@ -1,0 +1,307 @@
+name: Image publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+  schedule:
+    - cron: '17 4 * * *'
+  workflow_dispatch:
+
+jobs:
+  scan:
+    name: ${{ matrix.name }}
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: write
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        include:
+          - name: server
+            context: .
+            dockerfile: Dockerfile
+            image: ghcr.io/abedegno/muesli-server
+          - name: whisper-transcriber
+            context: plugins/whisper-transcriber
+            dockerfile: plugins/whisper-transcriber/Dockerfile
+            image: ghcr.io/abedegno/muesli-whisper-transcriber
+          - name: ollama-agent
+            context: plugins/ollama-agent
+            dockerfile: plugins/ollama-agent/Dockerfile
+            image: ghcr.io/abedegno/muesli-ollama-agent
+          - name: streaming-transcriber
+            context: plugins/streaming-transcriber
+            dockerfile: plugins/streaming-transcriber/Dockerfile
+            image: ghcr.io/abedegno/muesli-streaming-transcriber
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and load ${{ matrix.name }} for scan
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ matrix.image }}:scan
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+      - name: Scan ${{ matrix.name }} image for vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ matrix.image }}:scan
+          format: table
+          output: trivy-${{ matrix.name }}.txt
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          exit-code: 0
+          trivyignores: .trivyignore
+
+      - name: Generate Trivy JSON for ${{ matrix.name }}
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ matrix.image }}:scan
+          format: json
+          output: trivy-${{ matrix.name }}.json
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          exit-code: 0
+          trivyignores: .trivyignore
+
+      - name: Upload Trivy report for ${{ matrix.name }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-${{ matrix.name }}
+          path: trivy-${{ matrix.name }}.txt
+
+      - name: Generate SBOM for ${{ matrix.name }}
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ matrix.image }}:scan
+          format: spdx-json
+          output-file: sbom-${{ matrix.name }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Upload SBOM artifact for ${{ matrix.name }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.name }}
+          path: sbom-${{ matrix.name }}.spdx.json
+
+      - name: Update security issue for ${{ matrix.name }}
+        if: always()
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          IMAGE_NAME: ${{ matrix.name }}
+        run: |
+          set -eu
+
+          issue_payload="$(IMAGE_NAME="$IMAGE_NAME" python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          image_name = os.environ["IMAGE_NAME"]
+          report_path = Path(f"trivy-{image_name}.json")
+          data = json.loads(report_path.read_text())
+
+          counts = {"CRITICAL": 0, "HIGH": 0}
+          total = 0
+
+          for result in data.get("Results", []):
+              for vuln in result.get("Vulnerabilities") or []:
+                  sev = (vuln.get("Severity") or "").upper()
+                  if sev in counts:
+                      counts[sev] += 1
+                      total += 1
+
+          body_line = ""
+          if total:
+              body_line = (
+                  f"- `{image_name}`: {total} finding(s) "
+                  f"(HIGH: {counts['HIGH']}, CRITICAL: {counts['CRITICAL']})"
+              )
+
+          print(json.dumps({
+              "has_findings": bool(total),
+              "body_line": body_line,
+          }))
+          PY
+          )"
+
+          has_findings="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["has_findings"])' "$issue_payload")"
+          if [ "$has_findings" != "True" ]; then
+            exit 0
+          fi
+
+          body_line="$(python3 -c 'import json,sys; print(json.loads(sys.argv[1])["body_line"])' "$issue_payload")"
+          marker='<!-- image-scan-tracker -->'
+          title='Image vulnerability scan'
+
+          existing_issue_number="$(gh issue list --state open --label security --limit 100 --json number,title,body --jq '.[] | select((.body // "") | contains("<!-- image-scan-tracker -->")) | .number' | head -n1)"
+
+          if [ -n "$existing_issue_number" ]; then
+            current_body="$(gh issue view "$existing_issue_number" --json body --jq .body)"
+            new_body="$(IMAGE_NAME="$IMAGE_NAME" BODY_LINE="$body_line" CURRENT_BODY="$current_body" python3 - <<'PY'
+          import os
+
+          marker = "<!-- image-scan-tracker -->"
+          image_name = os.environ["IMAGE_NAME"]
+          body_line = os.environ["BODY_LINE"]
+          current_body = os.environ["CURRENT_BODY"]
+
+          prefix = f"- `{image_name}`:"
+          lines = current_body.splitlines()
+          kept = [line for line in lines if not line.startswith(prefix)]
+
+          if marker not in current_body:
+              kept = [marker, "", "Image vulnerability scan findings", ""] + kept
+
+          if body_line:
+              kept.append(body_line)
+
+          print("\n".join(kept).rstrip() + "\n")
+          PY
+          )"
+            gh issue edit "$existing_issue_number" --body "$new_body"
+          else
+            gh issue create \
+              --title "$title" \
+              --label security \
+              --body "$marker"$'\n\n''Image vulnerability scan findings'$'\n\n'"$body_line"
+          fi
+
+  publish:
+    name: ${{ matrix.name }}
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: server
+            context: .
+            dockerfile: Dockerfile
+            image: ghcr.io/abedegno/muesli-server
+            platforms: linux/amd64,linux/arm64
+          - name: whisper-transcriber
+            context: plugins/whisper-transcriber
+            dockerfile: plugins/whisper-transcriber/Dockerfile
+            image: ghcr.io/abedegno/muesli-whisper-transcriber
+            platforms: linux/amd64,linux/arm64
+          - name: ollama-agent
+            context: plugins/ollama-agent
+            dockerfile: plugins/ollama-agent/Dockerfile
+            image: ghcr.io/abedegno/muesli-ollama-agent
+            platforms: linux/amd64,linux/arm64
+          - name: streaming-transcriber
+            context: plugins/streaming-transcriber
+            dockerfile: plugins/streaming-transcriber/Dockerfile
+            image: ghcr.io/abedegno/muesli-streaming-transcriber
+            platforms: linux/amd64,linux/arm64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ matrix.image }}
+          tags: |
+            type=sha,format=short
+            type=raw,value=latest
+            type=ref,event=tag
+
+      - name: Build and load ${{ matrix.name }} for scan
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ matrix.image }}:scan
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+      - name: Scan ${{ matrix.name }} image for vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ matrix.image }}:scan
+          format: table
+          output: trivy-${{ matrix.name }}.txt
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          exit-code: 0
+          trivyignores: .trivyignore
+
+      - name: Upload Trivy report for ${{ matrix.name }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-${{ matrix.name }}
+          path: trivy-${{ matrix.name }}.txt
+
+      - name: Generate SBOM for ${{ matrix.name }}
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ matrix.image }}:scan
+          format: spdx-json
+          output-file: sbom-${{ matrix.name }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Upload SBOM artifact for ${{ matrix.name }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.name }}
+          path: sbom-${{ matrix.name }}.spdx.json
+
+      - name: Build and push ${{ matrix.name }}
+        id: push
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platforms }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+      - name: Attest build provenance for ${{ matrix.name }}
+        uses: actions/attest-build-provenance@v2.4.0
+        with:
+          subject-name: ${{ matrix.image }}
+          subject-digest: ${{ steps.push.outputs.digest }}
+          push-to-registry: true
