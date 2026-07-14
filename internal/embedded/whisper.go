@@ -17,6 +17,13 @@ import (
 const (
 	DefaultWhisperName    = "Embedded whisper.cpp transcriber"
 	DefaultWhisperVersion = "0.1.0"
+
+	// startupCleanupStopTimeout bounds the Stop() call used to clean up a
+	// child process that failed its readiness check during startup. It must
+	// never be context.Background(): that never cancels, so a child that
+	// ignores SIGINT would hang the cleanup call forever, leaking the
+	// subprocess and blocking server startup indefinitely.
+	startupCleanupStopTimeout = 5 * time.Second
 )
 
 // WhisperHandle represents a running whisper-cpp-transcriber child process
@@ -95,13 +102,23 @@ func StartWhisperTranscriber(ctx context.Context) (*WhisperHandle, error) {
 	}()
 
 	if err := waitForAgentReady(ctx, handle.EndpointURL); err != nil {
-		if stopErr := handle.Stop(context.Background()); stopErr != nil {
+		if stopErr := stopStartupCleanup(handle); stopErr != nil {
 			return nil, fmt.Errorf("wait for whisper-cpp-transcriber: %w (cleanup stop failed: %v)", err, stopErr)
 		}
 		return nil, fmt.Errorf("wait for whisper-cpp-transcriber: %w", err)
 	}
 
 	return handle, nil
+}
+
+// stopStartupCleanup stops a child process that failed its readiness check
+// during StartWhisperTranscriber, bounded by startupCleanupStopTimeout so an
+// unresponsive (e.g. SIGINT-ignoring) child can never hang server startup
+// forever; Stop falls back to Kill once that bound elapses.
+func stopStartupCleanup(h *WhisperHandle) error {
+	stopCtx, cancel := context.WithTimeout(context.Background(), startupCleanupStopTimeout)
+	defer cancel()
+	return h.Stop(stopCtx)
 }
 
 func buildWhisperCppTranscriberCmd(binaryPath, addr, token string) *exec.Cmd {

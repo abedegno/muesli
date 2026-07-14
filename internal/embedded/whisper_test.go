@@ -223,6 +223,38 @@ func TestWhisperHandleStopFallsBackToKillOnTimeout(t *testing.T) {
 	}
 }
 
+func TestStopStartupCleanupDoesNotHangForever(t *testing.T) {
+	t.Parallel()
+
+	handle, _, exited := newFakeWhisperHandle(t, "ignore-interrupt")
+
+	// stopStartupCleanup must bound its Stop() call: this is the regression
+	// this test guards against (it previously passed context.Background(),
+	// which never cancels, to the startup-cleanup Stop call, so a child
+	// that ignores SIGINT would hang server startup forever).
+	cleanupDone := make(chan error, 1)
+	go func() {
+		cleanupDone <- stopStartupCleanup(handle)
+	}()
+
+	assertCtx, assertCancel := context.WithTimeout(context.Background(), startupCleanupStopTimeout+3*time.Second)
+	defer assertCancel()
+	select {
+	case err := <-cleanupDone:
+		if err == nil {
+			t.Fatal("stopStartupCleanup() error = nil, want non-nil after killing an unresponsive child")
+		}
+	case <-assertCtx.Done():
+		t.Fatal("stopStartupCleanup did not return within a bounded time against an unresponsive child")
+	}
+
+	select {
+	case <-exited:
+	case <-time.After(2 * time.Second):
+		t.Fatal("child process did not exit after stopStartupCleanup's Kill fallback")
+	}
+}
+
 func TestWaitForAgentReadyTimeout(t *testing.T) {
 	t.Parallel()
 
