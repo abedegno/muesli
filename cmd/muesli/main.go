@@ -36,6 +36,21 @@ func main() {
 		slog.Error("config", "error", err)
 		os.Exit(1)
 	}
+	var logLevel slog.LevelVar
+	level, err := config.ParseLogLevel(cfg.LogLevel)
+	if err != nil {
+		level = slog.LevelInfo
+	}
+	logLevel.Set(level)
+	handlerOpts := slog.HandlerOptions{Level: &logLevel}
+	var handler slog.Handler
+	switch cfg.LogFormat {
+	case "json":
+		handler = slog.NewJSONHandler(os.Stderr, &handlerOpts)
+	default:
+		handler = slog.NewTextHandler(os.Stderr, &handlerOpts)
+	}
+	slog.SetDefault(slog.New(handler))
 
 	if len(os.Args) > 1 && os.Args[1] == "doctor" {
 		os.Exit(runDoctor(ctx, cfg, os.Args[2:], os.Stdout))
