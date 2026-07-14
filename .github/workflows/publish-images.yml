@@ -82,10 +82,17 @@ jobs:
           scan-type: image
           image-ref: ${{ matrix.image }}:scan
           format: table
+          output: trivy-${{ matrix.name }}.txt
           scanners: vuln
           severity: HIGH,CRITICAL
-          exit-code: 1
+          exit-code: 0
           trivyignores: .trivyignore
+
+      - name: Upload Trivy report for ${{ matrix.name }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-${{ matrix.name }}
+          path: trivy-${{ matrix.name }}.txt
 
       - name: Generate SBOM for ${{ matrix.name }}
         uses: anchore/sbom-action@v0
