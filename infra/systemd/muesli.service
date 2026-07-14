@@ -1,0 +1,17 @@
+[Unit]
+Description=Muesli application stack
+Requires=docker.service
+Wants=network-online.target
+After=docker.service network-online.target
+
+[Service]
+Type=simple
+# Adjust this to the path where you cloned the muesli repository.
+WorkingDirectory=/opt/muesli
+ExecStart=/usr/bin/docker compose -f docker-compose.prod.yml up
+ExecStop=/usr/bin/docker compose -f docker-compose.prod.yml down
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
