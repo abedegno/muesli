@@ -77,14 +77,6 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-for cmd in docker; do
-  command -v "$cmd" >/dev/null 2>&1 || die "Missing required command: $cmd"
-done
-
-if ! docker compose version >/dev/null 2>&1; then
-  die "Compose v2 is required. Install the Docker Compose plugin so 'docker compose version' works."
-fi
-
 [ -d "$install_dir" ] || die "Install directory not found: $install_dir. Run scripts/install.sh first."
 [ -f "$install_dir/docker-compose.prod.yml" ] || die "Missing $install_dir/docker-compose.prod.yml. Run scripts/install.sh first."
 [ -f "$install_dir/.env" ] || die "Missing $install_dir/.env. Run scripts/install.sh first."
@@ -116,9 +108,11 @@ else
   printf '%s\n' "Current MUESLI_IMAGE_TAG in $install_dir/.env: not set"
 fi
 
-if [ "$yes" -eq 0 ] && [ -t 0 ]; then
+if [ "$yes" -eq 0 ]; then
   printf '%s' "Continue with the upgrade? [y/N] "
-  IFS= read -r answer || exit 1
+  if ! IFS= read -r answer; then
+    die "Confirmation required. Re-run with -y/--yes or provide y on stdin."
+  fi
   case "$answer" in
     y|Y)
       ;;
@@ -127,6 +121,14 @@ if [ "$yes" -eq 0 ] && [ -t 0 ]; then
       exit 1
       ;;
   esac
+fi
+
+for cmd in docker; do
+  command -v "$cmd" >/dev/null 2>&1 || die "Missing required command: $cmd"
+done
+
+if ! docker compose version >/dev/null 2>&1; then
+  die "Compose v2 is required. Install the Docker Compose plugin so 'docker compose version' works."
 fi
 
 printf '%s\n' "Pulling pinned images from GHCR..."
