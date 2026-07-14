@@ -107,8 +107,8 @@ func TestSummarizeTemplateAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetSummaries: %v", err)
 	}
-	if len(sums) != len(tmpls) {
-		t.Fatalf("summaries after summarize-template = %d, want %d", len(sums), len(tmpls))
+	if len(sums) != 2 {
+		t.Fatalf("summaries after summarize-template = %d, want 2", len(sums))
 	}
 	var sawFreshTarget, sawOtherUntouched bool
 	for _, s := range sums {
