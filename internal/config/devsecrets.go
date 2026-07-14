@@ -1,5 +1,10 @@
 package config
 
+import (
+	"fmt"
+	"strings"
+)
+
 // devDefaults maps env-var names to their known dev-only default values
 // (taken verbatim from docker-compose.yml). An empty string as the default
 // value means the field has no known dev default (so it is never flagged).
@@ -56,4 +61,13 @@ func DevSecretWarnings(cfg Config) []string {
 		}
 	}
 	return warnings
+}
+
+// RequireProductionSecrets returns an error when a production config is missing
+// secrets that must be set explicitly in production.
+func RequireProductionSecrets(cfg Config) error {
+	if cfg.Production && strings.TrimSpace(cfg.StorageSigningKey) == "" {
+		return fmt.Errorf("MUESLI_STORAGE_SIGNING_KEY is required in production")
+	}
+	return nil
 }

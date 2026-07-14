@@ -38,6 +38,115 @@ func TestLoadDefaultsAndRequired(t *testing.T) {
 	}
 }
 
+func TestLoadValidationErrors(t *testing.T) {
+	get := func(m map[string]string) func(string) string {
+		return func(k string) string { return m[k] }
+	}
+
+	tests := []struct {
+		name       string
+		env        map[string]string
+		wantSubstr string
+	}{
+		{
+			name: "database url wrong scheme",
+			env: map[string]string{
+				"DATABASE_URL": "http://localhost/muesli",
+			},
+			wantSubstr: "DATABASE_URL must be a postgres:// or postgresql:// URL with a host",
+		},
+		{
+			name: "database url missing host",
+			env: map[string]string{
+				"DATABASE_URL": "postgres:///muesli",
+			},
+			wantSubstr: "DATABASE_URL must be a postgres:// or postgresql:// URL with a host",
+		},
+		{
+			name: "embeddings url wrong scheme",
+			env: map[string]string{
+				"DATABASE_URL":          "postgres://localhost/muesli",
+				"MUESLI_EMBEDDINGS_URL": "ftp://ollama:11434",
+			},
+			wantSubstr: "MUESLI_EMBEDDINGS_URL must be an http:// or https:// URL with a host",
+		},
+		{
+			name: "webhook url wrong scheme",
+			env: map[string]string{
+				"DATABASE_URL":       "postgres://localhost/muesli",
+				"MUESLI_WEBHOOK_URL": "ws://hooks.example.com",
+			},
+			wantSubstr: "MUESLI_WEBHOOK_URL must be an http:// or https:// URL with a host",
+		},
+		{
+			name: "default transcriber url wrong scheme",
+			env: map[string]string{
+				"DATABASE_URL":                   "postgres://localhost/muesli",
+				"MUESLI_DEFAULT_TRANSCRIBER_URL": "ws://transcriber.example.com",
+			},
+			wantSubstr: "MUESLI_DEFAULT_TRANSCRIBER_URL must be an http:// or https:// URL with a host",
+		},
+		{
+			name: "default streaming transcriber url missing host",
+			env: map[string]string{
+				"DATABASE_URL": "postgres://localhost/muesli",
+				"MUESLI_DEFAULT_STREAMING_TRANSCRIBER_URL": "https:///stream",
+			},
+			wantSubstr: "MUESLI_DEFAULT_STREAMING_TRANSCRIBER_URL must be an http:// or https:// URL with a host",
+		},
+		{
+			name: "default agent url wrong scheme",
+			env: map[string]string{
+				"DATABASE_URL":             "postgres://localhost/muesli",
+				"MUESLI_DEFAULT_AGENT_URL": "ftp://agent.example.com",
+			},
+			wantSubstr: "MUESLI_DEFAULT_AGENT_URL must be an http:// or https:// URL with a host",
+		},
+		{
+			name: "mode invalid",
+			env: map[string]string{
+				"DATABASE_URL": "postgres://localhost/muesli",
+				"MUESLI_MODE":  "desktop",
+			},
+			wantSubstr: "MUESLI_MODE must be 'embedded' or 'server'",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Load(get(tc.env))
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantSubstr) {
+				t.Fatalf("error %q does not contain %q", err, tc.wantSubstr)
+			}
+		})
+	}
+}
+
+func TestLoadValidationValidConfig(t *testing.T) {
+	get := func(m map[string]string) func(string) string {
+		return func(k string) string { return m[k] }
+	}
+
+	cfg, err := Load(get(map[string]string{
+		"DATABASE_URL":                             "postgres://user:pass@db.example.com:5432/muesli",
+		"MUESLI_EMBEDDINGS_URL":                    "https://embeddings.example.com",
+		"MUESLI_WEBHOOK_URL":                       "https://hooks.example.com",
+		"MUESLI_DEFAULT_TRANSCRIBER_URL":           "http://transcriber.example.com",
+		"MUESLI_DEFAULT_STREAMING_TRANSCRIBER_URL": "https://streaming.example.com",
+		"MUESLI_DEFAULT_AGENT_URL":                 "https://agent.example.com",
+		"MUESLI_MODE":                              "server",
+	}))
+	if err != nil {
+		t.Fatalf("unexpected error for valid config: %v", err)
+	}
+	if cfg.Embedded {
+		t.Fatalf("Embedded = %v, want false for MUESLI_MODE=server", cfg.Embedded)
+	}
+}
+
 func TestLoadInternalURLOverrideAndFallback(t *testing.T) {
 	get := func(m map[string]string) func(string) string {
 		return func(k string) string { return m[k] }
