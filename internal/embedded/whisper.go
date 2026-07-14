@@ -134,6 +134,15 @@ func buildWhisperCppTranscriberCmd(binaryPath, addr, token string) *exec.Cmd {
 		"MUESLI_WHISPER_NAME="+DefaultWhisperName,
 		"MUESLI_WHISPER_VERSION="+DefaultWhisperVersion,
 	)
+	for _, key := range []string{
+		"MUESLI_WHISPER_MODEL_DIR",
+		"MUESLI_WHISPER_MODEL_URL",
+		"MUESLI_WHISPER_MODEL",
+	} {
+		if value, ok := os.LookupEnv(key); ok {
+			cmd.Env = append(cmd.Env, key+"="+value)
+		}
+	}
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd
