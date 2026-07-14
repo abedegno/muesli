@@ -110,4 +110,3 @@ For the backup and restore details, see [docs/BACKUP.md](BACKUP.md).
 - [docs/TROUBLESHOOTING.md](TROUBLESHOOTING.md) if something is slow, stuck, or
   failing
 - [docs/CONFIGURATION.md](CONFIGURATION.md) to customize environment variables
-
