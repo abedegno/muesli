@@ -6,73 +6,41 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"net"
-	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	"github.com/abedegno/muesli/cmd/ollama-agent/internal/agent"
+	"github.com/abedegno/muesli/internal/pluginkit"
 )
 
 func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	cfg := loadConfig()
-	if err := run(ctx, cfg); err != nil && !errors.Is(err, context.Canceled) {
+	plugCfg, engCfg := loadConfig()
+	if err := run(ctx, plugCfg, agent.New(engCfg)); err != nil && !errors.Is(err, context.Canceled) {
 		slog.Error("ollama agent", "error", err)
 		os.Exit(1)
 	}
 }
 
-func run(ctx context.Context, cfg agent.Config) error {
+func run(ctx context.Context, cfg pluginkit.Config, eng pluginkit.Agent) error {
 	if strings.TrimSpace(cfg.Token) == "" {
 		return fmt.Errorf("MUESLI_OLLAMA_AGENT_TOKEN is required")
 	}
 	if strings.TrimSpace(cfg.Addr) == "" {
 		return fmt.Errorf("listen address is required")
 	}
-
-	srv := &http.Server{
-		Addr:    cfg.Addr,
-		Handler: agent.New(cfg),
-	}
-
-	ln, err := net.Listen("tcp", cfg.Addr)
-	if err != nil {
-		return err
-	}
-	defer ln.Close()
-
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- srv.Serve(ln)
-	}()
-
-	select {
-	case <-ctx.Done():
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		return srv.Shutdown(shutdownCtx)
-	case err := <-errCh:
-		if err == nil || errorsIsServerClosed(err) {
-			return nil
-		}
-		return err
-	}
+	return pluginkit.ServeAgent(ctx, cfg, eng)
 }
 
-func loadConfig() agent.Config {
-	// The agent accepts its bearer token from either MUESLI_OLLAMA_AGENT_TOKEN
-	// or --token; the embedded launcher sets both so the process is easy to run
-	// standalone and deterministic when spawned as a child.
+func loadConfig() (pluginkit.Config, agent.Config) {
 	defaultAddr := envOrDefault("MUESLI_OLLAMA_AGENT_ADDR", "127.0.0.1:0")
 	defaultToken := envOrDefault("MUESLI_OLLAMA_AGENT_TOKEN", "")
-	defaultOllamaURL := envOrDefault("MUESLI_OLLAMA_URL", "http://127.0.0.1:11434")
+	defaultOllamaURL := envOrDefault("MUESLI_OLLAMA_URL", agent.DefaultURL)
 	defaultModel := envOrDefault("MUESLI_OLLAMA_AGENT_MODEL", agent.DefaultModel)
 	defaultTemperature := parseFloat(envOrDefault("MUESLI_OLLAMA_AGENT_TEMPERATURE", "0.2"), 0.2)
 	defaultName := envOrDefault("MUESLI_OLLAMA_AGENT_NAME", agent.DefaultName)
@@ -87,15 +55,19 @@ func loadConfig() agent.Config {
 	version := flag.String("version", defaultVersion, "plugin version")
 	flag.Parse()
 
-	return agent.Config{
-		Addr:        *addr,
-		Token:       *token,
-		OllamaURL:   *ollamaURL,
-		Model:       *model,
-		Temperature: *temperature,
-		Name:        *name,
-		Version:     *version,
-	}
+	return pluginkit.Config{
+			Name:         *name,
+			Version:      *version,
+			Kind:         "agent",
+			Token:        *token,
+			Addr:         *addr,
+			ModelDir:     "",
+			ConfigSchema: agent.ConfigSchema,
+		}, agent.Config{
+			OllamaURL:   *ollamaURL,
+			Model:       *model,
+			Temperature: *temperature,
+		}
 }
 
 func envOrDefault(key, fallback string) string {
@@ -114,8 +86,4 @@ func parseFloat(v string, fallback float64) float64 {
 		return fallback
 	}
 	return f
-}
-
-func errorsIsServerClosed(err error) bool {
-	return err == http.ErrServerClosed
 }
