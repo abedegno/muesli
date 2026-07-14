@@ -68,18 +68,20 @@ Deploying to production? See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ### One-line install
 
-Use this for a production/hosted deployment. It fetches pinned copies of
-`docker-compose.prod.yml` and `.env.example`, generates real secrets in `.env`,
-and uses the GHCR-hosted images referenced by the production compose stack.
+Use this for a production/hosted deployment. It downloads the GitHub Release
+asset bundle (a version-pinned `docker-compose.prod.yml`, `.env.example`,
+`install.sh`, and a `SHA256SUMS` file), verifies checksums before installing
+anything, generates real secrets in `.env`, and uses the GHCR-hosted images
+already pinned into that release's compose file.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/abedegno/muesli/main/scripts/install.sh | sh
+curl -fsSL https://github.com/abedegno/muesli/releases/latest/download/install.sh | sh
 ```
 
 This is separate from the dev `docker compose up` quickstart above. The
 installer writes the production files into `./muesli` by default; set
-`MUESLI_INSTALL_REF` to fetch a different tag, branch, or commit, and use
-`--up` if you want the script to start the stack after installation.
+`MUESLI_RELEASE_TAG` to pin a specific release instead of the latest one, and
+use `--up` if you want the script to start the stack after installation.
 
 ### GPU acceleration
 

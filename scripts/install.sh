@@ -3,8 +3,7 @@ set -eu
 
 repo_owner='abedegno'
 repo_name='muesli'
-install_ref=${MUESLI_INSTALL_REF:-main}
-image_tag=${MUESLI_IMAGE_TAG:-latest}
+release_tag=${MUESLI_RELEASE_TAG:-}
 install_dir='./muesli'
 run_up=0
 force=0
@@ -15,8 +14,12 @@ usage() {
   cat <<'EOF'
 Usage: install.sh [OPTIONS] [DIR]
 
-Install the production Muesli stack into DIR (default: ./muesli) by fetching
-docker-compose.prod.yml and .env.example from an explicit git ref.
+Install the production Muesli stack into DIR (default: ./muesli) by
+downloading the GitHub Release asset bundle for a version tag: a
+version-pinned docker-compose.prod.yml (image tags baked in, so it does not
+depend on MUESLI_IMAGE_TAG in .env), .env.example, install.sh, and a
+SHA256SUMS file. Every downloaded file's checksum is verified against
+SHA256SUMS before anything is moved into DIR.
 
 Options:
   -d, --dir DIR   Target install directory.
@@ -25,14 +28,14 @@ Options:
   -h, --help      Show this help text and exit.
 
 Environment:
-  MUESLI_INSTALL_REF   Git ref to fetch from (default: main).
-  MUESLI_IMAGE_TAG     Image tag to write into .env (default: latest).
+  MUESLI_RELEASE_TAG   Release tag to install, e.g. v1.2.3 (default: the
+                        latest release, resolved via the GitHub API).
   MUESLI_INSTALL_READY_TIMEOUT   Seconds to wait for /readyz after --up (default: 240).
   MUESLI_INSTALL_READY_INTERVAL   Seconds between /readyz polls after --up (default: 5).
 
 Examples:
-  curl -fsSL https://raw.githubusercontent.com/abedegno/muesli/main/scripts/install.sh | sh
-  MUESLI_INSTALL_REF=main sh scripts/install.sh --dir /opt/muesli --up
+  curl -fsSL https://github.com/abedegno/muesli/releases/latest/download/install.sh | sh
+  MUESLI_RELEASE_TAG=v1.2.3 sh scripts/install.sh --dir /opt/muesli --up
 EOF
 }
 
@@ -68,6 +71,16 @@ wait_for_readyz() {
 
     sleep "$ready_interval"
   done
+}
+
+# Resolve the latest release tag via the GitHub API (no jq dependency; parsed
+# with sed so the script stays POSIX sh with no extra required commands).
+resolve_latest_release_tag() {
+  api_url="https://api.github.com/repos/$repo_owner/$repo_name/releases/latest"
+  api_body=$(curl -fsSL "$api_url") || die "Failed to query $api_url to resolve the latest release. Set MUESLI_RELEASE_TAG to pin a specific release instead."
+  latest_tag=$(printf '%s\n' "$api_body" | sed -n 's/.*"tag_name":[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)
+  [ -n "$latest_tag" ] || die "Could not parse a release tag from $api_url. Set MUESLI_RELEASE_TAG to pin a specific release instead."
+  printf '%s\n' "$latest_tag"
 }
 
 trap cleanup 0 1 2 15
@@ -123,9 +136,17 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-for cmd in docker curl openssl awk mktemp mv mkdir rm; do
+for cmd in docker curl openssl awk sed mktemp mv mkdir rm; do
   command -v "$cmd" >/dev/null 2>&1 || die "Missing required command: $cmd"
 done
+
+if command -v sha256sum >/dev/null 2>&1; then
+  checksum_cmd='sha256sum -c'
+elif command -v shasum >/dev/null 2>&1; then
+  checksum_cmd='shasum -a 256 -c'
+else
+  die "Missing required command: sha256sum (or shasum) to verify release checksums."
+fi
 
 if ! docker info >/dev/null 2>&1; then
   die "Docker is not ready. Start the Docker daemon and make sure your user can talk to it, then try again."
@@ -135,21 +156,40 @@ if ! docker compose version >/dev/null 2>&1; then
   die "Compose v2 is required. Install the Docker Compose plugin so 'docker compose version' works."
 fi
 
+if [ -z "$release_tag" ]; then
+  printf '%s\n' "Resolving the latest release of $repo_owner/$repo_name..."
+  release_tag=$(resolve_latest_release_tag)
+fi
+
 tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/muesli-install.XXXXXX")
 
 mkdir -p "$install_dir"
 
-# Fetch individual files from raw.githubusercontent.com at an explicit git ref
-# so the install is pinned without cloning the whole repository.
-compose_url="https://raw.githubusercontent.com/$repo_owner/$repo_name/$install_ref/docker-compose.prod.yml"
-env_example_url="https://raw.githubusercontent.com/$repo_owner/$repo_name/$install_ref/.env.example"
+# Fetch the self-contained release asset bundle: a docker-compose.prod.yml
+# with image tags pinned literally to this release, .env.example, install.sh,
+# and a SHA256SUMS covering all three.
+release_base="https://github.com/$repo_owner/$repo_name/releases/download/$release_tag"
 
-printf '%s\n' "Fetching production files from ref: $install_ref"
-curl -fsSL "$compose_url" -o "$tmpdir/docker-compose.prod.yml"
-curl -fsSL "$env_example_url" -o "$tmpdir/.env.example"
+printf '%s\n' "Fetching release $release_tag from $repo_owner/$repo_name..."
+curl -fsSL "$release_base/docker-compose.prod.yml" -o "$tmpdir/docker-compose.prod.yml" || die "Failed to download docker-compose.prod.yml for release $release_tag. Check that the release and its assets exist."
+curl -fsSL "$release_base/.env.example" -o "$tmpdir/.env.example" || die "Failed to download .env.example for release $release_tag."
+curl -fsSL "$release_base/install.sh" -o "$tmpdir/install.sh" || die "Failed to download install.sh for release $release_tag."
+curl -fsSL "$release_base/SHA256SUMS" -o "$tmpdir/SHA256SUMS" || die "Failed to download SHA256SUMS for release $release_tag; refusing to install without checksum verification."
+
+for asset in docker-compose.prod.yml .env.example install.sh; do
+  awk -v f="$asset" '$2 == f || $2 == "*" f { found = 1 } END { exit !found }' "$tmpdir/SHA256SUMS" \
+    || die "SHA256SUMS for release $release_tag has no entry for $asset; refusing to install. Nothing has been installed."
+done
+
+checksum_output=$(cd "$tmpdir" && $checksum_cmd SHA256SUMS 2>&1) || {
+  printf '%s\n' "$checksum_output" >&2
+  die "Checksum verification failed for release $release_tag assets; aborting install. Nothing has been installed."
+}
 
 mv "$tmpdir/docker-compose.prod.yml" "$install_dir/docker-compose.prod.yml"
 mv "$tmpdir/.env.example" "$install_dir/.env.example"
+mv "$tmpdir/install.sh" "$install_dir/install.sh"
+chmod +x "$install_dir/install.sh" 2>/dev/null || true
 
 if [ -e "$install_dir/.env" ] && [ "$force" -ne 1 ]; then
   printf '%s\n' "Existing .env found at $install_dir/.env; leaving it unchanged. Use --force to regenerate it."
@@ -158,11 +198,10 @@ else
   storage_key=$(openssl rand -base64 32)
   env_tmp="$tmpdir/.env"
 
-  awk -v mk="$master_key" -v sk="$storage_key" -v it="$image_tag" '
+  awk -v mk="$master_key" -v sk="$storage_key" '
     BEGIN {
       found_mk = 0
       found_sk = 0
-      found_it = 0
     }
     /^MUESLI_MASTER_KEY=/ {
       print "MUESLI_MASTER_KEY=" mk
@@ -174,11 +213,6 @@ else
       found_sk = 1
       next
     }
-    /^MUESLI_IMAGE_TAG=/ {
-      print "MUESLI_IMAGE_TAG=" it
-      found_it = 1
-      next
-    }
     {
       print
     }
@@ -188,9 +222,6 @@ else
       }
       if (!found_sk) {
         print "MUESLI_STORAGE_SIGNING_KEY=" sk
-      }
-      if (!found_it) {
-        print "MUESLI_IMAGE_TAG=" it
       }
     }
   ' "$install_dir/.env.example" > "$env_tmp"
@@ -214,7 +245,7 @@ if [ "$run_up" -eq 1 ]; then
   printf '%s\n' "Started the production stack with docker compose."
 fi
 
-printf '%s\n' "Install complete."
+printf '%s\n' "Install complete (release $release_tag)."
 printf '%s\n' "Next steps:"
 printf '%s\n' "  cd $install_dir"
 printf '%s\n' "  review .env before using the stack"

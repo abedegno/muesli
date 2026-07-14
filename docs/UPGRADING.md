@@ -56,8 +56,8 @@ No further steps are needed for a standard upgrade.
 ## Upgrade procedure (hosted install / compose.prod)
 
 This path is for installs created by `scripts/install.sh`. Those installs use
-`docker-compose.prod.yml`, image names under `ghcr.io/abedegno/muesli-*`, and
-the `MUESLI_IMAGE_TAG` pin in `.env`.
+`docker-compose.prod.yml` with image names under `ghcr.io/abedegno/muesli-*`
+pinned literally to the release tag the compose file was fetched from.
 
 ### 1. Back up first
 
@@ -71,12 +71,22 @@ docker compose -f docker-compose.prod.yml exec -T postgres pg_dump -U postgres m
 Run that from the install directory that contains `docker-compose.prod.yml`
 and `.env`.
 
-### 2. Bump the image pin
+### 2. Pull the new release's compose file
 
-Update `MUESLI_IMAGE_TAG` in `.env` to the new release tag, then re-run the
-upgrade. If you are re-seeding the install directory instead of editing it in
-place, you can also run `scripts/install.sh --force` with `MUESLI_INSTALL_REF`
-set to the newer ref and `MUESLI_IMAGE_TAG` set to the new release tag.
+Re-run the installer pointed at the new release tag so it refetches
+`docker-compose.prod.yml` (with the new tag's images pinned in) alongside a
+fresh `install.sh` and `.env.example`:
+
+```bash
+MUESLI_RELEASE_TAG=v1.2.3 scripts/install.sh --dir /opt/muesli
+```
+
+`docker-compose.prod.yml`, `.env.example`, and `install.sh` are always
+refetched and overwritten from the chosen release. Do **not** add `--force`
+here: without it the installer leaves your existing `.env` (and its secrets)
+untouched, which is what you want on an upgrade; `--force` would regenerate
+`MUESLI_MASTER_KEY` and `MUESLI_STORAGE_SIGNING_KEY`, invalidating existing
+encrypted data and presigned URLs.
 
 ### 3. Upgrade
 
@@ -90,8 +100,11 @@ What it does:
 
 - confirms you have the right install directory
 - reminds you to take a backup
-- prints the current `MUESLI_IMAGE_TAG` for rollback reference
-- pulls the pinned GHCR images
+- prints the current `MUESLI_IMAGE_TAG` from `.env` for rollback reference if
+  it happens to be set (release-based installs normally leave it unset, since
+  the image tags are pinned literally in `docker-compose.prod.yml` instead)
+- pulls the pinned GHCR images referenced by the installed
+  `docker-compose.prod.yml`
 - recreates the containers with `docker compose up -d`
 
 The Muesli server applies migrations on boot, so the upgrade script does not
@@ -99,8 +112,11 @@ run any manual `psql` or migration command.
 
 ### 4. Roll back if needed
 
-If the new release does not work, pin `MUESLI_IMAGE_TAG` back to the previous
-value in `.env`, then run the same `pull` and `up -d` commands again.
+If the new release does not work, re-run the installer with the previous
+release tag (`MUESLI_RELEASE_TAG=<previous tag> scripts/install.sh --dir
+/opt/muesli`, again without `--force`) to restore the old
+`docker-compose.prod.yml`, then run the same `pull` and `up -d` commands
+again.
 
 If the failed version introduced a migration that the old binary cannot read,
 restore the database backup you took before the upgrade using the restore

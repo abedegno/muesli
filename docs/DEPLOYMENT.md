@@ -79,7 +79,11 @@ It does not build anything locally, and it reads secrets and other
 environment-specific values directly from `.env` with no fallback defaults.
 Follow the [Production secrets checklist](#production-secrets-checklist) and
 set `MUESLI_IMAGE_TAG` to a real published tag. Today that tag is the short git
-SHA produced by the publish workflow.
+SHA produced by the publish workflow. (If you installed with
+[`scripts/install.sh`](../scripts/install.sh), the compose file it wrote
+already has image tags pinned literally to a release and does not read
+`MUESLI_IMAGE_TAG` at all — this only applies when running
+`docker-compose.prod.yml` straight from a git checkout.)
 
 Use the production stack like this:
 
@@ -317,23 +321,29 @@ compose stack picks it up automatically on the next `docker compose up`.
 
 ---
 
-## Install script (A3)
+## Install script (A3/A6)
 
 For a fresh production box, the recommended path is the one-line installer in
 [`scripts/install.sh`](../scripts/install.sh) (see the README's One-line
-install section). It fetches `docker-compose.prod.yml` and `.env.example` from
-the git ref you choose, writes fresh `MUESLI_MASTER_KEY` and
-`MUESLI_STORAGE_SIGNING_KEY` values into `.env`, and can optionally start the
-stack with `--up`.
+install section). It downloads the release asset bundle attached to a GitHub
+Release for a version tag — a version-pinned `docker-compose.prod.yml` (image
+tags baked in literally), `.env.example`, `install.sh`, and a `SHA256SUMS`
+file — verifies every downloaded file's checksum before installing anything,
+writes fresh `MUESLI_MASTER_KEY` and `MUESLI_STORAGE_SIGNING_KEY` values into
+`.env`, and can optionally start the stack with `--up`. See
+[`docs/PUBLISHED-IMAGES.md`](./PUBLISHED-IMAGES.md) for how that release
+bundle is built.
 
-Use `MUESLI_INSTALL_REF` to pin the files you fetch and `MUESLI_IMAGE_TAG` to
-pin the image tag written into `.env`. `--force` regenerates `.env` even if one
-already exists, and `--dir` / `-d` choose the install directory.
+Use `MUESLI_RELEASE_TAG` to pin a specific release; it defaults to the latest
+release, resolved via the GitHub API. `--force` regenerates `.env` even if one
+already exists, and `--dir` / `-d` choose the install directory. Because the
+release bundle's compose file already has image tags pinned literally, there
+is no `MUESLI_IMAGE_TAG` to set for installs created this way.
 
 The installer handles the two secrets that are most error-prone to generate by
 hand, but you still need to review the remaining production values before the
-first boot, especially `WHISPER_TOKEN`, `AGENT_TOKEN`, `MUESLI_PUBLIC_URL`, and
-the `MUESLI_IMAGE_TAG` you want to run. Cross-check those against the manual
+first boot, especially `WHISPER_TOKEN`, `AGENT_TOKEN`, and `MUESLI_PUBLIC_URL`.
+Cross-check those against the manual
 [Production secrets checklist](#production-secrets-checklist) below.
 
 ---

@@ -10,6 +10,13 @@ Muesli publishes prebuilt container images to GHCR for hosted deployments:
 The images are tagged with the git SHA, `latest`, and release tags such as
 `v1.2.3` when published from a matching tag.
 
+Pushing a `v*` tag also attaches a self-contained release asset bundle to the
+matching GitHub Release once the images finish publishing: a version-pinned
+`docker-compose.prod.yml` (image tags baked in literally), `.env.example`,
+`install.sh`, and a `SHA256SUMS` covering all three. This is what
+[`scripts/install.sh`](../scripts/install.sh) downloads by default; see the
+"Install script" section of [`docs/DEPLOYMENT.md`](./DEPLOYMENT.md).
+
 Each published-image job first builds a local `linux/amd64` image, scans that
 actual image with Trivy before any GHCR push, and generates an SPDX JSON SBOM
 from the same loaded image. The Trivy step is currently report-only, not
