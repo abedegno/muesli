@@ -48,7 +48,7 @@ func pollFullUntilReady(t *testing.T, srv *api.Server, noteID string, hdr map[st
 	return nil
 }
 
-func setupE2E(t *testing.T, transcriber, agent *plugintest.Stub) (*api.Server, map[string]string, string) {
+func setupE2E(t *testing.T, transcriber, agent *plugintest.Stub) (*api.Server, *store.Store, map[string]string, string) {
 	t.Helper()
 	ctx := context.Background()
 	pool := testutil.NewPool(t)
@@ -108,7 +108,7 @@ func setupE2E(t *testing.T, transcriber, agent *plugintest.Stub) (*api.Server, m
 	if rec.Code != http.StatusOK {
 		t.Fatalf("uploaded notify status %d body %s", rec.Code, rec.Body)
 	}
-	return srv, hdr, note.ID
+	return srv, st, hdr, note.ID
 }
 
 func TestEndToEndHappyPath(t *testing.T) {
@@ -118,15 +118,19 @@ func TestEndToEndHappyPath(t *testing.T) {
 	ag := plugintest.NewAgent()
 	defer ag.Close()
 
-	srv, hdr, noteID := setupE2E(t, tr, ag)
+	srv, st, hdr, noteID := setupE2E(t, tr, ag)
 	result := pollFullUntilReady(t, srv, noteID, hdr)
+	tmpls, err := st.BuiltInTemplates(context.Background())
+	if err != nil {
+		t.Fatalf("BuiltInTemplates: %v", err)
+	}
 
 	if string(result["transcript"].(json.RawMessage)) == "null" {
 		t.Fatal("expected a transcript")
 	}
 	sums := result["summaries"].([]map[string]any)
-	if len(sums) != 2 {
-		t.Fatalf("summaries = %d, want 2", len(sums))
+	if len(sums) != len(tmpls) {
+		t.Fatalf("summaries = %d, want %d", len(sums), len(tmpls))
 	}
 	for _, s := range sums {
 		if s["status"] != "ready" {
@@ -143,7 +147,7 @@ func TestEndToEndTranscriberRetriesThenSucceeds(t *testing.T) {
 	defer ag.Close()
 	tr.FailNext(1) // first transcribe attempt 500s; the leased job retries and succeeds
 
-	srv, hdr, noteID := setupE2E(t, tr, ag)
+	srv, _, hdr, noteID := setupE2E(t, tr, ag)
 	result := pollFullUntilReady(t, srv, noteID, hdr)
 	if string(result["transcript"].(json.RawMessage)) == "null" {
 		t.Fatal("expected a transcript after retry")
@@ -158,7 +162,7 @@ func TestEndToEndTranscriberTerminalFailure(t *testing.T) {
 	defer ag.Close()
 	tr.FailNext(10) // exceed MaxJobAttempts → transcribe job terminally fails
 
-	srv, hdr, noteID := setupE2E(t, tr, ag)
+	srv, _, hdr, noteID := setupE2E(t, tr, ag)
 
 	// The note never becomes ready; the transcribe job ends 'failed' and surfaces
 	// in the admin monitor, and the note itself is set to 'failed' (terminal
@@ -194,7 +198,7 @@ func TestE2E_Resummarize(t *testing.T) {
 	ag := plugintest.NewAgent()
 	defer ag.Close()
 
-	srv, hdr, noteID := setupE2E(t, tr, ag)
+	srv, _, hdr, noteID := setupE2E(t, tr, ag)
 
 	// 1. Wait for the initial pipeline to complete.
 	pollFullUntilReady(t, srv, noteID, hdr)

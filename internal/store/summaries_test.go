@@ -56,7 +56,7 @@ func TestEnqueueSummarizeJobs(t *testing.T) {
 
 	// One summarize job per template was enqueued.
 	jobs := 0
-	for i := 0; i < 5; i++ {
+	for i := 0; i < len(tmpls)+1; i++ {
 		job, ok, err := st.ClaimJob(ctx, 30*time.Second)
 		if err != nil {
 			t.Fatalf("ClaimJob: %v", err)
