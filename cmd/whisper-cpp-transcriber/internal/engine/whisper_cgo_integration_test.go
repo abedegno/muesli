@@ -1,5 +1,22 @@
 //go:build whisper_cgo
 
+// NOTE on the structural limit of this guard: this file only compiles at
+// all under `-tags whisper_cgo`, and cgo compilation itself requires the
+// whisper.cpp headers/libs to be resolvable via the C toolchain's search
+// path (typically via C_INCLUDE_PATH/LIBRARY_PATH pointing at the vendored
+// artifacts, see the build-whisper-lib CI workflow and this repo's docs). If
+// those are fully absent, `go build/test -tags whisper_cgo` fails to
+// COMPILE before any Go-level t.Skip can run -- that is unavoidable with
+// cgo build tags and is not something a runtime check can paper over.
+// Operators must not pass `-tags whisper_cgo` unless they've provisioned
+// the libs per the documented prereqs.
+//
+// The runtime guard below (skipUnlessWhisperCppArtifactsPresent) instead
+// covers the case where the package DID compile -- e.g. the headers were
+// found via some other system default include path -- but the specific
+// vendored model/lib artifacts this integration test wants for a full,
+// meaningful run aren't actually present. In that case we skip cleanly
+// rather than fail.
 package engine
 
 import (
@@ -23,15 +40,65 @@ import (
 // fetches.
 const tinyModelURL = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin"
 
+// skipUnlessWhisperCppArtifactsPresent skips the calling test, with a clear
+// message, unless the environment looks like it actually has the vendored
+// whisper.cpp headers and static libs available -- i.e. C_INCLUDE_PATH
+// contains a directory with whisper.h and LIBRARY_PATH contains a directory
+// with libwhisper.a. This is a best-effort defensive check: it can't detect
+// headers/libs found via other means (e.g. baked into a system include
+// path), but it does protect against the common case of running
+// `-tags whisper_cgo` in an environment that isn't actually provisioned for
+// it in the way this repo's build-whisper-lib workflow provisions it.
+func skipUnlessWhisperCppArtifactsPresent(t *testing.T) {
+	t.Helper()
+
+	includeDirs := filepath.SplitList(os.Getenv("C_INCLUDE_PATH"))
+	libDirs := filepath.SplitList(os.Getenv("LIBRARY_PATH"))
+	if len(includeDirs) == 0 || len(libDirs) == 0 {
+		t.Skip("skipping whisper_cgo integration test: C_INCLUDE_PATH/LIBRARY_PATH not set; vendored whisper.cpp libs/headers not provisioned")
+	}
+
+	hasHeader := false
+	for _, dir := range includeDirs {
+		if dir == "" {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(dir, "whisper.h")); err == nil {
+			hasHeader = true
+			break
+		}
+	}
+	if !hasHeader {
+		t.Skipf("skipping whisper_cgo integration test: whisper.h not found under C_INCLUDE_PATH=%q", os.Getenv("C_INCLUDE_PATH"))
+	}
+
+	hasLib := false
+	for _, dir := range libDirs {
+		if dir == "" {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(dir, "libwhisper.a")); err == nil {
+			hasLib = true
+			break
+		}
+	}
+	if !hasLib {
+		t.Skipf("skipping whisper_cgo integration test: libwhisper.a not found under LIBRARY_PATH=%q", os.Getenv("LIBRARY_PATH"))
+	}
+}
+
 // TestWhisperCGOEngineTranscribesFixture exercises the real whisper.cpp cgo
 // engine end-to-end: it downloads a tiny GGML model, decodes a short checked
 // in speech fixture, and runs it through Engine.Transcribe.
 //
 // It is env-guarded so that it skips cleanly (rather than failing) whenever
-// the model can't be fetched -- e.g. no network access -- keeping it
+// either the vendored whisper.cpp libs/headers aren't provisioned or the
+// model can't be fetched -- e.g. no network access -- keeping it
 // runner-safe. It only builds at all under `-tags whisper_cgo`, so it never
 // affects the default pure-Go build or CI.
 func TestWhisperCGOEngineTranscribesFixture(t *testing.T) {
+	skipUnlessWhisperCppArtifactsPresent(t)
+
 	if _, err := http.Head(tinyModelURL); err != nil {
 		t.Skipf("skipping whisper_cgo integration test: model host unreachable: %v", err)
 	}
