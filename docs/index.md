@@ -23,6 +23,7 @@ within the `docs/` directory.
 | Document                                   | What's in it                                                       |
 | ------------------------------------------ | ------------------------------------------------------------------ |
 | [`CONFIGURATION.md`](CONFIGURATION.md)     | Complete reference for all `MUESLI_*` environment variables.       |
+| [`EMBEDDED-POSTGRES-BUNDLE.md`](EMBEDDED-POSTGRES-BUNDLE.md) | Vendored embedded Postgres bundle, pinned checksum, and bump steps. |
 | [`DEPLOYMENT.md`](DEPLOYMENT.md)           | Production TLS and reverse-proxy guide.                            |
 | [`PLUGINS.md`](PLUGINS.md)                 | How to write a transcriber or agent plugin.                        |
 | [`STREAMING-SMOKE.md`](STREAMING-SMOKE.md) | Manual smoke checklist for the optional streaming transcript path. |

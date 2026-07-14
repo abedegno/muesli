@@ -33,12 +33,18 @@ func TestPgvectorIntegration(t *testing.T) {
 		}
 	}()
 
-	if err := InstallPgvector(
-		filepath.Join(pg.runtimePath(), "lib"),
-		filepath.Join(pg.runtimePath(), "share", "extension"),
-		os.Getenv("MUESLI_EMBEDDED_PGVECTOR_DIR"),
-	); err != nil {
-		t.Fatalf("InstallPgvector() error: %v", err)
+	targetRoot := pg.installRoot()
+	libDir := filepath.Join(targetRoot, "lib")
+	shareExtDir := filepath.Join(targetRoot, "share", "extension")
+
+	installed, err := pgvectorControlInstalled(shareExtDir)
+	if err != nil {
+		t.Fatalf("pgvectorControlInstalled() error: %v", err)
+	}
+	if !installed {
+		if err := InstallPgvector(libDir, shareExtDir, os.Getenv("MUESLI_EMBEDDED_PGVECTOR_DIR")); err != nil {
+			t.Fatalf("InstallPgvector() error: %v", err)
+		}
 	}
 
 	if err := EnsureExtension(ctx, pg.URL()); err != nil {
