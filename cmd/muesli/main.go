@@ -37,8 +37,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	if len(os.Args) > 1 && os.Args[1] == "doctor" {
+		os.Exit(runDoctor(ctx, cfg, os.Args[2:], os.Stdout))
+	}
+
 	// Warn loudly (or refuse to start) when known dev-only default secrets are
-	// detected. This runs before any subcommand check so all code paths are covered.
+	// detected. The doctor subcommand runs before this so it can report on those
+	// secrets instead of being blocked by startup policy.
 	if warnings := config.DevSecretWarnings(cfg); len(warnings) > 0 {
 		if cfg.Production {
 			log.Fatalf("FATAL: running with dev-only default secrets in production mode: %s — set real secrets or unset MUESLI_PRODUCTION", strings.Join(warnings, ", "))

@@ -30,6 +30,40 @@ proxy must forward HTTPS traffic to that address.
 
 ---
 
+## `muesli doctor`
+
+Run `muesli doctor` before starting a deployment when you want a quick
+config-and-connectivity check. It does not start the server or worker pool.
+
+It prints one line per check in this format:
+
+```text
+[PASS] database: DATABASE_URL reachable; pgvector extension present
+[WARN] embeddings: not configured (disabled)
+[FAIL] default agent plugin: configured but unhealthy/unreachable: plugin returned 503
+Summary: 5 PASS, 2 WARN, 1 FAIL
+```
+
+Checks cover:
+
+- `DATABASE_URL` reachability and the `vector` extension
+- configured default plugin URLs (`transcriber`, `streaming transcriber`,
+  `agent`) via `/info`
+- embeddings reachability when `MUESLI_EMBEDDINGS_URL` is set
+- master key and storage signing key presence, plus known dev-default secrets
+- writability of `MUESLI_STORAGE_DIR` and `MUESLI_BACKUP_DIR`
+
+Exit codes:
+
+- `0` when every check is `PASS` or `WARN`
+- `1` when any check is `FAIL`
+
+`WARN` is reserved for valid-but-disabled settings such as an unset embeddings
+URL or an empty backup directory. `FAIL` means the setting is missing,
+unreachable, or otherwise unusable.
+
+---
+
 ## Prod vs dev compose
 
 `docker-compose.yml` is the development stack: it builds `whisper`, `agent`,
