@@ -149,7 +149,7 @@ and terminate TLS at a reverse proxy. See [`SECURITY.md`](SECURITY.md).
 
 Muesli is **pre-1.0** and under active development. v1 is a complete end-to-end
 thin slice (capture → upload → transcribe → summarize → viewable note); polished
-UX and multi-user features are on the [roadmap](backlog.md).
+UX and multi-user features are on the [roadmap](ROADMAP.md).
 
 ## Contributing
 
