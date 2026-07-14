@@ -111,8 +111,8 @@ If you want more or less retention, edit the per-service logging block in
 logging:
   driver: json-file
   options:
-    max-size: "10m"
-    max-file: "3"
+    max-size: '10m'
+    max-file: '3'
 ```
 
 - Increase `max-size` when you want larger individual log files.
