@@ -45,8 +45,9 @@ func (serveTestAgent) Generate(_ context.Context, _ GenerateRequest) (GenerateRe
 
 func waitForHTTP(t *testing.T, url string, hdr map[string]string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for {
 		req, _ := http.NewRequest(http.MethodGet, url, nil)
 		for k, v := range hdr {
 			req.Header.Set(k, v)
@@ -58,9 +59,12 @@ func waitForHTTP(t *testing.T, url string, hdr map[string]string) {
 				return
 			}
 		}
-		time.Sleep(25 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			t.Fatalf("timeout waiting for %s", url)
+		case <-time.After(10 * time.Millisecond):
+		}
 	}
-	t.Fatalf("timeout waiting for %s", url)
 }
 
 func TestServeTranscriber(t *testing.T) {
