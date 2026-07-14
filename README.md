@@ -62,6 +62,8 @@ transcription. Expect a few minutes before the stack is fully ready. CPU
 inference is slow — this is a local-first dev setup, not a tuned production
 deployment. (For GPU acceleration, use the override described in the [GPU acceleration](#gpu-acceleration) section below.)
 
+For a step-by-step first run, see [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md).
+
 Deploying to production? See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ### One-line install
