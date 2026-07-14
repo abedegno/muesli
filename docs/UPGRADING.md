@@ -53,6 +53,63 @@ No further steps are needed for a standard upgrade.
 
 ---
 
+## Upgrade procedure (hosted install / compose.prod)
+
+This path is for installs created by `scripts/install.sh`. Those installs use
+`docker-compose.prod.yml`, image names under `ghcr.io/abedegno/muesli-*`, and
+the `MUESLI_IMAGE_TAG` pin in `.env`.
+
+### 1. Back up first
+
+Before upgrading, follow the backup guide in [docs/BACKUP.md](BACKUP.md).
+For the Postgres snapshot, the one-line command is:
+
+```bash
+docker compose -f docker-compose.prod.yml exec -T postgres pg_dump -U postgres muesli | gzip > muesli-$(date +%Y%m%d%H%M%S).sql.gz
+```
+
+Run that from the install directory that contains `docker-compose.prod.yml`
+and `.env`.
+
+### 2. Bump the image pin
+
+Update `MUESLI_IMAGE_TAG` in `.env` to the new release tag, then re-run the
+upgrade. If you are re-seeding the install directory instead of editing it in
+place, you can also run `scripts/install.sh --force` with `MUESLI_INSTALL_REF`
+set to the newer ref and `MUESLI_IMAGE_TAG` set to the new release tag.
+
+### 3. Upgrade
+
+The recommended one-command path is:
+
+```bash
+scripts/upgrade.sh --dir /opt/muesli
+```
+
+What it does:
+
+- confirms you have the right install directory
+- reminds you to take a backup
+- prints the current `MUESLI_IMAGE_TAG` for rollback reference
+- pulls the pinned GHCR images
+- recreates the containers with `docker compose up -d`
+
+The Muesli server applies migrations on boot, so the upgrade script does not
+run any manual `psql` or migration command.
+
+### 4. Roll back if needed
+
+If the new release does not work, pin `MUESLI_IMAGE_TAG` back to the previous
+value in `.env`, then run the same `pull` and `up -d` commands again.
+
+If the failed version introduced a migration that the old binary cannot read,
+restore the database backup you took before the upgrade using the restore
+procedure in [docs/BACKUP.md](BACKUP.md). See the existing Rollback section
+below for the general rule: restore the pre-upgrade database snapshot before
+starting the old version again.
+
+---
+
 ## Upgrade procedure (binary / systemd)
 
 1. **Stop the running server.** If you are using systemd:
