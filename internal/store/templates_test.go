@@ -18,20 +18,28 @@ func TestSeedBuiltInTemplates(t *testing.T) {
 	if err := st.SeedBuiltInTemplates(ctx); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	// Idempotent: a second call doesn't duplicate.
+	namesBefore, err := st.BuiltInTemplateNames(ctx)
+	if err != nil {
+		t.Fatalf("list before reseed: %v", err)
+	}
+	if len(namesBefore) == 0 {
+		t.Fatal("expected at least one built-in template after first seed")
+	}
+	// Idempotent: a second call leaves the built-in template set unchanged.
 	if err := st.SeedBuiltInTemplates(ctx); err != nil {
 		t.Fatalf("seed 2: %v", err)
 	}
-	names, err := st.BuiltInTemplateNames(ctx)
+	namesAfter, err := st.BuiltInTemplateNames(ctx)
 	if err != nil {
-		t.Fatalf("list: %v", err)
+		t.Fatalf("list after reseed: %v", err)
 	}
-	builtins, err := st.BuiltInTemplates(ctx)
-	if err != nil {
-		t.Fatalf("built-ins: %v", err)
+	if len(namesBefore) != len(namesAfter) {
+		t.Fatalf("built-in template count changed after reseed: before=%d after=%d namesBefore=%v namesAfter=%v", len(namesBefore), len(namesAfter), namesBefore, namesAfter)
 	}
-	if len(names) != len(builtins) {
-		t.Fatalf("got %d templates, want %d: %v", len(names), len(builtins), names)
+	for i := range namesBefore {
+		if namesBefore[i] != namesAfter[i] {
+			t.Fatalf("built-in template names changed after reseed: before=%v after=%v", namesBefore, namesAfter)
+		}
 	}
 }
 
