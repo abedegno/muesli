@@ -63,6 +63,52 @@ jobs:
             type=raw,value=latest
             type=ref,event=tag
 
+      - name: Build and load ${{ matrix.name }} for scan
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.context }}
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: false
+          load: true
+          tags: ${{ matrix.image }}:scan
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=${{ matrix.name }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+      - name: Scan ${{ matrix.name }} image for vulnerabilities
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: image
+          image-ref: ${{ matrix.image }}:scan
+          format: table
+          output: trivy-${{ matrix.name }}.txt
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          exit-code: 0
+          trivyignores: .trivyignore
+
+      - name: Upload Trivy report for ${{ matrix.name }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-${{ matrix.name }}
+          path: trivy-${{ matrix.name }}.txt
+
+      - name: Generate SBOM for ${{ matrix.name }}
+        uses: anchore/sbom-action@v0
+        with:
+          image: ${{ matrix.image }}:scan
+          format: spdx-json
+          output-file: sbom-${{ matrix.name }}.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Upload SBOM artifact for ${{ matrix.name }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ matrix.name }}
+          path: sbom-${{ matrix.name }}.spdx.json
+
       - name: Build and push ${{ matrix.name }}
         uses: docker/build-push-action@v6
         with:

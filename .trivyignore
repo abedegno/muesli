@@ -1,0 +1,9 @@
+# Trivy allowlist for approved image vulnerabilities.
+#
+# Add one vulnerability ID per line, and precede each entry with a short note
+# explaining why it is accepted and when it should be removed.
+#
+# Example:
+#   # False positive in upstream package metadata; remove after the next base
+#   # image refresh.
+#   CVE-2024-12345
