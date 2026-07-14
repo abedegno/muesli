@@ -7,6 +7,7 @@ require (
 	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
 	github.com/emersion/go-webdav v0.7.0
 	github.com/fergusstrange/embedded-postgres v1.34.0
+	github.com/ggerganov/whisper.cpp/bindings/go v0.0.0-20260711155359-080bbbe85230
 	github.com/go-chi/chi/v5 v5.3.0
 	github.com/go-pdf/fpdf v0.9.0
 	github.com/golang-migrate/migrate/v4 v4.19.1
