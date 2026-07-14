@@ -1,4 +1,7 @@
-.PHONY: run test test-db test-db-stop tidy build-admin build up dev lint check smoke new-migration check-test-determinism
+.PHONY: run test test-db test-db-stop tidy build-admin build up dev lint check smoke new-migration check-test-determinism prod-up prod-down prod-logs prod-ps prod-backup prod-upgrade
+
+PROD_DIR ?= .
+PROD_COMPOSE = docker compose --env-file $(PROD_DIR)/.env -f $(PROD_DIR)/docker-compose.prod.yml
 
 run:
 	go run ./cmd/muesli
@@ -56,3 +59,22 @@ smoke:
 # Verify no banned time calls (time.Sleep, time.Now) in non-e2e Go test files.
 check-test-determinism:
 	bash scripts/check-test-determinism.sh
+
+# Operator helpers for the production compose stack.
+prod-up:
+	$(PROD_COMPOSE) up -d
+
+prod-down:
+	$(PROD_COMPOSE) down
+
+prod-logs:
+	$(PROD_COMPOSE) logs -f
+
+prod-ps:
+	$(PROD_COMPOSE) ps
+
+prod-backup:
+	$(PROD_COMPOSE) exec -T postgres pg_dump -U postgres muesli | gzip > muesli-$$(date +%Y%m%d%H%M%S).sql.gz
+
+prod-upgrade:
+	sh scripts/upgrade.sh --dir $(PROD_DIR)
