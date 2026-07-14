@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"math"
 	"net/url"
+	"os"
 	"os/exec"
 	"testing"
 )
@@ -62,5 +63,39 @@ func TestDecodePCMSupportsDataURL(t *testing.T) {
 	u, err := url.Parse(tinyWAVDataURL(1))
 	if err != nil || u.Scheme != "data" {
 		t.Fatalf("bad fixture url: %v %v", u, err)
+	}
+}
+
+func TestFfmpegBin(t *testing.T) {
+	t.Run("env override", func(t *testing.T) {
+		t.Setenv("MUESLI_FFMPEG_BIN", "  /opt/muesli/bin/ffmpeg  ")
+		if got := ffmpegBin(); got != "/opt/muesli/bin/ffmpeg" {
+			t.Fatalf("ffmpegBin() = %q, want %q", got, "/opt/muesli/bin/ffmpeg")
+		}
+	})
+
+	t.Run("default", func(t *testing.T) {
+		restore := clearEnv(t, "MUESLI_FFMPEG_BIN")
+		defer restore()
+
+		if got := ffmpegBin(); got != "ffmpeg" {
+			t.Fatalf("ffmpegBin() = %q, want %q", got, "ffmpeg")
+		}
+	})
+}
+
+func clearEnv(t *testing.T, key string) func() {
+	t.Helper()
+
+	old, had := os.LookupEnv(key)
+	if err := os.Unsetenv(key); err != nil {
+		t.Fatalf("unset %s: %v", key, err)
+	}
+	return func() {
+		if had {
+			t.Setenv(key, old)
+			return
+		}
+		_ = os.Unsetenv(key)
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"os"
 	"os/exec"
 	"strings"
 )
@@ -22,7 +23,7 @@ func DecodePCM(ctx context.Context, audioURL string) ([]float32, error) {
 		return nil, err
 	}
 
-	cmd := exec.CommandContext(ctx, "ffmpeg",
+	cmd := exec.CommandContext(ctx, ffmpegBin(),
 		"-hide_banner",
 		"-loglevel", "error",
 		"-i", "pipe:0",
@@ -95,4 +96,11 @@ func decodeDataURL(audioURL string) ([]byte, error) {
 		return decoded, nil
 	}
 	return []byte(data), nil
+}
+
+func ffmpegBin() string {
+	if v := strings.TrimSpace(os.Getenv("MUESLI_FFMPEG_BIN")); v != "" {
+		return v
+	}
+	return "ffmpeg"
 }
