@@ -27,6 +27,8 @@ Options:
 Environment:
   MUESLI_INSTALL_REF   Git ref to fetch from (default: main).
   MUESLI_IMAGE_TAG     Image tag to write into .env (default: latest).
+  MUESLI_INSTALL_READY_TIMEOUT   Seconds to wait for /readyz after --up (default: 240).
+  MUESLI_INSTALL_READY_INTERVAL   Seconds between /readyz polls after --up (default: 5).
 
 Examples:
   curl -fsSL https://raw.githubusercontent.com/abedegno/muesli/main/scripts/install.sh | sh
@@ -43,6 +45,29 @@ cleanup() {
   if [ -n "${tmpdir:-}" ] && [ -d "$tmpdir" ]; then
     rm -rf "$tmpdir"
   fi
+}
+
+wait_for_readyz() {
+  readyz_url=${1:?}
+  ready_timeout=${2:?}
+  ready_interval=${3:?}
+  ready_start=$(date +%s)
+  ready_deadline=$((ready_start + ready_timeout))
+
+  printf '%s\n' "Waiting for $readyz_url to return HTTP 200..."
+  while :; do
+    ready_status=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 3 "$readyz_url" 2>/dev/null || true)
+    if [ "$ready_status" = "200" ]; then
+      return 0
+    fi
+
+    ready_now=$(date +%s)
+    if [ "$ready_now" -ge "$ready_deadline" ]; then
+      return 1
+    fi
+
+    sleep "$ready_interval"
+  done
 }
 
 trap cleanup 0 1 2 15
@@ -179,6 +204,13 @@ if [ "$run_up" -eq 1 ]; then
     cd "$install_dir"
     docker compose -f docker-compose.prod.yml up -d
   )
+  ready_timeout=${MUESLI_INSTALL_READY_TIMEOUT:-240}
+  ready_interval=${MUESLI_INSTALL_READY_INTERVAL:-5}
+
+  if ! wait_for_readyz 'http://localhost:8080/readyz' "$ready_timeout" "$ready_interval"; then
+    die "Timed out waiting for http://localhost:8080/readyz after ${ready_timeout}s. Check 'docker compose -f docker-compose.prod.yml ps' and 'docker compose -f docker-compose.prod.yml logs' in $install_dir."
+  fi
+
   printf '%s\n' "Started the production stack with docker compose."
 fi
 
