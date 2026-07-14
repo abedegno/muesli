@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/base64"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -144,6 +145,54 @@ func TestLoadValidationValidConfig(t *testing.T) {
 	}
 	if cfg.Embedded {
 		t.Fatalf("Embedded = %v, want false for MUESLI_MODE=server", cfg.Embedded)
+	}
+}
+
+func TestLogLevelAndFormatParsing(t *testing.T) {
+	levelTests := []struct {
+		name      string
+		input     string
+		wantValue string
+		wantLevel slog.Level
+	}{
+		{name: "debug lower", input: "debug", wantValue: "debug", wantLevel: slog.LevelDebug},
+		{name: "info mixed case", input: "InFo", wantValue: "info", wantLevel: slog.LevelInfo},
+		{name: "warn upper", input: "WARN", wantValue: "warn", wantLevel: slog.LevelWarn},
+		{name: "error spaced", input: " error ", wantValue: "error", wantLevel: slog.LevelError},
+		{name: "invalid falls back", input: "trace", wantValue: "info", wantLevel: slog.LevelInfo},
+	}
+	for _, tc := range levelTests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotValue := normalizeLogLevel("MUESLI_LOG_LEVEL", tc.input, "info")
+			if gotValue != tc.wantValue {
+				t.Fatalf("normalizeLogLevel(%q) = %q, want %q", tc.input, gotValue, tc.wantValue)
+			}
+			gotLevel, err := ParseLogLevel(gotValue)
+			if err != nil {
+				t.Fatalf("ParseLogLevel(%q) unexpected error: %v", gotValue, err)
+			}
+			if gotLevel != tc.wantLevel {
+				t.Fatalf("ParseLogLevel(%q) = %v, want %v", gotValue, gotLevel, tc.wantLevel)
+			}
+		})
+	}
+
+	formatTests := []struct {
+		name      string
+		input     string
+		wantValue string
+	}{
+		{name: "text lower", input: "text", wantValue: "text"},
+		{name: "json mixed case", input: "JsOn", wantValue: "json"},
+		{name: "invalid falls back", input: "pretty", wantValue: "text"},
+	}
+	for _, tc := range formatTests {
+		t.Run(tc.name, func(t *testing.T) {
+			gotValue := normalizeLogFormat("MUESLI_LOG_FORMAT", tc.input, "text")
+			if gotValue != tc.wantValue {
+				t.Fatalf("normalizeLogFormat(%q) = %q, want %q", tc.input, gotValue, tc.wantValue)
+			}
+		})
 	}
 }
 

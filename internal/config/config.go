@@ -14,6 +14,8 @@ import (
 type Config struct {
 	Addr               string
 	DatabaseURL        string
+	LogLevel           string // MUESLI_LOG_LEVEL; default "info"
+	LogFormat          string // MUESLI_LOG_FORMAT; default "text"
 	MasterKey          string // base64, 32 bytes; required only when plugin secrets are stored (later plan)
 	StorageDir         string
 	StorageSigningKey  string // signing key for presigned upload URLs; must be stable across restarts/replicas
@@ -107,6 +109,8 @@ func Load(get func(string) string) (Config, error) {
 	cfg := Config{
 		Addr:              def(get("MUESLI_ADDR"), ":8080"),
 		DatabaseURL:       get("DATABASE_URL"),
+		LogLevel:          def(get("MUESLI_LOG_LEVEL"), "info"),
+		LogFormat:         def(get("MUESLI_LOG_FORMAT"), "text"),
 		MasterKey:         get("MUESLI_MASTER_KEY"),
 		StorageDir:        def(get("MUESLI_STORAGE_DIR"), "./data/audio"),
 		StorageSigningKey: get("MUESLI_STORAGE_SIGNING_KEY"),
@@ -132,6 +136,8 @@ func Load(get func(string) string) (Config, error) {
 	cfg.MicrosoftOAuthClientID = get("MUESLI_MICROSOFT_OAUTH_CLIENT_ID")
 	cfg.MicrosoftOAuthClientSecret = get("MUESLI_MICROSOFT_OAUTH_CLIENT_SECRET")
 	cfg.MicrosoftOAuthRedirectURL = def(get("MUESLI_MICROSOFT_OAUTH_REDIRECT_URL"), "")
+	cfg.LogLevel = normalizeLogLevel("MUESLI_LOG_LEVEL", cfg.LogLevel, "info")
+	cfg.LogFormat = normalizeLogFormat("MUESLI_LOG_FORMAT", cfg.LogFormat, "text")
 	rawMode := get("MUESLI_MODE")
 	if rawMode != "" && rawMode != "embedded" && rawMode != "server" {
 		return Config{}, fmt.Errorf("MUESLI_MODE must be 'embedded' or 'server', got %q", rawMode)
@@ -204,6 +210,47 @@ func def(v, fallback string) string {
 		return fallback
 	}
 	return v
+}
+
+// ParseLogLevel maps a validated log-level string to a slog.Level.
+func ParseLogLevel(v string) (slog.Level, error) {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "debug":
+		return slog.LevelDebug, nil
+	case "info":
+		return slog.LevelInfo, nil
+	case "warn":
+		return slog.LevelWarn, nil
+	case "error":
+		return slog.LevelError, nil
+	default:
+		return slog.LevelInfo, fmt.Errorf("invalid log level %q", v)
+	}
+}
+
+func normalizeLogLevel(name, v, fallback string) string {
+	if v == "" {
+		return fallback
+	}
+	if _, err := ParseLogLevel(v); err != nil {
+		slog.Warn(name+" must be one of debug, info, warn, or error, using default", "value", v, "default", fallback)
+		return fallback
+	}
+	return strings.ToLower(strings.TrimSpace(v))
+}
+
+func normalizeLogFormat(name, v, fallback string) string {
+	switch strings.ToLower(strings.TrimSpace(v)) {
+	case "":
+		return fallback
+	case "json":
+		return "json"
+	case "text":
+		return "text"
+	default:
+		slog.Warn(name+" must be one of json or text, using default", "value", v, "default", fallback)
+		return fallback
+	}
 }
 
 func validatePostgresURL(name, value string) error {
