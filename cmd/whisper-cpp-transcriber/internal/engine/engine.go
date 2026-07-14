@@ -1,3 +1,5 @@
+//go:build !whisper_cgo
+
 package engine
 
 import (
