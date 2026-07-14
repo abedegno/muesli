@@ -110,7 +110,7 @@ jobs:
       - name: Run pluginkit conformance
         env:
           MUESLI_PLUGINKIT_CONFORMANCE: '1'
-        run: go test ./internal/pluginkit/fakeplugin/... -run TestFakePluginConformance -v
+        run: go test ./internal/pluginkit/fakeplugin/... -run TestFakePluginConformance -v && go test ./cmd/whisper-cpp-transcriber/... -run TestWhisperCppTranscriberConformance -v
 
   lighthouse:
     name: lighthouse (a11y)
