@@ -18,6 +18,7 @@ build-admin:
 build: build-admin
 	go build -o bin/muesli ./cmd/muesli
 	go build -o bin/ollama-agent ./cmd/ollama-agent
+	go build -o bin/whisper-cpp-transcriber ./cmd/whisper-cpp-transcriber
 
 # Each test call gets its own PostgreSQL schema, so packages run in parallel safely.
 test:

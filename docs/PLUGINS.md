@@ -31,7 +31,10 @@ Key facts:
 - The contract is versioned. All current plugins implement **`plugin_api: 1`**.
 - There are exactly two plugin **kinds**: `transcriber` and `agent`.
 - The reference transcribers are `whisper-transcriber` (CPU-first) and
-  `parakeet-transcriber` (GPU-oriented).
+  `parakeet-transcriber` (GPU-oriented). In `--embedded` (desktop) mode the
+  server instead spawns the bundled Go binary `cmd/whisper-cpp-transcriber`
+  as the default transcriber; `plugins/whisper-transcriber` remains available
+  as an optional swap (see [Section 7, Registering your plugin](#7-registering-your-plugin)).
 
 The contract is pinned: the server sends `X-Muesli-Plugin-API: 1` on every
 authenticated call and your plugin should verify it (see [§4 Authentication](#4-authentication)).
@@ -470,7 +473,17 @@ plugin URL, bearer token, kind, and any config values.
 ### Option B — Environment variables (default plugins)
 
 Set these environment variables on the server **before it starts**; the server
-auto-registers the plugins on boot and the operation is idempotent:
+auto-registers the plugins on boot and the operation is idempotent.
+
+> **Desktop (`--embedded`) default:** in `--embedded` mode the server spawns
+> the bundled `cmd/whisper-cpp-transcriber` binary and registers it as the
+> default transcriber plugin automatically (no env vars required); the
+> embedded Ollama agent is registered as the default agent plugin the same
+> way when Ollama is detected locally. The Python `plugins/whisper-transcriber`
+> reference plugin is still fully supported and can be swapped in for either
+> deployment mode using `MUESLI_DEFAULT_TRANSCRIBER_URL` /
+> `MUESLI_DEFAULT_TRANSCRIBER_TOKEN` below, the same mechanism already used
+> for other default-plugin overrides.
 
 | Variable                                     | Description                                               |
 | -------------------------------------------- | --------------------------------------------------------- |

@@ -94,6 +94,7 @@ func main() {
 		os.Exit(1)
 	}
 	var embeddedAgent *embedded.AgentHandle
+	var embeddedWhisper *embedded.WhisperHandle
 	var completeEmbeddedStartup func()
 	var startupReporter *embedded.Reporter
 	ollamaURL := embedded.OllamaBaseURL()
@@ -112,6 +113,11 @@ func main() {
 			if embeddedAgent != nil {
 				if err := embeddedAgent.Stop(shutdownCtx); err != nil {
 					slog.Error("embedded agent shutdown", "error", err)
+				}
+			}
+			if embeddedWhisper != nil {
+				if err := embeddedWhisper.Stop(shutdownCtx); err != nil {
+					slog.Error("embedded whisper transcriber shutdown", "error", err)
 				}
 			}
 			if err := embeddedStop(shutdownCtx); err != nil {
@@ -258,6 +264,27 @@ func main() {
 			os.Exit(1)
 		}
 		slog.Info("registered embedded ollama agent plugin", "url", embeddedAgent.EndpointURL)
+	}
+
+	if embeddedMode {
+		var err error
+		embeddedWhisper, err = embedded.StartWhisperTranscriber(ctx)
+		if err != nil {
+			slog.Error("start embedded whisper transcriber", "error", err)
+			os.Exit(1)
+		}
+		// The bundled whisper.cpp binary is the desktop default transcriber in
+		// --embedded mode, mirroring how the embedded Ollama agent above is the
+		// desktop default local agent: it takes precedence over any hosted
+		// default configured via MUESLI_DEFAULT_TRANSCRIBER_URL/_TOKEN. Swap in
+		// a different transcriber (e.g. the Python plugins/whisper-transcriber
+		// reference) via the admin UI/API after boot.
+		if err := st.EnsureDefaultPlugin(ctx, cr, model.PluginTranscriber, embedded.DefaultWhisperName,
+			embeddedWhisper.EndpointURL, embeddedWhisper.Token, embeddedWhisper.ConfigJSON); err != nil {
+			slog.Error("register embedded whisper transcriber", "error", err)
+			os.Exit(1)
+		}
+		slog.Info("registered embedded whisper transcriber plugin", "url", embeddedWhisper.EndpointURL)
 	}
 
 	srv := api.NewServer(api.Deps{Store: st, Storage: prov, Crypto: cr, Worker: wpool, Config: cfg, Embedder: emb, BackupRunner: backup.PgDumpRunner{}, EmbeddedProgress: startupReporter})

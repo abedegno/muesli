@@ -191,15 +191,33 @@ contract. **Run it against any new plugin.**
 
 ## Other source trees
 
-| Path                                  | What it is                                                                                        |
-| ------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| `cmd/muesli/`                         | Server entry point and startup banner.                                                            |
-| `plugins/whisper-transcriber/`        | Reference transcriber (FastAPI + faster-whisper).                                                 |
-| `plugins/parakeet-transcriber/`       | GPU-oriented transcriber (FastAPI + NeMo / Parakeet).                                             |
-| `plugins/ollama-agent/`               | Reference agent (FastAPI + Ollama; self-hosted default, BYO-cloud opt-in).                        |
-| `plugins/conformance/`                | CLI + library that checks a plugin against the contract.                                          |
-| `src/{main,preload,renderer,shared}/` | Electron desktop client (TypeScript/React). See "Desktop client" below.                           |
-| `web/admin/`                          | Admin SPA (Vite + React + TS). Built into `internal/adminui/dist/` and embedded in the Go binary. |
+| Path                                  | What it is                                                                                            |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `cmd/muesli/`                         | Server entry point and startup banner.                                                                |
+| `cmd/ollama-agent/`                   | Go plugin binary spawned in `--embedded` mode as the desktop default local agent (see below).         |
+| `cmd/whisper-cpp-transcriber/`        | Go plugin binary spawned in `--embedded` mode as the desktop default transcriber (see below).         |
+| `plugins/whisper-transcriber/`        | Reference transcriber (FastAPI + faster-whisper); optional swap for the embedded whisper.cpp default. |
+| `plugins/parakeet-transcriber/`       | GPU-oriented transcriber (FastAPI + NeMo / Parakeet).                                                 |
+| `plugins/ollama-agent/`               | Reference agent (FastAPI + Ollama; self-hosted default, BYO-cloud opt-in).                            |
+| `plugins/conformance/`                | CLI + library that checks a plugin against the contract.                                              |
+| `src/{main,preload,renderer,shared}/` | Electron desktop client (TypeScript/React). See "Desktop client" below.                               |
+| `web/admin/`                          | Admin SPA (Vite + React + TS). Built into `internal/adminui/dist/` and embedded in the Go binary.     |
+
+### `--embedded` mode default plugins
+
+When the server starts with `--embedded` (the desktop path), it spawns two
+bundled Go plugin binaries as subprocesses and auto-registers them as the
+default plugins for their kind (`internal/embedded/agent.go`,
+`internal/embedded/whisper.go`, wired in `cmd/muesli/main.go`):
+
+- **Agent:** `cmd/ollama-agent` is spawned and registered as the default
+  agent plugin when a local Ollama install is detected.
+- **Transcriber:** `cmd/whisper-cpp-transcriber` is always spawned and
+  registered as the default transcriber plugin - it is the desktop default,
+  no detection gate needed. The Python `plugins/whisper-transcriber` plugin
+  remains available as an optional swap; see [`docs/PLUGINS.md`](PLUGINS.md#7-registering-your-plugin)
+  for the `MUESLI_DEFAULT_TRANSCRIBER_URL`/`MUESLI_DEFAULT_TRANSCRIBER_TOKEN`
+  override mechanism.
 
 ## Desktop client (`src/`)
 
