@@ -1,0 +1,25 @@
+import { join } from 'node:path'
+
+export function resolveServerBin(opts: { isPackaged: boolean; resourcesPath: string; env: NodeJS.ProcessEnv }): string {
+  if (opts.isPackaged) {
+    return join(opts.resourcesPath, 'server', 'muesli')
+  }
+
+  const configured = opts.env.MUESLI_SERVER_BIN?.trim()
+  if (configured) return configured
+
+  throw new Error('MUESLI_SERVER_BIN must point to the muesli server binary in development')
+}
+
+export function resolveResourceEnv(opts: { isPackaged: boolean; resourcesPath: string }): Record<string, string> {
+  if (!opts.isPackaged) return {}
+
+  return {
+    MUESLI_EMBEDDED_PG_BINARIES: join(opts.resourcesPath, 'pg'),
+    MUESLI_EMBEDDED_PGVECTOR_DIR: join(opts.resourcesPath, 'pgvector'),
+    MUESLI_WHISPER_CPP_TRANSCRIBER_BIN: join(opts.resourcesPath, 'server', 'whisper-cpp-transcriber'),
+    MUESLI_WHISPER_MODEL_DIR: join(opts.resourcesPath, 'models', 'whisper'),
+    MUESLI_WHISPER_MODEL: 'ggml-tiny.en',
+    MUESLI_FFMPEG_BIN: join(opts.resourcesPath, 'bin', 'ffmpeg'),
+  }
+}

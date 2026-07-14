@@ -6,6 +6,7 @@ const { appMock, spawnMock } = vi.hoisted(() => {
   const listeners = new Map<string, Set<(...args: any[]) => void>>()
   const app = {
     isPackaged: false,
+    resourcesPath: '/tmp/resources' as string | undefined,
     getPath: vi.fn((name: string) => `/tmp/${name}`),
     quit: vi.fn(),
     exit: vi.fn(),
@@ -83,6 +84,10 @@ describe('serverSupervisor', () => {
   beforeEach(() => {
     vi.useFakeTimers()
     vi.stubGlobal('fetch', vi.fn())
+    appMock.isPackaged = false
+    appMock.resourcesPath = '/tmp/resources'
+    ;(appMock as { resourcesPath: string | undefined }).resourcesPath = undefined
+    ;(process as unknown as { resourcesPath: string | undefined }).resourcesPath = undefined
     appMock.quit.mockClear()
     appMock.exit.mockClear()
     appMock.requestSingleInstanceLock.mockReset()
@@ -94,6 +99,8 @@ describe('serverSupervisor', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
     vi.useRealTimers()
+    ;(appMock as { resourcesPath: string | undefined }).resourcesPath = undefined
+    ;(process as unknown as { resourcesPath: string | undefined }).resourcesPath = undefined
     appMock.removeAllListeners()
   })
 
@@ -127,6 +134,43 @@ describe('serverSupervisor', () => {
     expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:4567/healthz')
     expect(spawnMock).toHaveBeenCalledWith('/tmp/muesli', ['--embedded'], expect.objectContaining({
       env: expect.objectContaining({ MUESLI_ADDR: '127.0.0.1:4567' }),
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }))
+  })
+
+  it('resolves packaged server and resource paths from the app resources directory', async () => {
+    vi.useRealTimers()
+    appMock.isPackaged = true
+    appMock.requestSingleInstanceLock.mockReturnValue(true)
+    const child = createFakeChild()
+    spawnMock.mockReturnValue(child)
+    ;(process as NodeJS.Process & { resourcesPath: string }).resourcesPath = '/R'
+
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
+
+    const { startServerSupervisor } = await loadSupervisor()
+    const supervisor = await startServerSupervisor({
+      env: {
+        MUESLI_ADDR: '127.0.0.1:4572',
+      },
+      fetchImpl: fetchMock,
+      healthPollIntervalMs: 10,
+      healthTimeoutMs: 100,
+      killTimeoutMs: 1_000,
+    })
+
+    expect(supervisor?.baseUrl).toBe('http://127.0.0.1:4572')
+    expect(spawnMock).toHaveBeenCalledWith('/R/server/muesli', ['--embedded'], expect.objectContaining({
+      env: expect.objectContaining({
+        MUESLI_EMBEDDED_PG_BINARIES: '/R/pg',
+        MUESLI_EMBEDDED_PGVECTOR_DIR: '/R/pgvector',
+        MUESLI_WHISPER_CPP_TRANSCRIBER_BIN: '/R/server/whisper-cpp-transcriber',
+        MUESLI_WHISPER_MODEL_DIR: '/R/models/whisper',
+        MUESLI_WHISPER_MODEL: 'ggml-tiny.en',
+        MUESLI_FFMPEG_BIN: '/R/bin/ffmpeg',
+        MUESLI_ADDR: '127.0.0.1:4572',
+      }),
       stdio: ['ignore', 'pipe', 'pipe'],
     }))
   })

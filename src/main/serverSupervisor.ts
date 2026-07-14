@@ -3,6 +3,7 @@ import { mkdir } from 'node:fs/promises'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
+import { resolveResourceEnv, resolveServerBin } from './resourcePaths'
 
 export interface ServerSupervisor {
   baseUrl: string
@@ -65,14 +66,11 @@ function parseLoopbackAddr(raw: string | undefined): ParsedAddr {
 }
 
 function resolveServerBinaryPath(env: NodeJS.ProcessEnv): string {
-  if (electronApp.isPackaged) {
-    throw new Error('packaged server binary resolution is TODO (phase 5c)')
-  }
-
-  const configured = env.MUESLI_SERVER_BIN?.trim()
-  if (configured) return configured
-
-  throw new Error('MUESLI_SERVER_BIN must point to the muesli server binary in development')
+  return resolveServerBin({
+    isPackaged: electronApp.isPackaged,
+    resourcesPath: process.resourcesPath,
+    env,
+  })
 }
 
 function makeHealthUrl(baseUrl: string): string {
@@ -252,6 +250,10 @@ export async function startServerSupervisor(opts: ServerSupervisorOptions = {}):
   }
   const child = (opts.spawnImpl ?? spawn)(binaryPath, ['--embedded'], {
     env: {
+      ...resolveResourceEnv({
+        isPackaged: electronApp.isPackaged,
+        resourcesPath: process.resourcesPath,
+      }),
       ...env,
       MUESLI_ADDR: `${addr.host}:${addr.port}`,
     },
