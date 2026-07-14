@@ -91,7 +91,7 @@ GET /api/calendar/oauth/microsoft/status
 When a provider is configured, the response is:
 
 ```json
-{"configured": true}
+{ "configured": true }
 ```
 
 Common issues:
