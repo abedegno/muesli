@@ -11,8 +11,8 @@ It charts two arcs:
 
 Milestones are sequenced by dependency and value, not locked to a calendar. Each
 lists a **goal**, the **headline work**, and **exit criteria** (what "done"
-means). The fine-grained, always-current task list lives in
-[`backlog.md`](backlog.md); this document is the high-level map above it.
+means). The fine-grained, always-current task list lives internally; this
+document is the high-level map above it.
 
 > **Legend:** ✅ shipped · 🔜 next · 📋 planned · 🔭 exploratory
 

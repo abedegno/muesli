@@ -68,7 +68,7 @@ with `npm run dev`.
 - [ ] Click "Disconnect" → returns to Connect; relaunch stays on Connect
       (credentials cleared).
 
-## Known v1 limitations (see backlog.md)
+## Known v1 limitations (see ROADMAP.md)
 
 - System-audio capture: reliable on Windows, partial on macOS (screen-share audio
   only / needs loopback driver), PipeWire-dependent on Linux. Native per-OS capture
