@@ -668,10 +668,14 @@ func TestResummarizeAPI(t *testing.T) {
 		t.Fatalf("resummarize body status = %q, want summarizing", resp.Status)
 	}
 
-	// Stale summary was deleted and fresh pending summaries were created (2 built-ins).
+	// Stale summary was deleted and fresh pending summaries were created for the built-ins.
+	tmpls, err = st.BuiltInTemplates(ctx)
+	if err != nil {
+		t.Fatalf("BuiltInTemplates: %v", err)
+	}
 	sums, _ := st.GetSummaries(ctx, note.ID)
-	if len(sums) != 2 {
-		t.Fatalf("summaries after resummarize = %d, want 2", len(sums))
+	if len(sums) != len(tmpls) {
+		t.Fatalf("summaries after resummarize = %d, want %d", len(sums), len(tmpls))
 	}
 	for _, s := range sums {
 		if s.ID == staleID {

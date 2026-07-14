@@ -27,13 +27,17 @@ func TestEnqueueSummarizeJobs(t *testing.T) {
 		t.Fatalf("enqueue: %v", err)
 	}
 
-	// One pending summary per built-in template (2).
+	// One pending summary per built-in template.
+	tmpls, err := st.BuiltInTemplates(ctx)
+	if err != nil {
+		t.Fatalf("BuiltInTemplates: %v", err)
+	}
 	sums, err := st.GetSummaries(ctx, noteID)
 	if err != nil {
 		t.Fatalf("GetSummaries: %v", err)
 	}
-	if len(sums) != 2 {
-		t.Fatalf("summaries = %d, want 2 built-ins", len(sums))
+	if len(sums) != len(tmpls) {
+		t.Fatalf("summaries = %d, want %d built-ins", len(sums), len(tmpls))
 	}
 	for _, s := range sums {
 		if s.Status != model.SummaryPending {
@@ -52,7 +56,7 @@ func TestEnqueueSummarizeJobs(t *testing.T) {
 
 	// One summarize job per template was enqueued.
 	jobs := 0
-	for i := 0; i < 5; i++ {
+	for i := 0; i < len(tmpls)+1; i++ {
 		job, ok, err := st.ClaimJob(ctx, 30*time.Second)
 		if err != nil {
 			t.Fatalf("ClaimJob: %v", err)
@@ -65,8 +69,8 @@ func TestEnqueueSummarizeJobs(t *testing.T) {
 		}
 		jobs++
 	}
-	if jobs != 2 {
-		t.Fatalf("enqueued jobs = %d, want 2", jobs)
+	if jobs != len(tmpls) {
+		t.Fatalf("enqueued jobs = %d, want %d", jobs, len(tmpls))
 	}
 }
 
@@ -144,7 +148,7 @@ func TestSummaryLifecycle(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	tmpls, err := st.BuiltInTemplates(ctx)
-	if err != nil || len(tmpls) != 2 {
+	if err != nil || len(tmpls) < 2 {
 		t.Fatalf("templates: %v len=%d", err, len(tmpls))
 	}
 
@@ -207,7 +211,7 @@ func TestCompleteSummaryTruncatedRoundTrip(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	tmpls, err := st.BuiltInTemplates(ctx)
-	if err != nil || len(tmpls) != 2 {
+	if err != nil || len(tmpls) < 2 {
 		t.Fatalf("templates: %v len=%d", err, len(tmpls))
 	}
 

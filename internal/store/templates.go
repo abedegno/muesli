@@ -34,6 +34,41 @@ var builtInTemplates = []struct {
 			{"Action items", "List each action item with its owner and any deadline mentioned."},
 		},
 	},
+	{
+		Name: "1:1",
+		Sections: []templateSection{
+			{"Talking points", "Capture the main topics, personal updates, and anything either person wants to discuss."},
+			{"Decisions", "List agreements, commitments, or other decisions made in the conversation."},
+			{"Action items", "List tasks assigned to either person, with owners and deadlines if mentioned."},
+			{"Follow-ups", "Note open questions, check-ins, or follow-up conversations to revisit later."},
+		},
+	},
+	{
+		Name: "Standup",
+		Sections: []templateSection{
+			{"Yesterday", "Summarize what was completed since the last standup, focusing on shipped work and progress."},
+			{"Today", "Summarize what the speaker plans to work on next, including immediate priorities."},
+			{"Blockers", "List blockers, risks, dependencies, or anything preventing progress."},
+		},
+	},
+	{
+		Name: "Interview",
+		Sections: []templateSection{
+			{"Candidate summary", "Summarize the candidate's background, experience, and the overall shape of the interview."},
+			{"Strengths", "List the strongest signals, relevant skills, and positive evidence from the discussion."},
+			{"Concerns", "Note gaps, risks, unclear areas, or follow-up topics that need more evaluation."},
+			{"Recommendation", "State the hiring recommendation and brief rationale, grounded in the conversation."},
+		},
+	},
+	{
+		Name: "Sales call",
+		Sections: []templateSection{
+			{"Needs", "Summarize the prospect's goals, pain points, requirements, and buying context."},
+			{"Objections", "List objections, hesitation, or blockers raised by the prospect."},
+			{"Next steps", "Capture agreed follow-ups, meetings, trials, or information to send."},
+			{"Decision-makers", "Identify who is involved in the decision, their roles, and any approval process mentioned."},
+		},
+	},
 }
 
 // SeedBuiltInTemplates inserts the built-in (owner_id NULL) templates if absent. Idempotent.
