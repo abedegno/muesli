@@ -97,3 +97,42 @@ func TestRemoveStalePostmasterPIDKeepsLivePID(t *testing.T) {
 		t.Fatalf("postmaster.pid unexpectedly removed: %v", err)
 	}
 }
+
+func TestInstallRootUsesEmbeddedBinaryOverride(t *testing.T) {
+	pg := &PG{runtimeDir: "/tmp/runtime"}
+
+	t.Setenv(embeddedPGBinaryEnv, "/tmp/binaries")
+	if got := pg.installRoot(); got != "/tmp/binaries" {
+		t.Fatalf("installRoot() = %q, want %q", got, "/tmp/binaries")
+	}
+
+	t.Setenv(embeddedPGBinaryEnv, "")
+	if got := pg.installRoot(); got != "/tmp/runtime" {
+		t.Fatalf("installRoot() = %q, want %q", got, "/tmp/runtime")
+	}
+}
+
+func TestPgvectorControlInstalled(t *testing.T) {
+	shareExtDir := t.TempDir()
+
+	installed, err := pgvectorControlInstalled(shareExtDir)
+	if err != nil {
+		t.Fatalf("pgvectorControlInstalled() error: %v", err)
+	}
+	if installed {
+		t.Fatal("pgvectorControlInstalled() = true, want false")
+	}
+
+	controlPath := filepath.Join(shareExtDir, "vector.control")
+	if err := os.WriteFile(controlPath, []byte("control"), 0o644); err != nil {
+		t.Fatalf("WriteFile(%q) error: %v", controlPath, err)
+	}
+
+	installed, err = pgvectorControlInstalled(shareExtDir)
+	if err != nil {
+		t.Fatalf("pgvectorControlInstalled() error: %v", err)
+	}
+	if !installed {
+		t.Fatal("pgvectorControlInstalled() = false, want true")
+	}
+}
