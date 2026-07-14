@@ -12,54 +12,38 @@ import (
 	"time"
 
 	"github.com/abedegno/muesli/internal/model"
+	"github.com/abedegno/muesli/internal/pluginkit"
 )
 
 const (
 	DefaultName    = "muesli-ollama-agent"
 	DefaultVersion = "0.1.0"
 	DefaultModel   = "llama3.2:3b"
+	DefaultURL     = "http://127.0.0.1:11434"
 
-	defaultOllamaURL = "http://127.0.0.1:11434"
-	pluginAPIVersion = "1"
+	defaultTemperature = 0.2
 )
 
-var configSchema = json.RawMessage(`{"type":"object","properties":{"model":{"type":"string","title":"Model","description":"Model name to send to Ollama","default":"llama3.2:3b"},"ollama_url":{"type":"string","title":"Ollama URL","description":"Base URL for the Ollama server","default":"http://127.0.0.1:11434"},"temperature":{"type":"number","title":"Temperature","minimum":0,"maximum":2,"default":0.2}},"additionalProperties":false}`)
+var ConfigSchema = json.RawMessage(`{"type":"object","properties":{"model":{"type":"string","title":"Model","description":"Model name to send to Ollama","default":"llama3.2:3b"},"ollama_url":{"type":"string","title":"Ollama URL","description":"Base URL for the Ollama server","default":"http://127.0.0.1:11434"},"temperature":{"type":"number","title":"Temperature","minimum":0,"maximum":2,"default":0.2}},"additionalProperties":false}`)
 
 type Config struct {
-	Addr        string
-	Token       string
 	OllamaURL   string
 	Model       string
 	Temperature float64
-	Name        string
-	Version     string
 }
 
-type Info struct {
-	Name         string          `json:"name"`
-	Version      string          `json:"version"`
-	PluginAPI    int             `json:"plugin_api"`
-	Kind         string          `json:"kind"`
-	ConfigSchema json.RawMessage `json:"config_schema"`
+type Engine struct {
+	cfg    Config
+	client http.Client
 }
 
-type Template struct {
-	Sections []model.TemplateSection `json:"sections"`
-}
-
-type GenerateRequest struct {
-	Transcript    []model.Segment `json:"transcript"`
-	NotesMarkdown string          `json:"notes_markdown"`
-	Template      Template        `json:"template"`
-	Options       json.RawMessage `json:"options,omitempty"`
-	Config        json.RawMessage `json:"config"`
-}
-
-type GenerateResponse struct {
-	Summary struct {
-		Sections []model.SummarySection `json:"sections"`
-	} `json:"summary"`
-	Model string `json:"model"`
+func New(cfg Config) *Engine {
+	return &Engine{
+		cfg: cfg,
+		client: http.Client{
+			Timeout: 10 * time.Minute,
+		},
+	}
 }
 
 type pluginConfig struct {
@@ -93,56 +77,10 @@ type ollamaChatResponse struct {
 	Response string `json:"response"`
 }
 
-type Server struct {
-	cfg    Config
-	client http.Client
-	mux    *http.ServeMux
-}
-
-func New(cfg Config) http.Handler {
-	s := &Server{
-		cfg: cfg,
-		client: http.Client{
-			Timeout: 10 * time.Minute,
-		},
-		mux: http.NewServeMux(),
-	}
-	s.routes()
-	return s
-}
-
-func (s *Server) routes() {
-	s.mux.HandleFunc("/health", s.health)
-	s.mux.Handle("/info", s.requireAuth(http.HandlerFunc(s.info)))
-	s.mux.Handle("/generate", s.requireAuth(http.HandlerFunc(s.generate)))
-}
-
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	s.mux.ServeHTTP(w, r)
-}
-
-func (s *Server) health(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
-}
-
-func (s *Server) info(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, Info{
-		Name:         s.name(),
-		Version:      s.version(),
-		PluginAPI:    1,
-		Kind:         "agent",
-		ConfigSchema: configSchema,
-	})
-}
-
-func (s *Server) generate(w http.ResponseWriter, r *http.Request) {
-	var req GenerateRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	cfg := s.effectiveConfig(req.Config)
+// Generate implements pluginkit.Agent by forwarding each section to Ollama and
+// returning the combined summary response.
+func (e *Engine) Generate(ctx context.Context, req pluginkit.GenerateRequest) (pluginkit.GenerateResponse, error) {
+	cfg := e.effectiveConfig(req.Config)
 	transcript := req.Transcript
 	if transcript == nil {
 		transcript = []model.Segment{}
@@ -151,10 +89,9 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request) {
 	sections := make([]model.SummarySection, 0, len(req.Template.Sections))
 	reportedModel := ""
 	for idx, section := range req.Template.Sections {
-		out, err := s.generateSection(r.Context(), cfg, idx, section, transcript, req.NotesMarkdown, req.Options)
+		out, err := e.generateSection(ctx, cfg, idx, section, transcript, req.NotesMarkdown, req.Options)
 		if err != nil {
-			http.Error(w, fmt.Sprintf("ollama error: %v", err), http.StatusBadGateway)
-			return
+			return pluginkit.GenerateResponse{}, err
 		}
 		sections = append(sections, model.SummarySection{
 			Heading:         section.Heading,
@@ -166,15 +103,15 @@ func (s *Server) generate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	resp := GenerateResponse{Model: cfg.Model}
+	resp := pluginkit.GenerateResponse{Model: cfg.Model}
 	if reportedModel != "" {
 		resp.Model = reportedModel
 	}
 	resp.Summary.Sections = sections
-	writeJSON(w, http.StatusOK, resp)
+	return resp, nil
 }
 
-func (s *Server) generateSection(ctx context.Context, cfg pluginConfig, index int, section model.TemplateSection, transcript []model.Segment, notesMarkdown string, options json.RawMessage) (sectionOutput, error) {
+func (e *Engine) generateSection(ctx context.Context, cfg pluginConfig, index int, section model.TemplateSection, transcript []model.Segment, notesMarkdown string, options json.RawMessage) (sectionOutput, error) {
 	prompt := buildPrompt(index, section, transcript, notesMarkdown, options)
 	payload := ollamaChatRequest{
 		Model:  cfg.Model,
@@ -202,7 +139,7 @@ func (s *Server) generateSection(ctx context.Context, cfg pluginConfig, index in
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := s.client.Do(req)
+	resp, err := e.client.Do(req)
 	if err != nil {
 		return sectionOutput{}, err
 	}
@@ -233,39 +170,20 @@ func (s *Server) generateSection(ctx context.Context, cfg pluginConfig, index in
 	return out, nil
 }
 
-func (s *Server) requireAuth(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("X-Muesli-Plugin-API") != pluginAPIVersion {
-			http.Error(w, "missing or unsupported X-Muesli-Plugin-API", http.StatusBadRequest)
-			return
-		}
-		authorization := r.Header.Get("Authorization")
-		if !strings.HasPrefix(authorization, "Bearer ") || strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")) == "" {
-			http.Error(w, "invalid or missing token", http.StatusUnauthorized)
-			return
-		}
-		if strings.TrimSpace(strings.TrimPrefix(authorization, "Bearer ")) != s.cfg.Token || s.cfg.Token == "" {
-			http.Error(w, "invalid or missing token", http.StatusUnauthorized)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-func (s *Server) effectiveConfig(raw json.RawMessage) pluginConfig {
+func (e *Engine) effectiveConfig(raw json.RawMessage) pluginConfig {
 	cfg := pluginConfig{
-		Model:     strings.TrimSpace(s.cfg.Model),
-		OllamaURL: strings.TrimSpace(s.cfg.OllamaURL),
+		Model:     strings.TrimSpace(e.cfg.Model),
+		OllamaURL: strings.TrimSpace(e.cfg.OllamaURL),
 	}
 	if cfg.Model == "" {
 		cfg.Model = DefaultModel
 	}
 	if cfg.OllamaURL == "" {
-		cfg.OllamaURL = defaultOllamaURL
+		cfg.OllamaURL = DefaultURL
 	}
-	temp := s.cfg.Temperature
+	temp := e.cfg.Temperature
 	if temp <= 0 {
-		temp = 0.2
+		temp = defaultTemperature
 	}
 	cfg.Temperature = &temp
 	if len(raw) == 0 {
@@ -344,24 +262,4 @@ func decodeSectionOutput(content string) (sectionOutput, error) {
 
 func systemPrompt() string {
 	return "You are a note summarization agent. Return only JSON objects matching {\"content_markdown\":\"...\",\"refs\":[0,1]}. Use concise markdown. Keep refs optional."
-}
-
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(v)
-}
-
-func (s *Server) name() string {
-	if strings.TrimSpace(s.cfg.Name) != "" {
-		return strings.TrimSpace(s.cfg.Name)
-	}
-	return DefaultName
-}
-
-func (s *Server) version() string {
-	if strings.TrimSpace(s.cfg.Version) != "" {
-		return strings.TrimSpace(s.cfg.Version)
-	}
-	return DefaultVersion
 }

@@ -1,7 +1,7 @@
 package agent
 
 import (
-	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,78 +10,8 @@ import (
 	"testing"
 
 	"github.com/abedegno/muesli/internal/model"
+	"github.com/abedegno/muesli/internal/pluginkit"
 )
-
-func TestHealthAndInfoAuth(t *testing.T) {
-	t.Parallel()
-
-	srv := New(Config{
-		Token:   "secret-token",
-		Name:    "agent-name",
-		Version: "agent-version",
-	})
-
-	t.Run("health is public", func(t *testing.T) {
-		t.Parallel()
-
-		req := httptest.NewRequest(http.MethodGet, "/health", nil)
-		rec := httptest.NewRecorder()
-		srv.ServeHTTP(rec, req)
-
-		if rec.Code != http.StatusOK {
-			t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
-		}
-		if !strings.Contains(rec.Body.String(), `"status":"ok"`) {
-			t.Fatalf("body = %s, want ok status", rec.Body.String())
-		}
-	})
-
-	cases := []struct {
-		name      string
-		apiHeader string
-		auth      string
-		wantCode  int
-	}{
-		{name: "missing api header", apiHeader: "", auth: "Bearer secret-token", wantCode: http.StatusBadRequest},
-		{name: "wrong api header", apiHeader: "2", auth: "Bearer secret-token", wantCode: http.StatusBadRequest},
-		{name: "missing bearer", apiHeader: pluginAPIVersion, auth: "", wantCode: http.StatusUnauthorized},
-		{name: "wrong bearer", apiHeader: pluginAPIVersion, auth: "Bearer nope", wantCode: http.StatusUnauthorized},
-		{name: "success", apiHeader: pluginAPIVersion, auth: "Bearer secret-token", wantCode: http.StatusOK},
-	}
-
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			req := httptest.NewRequest(http.MethodGet, "/info", nil)
-			if tc.apiHeader != "" {
-				req.Header.Set("X-Muesli-Plugin-API", tc.apiHeader)
-			}
-			if tc.auth != "" {
-				req.Header.Set("Authorization", tc.auth)
-			}
-			rec := httptest.NewRecorder()
-			srv.ServeHTTP(rec, req)
-
-			if rec.Code != tc.wantCode {
-				t.Fatalf("status = %d, want %d", rec.Code, tc.wantCode)
-			}
-			if tc.wantCode == http.StatusOK {
-				var info Info
-				if err := json.NewDecoder(rec.Body).Decode(&info); err != nil {
-					t.Fatalf("decode info: %v", err)
-				}
-				if info.Kind != "agent" {
-					t.Fatalf("kind = %q, want agent", info.Kind)
-				}
-				if info.Name != "agent-name" || info.Version != "agent-version" || info.PluginAPI != 1 {
-					t.Fatalf("info = %+v", info)
-				}
-			}
-		})
-	}
-}
 
 func TestGenerateMultiSectionAndNilTranscript(t *testing.T) {
 	t.Parallel()
@@ -140,42 +70,26 @@ func TestGenerateMultiSectionAndNilTranscript(t *testing.T) {
 	}))
 	defer ollama.Close()
 
-	handler := New(Config{
-		Token:       "secret-token",
-		Name:        "agent-name",
-		Version:     "agent-version",
+	eng := New(Config{
 		OllamaURL:   ollama.URL,
 		Model:       "fallback-model",
 		Temperature: 0.2,
 	})
 
-	reqBody := GenerateRequest{
+	reqBody := pluginkit.GenerateRequest{
 		Transcript:    nil,
 		NotesMarkdown: "notes",
-		Template: Template{Sections: []model.TemplateSection{
+		Template: pluginkit.TemplatePayload{Sections: []model.TemplateSection{
 			{Heading: "Summary", Instruction: "Summarize the conversation."},
 			{Heading: "Decisions", Instruction: "List decisions."},
 		}},
 		Options: json.RawMessage(`{"temperature":0.7}`),
 		Config:  json.RawMessage(`{"model":"test-model","ollama_url":"` + ollama.URL + `","temperature":0.7}`),
 	}
-	body, err := json.Marshal(reqBody)
+
+	resp, err := eng.Generate(context.Background(), reqBody)
 	if err != nil {
-		t.Fatalf("marshal request: %v", err)
-	}
-
-	req := httptest.NewRequest(http.MethodPost, "/generate", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer secret-token")
-	req.Header.Set("X-Muesli-Plugin-API", pluginAPIVersion)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
-	}
-	var resp GenerateResponse
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
+		t.Fatalf("Generate: %v", err)
 	}
 	if resp.Model != "test-model" {
 		t.Fatalf("model = %q, want test-model", resp.Model)
@@ -224,37 +138,23 @@ func TestGenerateNilTranscriptUsesEmptyList(t *testing.T) {
 	}))
 	defer ollama.Close()
 
-	handler := New(Config{
-		Token:     "secret-token",
+	eng := New(Config{
 		OllamaURL: ollama.URL,
 		Model:     "fallback-model",
 	})
 
-	reqBody := GenerateRequest{
+	reqBody := pluginkit.GenerateRequest{
 		Transcript:    nil,
 		NotesMarkdown: "",
-		Template: Template{Sections: []model.TemplateSection{
+		Template: pluginkit.TemplatePayload{Sections: []model.TemplateSection{
 			{Heading: "Summary", Instruction: "Summarize."},
 		}},
 		Config: json.RawMessage(`{"ollama_url":"` + ollama.URL + `"}`),
 	}
-	body, err := json.Marshal(reqBody)
+
+	resp, err := eng.Generate(context.Background(), reqBody)
 	if err != nil {
-		t.Fatalf("marshal request: %v", err)
-	}
-
-	req := httptest.NewRequest(http.MethodPost, "/generate", bytes.NewReader(body))
-	req.Header.Set("Authorization", "Bearer secret-token")
-	req.Header.Set("X-Muesli-Plugin-API", pluginAPIVersion)
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
-	}
-	var resp GenerateResponse
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
+		t.Fatalf("Generate: %v", err)
 	}
 	if len(resp.Summary.Sections) != 1 || resp.Summary.Sections[0].ContentMarkdown != "empty transcript" {
 		t.Fatalf("response = %+v", resp)
