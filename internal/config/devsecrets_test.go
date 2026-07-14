@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -141,6 +142,49 @@ func TestProductionFlagDetected(t *testing.T) {
 	warnings = DevSecretWarnings(cfgProdNoDevSecrets)
 	if len(warnings) != 0 {
 		t.Fatalf("expected no warnings for real secrets in production, got %v", warnings)
+	}
+}
+
+func TestRequireProductionSecrets(t *testing.T) {
+	tests := []struct {
+		name       string
+		cfg        Config
+		wantErrSub string
+	}{
+		{
+			name: "non-production allows empty storage signing key",
+			cfg:  Config{Production: false},
+		},
+		{
+			name:       "production requires storage signing key",
+			cfg:        Config{Production: true},
+			wantErrSub: "MUESLI_STORAGE_SIGNING_KEY is required in production",
+		},
+		{
+			name: "production accepts real storage signing key",
+			cfg: Config{
+				Production:        true,
+				StorageSigningKey: "real-signing-key",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := RequireProductionSecrets(tc.cfg)
+			if tc.wantErrSub == "" {
+				if err != nil {
+					t.Fatalf("RequireProductionSecrets() unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !strings.Contains(err.Error(), tc.wantErrSub) {
+				t.Fatalf("error %q does not contain %q", err, tc.wantErrSub)
+			}
+		})
 	}
 }
 

@@ -62,6 +62,12 @@ func main() {
 		slog.Error("config", "error", err)
 		os.Exit(1)
 	}
+	if cfg.Production {
+		if err := config.RequireProductionSecrets(cfg); err != nil {
+			slog.Error("config", "error", err)
+			os.Exit(1)
+		}
+	}
 	cr, err := crypto.New(cfg.MasterKey)
 	if err != nil {
 		slog.Error("master key", "error", err, "hint", "set MUESLI_MASTER_KEY to a base64 32-byte key")

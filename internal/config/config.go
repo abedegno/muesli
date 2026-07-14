@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -131,7 +132,11 @@ func Load(get func(string) string) (Config, error) {
 	cfg.MicrosoftOAuthClientID = get("MUESLI_MICROSOFT_OAUTH_CLIENT_ID")
 	cfg.MicrosoftOAuthClientSecret = get("MUESLI_MICROSOFT_OAUTH_CLIENT_SECRET")
 	cfg.MicrosoftOAuthRedirectURL = def(get("MUESLI_MICROSOFT_OAUTH_REDIRECT_URL"), "")
-	cfg.Embedded = get("MUESLI_MODE") == "embedded"
+	rawMode := get("MUESLI_MODE")
+	if rawMode != "" && rawMode != "embedded" && rawMode != "server" {
+		return Config{}, fmt.Errorf("MUESLI_MODE must be 'embedded' or 'server', got %q", rawMode)
+	}
+	cfg.Embedded = rawMode == "embedded"
 	cfg.Production = get("MUESLI_PRODUCTION") == "true" || get("MUESLI_PRODUCTION") == "1"
 	cfg.Diarization = get("MUESLI_DIARIZATION") == "true" || get("MUESLI_DIARIZATION") == "1"
 	cfg.EmbeddingsURL = get("MUESLI_EMBEDDINGS_URL")
@@ -170,6 +175,24 @@ func Load(get func(string) string) (Config, error) {
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("DATABASE_URL is required")
 	}
+	if err := validatePostgresURL("DATABASE_URL", cfg.DatabaseURL); err != nil {
+		return Config{}, err
+	}
+	if err := validateHTTPURL("MUESLI_EMBEDDINGS_URL", cfg.EmbeddingsURL); err != nil {
+		return Config{}, err
+	}
+	if err := validateHTTPURL("MUESLI_WEBHOOK_URL", cfg.WebhookURL); err != nil {
+		return Config{}, err
+	}
+	if err := validateHTTPURL("MUESLI_DEFAULT_TRANSCRIBER_URL", cfg.DefaultTranscriberURL); err != nil {
+		return Config{}, err
+	}
+	if err := validateHTTPURL("MUESLI_DEFAULT_STREAMING_TRANSCRIBER_URL", cfg.DefaultStreamingTranscriberURL); err != nil {
+		return Config{}, err
+	}
+	if err := validateHTTPURL("MUESLI_DEFAULT_AGENT_URL", cfg.DefaultAgentURL); err != nil {
+		return Config{}, err
+	}
 	return cfg, nil
 }
 
@@ -181,6 +204,25 @@ func def(v, fallback string) string {
 		return fallback
 	}
 	return v
+}
+
+func validatePostgresURL(name, value string) error {
+	u, err := url.Parse(value)
+	if err != nil || u.Scheme == "" || u.Host == "" || (u.Scheme != "postgres" && u.Scheme != "postgresql") {
+		return fmt.Errorf("%s must be a postgres:// or postgresql:// URL with a host, e.g. postgres://user:pass@host:5432/dbname", name)
+	}
+	return nil
+}
+
+func validateHTTPURL(name, value string) error {
+	if value == "" {
+		return nil
+	}
+	u, err := url.Parse(value)
+	if err != nil || u.Scheme == "" || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return fmt.Errorf("%s must be an http:// or https:// URL with a host", name)
+	}
+	return nil
 }
 
 // parseIntPositive returns the int value of v when v is a positive integer,
