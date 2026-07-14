@@ -43,9 +43,13 @@ jobs:
           - platform: darwin-arm64
             os: macos-14
             backend: metal
-          # darwin-amd64 (Intel, macos-13) omitted: Apple-Silicon-first, and
-          # GitHub's Intel-mac runners queue indefinitely. Re-add for a future
-          # universal/Intel build when the desktop app needs an x64 mac lib.
+          # darwin-amd64: cross-compiled to x86_64 on the arm64 macos-14 runner
+          # (GitHub's Intel/macos-13 runners queue indefinitely). This workflow
+          # only builds the .a artifact, never runs it, so no x86_64 execution is
+          # needed on the host.
+          - platform: darwin-amd64
+            os: macos-14
+            backend: metal
     runs-on: ${{ matrix.os }}
     steps:
       - name: Resolve whisper.cpp ref
@@ -61,10 +65,21 @@ jobs:
           git clone https://github.com/ggml-org/whisper.cpp wcpp
           git -C wcpp checkout "${{ steps.ref.outputs.ref }}"
 
-      - name: Build static libs (make whisper)
+      - name: Build static libs
         run: |
-          cd wcpp/bindings/go
-          make whisper
+          if [ "${{ matrix.platform }}" = "darwin-amd64" ]; then
+            # Cross-compile the x86_64 slice on the arm64 runner. The bindings/go
+            # Makefile hardcodes the host arch in its cmake call, so invoke cmake
+            # directly with the same flags plus CMAKE_OSX_ARCHITECTURES=x86_64.
+            # Output lands in wcpp/build_go, matching the artifact glob below.
+            cmake -S wcpp -B wcpp/build_go \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DBUILD_SHARED_LIBS=OFF \
+              -DCMAKE_OSX_ARCHITECTURES=x86_64
+            cmake --build wcpp/build_go --target whisper
+          else
+            cd wcpp/bindings/go && make whisper
+          fi
 
       - name: Assemble vendored artifact
         run: |
