@@ -25,17 +25,17 @@ jobs:
             platforms: linux/amd64,linux/arm64
           - name: whisper-transcriber
             context: plugins/whisper-transcriber
-            dockerfile: Dockerfile
+            dockerfile: plugins/whisper-transcriber/Dockerfile
             image: ghcr.io/abedegno/muesli-whisper-transcriber
             platforms: linux/amd64,linux/arm64
           - name: ollama-agent
             context: plugins/ollama-agent
-            dockerfile: Dockerfile
+            dockerfile: plugins/ollama-agent/Dockerfile
             image: ghcr.io/abedegno/muesli-ollama-agent
             platforms: linux/amd64,linux/arm64
           - name: streaming-transcriber
             context: plugins/streaming-transcriber
-            dockerfile: Dockerfile
+            dockerfile: plugins/streaming-transcriber/Dockerfile
             image: ghcr.io/abedegno/muesli-streaming-transcriber
             platforms: linux/amd64,linux/arm64
     steps:
