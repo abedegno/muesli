@@ -81,7 +81,7 @@ client uploads audio ──▶ note row created, audio stored
 
 - **Batch, not streaming** (v1). The user records a whole meeting, then uploads.
 - The queue is a **Postgres table**, leased with `SELECT … FOR UPDATE SKIP LOCKED`.
-  No Redis/Kafka dependency until scale demands it (see `backlog.md`).
+  No Redis/Kafka dependency until scale demands it (see [ROADMAP.md](../ROADMAP.md)).
 - A **worker pool** of goroutines leases jobs, calls the relevant plugin over
   HTTP, persists results, and advances the note's state. Job types: `transcribe`,
   `summarize` (one per template — built-ins + the owner's), and `embed`.
@@ -295,6 +295,6 @@ npm run dev:debug              # launch with CDP on :9333 for the visual loop
 
 ## Where to go next
 
-- **What's planned / deferred:** [`backlog.md`](../backlog.md)
+- **What's planned / deferred:** [`ROADMAP.md`](../ROADMAP.md)
 - **How to contribute:** [`CONTRIBUTING.md`](../CONTRIBUTING.md)
 - **Reporting a vulnerability:** [`SECURITY.md`](../SECURITY.md)

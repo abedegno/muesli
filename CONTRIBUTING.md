@@ -13,7 +13,7 @@ By participating you agree to abide by our [Code of Conduct](CODE_OF_CONDUCT.md)
   the README, or inline comments are very welcome.
 - **Write a plugin** — a transcriber or agent in any language that speaks the
   [plugin contract](docs/ARCHITECTURE.md#the-plugin-contract).
-- **Pick up backlog work** — see [`backlog.md`](backlog.md) for what's planned.
+- **Pick up backlog work** — see [`ROADMAP.md`](ROADMAP.md) for what's planned.
 
 For anything non-trivial, **open an issue first** so we can agree on the approach
 before you invest time. This is especially true for changes to the plugin
@@ -123,7 +123,7 @@ instructions.
 - **TypeScript:** the project is typed; keep it that way (no `any` escape hatches
   without reason).
 - **DRY, YAGNI.** Don't build for requirements that aren't here yet — capture
-  future ideas in `backlog.md` instead.
+  future ideas in `ROADMAP.md` instead.
 - **Migrations are append-only and timestamp-versioned.** Create new migrations
   with `make new-migration name=<snake_name>` (or `scripts/new-migration.sh`),
   which stamps a collision-free `YYYYMMDDHHMMSS_<name>.{up,down}.sql`. Never
