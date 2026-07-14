@@ -35,15 +35,25 @@ func Start(ctx context.Context, reporter *Reporter) (databaseURL string, stop fu
 
 	if bundleDir := strings.TrimSpace(os.Getenv("MUESLI_EMBEDDED_PGVECTOR_DIR")); bundleDir != "" {
 		reporter.Advance(PhasePgvector, "installing pgvector")
-		if err := InstallPgvector(
-			filepath.Join(pg.runtimePath(), "lib"),
-			filepath.Join(pg.runtimePath(), "share", "extension"),
-			bundleDir,
-		); err != nil {
+		targetRoot := pg.installRoot()
+		libDir := filepath.Join(targetRoot, "lib")
+		shareExtDir := filepath.Join(targetRoot, "share", "extension")
+
+		installed, err := pgvectorControlInstalled(shareExtDir)
+		if err != nil {
 			if stopErr := cleanup(context.Background()); stopErr != nil {
-				return "", nil, fmt.Errorf("install embedded pgvector: %w (cleanup stop failed: %v)", err, stopErr)
+				return "", nil, fmt.Errorf("check embedded pgvector: %w (cleanup stop failed: %v)", err, stopErr)
 			}
-			return "", nil, fmt.Errorf("install embedded pgvector: %w", err)
+			return "", nil, fmt.Errorf("check embedded pgvector: %w", err)
+		}
+
+		if !installed {
+			if err := InstallPgvector(libDir, shareExtDir, bundleDir); err != nil {
+				if stopErr := cleanup(context.Background()); stopErr != nil {
+					return "", nil, fmt.Errorf("install embedded pgvector: %w (cleanup stop failed: %v)", err, stopErr)
+				}
+				return "", nil, fmt.Errorf("install embedded pgvector: %w", err)
+			}
 		}
 
 		if err := EnsureExtension(ctx, pg.URL()); err != nil {

@@ -81,6 +81,18 @@ func (p *PG) runtimePath() string {
 	return p.runtimeDir
 }
 
+// installRoot returns the directory that actually backs the running server's
+// lib/share tree.
+func (p *PG) installRoot() string {
+	if p == nil {
+		return ""
+	}
+	if binaries := getenv(embeddedPGBinaryEnv); binaries != "" {
+		return binaries
+	}
+	return p.runtimePath()
+}
+
 // Stop shuts the server down gracefully, then force-kills it if needed.
 func (p *PG) Stop(ctx context.Context) error {
 	if ctx == nil {

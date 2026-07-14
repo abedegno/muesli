@@ -11,6 +11,18 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+func pgvectorControlInstalled(shareExtDir string) (bool, error) {
+	controlPath := filepath.Join(shareExtDir, "vector.control")
+	_, err := os.Stat(controlPath)
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("stat pgvector control %q: %w", controlPath, err)
+}
+
 // InstallPgvector copies pgvector artifacts from bundleDir into the target
 // embedded Postgres library and extension directories.
 func InstallPgvector(pgLibDir, pgShareExtDir, bundleDir string) error {
