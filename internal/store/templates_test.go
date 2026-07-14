@@ -26,8 +26,12 @@ func TestSeedBuiltInTemplates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
-	if len(names) != 2 {
-		t.Fatalf("got %d templates, want 2: %v", len(names), names)
+	builtins, err := st.BuiltInTemplates(ctx)
+	if err != nil {
+		t.Fatalf("built-ins: %v", err)
+	}
+	if len(names) != len(builtins) {
+		t.Fatalf("got %d templates, want %d: %v", len(names), len(builtins), names)
 	}
 }
 
