@@ -195,6 +195,63 @@ compose stack picks it up automatically on the next `docker compose up`.
 
 ---
 
+## Install script (A3)
+
+For a fresh production box, the recommended path is the one-line installer in
+[`scripts/install.sh`](../scripts/install.sh) (see the README's One-line
+install section). It fetches `docker-compose.prod.yml` and `.env.example` from
+the git ref you choose, writes fresh `MUESLI_MASTER_KEY` and
+`MUESLI_STORAGE_SIGNING_KEY` values into `.env`, and can optionally start the
+stack with `--up`.
+
+Use `MUESLI_INSTALL_REF` to pin the files you fetch and `MUESLI_IMAGE_TAG` to
+pin the image tag written into `.env`. `--force` regenerates `.env` even if one
+already exists, and `--dir` / `-d` choose the install directory.
+
+The installer handles the two secrets that are most error-prone to generate by
+hand, but you still need to review the remaining production values before the
+first boot, especially `WHISPER_TOKEN`, `AGENT_TOKEN`, `MUESLI_PUBLIC_URL`, and
+the `MUESLI_IMAGE_TAG` you want to run. Cross-check those against the manual
+[Production secrets checklist](#production-secrets-checklist) below.
+
+---
+
+## Resource sizing
+
+For a single-node production deployment that runs the server, Postgres, Ollama,
+and Whisper on the same host, a practical starting point is **4 vCPU / 16 GiB
+RAM**. If you expect concurrent meetings or want the box to stay comfortable
+under load, **8 vCPU / 32 GiB RAM** is a safer baseline. The README's
+recommendation of 8 GiB for CPU inference with `llama3.2:3b` is the floor, not
+the production target.
+
+Disk needs are driven by retention. Start with **10-20 GiB** for the Postgres
+volume, then grow it with your note history and semantic-search data. Size the
+audio blob volume from recording volume and how long you keep recordings; for a
+small team that retains audio, **50-100 GiB** is a reasonable first allocation.
+
+If you use [`docker-compose.gpu.yml`](../docker-compose.gpu.yml) or the GPU
+section in the README, GPU acceleration shifts most of the CPU and RAM burden
+away from Ollama and Whisper, so the sizing math changes accordingly.
+
+---
+
+## Backups
+
+For backup and restore, see [`docs/BACKUP.md`](./BACKUP.md). It covers the
+Postgres database and the audio blob volume, and you need both pieces for a
+restorable snapshot.
+
+---
+
+## Upgrades
+
+For rolling a deployment forward, see [`docs/UPGRADING.md`](./UPGRADING.md).
+It covers pulling or rebuilding images, restarting the stack, and the fact that
+DB migrations run automatically on server boot.
+
+---
+
 ## Production secrets checklist
 
 The `docker-compose.yml` ships dev-only defaults so that `docker compose up`
@@ -240,3 +297,15 @@ $EDITOR .env
 
 See [`SECURITY.md`](../SECURITY.md) for the full security policy, including
 vulnerability reporting and the operator responsibility boundary.
+
+---
+
+## Production smoke checklist
+
+- [ ] Open `/admin`, create a new account, and sign in.
+- [ ] Record a short meeting in the desktop client, or upload an audio file, and confirm a new note appears.
+- [ ] Wait for the note transcript panel to populate.
+- [ ] Wait for the summary section to populate.
+- [ ] Confirm the note status badge changes to `ready`.
+- [ ] Restart the stack with `docker compose -f docker-compose.prod.yml restart` or `sudo systemctl restart muesli.service`.
+- [ ] Reopen the same note and confirm the transcript, summary, and audio still load after the restart.
