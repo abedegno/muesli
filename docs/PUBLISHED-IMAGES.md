@@ -28,6 +28,18 @@ vulnerability ID per line, preceded by a short comment that explains why the
 exception is accepted and when it should be removed. Track that enforcement flip
 in [issue #238](https://github.com/abedegno/muesli/issues/238).
 
+## Verifying provenance
+
+Each pushed image now carries a keyless GitHub-OIDC build-provenance
+attestation. Verify it with:
+
+```bash
+gh attestation verify oci://ghcr.io/abedegno/muesli-server:latest --owner abedegno
+```
+
+This works for any of the four published images by substituting the image name
+or tag in the `oci://` reference.
+
 Example compose override:
 
 ```yaml
