@@ -259,6 +259,40 @@ URL you configured.
    POST /api/calendar/refresh
    ```
 
+---
+
+## `muesli doctor`
+
+When startup fails or a deployment looks half-configured, `muesli doctor` is
+the fastest way to separate a bad config from a real runtime problem. It does
+not start the server or worker pool.
+
+The command prints one line per check:
+
+```text
+[PASS] database: DATABASE_URL reachable; pgvector extension present
+[WARN] embeddings: not configured (disabled)
+[PASS] audio dir: writable: ./data/audio
+Summary: 6 PASS, 2 WARN, 0 FAIL
+```
+
+The checks cover:
+
+- database reachability and the `vector` extension
+- default plugin URLs for transcriber, streaming transcriber, and agent
+- embeddings reachability when configured
+- master key and storage signing key presence, plus dev-default secret checks
+- writability of the audio and backup directories
+
+Exit codes:
+
+- `0` when every check is `PASS` or `WARN`
+- `1` when any check is `FAIL`
+
+Use the summary counts to see whether the problem is a missing config value,
+an unreachable dependency, or just a disabled feature such as embeddings or a
+backup directory.
+
 If the upstream server is returning `401 Unauthorized` or `403 Forbidden`, fix
 the credentials first. If it is returning another HTTP error, fix the URL or the
 upstream service before retrying.
