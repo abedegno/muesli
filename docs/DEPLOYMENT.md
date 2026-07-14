@@ -53,6 +53,32 @@ docker compose -f docker-compose.prod.yml up -d
 
 ---
 
+## Operator Makefile targets
+
+The root `Makefile` adds convenience targets for the production compose stack.
+They all default to the repo root, but you can point them at a real install
+directory with `PROD_DIR=/opt/muesli`:
+
+```bash
+make prod-up PROD_DIR=/opt/muesli
+```
+
+Targets:
+
+- `prod-up` wraps `docker compose --env-file $(PROD_DIR)/.env -f $(PROD_DIR)/docker-compose.prod.yml up -d`
+- `prod-down` wraps `docker compose --env-file $(PROD_DIR)/.env -f $(PROD_DIR)/docker-compose.prod.yml down`
+- `prod-logs` wraps `docker compose --env-file $(PROD_DIR)/.env -f $(PROD_DIR)/docker-compose.prod.yml logs -f`
+- `prod-ps` wraps `docker compose --env-file $(PROD_DIR)/.env -f $(PROD_DIR)/docker-compose.prod.yml ps`
+- `prod-backup` wraps the Postgres dump command from [docs/BACKUP.md](./BACKUP.md) using the same `pg_dump` invocation as the upgrade reminder
+- `prod-upgrade` wraps `scripts/upgrade.sh --dir $(PROD_DIR)` and follows the upgrade flow in [docs/UPGRADING.md](./UPGRADING.md)
+
+Use these targets from the repo root or from an install directory created by
+[`scripts/install.sh`](../scripts/install.sh). The `PROD_DIR` override lets the
+same Makefile commands point at either location without changing the command
+shape.
+
+---
+
 ## Caddy (recommended)
 
 [Caddy](https://caddyserver.com) obtains and renews TLS certificates from Let's
