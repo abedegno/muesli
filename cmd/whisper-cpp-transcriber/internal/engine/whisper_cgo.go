@@ -4,8 +4,19 @@
 // transcription backend. It is only compiled when built with
 // `-tags whisper_cgo` and requires the whisper.cpp static libraries and
 // headers to be present on the build machine (see
-// cmd/whisper-cpp-transcriber/README or the build-whisper-lib CI workflow).
-// The default (untagged) build uses the pure-Go stub in engine.go instead.
+// .github/workflows/build-whisper-lib.yml, which produces the vendored
+// artifact this links against).
+//
+// Linking happens as part of the `go build`/`go test` invocation itself, so
+// a missing library/header is a COMPILE-time failure, not something any
+// Go-level code (including a test's t.Skip) can guard against. Use
+// `make test-whisper-cgo` (scripts/test-whisper-cgo.sh) rather than a raw
+// `go test -tags whisper_cgo ...` in any context where the vendored libs
+// might not be present -- it checks for them before invoking the Go
+// toolchain at all, so it never reaches the link step when they're absent.
+//
+// The default (untagged) build uses the pure-Go stub in engine.go instead,
+// and is unaffected by any of this.
 package engine
 
 import (

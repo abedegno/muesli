@@ -17,6 +17,15 @@
 // vendored model/lib artifacts this integration test wants for a full,
 // meaningful run aren't actually present. In that case we skip cleanly
 // rather than fail.
+//
+// The intended, fully runner-safe entrypoint for this test is
+// `make test-whisper-cgo` (scripts/test-whisper-cgo.sh), which checks for
+// the vendored artifacts BEFORE invoking the Go toolchain at all, so a
+// missing library never reaches the cgo link step in the first place.
+// Invoking `go test -tags whisper_cgo ...` directly is a documented,
+// prereq-gated developer action (see this repo's whisper.cpp cgo prereqs)
+// and will fail at link time -- not skip -- if the libs aren't present;
+// that is expected and does not affect the default untagged CI gate.
 package engine
 
 import (

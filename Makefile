@@ -1,4 +1,4 @@
-.PHONY: run test test-db test-db-stop tidy build-admin build up dev lint check smoke new-migration check-test-determinism prod-up prod-down prod-logs prod-ps prod-backup prod-upgrade
+.PHONY: run test test-whisper-cgo test-db test-db-stop tidy build-admin build up dev lint check smoke new-migration check-test-determinism prod-up prod-down prod-logs prod-ps prod-backup prod-upgrade
 
 PROD_DIR ?= .
 PROD_COMPOSE = docker compose --env-file $(PROD_DIR)/.env -f $(PROD_DIR)/docker-compose.prod.yml
@@ -22,6 +22,17 @@ build: build-admin
 # Each test call gets its own PostgreSQL schema, so packages run in parallel safely.
 test:
 	go test ./... -p 4 -parallel 2
+
+# Runner-safe entrypoint for the whisper.cpp cgo build/test path
+# (cmd/whisper-cpp-transcriber's `whisper_cgo`-tagged real engine).
+# Skips cleanly (exit 0, no `go test` invocation at all) if the vendored
+# whisper.cpp headers/libs aren't provisioned via C_INCLUDE_PATH/
+# LIBRARY_PATH -- see scripts/test-whisper-cgo.sh for why a Go-level
+# t.Skip alone can't do this (cgo link failures happen before any Go
+# code runs). Does not affect the default `test` target above, which
+# stays pure Go / untagged.
+test-whisper-cgo:
+	bash scripts/test-whisper-cgo.sh
 
 # Spin up a throwaway Postgres (with pgvector) for tests on :5433
 test-db:
