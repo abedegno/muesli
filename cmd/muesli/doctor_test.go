@@ -241,6 +241,14 @@ func TestCheckSecrets(t *testing.T) {
 			wantDetail: "dev-only defaults in use: MUESLI_STORAGE_SIGNING_KEY",
 		},
 		{
+			name: "fail when missing key and dev defaults are both present",
+			cfg: config.Config{
+				StorageSigningKey: "dev-storage-signing-key-change-me",
+			},
+			status:     doctorFail,
+			wantDetail: "MUESLI_MASTER_KEY is required; generate one with: openssl rand -base64 32; dev-only defaults in use: MUESLI_STORAGE_SIGNING_KEY",
+		},
+		{
 			name:       "fail when missing",
 			cfg:        config.Config{},
 			status:     doctorFail,

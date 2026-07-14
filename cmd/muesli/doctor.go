@@ -82,6 +82,8 @@ func (realPluginProbe) CheckInfo(ctx context.Context, endpointURL, token string)
 	if strings.TrimSpace(token) == "" {
 		return errors.New("plugin token missing")
 	}
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
 	_, err := plugin.New(endpointURL, token).Info(ctx)
 	return err
 }
@@ -185,11 +187,12 @@ func checkSecrets(cfg config.Config) doctorCheck {
 		problems = append(problems, "MUESLI_STORAGE_SIGNING_KEY is required")
 	}
 	if warnings := config.DevSecretWarnings(cfg); len(warnings) > 0 {
-		msg := "dev-only defaults in use: " + strings.Join(warnings, ", ")
 		if cfg.Production {
-			problems = append(problems, msg)
+			problems = append(problems, "dev-only defaults in use: "+strings.Join(warnings, ", "))
+		} else if len(problems) == 0 {
+			return warnCheck("secrets", "dev-only defaults in use: "+strings.Join(warnings, ", "))
 		} else {
-			return warnCheck("secrets", msg)
+			problems = append(problems, "dev-only defaults in use: "+strings.Join(warnings, ", "))
 		}
 	}
 	if len(problems) > 0 {
