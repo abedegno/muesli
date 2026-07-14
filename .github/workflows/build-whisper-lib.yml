@@ -43,9 +43,9 @@ jobs:
           - platform: darwin-arm64
             os: macos-14
             backend: metal
-          - platform: darwin-amd64
-            os: macos-13
-            backend: metal
+          # darwin-amd64 (Intel, macos-13) omitted: Apple-Silicon-first, and
+          # GitHub's Intel-mac runners queue indefinitely. Re-add for a future
+          # universal/Intel build when the desktop app needs an x64 mac lib.
     runs-on: ${{ matrix.os }}
     steps:
       - name: Resolve whisper.cpp ref
