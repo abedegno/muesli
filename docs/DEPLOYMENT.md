@@ -149,6 +149,34 @@ overhead of HTTP/1.0 (nginx's default upstream mode).
 
 ---
 
+## TLS + running as a service
+
+For a copy-paste-ready reverse proxy setup, start with the tracked examples in
+`infra/reverse-proxy/`:
+
+- `infra/reverse-proxy/Caddyfile` is the documented default. Caddy handles TLS
+  automatically and is the simplest option for most deployments.
+- `infra/reverse-proxy/nginx.conf` is an nginx example with certbot-style TLS
+  paths, HTTP -> HTTPS redirect, and ACME challenge handling.
+
+The inline snippets above are kept as quick illustrations, but the files in
+`infra/reverse-proxy/` are the versions to copy into a real deployment.
+
+For a bare-metal single-box install, use `infra/systemd/muesli.service`:
+
+```bash
+sudo cp infra/systemd/muesli.service /etc/systemd/system/muesli.service
+sudoedit /etc/systemd/system/muesli.service  # adjust WorkingDirectory first
+sudo systemctl daemon-reload
+sudo systemctl enable --now muesli.service
+```
+
+The unit runs `docker compose -f docker-compose.prod.yml up` in the foreground
+so systemd can supervise it, and it stops the stack with `docker compose -f
+docker-compose.prod.yml down` on shutdown.
+
+---
+
 ## `MUESLI_PUBLIC_URL`
 
 Set this environment variable to the **public HTTPS base URL** of your
