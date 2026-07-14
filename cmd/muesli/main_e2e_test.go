@@ -35,6 +35,18 @@ func TestEmbeddedMainE2E(t *testing.T) {
 		t.Fatalf("go build failed: %v\n%s", err, buildOut)
 	}
 
+	// The embedded server always spawns whisper-cpp-transcriber as the
+	// desktop-default transcriber plugin now, so build it too (untagged,
+	// no cgo needed) and point the embedded locate step at it via the same
+	// override mechanism MUESLI_OLLAMA_AGENT_BIN uses.
+	whisperBin := filepath.Join(t.TempDir(), "whisper-cpp-transcriber")
+	buildWhisper := exec.Command("go", "build", "-o", whisperBin, "github.com/abedegno/muesli/cmd/whisper-cpp-transcriber")
+	buildWhisper.Dir = cwd
+	buildWhisperOut, err := buildWhisper.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go build whisper-cpp-transcriber failed: %v\n%s", err, buildWhisperOut)
+	}
+
 	addr := freeLoopbackAddress(t)
 	root := t.TempDir()
 	appDataDir := filepath.Join(root, "appdata")
@@ -43,14 +55,15 @@ func TestEmbeddedMainE2E(t *testing.T) {
 	masterKey := mustBase64Key(t)
 
 	env := mergedEnv(os.Environ(), map[string]string{
-		"DATABASE_URL":                 dbURL,
-		"MUESLI_ADDR":                  addr,
-		"MUESLI_APPDATA":               appDataDir,
-		"MUESLI_MODE":                  "",
-		"MUESLI_MASTER_KEY":            masterKey,
-		"MUESLI_PUBLIC_URL":            "http://" + addr,
-		"MUESLI_STORAGE_DIR":           storageDir,
-		"MUESLI_EMBEDDED_PGVECTOR_DIR": os.Getenv("MUESLI_EMBEDDED_PGVECTOR_DIR"),
+		"DATABASE_URL":                       dbURL,
+		"MUESLI_ADDR":                        addr,
+		"MUESLI_APPDATA":                     appDataDir,
+		"MUESLI_MODE":                        "",
+		"MUESLI_MASTER_KEY":                  masterKey,
+		"MUESLI_PUBLIC_URL":                  "http://" + addr,
+		"MUESLI_STORAGE_DIR":                 storageDir,
+		"MUESLI_EMBEDDED_PGVECTOR_DIR":       os.Getenv("MUESLI_EMBEDDED_PGVECTOR_DIR"),
+		"MUESLI_WHISPER_CPP_TRANSCRIBER_BIN": whisperBin,
 	})
 
 	cmd := exec.Command(bin, "--embedded")

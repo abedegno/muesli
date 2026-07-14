@@ -10,7 +10,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -137,7 +136,7 @@ func TestLocateWhisperCppTranscriberBinaryCandidateSearch(t *testing.T) {
 // TestHelperProcess (the standard os/exec test double pattern), standing in
 // for the whisper-cpp-transcriber child process without touching the network
 // or the real binary. mode selects the helper's behavior on SIGINT.
-func newFakeWhisperHandle(t *testing.T, mode string) (*WhisperHandle, *exec.Cmd) {
+func newFakeWhisperHandle(t *testing.T, mode string) (*WhisperHandle, *exec.Cmd, <-chan struct{}) {
 	t.Helper()
 
 	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess", "--", mode)
@@ -168,21 +167,23 @@ func newFakeWhisperHandle(t *testing.T, mode string) (*WhisperHandle, *exec.Cmd)
 		cmd:  cmd,
 		done: make(chan error, 1),
 	}
+	exited := make(chan struct{})
 	go func() {
 		// Drain any remaining stdout so Wait doesn't block on pending pipe I/O.
 		_, _ = io.Copy(io.Discard, reader)
 	}()
 	go func() {
 		handle.done <- cmd.Wait()
+		close(exited)
 	}()
 
-	return handle, cmd
+	return handle, cmd, exited
 }
 
 func TestWhisperHandleStopSignalsThenExits(t *testing.T) {
 	t.Parallel()
 
-	handle, cmd := newFakeWhisperHandle(t, "exit-on-interrupt")
+	handle, cmd, _ := newFakeWhisperHandle(t, "exit-on-interrupt")
 
 	if err := handle.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop() error: %v", err)
@@ -200,7 +201,7 @@ func TestWhisperHandleStopSignalsThenExits(t *testing.T) {
 func TestWhisperHandleStopFallsBackToKillOnTimeout(t *testing.T) {
 	t.Parallel()
 
-	handle, cmd := newFakeWhisperHandle(t, "ignore-interrupt")
+	handle, _, exited := newFakeWhisperHandle(t, "ignore-interrupt")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
 	defer cancel()
@@ -210,16 +211,15 @@ func TestWhisperHandleStopFallsBackToKillOnTimeout(t *testing.T) {
 	}
 
 	// Stop() already drained handle.done internally (see the select in
-	// Stop's stopOnce.Do); the process being gone is what matters here.
-	deadline := time.Now().Add(2 * time.Second)
-	for cmd.Process != nil {
-		if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
-			break // process is gone
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("child process did not exit after Kill fallback")
-		}
-		time.Sleep(20 * time.Millisecond)
+	// Stop's stopOnce.Do). Wait, event-driven via close(exited) from the
+	// same goroutine, to confirm the child actually exited via the Kill
+	// fallback, instead of polling on a wall-clock deadline.
+	waitCtx, waitCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer waitCancel()
+	select {
+	case <-exited:
+	case <-waitCtx.Done():
+		t.Fatal("child process did not exit after Kill fallback")
 	}
 }
 
@@ -267,7 +267,7 @@ func TestHelperProcess(t *testing.T) {
 	case "ignore-interrupt":
 		signal.Ignore(os.Interrupt)
 		fmt.Println("ready")
-		time.Sleep(1 * time.Hour)
+		select {}
 	default:
 		os.Exit(2)
 	}
