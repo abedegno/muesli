@@ -1,11 +1,8 @@
 {
   "name": "muesli-desktop",
   "version": "0.1.0",
-  "description": "",
+  "description": "Muesli desktop app",
   "main": "out/main/main.js",
-  "directories": {
-    "doc": "docs"
-  },
   "scripts": {
     "dev": "electron-vite dev",
     "dev:debug": "electron-vite dev -- --remote-debugging-port=9333",

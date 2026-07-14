@@ -77,6 +77,9 @@ jobs:
           APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Same-repo PR: force electron-builder to actually code-sign (it skips
+          # signing on PR builds by default). Safe here -- not a fork.
+          PUBLISH_FOR_PULL_REQUEST: 'true'
         run: |
           # electron-builder's API-key notarization expects APPLE_API_KEY as a
           # path to the .p8; the secret stores it base64-encoded, so materialize.
