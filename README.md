@@ -62,6 +62,8 @@ transcription. Expect a few minutes before the stack is fully ready. CPU
 inference is slow — this is a local-first dev setup, not a tuned production
 deployment. (For GPU acceleration, use the override described in the [GPU acceleration](#gpu-acceleration) section below.)
 
+Deploying to production? See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
 ### One-line install
 
 Use this for a production/hosted deployment. It fetches pinned copies of
@@ -127,6 +129,8 @@ map, the plugin contract, and the processing pipeline — see
 | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)       | Contributor-oriented architecture: components, pipeline, package map, plugin contract, and the design rationale behind the privacy-first, self-hosted plugin approach. |
 | [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md)     | Complete reference for all `MUESLI_*` and plugin environment variables.                                                                                                |
 | [`docs/DEPLOYMENT.md`](docs/DEPLOYMENT.md)           | Production runbook: install, TLS, sizing, backups, upgrades, and smoke checks.                                                                                         |
+| [`docs/API.md`](docs/API.md)                         | HTTP API reference: JSON models, endpoints, auth rules, and response shapes.                                                                                          |
+| [`docs/PLUGINS.md`](docs/PLUGINS.md)                 | Plugin authoring guide: the transcriber/agent contract, required endpoints, auth, and validation flow.                                                                 |
 | [`docs/BACKUP.md`](docs/BACKUP.md)                   | Backup and restore guide for the Postgres database and audio blob store.                                                                                               |
 | [`docs/UPGRADING.md`](docs/UPGRADING.md)             | Upgrade procedure for pulling or rebuilding images, restarting, and handling migrations.                                                                               |
 | [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) | Common issues: slow first boot, port conflicts, reading logs, and telling "still loading" from broken.                                                                 |
@@ -147,9 +151,12 @@ and terminate TLS at a reverse proxy. See [`SECURITY.md`](SECURITY.md).
 
 ## Status
 
-Muesli is **pre-1.0** and under active development. v1 is a complete end-to-end
-thin slice (capture → upload → transcribe → summarize → viewable note); polished
-UX and multi-user features are on the [roadmap](ROADMAP.md).
+Muesli is **pre-1.0** and under active development. The current v3 feature set
+covers calendar integration, Chat/RAG over notes, speaker diarization with
+review and speaker aliases, semantic search, multi-format export, and tags,
+smart lists, folders, and recycle bin support. The product is still evolving,
+and there is more polish and broader multi-user work ahead on the
+[roadmap](ROADMAP.md).
 
 ## Contributing
 
