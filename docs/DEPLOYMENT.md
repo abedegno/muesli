@@ -72,6 +72,9 @@ fallback secrets so iteration stays fast.
 
 `docker-compose.prod.yml` uses the pinned GHCR images published by the build
 workflow and documented in [`docs/PUBLISHED-IMAGES.md`](./PUBLISHED-IMAGES.md).
+For provenance verification, see
+[`Verifying provenance`](./PUBLISHED-IMAGES.md#verifying-provenance) for the
+exact `gh attestation verify` command.
 It does not build anything locally, and it reads secrets and other
 environment-specific values directly from `.env` with no fallback defaults.
 Follow the [Production secrets checklist](#production-secrets-checklist) and
