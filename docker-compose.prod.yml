@@ -1,0 +1,174 @@
+# Full self-hosted Muesli stack for production: same services as docker-compose.yml,
+# but every locally-built service is pulled from GHCR with a pinned image tag.
+#
+# Set the required env vars in .env before running this file. Unlike the dev
+# compose stack, there are no default fallbacks for secrets or environment-
+# specific values here.
+
+services:
+  postgres:
+    # pgvector image (a superset of postgres:16) so the semantic-search migration can
+    # CREATE EXTENSION vector. Drop-in compatible with the prior postgres:16-alpine.
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: muesli
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d muesli']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  ollama:
+    image: ollama/ollama
+    volumes:
+      - ollama:/root/.ollama
+    healthcheck:
+      # The ollama CLI talks to the local server; `ollama list` succeeds once it's up.
+      test: ['CMD-SHELL', 'ollama list || exit 1']
+      interval: 5s
+      timeout: 10s
+      retries: 20
+
+  # One-shot: pull the default model into the ollama volume, then exit.
+  ollama-pull:
+    image: ollama/ollama
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    volumes:
+      - ./infra/ollama-pull.sh:/ollama-pull.sh:ro
+    entrypoint: ['/bin/sh', '/ollama-pull.sh']
+    command: ['llama3.2:3b']
+    restart: 'no'
+
+  # One-shot: pull the embedding model (semantic search) into the ollama volume.
+  ollama-pull-embed:
+    image: ollama/ollama
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    volumes:
+      - ./infra/ollama-pull.sh:/ollama-pull.sh:ro
+    entrypoint: ['/bin/sh', '/ollama-pull.sh']
+    command: ['nomic-embed-text']
+    restart: 'no'
+
+  whisper:
+    image: ghcr.io/abedegno/muesli-whisper-transcriber:${MUESLI_IMAGE_TAG}
+    environment:
+      MUESLI_PLUGIN_TOKEN: ${WHISPER_TOKEN}
+      WHISPER_MODEL: base
+    healthcheck:
+      # The python image has no curl; use the bundled Python to hit /health.
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(''http://localhost:8000/health'').status==200 else 1)"',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  streaming-transcriber:
+    image: ghcr.io/abedegno/muesli-streaming-transcriber:${MUESLI_IMAGE_TAG}
+    profiles: ['streaming']
+    environment:
+      MUESLI_PLUGIN_TOKEN: ${STREAMING_TOKEN}
+    healthcheck:
+      # The python image has no curl; use the bundled Python to hit /health.
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(''http://localhost:8000/health'').status==200 else 1)"',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  agent:
+    image: ghcr.io/abedegno/muesli-ollama-agent:${MUESLI_IMAGE_TAG}
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      MUESLI_PLUGIN_TOKEN: ${AGENT_TOKEN}
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: llama3.2:3b
+    healthcheck:
+      test:
+        [
+          'CMD-SHELL',
+          'python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen(''http://localhost:8000/health'').status==200 else 1)"',
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  server:
+    image: ghcr.io/abedegno/muesli-server:${MUESLI_IMAGE_TAG}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      whisper:
+        condition: service_healthy
+      # streaming-transcriber is opt-in via the streaming profile; do not add depends_on here.
+      agent:
+        condition: service_healthy
+    ports:
+      - '8080:8080'
+    volumes:
+      - audio:/data/audio
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/muesli?sslmode=disable
+      MUESLI_MASTER_KEY: ${MUESLI_MASTER_KEY}
+      MUESLI_STORAGE_SIGNING_KEY: ${MUESLI_STORAGE_SIGNING_KEY}
+      MUESLI_STORAGE_DIR: /data/audio
+      MUESLI_PUBLIC_URL: ${MUESLI_PUBLIC_URL}
+      # Plugin-facing base URL (used in DOWNLOAD urls so whisper can fetch audio
+      # by the in-network service name).
+      MUESLI_INTERNAL_URL: http://server:8080
+      # Auto-register the default plugins on startup (no manual admin steps).
+      MUESLI_DEFAULT_TRANSCRIBER_URL: http://whisper:8000
+      MUESLI_DEFAULT_TRANSCRIBER_TOKEN: ${WHISPER_TOKEN}
+      MUESLI_DEFAULT_TRANSCRIBER_CONFIG: '{"model":"base"}'
+      MUESLI_DEFAULT_STREAMING_TRANSCRIBER_URL: http://streaming-transcriber:8000
+      MUESLI_DEFAULT_STREAMING_TRANSCRIBER_TOKEN: ${STREAMING_TOKEN}
+      MUESLI_DEFAULT_STREAMING_TRANSCRIBER_CONFIG: '{"model":"tiny.en"}'
+      MUESLI_DEFAULT_AGENT_URL: http://agent:8000
+      MUESLI_DEFAULT_AGENT_TOKEN: ${AGENT_TOKEN}
+      MUESLI_DEFAULT_AGENT_CONFIG: '{"ollama_url":"http://ollama:11434","model":"llama3.2:3b"}'
+      # Semantic search: self-hosted embeddings via Ollama. Set this in .env for
+      # production; leaving it unset disables embeddings and falls back to lexical-only.
+      MUESLI_EMBEDDINGS_URL: ${MUESLI_EMBEDDINGS_URL}
+      # Any Ollama embedding model; dimension is automatic (unsized vector column).
+      # After changing it, restart (auto re-embed) or run `docker compose run --rm
+      # server reembed`. Candidates: nomic-embed-text 768, qwen3-embedding 1024,
+      # bge-m3 1024 — each may want its own DOC/QUERY prefixes and min-score.
+      MUESLI_EMBEDDINGS_MODEL: ${MUESLI_EMBEDDINGS_MODEL}
+      # Cosine cutoff for a semantic hit (0–1). Higher = stricter/fewer results,
+      # lower = more (looser) matches. Default 0.5 suits nomic-embed-text.
+      MUESLI_EMBEDDINGS_MIN_SCORE: ${MUESLI_EMBEDDINGS_MIN_SCORE}
+
+    healthcheck:
+      test: ['CMD-SHELL', 'curl -sf http://localhost:8080/healthz || exit 1']
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+
+volumes:
+  pgdata:
+  ollama:
+  audio:

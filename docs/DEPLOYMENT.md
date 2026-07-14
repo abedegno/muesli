@@ -30,6 +30,29 @@ proxy must forward HTTPS traffic to that address.
 
 ---
 
+## Prod vs dev compose
+
+`docker-compose.yml` is the development stack: it builds `whisper`, `agent`,
+`streaming-transcriber`, and `server` locally from source and includes dev-only
+fallback secrets so iteration stays fast.
+
+`docker-compose.prod.yml` uses the pinned GHCR images published by the build
+workflow and documented in [`docs/PUBLISHED-IMAGES.md`](./PUBLISHED-IMAGES.md).
+It does not build anything locally, and it reads secrets and other
+environment-specific values directly from `.env` with no fallback defaults.
+Follow the [Production secrets checklist](#production-secrets-checklist) and
+set `MUESLI_IMAGE_TAG` to a real published tag. Today that tag is the short git
+SHA produced by the publish workflow.
+
+Use the production stack like this:
+
+```bash
+docker compose -f docker-compose.prod.yml pull && \
+docker compose -f docker-compose.prod.yml up -d
+```
+
+---
+
 ## Caddy (recommended)
 
 [Caddy](https://caddyserver.com) obtains and renews TLS certificates from Let's
