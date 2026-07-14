@@ -19,19 +19,23 @@ jobs:
       matrix:
         include:
           - name: server
+            context: .
             dockerfile: Dockerfile
             image: ghcr.io/abedegno/muesli-server
             platforms: linux/amd64,linux/arm64
           - name: whisper-transcriber
-            dockerfile: plugins/whisper-transcriber/Dockerfile
+            context: plugins/whisper-transcriber
+            dockerfile: Dockerfile
             image: ghcr.io/abedegno/muesli-whisper-transcriber
             platforms: linux/amd64,linux/arm64
           - name: ollama-agent
-            dockerfile: plugins/ollama-agent/Dockerfile
+            context: plugins/ollama-agent
+            dockerfile: Dockerfile
             image: ghcr.io/abedegno/muesli-ollama-agent
             platforms: linux/amd64,linux/arm64
           - name: streaming-transcriber
-            dockerfile: plugins/streaming-transcriber/Dockerfile
+            context: plugins/streaming-transcriber
+            dockerfile: Dockerfile
             image: ghcr.io/abedegno/muesli-streaming-transcriber
             platforms: linux/amd64,linux/arm64
     steps:
@@ -62,7 +66,7 @@ jobs:
       - name: Build and push ${{ matrix.name }}
         uses: docker/build-push-action@v6
         with:
-          context: .
+          context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           platforms: ${{ matrix.platforms }}
           push: ${{ github.event_name != 'pull_request' }}
