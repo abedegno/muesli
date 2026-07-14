@@ -11,6 +11,7 @@ within the `docs/` directory.
 | Document                             | What's in it                                                                    |
 | ------------------------------------ | ------------------------------------------------------------------------------- |
 | [`../README.md`](../README.md)       | Project intro, quickstart, and Docker Compose setup.                            |
+| [`GETTING_STARTED.md`](GETTING_STARTED.md) | First-run walkthrough for setup, client connect, and a first meeting. |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | Components, processing pipeline, package map, and plugin contract.              |
 | [`../CONTEXT.md`](../CONTEXT.md)     | Shared language, domain glossary, and architecture map for contributors.        |
 | [`../CHANGELOG.md`](../CHANGELOG.md) | What's changed across releases.                                                 |
