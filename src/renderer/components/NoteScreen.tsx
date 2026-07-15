@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams, useOutletContext } from 'react-router-dom'
 import { muesli } from '@/api'
 import { RecordingSession } from '../../main/recorder'
-import { ElectronCapture } from '../capture/electronCapture'
+import { ElectronCapture, MicPermissionDeniedError } from '../capture/electronCapture'
 import { pollNote } from '@/lib/pollNote'
 import { isProcessing } from '@/lib/status'
 import { useToast } from '@/components/ui/Toast'
@@ -924,6 +924,10 @@ export function NoteScreen() {
   const start = useCallback(async () => {
     setMicError(null)
     try {
+      const micStatus = await muesli.micRequest?.()
+      if (micStatus === 'denied' || micStatus === 'restricted') {
+        throw new MicPermissionDeniedError()
+      }
       void muesli.startNoteStream?.(id)?.catch(() => {})
       const session = new RecordingSession(
         new ElectronCapture({

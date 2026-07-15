@@ -28,6 +28,8 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.inherit.plist
+  extendInfo:
+    NSMicrophoneUsageDescription: 'Muesli uses your microphone to record and transcribe meetings.'
   notarize: true
 dmg:
   title: Muesli ${version}

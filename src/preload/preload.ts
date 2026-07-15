@@ -99,6 +99,9 @@ const bridge: MuesliBridge = {
   openGoogleCalendarOAuthStart: () => ipcRenderer.invoke(IPC.openGoogleCalendarOAuthStart),
   getMicrosoftCalendarOAuthStatus: () => ipcRenderer.invoke(IPC.getMicrosoftCalendarOAuthStatus),
   openMicrosoftCalendarOAuthStart: () => ipcRenderer.invoke(IPC.openMicrosoftCalendarOAuthStart),
+  micStatus: () => ipcRenderer.invoke(IPC.micStatus),
+  micRequest: () => ipcRenderer.invoke(IPC.micRequest),
+  micOpenSettings: () => ipcRenderer.invoke(IPC.micOpenSettings),
   getDigestConfig: () => ipcRenderer.invoke(IPC.getDigestConfig),
   updateDigestConfig: (cadence) => ipcRenderer.invoke(IPC.updateDigestConfig, cadence),
   onUploadProgress: (cb: (p: UploadProgress) => void) => {

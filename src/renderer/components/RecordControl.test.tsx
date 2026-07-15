@@ -4,10 +4,17 @@ import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/re
 import userEvent from '@testing-library/user-event'
 import { RecordControl } from './RecordControl'
 
+const micOpenSettings = vi.hoisted(() => vi.fn())
+
+vi.mock('@/api', () => ({
+  muesli: { micOpenSettings },
+}))
+
 afterEach(cleanup)
 beforeEach(() => {
   localStorage.clear()
   vi.restoreAllMocks()
+  micOpenSettings.mockReset()
 })
 
 // ---------------------------------------------------------------------------
@@ -240,8 +247,23 @@ describe('RecordControl — permission denied', () => {
     expect(screen.getByRole('alert')).toBeInTheDocument()
     expect(screen.getByText(/microphone access was denied/i)).toBeInTheDocument()
     expect(
-      screen.getByText(/system settings|grant microphone permission/i),
+      screen.getByText((_, element) => element?.tagName === 'P' && /system settings|grant microphone permission/i.test(element.textContent ?? '')),
     ).toBeInTheDocument()
+  })
+
+  it('shows an Open System Settings button that calls micOpenSettings', async () => {
+    mockEnumerateDevices([])
+    render(
+      <RecordControl
+        state="idle"
+        elapsedMs={0}
+        onStart={() => {}}
+        onStop={() => {}}
+        micError={makeMicError()}
+      />,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /open system settings/i }))
+    expect(micOpenSettings).toHaveBeenCalledOnce()
   })
 
   it('shows a Retry button that calls onRetry', async () => {
