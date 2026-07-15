@@ -2,6 +2,7 @@ package pluginkit
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/abedegno/muesli/internal/model"
@@ -70,5 +71,52 @@ func TestWireTypesJSON(t *testing.T) {
 	}
 	if string(gotGenRes) != `{"summary":{"sections":[{"heading":"Overview","content_markdown":"Done."}]},"model":"m"}` {
 		t.Fatalf("generate response json = %s", gotGenRes)
+	}
+}
+
+// TestGenerateRequestOptionalOverridesJSON covers the optional per-template
+// agent override fields (SystemPrompt, Model, Temperature): absent when unset
+// (preserving prior wire behaviour), present and round-tripping when set.
+func TestGenerateRequestOptionalOverridesJSON(t *testing.T) {
+	base := GenerateRequest{
+		Transcript:    []model.Segment{{StartMS: 0, EndMS: 1, Text: "hi", Source: "mic"}},
+		NotesMarkdown: "- note",
+		Template:      TemplatePayload{Sections: []model.TemplateSection{{Heading: "Overview", Instruction: "Summarise."}}},
+		Config:        json.RawMessage(`{}`),
+	}
+
+	unsetJSON, err := json.Marshal(base)
+	if err != nil {
+		t.Fatalf("marshal unset: %v", err)
+	}
+	for _, field := range []string{"system_prompt", "\"model\"", "temperature"} {
+		if strings.Contains(string(unsetJSON), field) {
+			t.Fatalf("unset override field %q must be omitted from wire JSON, got %s", field, unsetJSON)
+		}
+	}
+	var roundTripped GenerateRequest
+	if err := json.Unmarshal(unsetJSON, &roundTripped); err != nil {
+		t.Fatalf("unmarshal unset: %v", err)
+	}
+	if roundTripped.SystemPrompt != "" || roundTripped.Model != "" || roundTripped.Temperature != nil {
+		t.Fatalf("unset overrides should round-trip as zero values: %+v", roundTripped)
+	}
+
+	temp := 0.9
+	withOverrides := base
+	withOverrides.SystemPrompt = "You are terse."
+	withOverrides.Model = "llama3.2:3b"
+	withOverrides.Temperature = &temp
+
+	setJSON, err := json.Marshal(withOverrides)
+	if err != nil {
+		t.Fatalf("marshal set: %v", err)
+	}
+	var gotSet GenerateRequest
+	if err := json.Unmarshal(setJSON, &gotSet); err != nil {
+		t.Fatalf("unmarshal set: %v", err)
+	}
+	if gotSet.SystemPrompt != "You are terse." || gotSet.Model != "llama3.2:3b" || gotSet.Temperature == nil || *gotSet.Temperature != 0.9 {
+		t.Fatalf("overrides did not round-trip: %+v", gotSet)
 	}
 }

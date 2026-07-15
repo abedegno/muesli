@@ -283,12 +283,21 @@ type TemplateSection struct {
 }
 
 // Template is a summary recipe.
+//
+// SystemPrompt, Model, and Temperature are optional per-template agent
+// overrides threaded through the /generate contract (pluginkit.GenerateRequest
+// / plugin.GenerateRequest) to the agent plugin. An empty SystemPrompt/Model or
+// a nil Temperature means "unset" — the agent falls back to its own default
+// system prompt / plugin Config values.
 type Template struct {
-	ID       string            `json:"id"`
-	Name     string            `json:"name"`
-	Phase    string            `json:"phase"`
-	Sections []TemplateSection `json:"sections"`
-	BuiltIn  bool              `json:"built_in"`
+	ID           string            `json:"id"`
+	Name         string            `json:"name"`
+	Phase        string            `json:"phase"`
+	Sections     []TemplateSection `json:"sections"`
+	BuiltIn      bool              `json:"built_in"`
+	SystemPrompt string            `json:"system_prompt,omitempty"`
+	Model        string            `json:"model,omitempty"`
+	Temperature  *float64          `json:"temperature,omitempty"`
 }
 
 // SpeakerAlias maps a raw speaker label from a transcript segment to a

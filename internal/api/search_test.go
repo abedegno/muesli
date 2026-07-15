@@ -104,7 +104,7 @@ func setNoteCreatedAt(t *testing.T, st *store.Store, noteID string, ts time.Time
 func createTemplate(t *testing.T, st *store.Store, ownerID string) string {
 	t.Helper()
 	tmpl, err := st.CreateTemplate(context.Background(), ownerID, "Search template", "after",
-		[]model.TemplateSection{{Heading: "Section", Instruction: "Instruction"}})
+		[]model.TemplateSection{{Heading: "Section", Instruction: "Instruction"}}, "", "", nil)
 	if err != nil {
 		t.Fatalf("CreateTemplate: %v", err)
 	}
