@@ -27,3 +27,7 @@ internal/adminui/dist/*
 !internal/adminui/dist/assets/
 internal/adminui/dist/assets/*
 !internal/adminui/dist/assets/app.js
+
+# desktop packaging build artifacts
+build/resources/
+dist-desktop/

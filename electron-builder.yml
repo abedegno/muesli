@@ -1,0 +1,33 @@
+# Packaging for the muesli all-in-one desktop app.
+# Bundles the Go server + Postgres/pgvector + whisper.cpp transcriber + a whisper
+# model + ffmpeg (staged into build/resources by
+# scripts/assemble-desktop-resources.sh) and produces a signed, notarized macOS
+# arm64 .dmg. The Electron supervisor resolves each dependency from
+# process.resourcesPath (see src/main/resourcePaths.ts); the extraResources
+# mapping below lands them under Contents/Resources/.
+appId: org.muesli.desktop
+productName: Muesli
+copyright: Muesli contributors
+directories:
+  output: dist-desktop
+  buildResources: build
+files:
+  - out/**
+extraResources:
+  - from: build/resources
+    to: .
+    filter:
+      - '**/*'
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch:
+        - arm64
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  notarize: true
+dmg:
+  title: Muesli ${version}
