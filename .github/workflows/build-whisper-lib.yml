@@ -1,19 +1,18 @@
 name: Build whisper.cpp lib
 
 # Builds a PINNED whisper.cpp into the vendored static libs that
-# cmd/whisper-cpp-transcriber links via cgo. Its output is consumed by that
-# plugin's build (CI + the Bircher runner) - whisper.cpp is compiled ONCE here,
+# cmd/whisper-cpp-transcriber links via cgo. whisper.cpp is compiled ONCE here,
 # never per plugin build.
 #
-# MVP scope: linux-amd64, CPU only. This is the only platform the CI matrix and
-# the Bircher runner build/test today, and what hosted-Linux uses. darwin (Metal)
-# and windows are the GPU/desktop fast-follow: the whisper.cpp Go bindings
-# hardcode `#cgo darwin LDFLAGS: -lggml-metal -lggml-blas -framework Metal ...`,
-# so a CPU-only mac build needs LDFLAGS overrides - handled in that later wave.
+# Backends: linux-amd64 = CPU; darwin = Metal (the whisper.cpp Go bindings
+# default to `-lggml-metal -lggml-blas -framework Metal` on darwin, which is the
+# win on Apple Silicon). Windows is a further follow-up (its cgo toolchain +
+# bindings path need their own handling).
 #
-# Verified recipe (2026-07-14, on Debian 13 x86_64, Go 1.25): `make whisper` in
-# bindings/go produces libwhisper.a + libggml{,-cpu,-base}.a and the headers;
-# `go build ./...` against ONLY the assembled artifact links cleanly.
+# Verified (2026-07-14, Debian 13 x86_64): `make whisper` in bindings/go ->
+# libwhisper.a + libggml{,-cpu,-base}.a + headers; `go build` against the
+# assembled artifact links cleanly. The assemble step globs ALL produced libs
+# so it also captures darwin's libggml-metal/libggml-blas.
 
 on:
   workflow_dispatch:
@@ -40,13 +39,25 @@ jobs:
         include:
           - platform: linux-amd64
             os: ubuntu-latest
+            backend: cpu
+          - platform: darwin-arm64
+            os: macos-14
+            backend: metal
+          # darwin-amd64: cross-compiled to x86_64 on the arm64 macos-14 runner
+          # (GitHub's Intel/macos-13 runners queue indefinitely). This workflow
+          # only builds the .a artifact, never runs it, so no x86_64 execution is
+          # needed on the host.
+          - platform: darwin-amd64
+            os: macos-14
+            backend: metal
     runs-on: ${{ matrix.os }}
     steps:
       - name: Resolve whisper.cpp ref
         id: ref
         run: echo "ref=${{ github.event.inputs.whisper_ref || env.DEFAULT_REF }}" >> "$GITHUB_OUTPUT"
 
-      - name: Install build toolchain
+      - name: Install build toolchain (Linux)
+        if: runner.os == 'Linux'
         run: sudo apt-get update -qq && sudo apt-get install -y build-essential cmake git
 
       - name: Clone whisper.cpp at the pinned ref
@@ -54,26 +65,40 @@ jobs:
           git clone https://github.com/ggml-org/whisper.cpp wcpp
           git -C wcpp checkout "${{ steps.ref.outputs.ref }}"
 
-      - name: Build CPU static libs (make whisper)
+      - name: Build static libs
         run: |
-          cd wcpp/bindings/go
-          make whisper
+          if [ "${{ matrix.platform }}" = "darwin-amd64" ]; then
+            # Cross-compile the x86_64 slice on the arm64 runner. The bindings/go
+            # Makefile hardcodes the host arch in its cmake call, so invoke cmake
+            # directly with the same flags plus CMAKE_OSX_ARCHITECTURES=x86_64.
+            # Output lands in wcpp/build_go, matching the artifact glob below.
+            # GGML_NATIVE=OFF: ggml otherwise detects the host CPU (apple-m1) and
+            # passes -mcpu=apple-m1, which is invalid for the x86_64 target. OFF
+            # builds a portable x86-64 baseline, correct for a distributable lib.
+            cmake -S wcpp -B wcpp/build_go \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DBUILD_SHARED_LIBS=OFF \
+              -DCMAKE_OSX_ARCHITECTURES=x86_64 \
+              -DGGML_NATIVE=OFF
+            cmake --build wcpp/build_go --target whisper
+          else
+            cd wcpp/bindings/go && make whisper
+          fi
 
       - name: Assemble vendored artifact
         run: |
           ref="${{ steps.ref.outputs.ref }}"
           out="whisper-cpp-${{ matrix.platform }}"
           mkdir -p "$out/lib" "$out/include"
-          cp wcpp/build_go/src/libwhisper.a "$out/lib/"
-          cp wcpp/build_go/ggml/src/libggml.a \
-             wcpp/build_go/ggml/src/libggml-cpu.a \
-             wcpp/build_go/ggml/src/libggml-base.a "$out/lib/"
-          cp wcpp/include/whisper.h "$out/include/"
+          # Glob ALL produced static libs (CPU: libwhisper + libggml{,-cpu,-base};
+          # Metal adds libggml-metal + libggml-blas).
+          find wcpp/build_go \( -name 'libwhisper.a' -o -name 'libggml*.a' \) -exec cp {} "$out/lib/" \;
+          cp wcpp/include/*.h "$out/include/"
           cp wcpp/ggml/include/*.h "$out/include/"
-          printf 'whisper.cpp %s\nplatform %s\nbackend cpu\n' "$ref" "${{ matrix.platform }}" > "$out/VERSION"
-          ( cd "$out" && find . -type f ! -name SHA256SUMS | sort | xargs sha256sum > SHA256SUMS )
+          printf 'whisper.cpp %s\nplatform %s\nbackend %s\n' "$ref" "${{ matrix.platform }}" "${{ matrix.backend }}" > "$out/VERSION"
+          ( cd "$out" && find . -type f ! -name SHA256SUMS | sort | xargs shasum -a 256 > SHA256SUMS )
           tar -czf "$out.tar.gz" "$out"
-          echo "=== $out contents ==="; ls -la "$out/lib" "$out/include"
+          echo "=== $out lib/ ==="; ls -la "$out/lib"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
