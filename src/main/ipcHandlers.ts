@@ -7,6 +7,8 @@ import type { ConnectRequest, CreateConversationRequest, CreateConversationRespo
 import { INSECURE_CONNECTION_CODE, isInsecureRemote } from '../shared/url'
 import type { UploadProgress } from './uploadMachine'
 import { ApiError, MuesliClient, type FetchLike, type NoteExportData } from './muesliClient'
+import type { SecretStore } from './secretStore'
+import { ensureLocalSession } from './localSession'
 import { uploadAudioToNote } from './uploadMachine'
 import { TokenStore } from './tokenStore'
 
@@ -15,12 +17,19 @@ interface HandlerDeps {
   fetch?: FetchLike
   onProgress: (p: UploadProgress) => void
   openExternal?: (url: string) => Promise<void>
+  embedded?: boolean
+  embeddedBaseUrl?: string
+  secretStore?: Pick<SecretStore, 'loadCreds' | 'saveCreds' | 'clearCreds' | 'getManualServer' | 'setManualServer'>
+  makeClient?: (baseUrl: string) => Pick<MuesliClient, 'setupNeeded' | 'setup' | 'login' | 'createToken'>
+  generatePassword?: () => string
+  log?: (msg: string, err?: unknown) => void
 }
 
 interface Handlers {
   getConfig(): Promise<ServerConfig | null>
   connect(req: ConnectRequest): Promise<{ serverUrl: string }>
   disconnect(): Promise<void>
+  resetToBuiltIn(): Promise<void>
   listNotes(folderId?: string): Promise<Note[]>
   listPeople(): Promise<PersonWithCompany[]>
   listCompanies(): Promise<CompanyWithCount[]>
@@ -137,6 +146,34 @@ function insecureAllowedByEnv(): boolean {
 // is unit-testable without Electron. main.ts adapts these to ipcMain.handle.
 export function createHandlers(deps: HandlerDeps): Handlers {
   const { tokenStore, fetch: fetchImpl, onProgress, openExternal } = deps
+  const secretStore =
+    deps.secretStore ??
+    ({
+      loadCreds: () => null,
+      saveCreds: () => {},
+      clearCreds: () => {},
+      getManualServer: () => false,
+      setManualServer: () => {},
+    } satisfies Pick<SecretStore, 'loadCreds' | 'saveCreds' | 'clearCreds' | 'getManualServer' | 'setManualServer'>)
+  const makeClient =
+    deps.makeClient ??
+    ((baseUrl: string) => new MuesliClient({ baseUrl, fetch: fetchImpl }))
+  const localSessionDeps = {
+    embedded: deps.embedded ?? false,
+    baseUrl: deps.embeddedBaseUrl ?? '',
+    tokenStore: {
+      load: () => tokenStore.load(),
+      save: (config: { serverUrl: string; token: string }) => tokenStore.save(config),
+    },
+    secretStore: {
+      loadCreds: () => secretStore.loadCreds(),
+      saveCreds: (creds: { email: string; password: string }) => secretStore.saveCreds(creds),
+      getManualServer: () => secretStore.getManualServer(),
+    },
+    makeClient,
+    generatePassword: deps.generatePassword ?? (() => ''),
+    log: deps.log,
+  }
 
   // Build an authenticated client from persisted config, or throw if absent.
   function authedClient(): MuesliClient {
@@ -147,6 +184,11 @@ export function createHandlers(deps: HandlerDeps): Handlers {
 
   return {
     async getConfig() {
+      try {
+        await ensureLocalSession(localSessionDeps)
+      } catch (err) {
+        deps.log?.('ensureLocalSession failed', err)
+      }
       return tokenStore.load()
     },
 
@@ -168,6 +210,14 @@ export function createHandlers(deps: HandlerDeps): Handlers {
 
     async disconnect() {
       tokenStore.clear()
+      secretStore.clearCreds()
+      secretStore.setManualServer(true)
+    },
+
+    async resetToBuiltIn() {
+      tokenStore.clear()
+      secretStore.clearCreds()
+      secretStore.setManualServer(false)
     },
 
     async listNotes(folderId) {
