@@ -14,6 +14,23 @@ import (
 // MaxJobAttempts caps retries before a job is marked terminally failed.
 const MaxJobAttempts = 3
 
+const maxRetryBackoff = 30 * time.Second
+
+// RetryBackoff returns the capped exponential backoff before a retryable job
+// may be reclaimed.
+func RetryBackoff(attempts int) time.Duration {
+	if attempts < 1 {
+		attempts = 1
+	} else if attempts > 5 {
+		attempts = 5
+	}
+	backoff := time.Duration(1<<attempts) * time.Second
+	if backoff > maxRetryBackoff {
+		return maxRetryBackoff
+	}
+	return backoff
+}
+
 // EnqueueJob inserts a pending job and returns its id.
 func (s *Store) EnqueueJob(ctx context.Context, noteID, jobType string, payload json.RawMessage) (string, error) {
 	if len(payload) == 0 {
@@ -27,9 +44,10 @@ func (s *Store) EnqueueJob(ctx context.Context, noteID, jobType string, payload 
 	return id, err
 }
 
-// ClaimJob atomically selects one claimable job (pending, or running with an
-// expired lease) using SELECT ... FOR UPDATE SKIP LOCKED, marks it running,
-// increments attempts, and sets a fresh lease. Returns ok=false if none.
+// ClaimJob atomically selects one claimable job (pending without a lease, or
+// running with an expired lease) using SELECT ... FOR UPDATE SKIP LOCKED,
+// marks it running, increments attempts, and sets a fresh lease. Returns
+// ok=false if none.
 func (s *Store) ClaimJob(ctx context.Context, lease time.Duration) (model.Job, bool, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -42,7 +60,7 @@ func (s *Store) ClaimJob(ctx context.Context, lease time.Duration) (model.Job, b
 	err = tx.QueryRow(ctx,
 		`SELECT id, note_id, type, status, attempts, COALESCE(last_error,''), priority, payload
 		 FROM jobs
-		 WHERE status='pending'
+		 WHERE (status='pending' AND (lease_expires_at IS NULL OR lease_expires_at < now()))
 		    OR (status='running' AND lease_expires_at < now())
 		 ORDER BY priority DESC, created_at ASC
 		 FOR UPDATE SKIP LOCKED
@@ -89,7 +107,7 @@ func (s *Store) CompleteJob(ctx context.Context, id string) error {
 }
 
 // FailJob records an error. If retryable AND under the attempt cap, the job goes
-// back to pending (lease cleared) for another worker; otherwise it is terminal.
+// back to pending with a retry lease; otherwise it is terminal.
 func (s *Store) FailJob(ctx context.Context, id, errMsg string, retryable bool) error {
 	var attempts int
 	if err := s.pool.QueryRow(ctx, `SELECT attempts FROM jobs WHERE id=$1`, id).Scan(&attempts); err != nil {
@@ -99,12 +117,14 @@ func (s *Store) FailJob(ctx context.Context, id, errMsg string, retryable bool) 
 		return err
 	}
 	status := model.JobFailed
+	var expires any = nil
 	if retryable && attempts < MaxJobAttempts {
 		status = model.JobPending
+		expires = time.Now().Add(RetryBackoff(attempts))
 	}
 	_, err := s.pool.Exec(ctx,
-		`UPDATE jobs SET status=$1, last_error=$2, lease_expires_at=NULL, finished_at=now(), updated_at=now()
-		 WHERE id=$3`, status, errMsg, id)
+		`UPDATE jobs SET status=$1, last_error=$2, lease_expires_at=$3, finished_at=now(), updated_at=now()
+		 WHERE id=$4`, status, errMsg, expires, id)
 	return err
 }
 

@@ -94,7 +94,14 @@ func TestFailJobRetryThenTerminal(t *testing.T) {
 	if err := st.FailJob(ctx, job.ID, "boom", true); err != nil {
 		t.Fatalf("fail retryable: %v", err)
 	}
-	// Reclaimable now.
+	// Retryable jobs now wait for their backoff window before they can be
+	// reclaimed again.
+	if _, ok, _ := st.ClaimJob(ctx, 30*time.Second); ok {
+		t.Fatal("retryable failure should not be immediately reclaimable")
+	}
+	if _, err := st.Pool().Exec(ctx, "UPDATE jobs SET lease_expires_at = NULL WHERE id=$1", job.ID); err != nil {
+		t.Fatalf("clear retry lease: %v", err)
+	}
 	job, ok, _ := st.ClaimJob(ctx, 30*time.Second)
 	if !ok || job.Attempts != 2 {
 		t.Fatalf("reclaim after retryable failure: ok=%v attempts=%d", ok, job.Attempts)
@@ -106,6 +113,30 @@ func TestFailJobRetryThenTerminal(t *testing.T) {
 	}
 	if _, ok, _ := st.ClaimJob(ctx, 30*time.Second); ok {
 		t.Fatal("terminally failed job must not be reclaimable")
+	}
+}
+
+func TestFailJob_RetryBackoffBlocksImmediateReclaim(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+	_, _ = st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+
+	job, ok, err := st.ClaimJob(ctx, 30*time.Second)
+	if err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected job to be claimable")
+	}
+	if err := st.FailJob(ctx, job.ID, "boom", true); err != nil {
+		t.Fatalf("fail retryable: %v", err)
+	}
+	if _, ok, err := st.ClaimJob(ctx, 30*time.Second); err != nil {
+		t.Fatalf("ClaimJob after retryable failure: %v", err)
+	} else if ok {
+		t.Fatal("retryable failure should not be immediately reclaimable")
 	}
 }
 
