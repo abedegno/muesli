@@ -83,3 +83,25 @@ func runEmbeddedStartupPhases(ctx context.Context, cfg *config.Config, reporter 
 		close(startupDone)
 	}, nil
 }
+
+// applyEmbeddedAgentDefault points cfg.DefaultAgentURL at the embedded Ollama
+// agent's endpoint once it has been registered as the DB default plugin (see
+// store.EnsureDefaultPlugin in main.go), so /readyz's "agent" dep check
+// reflects the real registered default instead of remaining unconfigured
+// because MUESLI_DEFAULT_AGENT_URL is unset in embedded mode. No-op if
+// endpointURL is empty.
+func applyEmbeddedAgentDefault(cfg *config.Config, endpointURL string) {
+	if endpointURL == "" {
+		return
+	}
+	cfg.DefaultAgentURL = endpointURL
+}
+
+// applyEmbeddedTranscriberDefault is applyEmbeddedAgentDefault's counterpart
+// for the bundled whisper.cpp transcriber.
+func applyEmbeddedTranscriberDefault(cfg *config.Config, endpointURL string) {
+	if endpointURL == "" {
+		return
+	}
+	cfg.DefaultTranscriberURL = endpointURL
+}
