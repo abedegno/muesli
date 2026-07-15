@@ -14,5 +14,7 @@
   <!-- embedded-postgres passes DYLD_* env when launching its binaries. -->
   <key>com.apple.security.cs.allow-dyld-environment-variables</key>
   <true/>
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
 </dict>
 </plist>

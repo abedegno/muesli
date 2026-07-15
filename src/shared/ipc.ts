@@ -1,5 +1,6 @@
 import type { ActionItem, ActionItemStatus, AudioUrlGrant, CalendarEvent, ChatSource, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, EmbeddedStartupStatus, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from './types'
 import type { UploadProgress } from '../main/uploadMachine'
+import type { MicStatus } from '../main/micPermission'
 import type { ExportOptions } from './export'
 
 export const IPC = {
@@ -101,6 +102,9 @@ export const IPC = {
   openGoogleCalendarOAuthStart: 'muesli:openGoogleCalendarOAuthStart',
   getMicrosoftCalendarOAuthStatus: 'muesli:getMicrosoftCalendarOAuthStatus',
   openMicrosoftCalendarOAuthStart: 'muesli:openMicrosoftCalendarOAuthStart',
+  micStatus: 'muesli:micStatus',
+  micRequest: 'muesli:micRequest',
+  micOpenSettings: 'muesli:micOpenSettings',
   getDigestConfig: 'muesli:getDigestConfig',
   updateDigestConfig: 'muesli:updateDigestConfig',
 } as const
@@ -312,6 +316,9 @@ export interface MuesliBridge {
   openGoogleCalendarOAuthStart(): Promise<void>
   getMicrosoftCalendarOAuthStatus(): Promise<MicrosoftOAuthStatus>
   openMicrosoftCalendarOAuthStart(): Promise<void>
+  micStatus(): Promise<MicStatus>
+  micRequest(): Promise<MicStatus>
+  micOpenSettings(): Promise<void>
   getDigestConfig(): Promise<DigestConfig>
   updateDigestConfig(cadence: DigestConfig['cadence']): Promise<DigestConfig>
 }

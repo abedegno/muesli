@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Mic, Square } from 'lucide-react'
+import { muesli } from '@/api'
 import { Button } from '@/components/ui/Button'
 import { useAnnouncer } from '@/hooks/useAnnouncer'
 import { loadAudioPrefs, saveAudioPrefs } from '@/lib/audioPrefs'
@@ -189,6 +190,16 @@ export function RecordControl({
           }}
         >
           Retry
+        </Button>
+        <Button
+          variant="secondary"
+          size="sm"
+          className="mt-2 ml-2"
+          onClick={() => {
+            void muesli.micOpenSettings?.()
+          }}
+        >
+          Open System Settings
         </Button>
       </div>
     )

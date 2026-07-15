@@ -1,10 +1,11 @@
 import { randomBytes } from 'node:crypto'
 import { basename, join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, safeStorage, session, shell } from 'electron'
 import { IPC, type ConnectRequest, type CreateConversationRequest, type DiarizationReviewUpdate, type ExportRequestOptions, type SearchOptions, type SendMessageRequest, type UpdateActionItemRequest, type UpdatePersonRequest, type UploadAudioRequest } from '../shared/ipc'
 import type { CreateShareRequest, DigestConfig, EmbeddedStartupStatus, RetranscribeNoteRequest, RuleGroup, TemplatePhase, TemplateSection } from '../shared/types'
 import { createHandlers } from './ipcHandlers'
+import { makeMicPermission } from './micPermission'
 import { startEmbeddedStartupMonitor } from './embeddedStartupMonitor'
 import { MuesliClient } from './muesliClient'
 import { NoteStreamRelay } from './noteStreamRelay'
@@ -57,6 +58,10 @@ app.whenReady().then(async () => {
     }
 
     createWindow()
+    session.defaultSession.setPermissionRequestHandler((_wc, permission, cb) => {
+      const perm = permission as string
+      cb(perm === 'media' || perm === 'microphone' || perm === 'audioCapture')
+    })
 
     const supervisor = await startServerSupervisor({
       onSecondInstance: focusMainWindow,
@@ -79,6 +84,7 @@ app.whenReady().then(async () => {
     const tokenStore = new TokenStore(userDataDir, safeStorage)
     const secretStore = new SecretStore(userDataDir, safeStorage)
     const fetchImpl = globalThis.fetch?.bind(globalThis)
+    const micPermission = makeMicPermission()
     const noteStream = new NoteStreamRelay({
       getConfig: () => tokenStore.load(),
       emit: (event) => mainWindow?.webContents.send(IPC.noteStreamEvent, event),
@@ -124,6 +130,9 @@ app.whenReady().then(async () => {
     ipcMain.handle(IPC.openGoogleCalendarOAuthStart, () => handlers.openGoogleCalendarOAuthStart())
     ipcMain.handle(IPC.getMicrosoftCalendarOAuthStatus, () => handlers.getMicrosoftCalendarOAuthStatus())
     ipcMain.handle(IPC.openMicrosoftCalendarOAuthStart, () => handlers.openMicrosoftCalendarOAuthStart())
+    ipcMain.handle(IPC.micStatus, () => micPermission.status())
+    ipcMain.handle(IPC.micRequest, () => micPermission.request())
+    ipcMain.handle(IPC.micOpenSettings, () => micPermission.openSettings())
     ipcMain.handle(IPC.getDigestConfig, () => handlers.getDigestConfig())
     ipcMain.handle(IPC.updateDigestConfig, (_e, cadence: DigestConfig['cadence']) => handlers.updateDigestConfig(cadence))
     ipcMain.handle(IPC.getFull, (_e, id: string) => handlers.getFull(id))
