@@ -53,6 +53,10 @@ func pipelineFixtureWithLanguage(t *testing.T, retention, transcribeLanguage str
 }
 
 func pipelineFixtureWithLanguageAndTranscriber(t *testing.T, retention, transcribeLanguage string, tr *plugintest.Stub) (*worker.Processor, *store.Store, string, *plugintest.Stub, *plugintest.Stub) {
+	return pipelineFixtureWithDefaults(t, retention, transcribeLanguage, tr, true, true)
+}
+
+func pipelineFixtureWithDefaults(t *testing.T, retention, transcribeLanguage string, tr *plugintest.Stub, setTranscriberDefault, setAgentDefault bool) (*worker.Processor, *store.Store, string, *plugintest.Stub, *plugintest.Stub) {
 	t.Helper()
 	ctx := context.Background()
 	st := store.New(testutil.NewPool(t))
@@ -70,8 +74,12 @@ func pipelineFixtureWithLanguageAndTranscriber(t *testing.T, retention, transcri
 
 	tp, _ := st.CreatePlugin(ctx, cr, model.Plugin{Kind: model.PluginTranscriber, Name: "t", EndpointURL: tr.URL(), Token: "x", Enabled: true, Config: json.RawMessage(`{}`)})
 	ap, _ := st.CreatePlugin(ctx, cr, model.Plugin{Kind: model.PluginAgent, Name: "a", EndpointURL: ag.URL(), Token: "x", Enabled: true, Config: json.RawMessage(`{}`)})
-	_ = st.SetDefaultPlugin(ctx, tp.ID)
-	_ = st.SetDefaultPlugin(ctx, ap.ID)
+	if setTranscriberDefault {
+		_ = st.SetDefaultPlugin(ctx, tp.ID)
+	}
+	if setAgentDefault {
+		_ = st.SetDefaultPlugin(ctx, ap.ID)
+	}
 
 	u, _ := st.CreateUser(ctx, "o@example.com", "h")
 	n, _ := st.CreateNote(ctx, u.ID, "M")
@@ -491,6 +499,70 @@ func TestPipeline_PartialSummarizeFailure(t *testing.T) {
 	}
 }
 
+func TestRunSummarize_NoDefaultAgentIsNonRetryable(t *testing.T) {
+	proc, st, noteID, _, _ := pipelineFixtureWithDefaults(t, "keep", "", plugintest.NewTranscriber(), true, false)
+	ctx := context.Background()
+
+	transcribeJob, ok, err := st.ClaimJob(ctx, 30*time.Second)
+	if err != nil {
+		t.Fatalf("ClaimJob transcribe: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected transcribe job to be claimable")
+	}
+	proc.Process(ctx, transcribeJob)
+
+	summarizeJob, ok, err := st.ClaimJob(ctx, 30*time.Second)
+	if err != nil {
+		t.Fatalf("ClaimJob summarize: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected summarize job to be claimable")
+	}
+	if summarizeJob.Type != model.JobSummarize {
+		t.Fatalf("job type = %q, want summarize", summarizeJob.Type)
+	}
+	var payload struct {
+		SummaryID string `json:"summary_id"`
+	}
+	if err := json.Unmarshal(summarizeJob.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal summarize payload: %v", err)
+	}
+	if payload.SummaryID == "" {
+		t.Fatal("summarize payload missing summary_id")
+	}
+
+	proc.Process(ctx, summarizeJob)
+
+	gotJob, err := st.GetJob(ctx, summarizeJob.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if gotJob.Status != model.JobFailed {
+		t.Fatalf("job status = %q, want failed", gotJob.Status)
+	}
+	if gotJob.Attempts != 1 {
+		t.Fatalf("job attempts = %d, want 1", gotJob.Attempts)
+	}
+
+	sums, err := st.GetSummaries(ctx, noteID)
+	if err != nil {
+		t.Fatalf("GetSummaries: %v", err)
+	}
+	var found bool
+	for _, s := range sums {
+		if s.ID == payload.SummaryID {
+			found = true
+			if s.Status != model.SummaryFailed {
+				t.Fatalf("summary status = %q, want failed", s.Status)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("summary %s not found", payload.SummaryID)
+	}
+}
+
 func TestPipelineEmptyTranscriptSummarizeSucceeds(t *testing.T) {
 	// Silent/very short audio yields zero transcript segments. The summarize step
 	// must still succeed (summarize from notes alone) — the worker/client must send
@@ -624,6 +696,45 @@ func TestPipelineTranscribeFailureLeavesProvisionalTranscriptIntact(t *testing.T
 	}
 	if got, want := trx.Segments[0].Text, "provisional segment"; got != want {
 		t.Fatalf("segment[0].Text = %q, want %q", got, want)
+	}
+}
+
+func TestRunTranscribe_NoDefaultTranscriberIsNonRetryable(t *testing.T) {
+	proc, st, noteID, _, _ := pipelineFixtureWithDefaults(t, "keep", "", plugintest.NewTranscriber(), false, true)
+	ctx := context.Background()
+
+	job, ok, err := st.ClaimJob(ctx, 30*time.Second)
+	if err != nil {
+		t.Fatalf("ClaimJob: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected transcribe job to be claimable")
+	}
+	proc.Process(ctx, job)
+
+	gotJob, err := st.GetJob(ctx, job.ID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if gotJob.Status != model.JobFailed {
+		t.Fatalf("job status = %q, want failed", gotJob.Status)
+	}
+	if gotJob.Attempts != 1 {
+		t.Fatalf("job attempts = %d, want 1", gotJob.Attempts)
+	}
+
+	if _, ok, err := st.ClaimJob(ctx, 30*time.Second); err != nil {
+		t.Fatalf("ClaimJob after failure: %v", err)
+	} else if ok {
+		t.Fatal("expected no further claimable jobs")
+	}
+
+	n, err := st.GetNoteByID(ctx, noteID)
+	if err != nil {
+		t.Fatalf("GetNoteByID: %v", err)
+	}
+	if n.Status != model.NoteFailed {
+		t.Fatalf("note status = %q, want failed", n.Status)
 	}
 }
 
