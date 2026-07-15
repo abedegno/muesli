@@ -1217,9 +1217,15 @@ Creates a custom template.
   ```json
   {
     "name": "<string>",
-    "sections": [{ "heading": "<string>", "instruction": "<string>" }]
+    "sections": [{ "heading": "<string>", "instruction": "<string>" }],
+    "system_prompt": "<string, optional>",
+    "model": "<string, optional>",
+    "temperature": "<number 0-2, optional>"
   }
   ```
+  - `system_prompt`, `model`, and `temperature` are optional per-template
+    agent overrides. Omit or leave empty/null to fall back to the agent
+    plugin's own defaults (current behaviour).
 - Response `201`: Template object
 - Errors:
   - `400`: invalid body or database error (body contains the error message)
@@ -1234,7 +1240,10 @@ Updates a template.
   ```json
   {
     "name": "<string>",
-    "sections": [{ "heading": "<string>", "instruction": "<string>" }]
+    "sections": [{ "heading": "<string>", "instruction": "<string>" }],
+    "system_prompt": "<string, optional>",
+    "model": "<string, optional>",
+    "temperature": "<number 0-2, optional>"
   }
   ```
 - Response `200`:
