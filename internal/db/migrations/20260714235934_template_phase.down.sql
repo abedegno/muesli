@@ -1,1 +1,2 @@
--- template_phase (down)
+ALTER TABLE templates
+DROP COLUMN phase;
