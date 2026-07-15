@@ -1,0 +1,2 @@
+ALTER TABLE templates
+ADD COLUMN phase TEXT NOT NULL DEFAULT 'after';

@@ -278,8 +278,8 @@ export interface MuesliBridge {
   addNoteFolder(noteId: string, folderId: string): Promise<void>
   removeNoteFolder(noteId: string, folderId: string): Promise<void>
   listTemplates(): Promise<Template[]>
-  createTemplate(name: string, sections: TemplateSection[]): Promise<Template>
-  updateTemplate(id: string, name: string, sections: TemplateSection[]): Promise<void>
+  createTemplate(name: string, phase: Template['phase'], sections: TemplateSection[], autoRun: boolean): Promise<Template>
+  updateTemplate(id: string, name: string, phase: Template['phase'], sections: TemplateSection[], autoRun: boolean): Promise<void>
   deleteTemplate(id: string): Promise<void>
   exportFile(defaultName: string, content: string): Promise<string | null>
   exportNote(noteId: string, format: string, options?: ExportRequestOptions): Promise<{ success: true; path: string } | { success: false; error: string }>

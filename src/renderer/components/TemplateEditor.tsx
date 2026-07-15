@@ -1,8 +1,8 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Dialog } from '@/components/ui/Dialog'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
-import type { Template, TemplateSection } from '../../shared/types'
+import type { Template, TemplatePhase, TemplateSection } from '../../shared/types'
 
 export function TemplateEditor({
   open,
@@ -14,14 +14,25 @@ export function TemplateEditor({
   open: boolean
   title: string
   initial?: Template
-  onSave: (name: string, sections: TemplateSection[]) => Promise<void>
+  onSave: (name: string, phase: TemplatePhase, sections: TemplateSection[], autoRun: boolean) => Promise<void>
   onClose: () => void
 }) {
   const [name, setName] = useState(initial?.name ?? '')
+  const [phase, setPhase] = useState<TemplatePhase>(initial?.phase ?? 'after')
+  const [autoRun, setAutoRun] = useState(initial?.auto_run ?? true)
   const [sections, setSections] = useState<TemplateSection[]>(
     initial?.sections ?? [{ heading: '', instruction: '' }],
   )
   const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    if (!open) return
+    setName(initial?.name ?? '')
+    setPhase(initial?.phase ?? 'after')
+    setAutoRun(initial?.auto_run ?? true)
+    setSections(initial?.sections ?? [{ heading: '', instruction: '' }])
+    setBusy(false)
+  }, [initial, open])
 
   const valid =
     name.trim().length > 0 &&
@@ -42,6 +53,32 @@ export function TemplateEditor({
       <label htmlFor="template-editor-name" className="mb-3 block text-sm">
         <span className="mb-1 block font-medium">Template name</span>
         <Input id="template-editor-name" aria-label="Template name" value={name} onChange={(e) => setName(e.target.value)} />
+      </label>
+      <label htmlFor="template-editor-phase" className="mb-3 block text-sm">
+        <span className="mb-1 block font-medium">Phase</span>
+        <select
+          id="template-editor-phase"
+          aria-label="Phase"
+          value={phase}
+          onChange={(e) => setPhase(e.target.value as TemplatePhase)}
+          className="w-full rounded-[var(--radius)] border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <option value="after">After</option>
+          <option value="pre">Pre</option>
+          <option value="during">During</option>
+          <option value="cross">Cross</option>
+        </select>
+      </label>
+      <label htmlFor="template-editor-auto-run" className="mb-3 flex items-center gap-2 text-sm">
+        <input
+          id="template-editor-auto-run"
+          aria-label="Auto-run on new notes"
+          type="checkbox"
+          checked={autoRun}
+          onChange={(e) => setAutoRun(e.target.checked)}
+          className="h-4 w-4 rounded border border-input"
+        />
+        <span className="font-medium">Auto-run on new notes</span>
       </label>
       <div className="mb-4 flex max-h-80 flex-col gap-3 overflow-y-auto">
         {sections.map((section, i) => (
@@ -101,7 +138,9 @@ export function TemplateEditor({
             try {
               await onSave(
                 name.trim(),
+                phase,
                 sections.map((s) => ({ heading: s.heading.trim(), instruction: s.instruction.trim() })),
+                autoRun,
               )
               onClose()
             } catch {

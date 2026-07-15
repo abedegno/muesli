@@ -141,10 +141,40 @@ func seedProvisionalTranscript(t *testing.T, st *store.Store, noteID string) {
 	}
 }
 
+func mustBuiltInTemplates(t *testing.T, st *store.Store) []model.Template {
+	t.Helper()
+	tmpls, err := st.BuiltInTemplates(context.Background())
+	if err != nil {
+		t.Fatalf("BuiltInTemplates: %v", err)
+	}
+	return tmpls
+}
+
+func claimSummarizeJobs(t *testing.T, st *store.Store, want int) []model.Job {
+	t.Helper()
+	ctx := context.Background()
+	jobs := make([]model.Job, 0, want)
+	for len(jobs) < want {
+		job, ok, err := st.ClaimJob(ctx, 30*time.Second)
+		if err != nil {
+			t.Fatalf("ClaimJob: %v", err)
+		}
+		if !ok {
+			t.Fatalf("claimed %d summarize jobs, want %d", len(jobs), want)
+		}
+		if job.Type != model.JobSummarize {
+			t.Fatalf("job type = %q, want summarize", job.Type)
+		}
+		jobs = append(jobs, job)
+	}
+	return jobs
+}
+
 func TestPipelineHappyPath(t *testing.T) {
 	proc, st, noteID, _, _ := pipelineFixture(t, "keep")
 	drain(t, proc, st)
 	ctx := context.Background()
+	tmpls := mustBuiltInTemplates(t, st)
 
 	n, _ := st.GetNoteByID(ctx, noteID)
 	if n.Status != model.NoteReady {
@@ -158,8 +188,8 @@ func TestPipelineHappyPath(t *testing.T) {
 		t.Fatalf("transcript: %v segs=%d", err, len(tr.Segments))
 	}
 	sums, _ := st.GetSummaries(ctx, noteID)
-	if len(sums) != 2 {
-		t.Fatalf("summaries = %d, want 2 (one per built-in template)", len(sums))
+	if len(sums) != len(tmpls) {
+		t.Fatalf("summaries = %d, want %d (one per built-in template)", len(sums), len(tmpls))
 	}
 	for _, s := range sums {
 		if s.Status != model.SummaryReady || len(s.Sections) == 0 {
@@ -328,24 +358,19 @@ func TestPipelineDiarizationReviewReleaseAllowsSummaryFanout(t *testing.T) {
 func TestPipelinePartialSuccessSummaryFails(t *testing.T) {
 	proc, st, noteID, _, ag := pipelineFixture(t, "keep")
 	ctx := context.Background()
+	tmpls := mustBuiltInTemplates(t, st)
 
 	// Process the transcribe job first (succeeds, enqueues one summarize job per
-	// built-in template — two of them).
+	// built-in template).
 	job, _, _ := st.ClaimJob(ctx, 30*time.Second)
 	proc.Process(ctx, job)
 
-	// Drive the first summarize job to TERMINAL failure by making the agent stub
-	// 500 on every attempt for that job. With MaxJobAttempts=3, three claims+fails
-	// exhaust it. We hold the second summarize job out of the queue meanwhile by
-	// claiming it first and parking it, so the injected failures only hit job #1.
-	first, ok, _ := st.ClaimJob(ctx, 30*time.Second)
-	if !ok || first.Type != model.JobSummarize {
-		t.Fatalf("expected to claim first summarize job, got %+v ok=%v", first, ok)
-	}
-	second, ok, _ := st.ClaimJob(ctx, 30*time.Second)
-	if !ok || second.Type != model.JobSummarize {
-		t.Fatalf("expected to claim second summarize job, got %+v ok=%v", second, ok)
-	}
+	// Claim every summarize job so only the chosen one can be reclaimed during
+	// the retry loop.
+	jobs := claimSummarizeJobs(t, st, len(tmpls))
+	first := jobs[0]
+	second := jobs[1]
+	parked := jobs[1:]
 	var firstSummaryID, secondSummaryID string
 	{
 		var p struct {
@@ -371,16 +396,18 @@ func TestPipelinePartialSuccessSummaryFails(t *testing.T) {
 			break
 		}
 		if rc.ID != cur.ID {
-			// The only other claimable job is the second summarize job — but we
-			// already hold it leased, so this should not happen. Guard anyway.
+			// All other summarize jobs are leased, so only the same job should be
+			// reclaimable here.
 			t.Fatalf("unexpected job reclaimed: %s (want %s)", rc.ID, cur.ID)
 		}
 		cur = rc
 	}
 
-	// Now let the second job succeed against a healthy agent.
+	// Now let the remaining summarize jobs succeed against a healthy agent.
 	ag.FailNext(0)
-	proc.Process(ctx, second)
+	for _, job := range parked {
+		proc.Process(ctx, job)
+	}
 
 	// The failed panel is failed; the healthy panel is ready; the note is ready.
 	n, _ := st.GetNoteByID(ctx, noteID)
@@ -403,22 +430,18 @@ func TestPipelinePartialSuccessSummaryFails(t *testing.T) {
 func TestPipeline_PartialSummarizeFailure(t *testing.T) {
 	proc, st, noteID, _, ag := pipelineFixture(t, "keep")
 	ctx := context.Background()
+	tmpls := mustBuiltInTemplates(t, st)
 
 	// Step 1: claim and process the transcribe job — it succeeds and fans out
-	// exactly 2 summarize jobs (one per built-in template).
+	// one summarize job per built-in template.
 	job, _, _ := st.ClaimJob(ctx, 30*time.Second)
 	proc.Process(ctx, job)
 
-	// Step 2: claim BOTH summarize jobs upfront to park them so injected failures
-	// only hit the first one while the second is held out of the queue.
-	first, ok, _ := st.ClaimJob(ctx, 30*time.Second)
-	if !ok || first.Type != model.JobSummarize {
-		t.Fatalf("expected to claim first summarize job, got %+v ok=%v", first, ok)
-	}
-	second, ok, _ := st.ClaimJob(ctx, 30*time.Second)
-	if !ok || second.Type != model.JobSummarize {
-		t.Fatalf("expected to claim second summarize job, got %+v ok=%v", second, ok)
-	}
+	// Step 2: claim every summarize job upfront so only the first one can be
+	// reclaimed while the rest stay leased.
+	jobs := claimSummarizeJobs(t, st, len(tmpls))
+	first := jobs[0]
+	parked := jobs[1:]
 
 	// Step 3: drive the first summarize job to terminal failure.
 	// MaxJobAttempts=3 — the first attempt was consumed by ClaimJob above;
@@ -437,9 +460,11 @@ func TestPipeline_PartialSummarizeFailure(t *testing.T) {
 		cur = rc
 	}
 
-	// Step 4: let the second summarize job succeed against a healthy agent.
+	// Step 4: let the remaining summarize jobs succeed against a healthy agent.
 	ag.FailNext(0)
-	proc.Process(ctx, second)
+	for _, job := range parked {
+		proc.Process(ctx, job)
+	}
 
 	// Step 5: note must reach ready (FinalizeNote was NOT skipped).
 	n, _ := st.GetNoteByID(ctx, noteID)
@@ -473,6 +498,7 @@ func TestPipelineEmptyTranscriptSummarizeSucceeds(t *testing.T) {
 	proc, st, noteID, _, _ := pipelineFixtureWith(t, "keep", plugintest.NewEmptyTranscriber())
 	drain(t, proc, st)
 	ctx := context.Background()
+	tmpls := mustBuiltInTemplates(t, st)
 
 	tr, err := st.GetTranscript(ctx, noteID)
 	if err != nil {
@@ -487,8 +513,8 @@ func TestPipelineEmptyTranscriptSummarizeSucceeds(t *testing.T) {
 		t.Fatalf("note status = %q, want ready", n.Status)
 	}
 	sums, _ := st.GetSummaries(ctx, noteID)
-	if len(sums) != 2 {
-		t.Fatalf("summaries = %d, want 2", len(sums))
+	if len(sums) != len(tmpls) {
+		t.Fatalf("summaries = %d, want %d", len(sums), len(tmpls))
 	}
 	for _, s := range sums {
 		if s.Status != model.SummaryReady {
@@ -502,6 +528,7 @@ func TestSummarizeFansOutOwnerTemplates(t *testing.T) {
 	// create a custom template owned by that user.
 	proc, st, noteID, _, _ := pipelineFixture(t, "keep")
 	ctx := context.Background()
+	tmpls := mustBuiltInTemplates(t, st)
 
 	// Identify the note's owner so we can create the custom template under them.
 	ownerID, err := st.NoteOwnerID(ctx, noteID)
@@ -509,9 +536,9 @@ func TestSummarizeFansOutOwnerTemplates(t *testing.T) {
 		t.Fatalf("NoteOwnerID: %v", err)
 	}
 
-	custom, err := st.CreateTemplate(ctx, ownerID, "My Custom", []model.TemplateSection{
+	custom, err := st.CreateTemplate(ctx, ownerID, "My Custom", "after", []model.TemplateSection{
 		{Heading: "Recap", Instruction: "Summarise in one sentence."},
-	})
+	}, true, "", "", nil)
 	if err != nil {
 		t.Fatalf("CreateTemplate: %v", err)
 	}
@@ -525,13 +552,13 @@ func TestSummarizeFansOutOwnerTemplates(t *testing.T) {
 		t.Fatalf("note status = %q, want ready", n.Status)
 	}
 
-	// Assert: there is a summary for the custom template (plus the 2 built-ins → 3 total).
+	// Assert: there is a summary for the custom template plus all built-ins.
 	sums, err := st.GetSummaries(ctx, noteID)
 	if err != nil {
 		t.Fatalf("GetSummaries: %v", err)
 	}
-	if len(sums) != 3 {
-		t.Fatalf("summaries = %d, want 3 (2 built-in + 1 custom)", len(sums))
+	if len(sums) != len(tmpls)+1 {
+		t.Fatalf("summaries = %d, want %d (%d built-in + 1 custom)", len(sums), len(tmpls)+1, len(tmpls))
 	}
 	var foundCustom bool
 	for _, s := range sums {

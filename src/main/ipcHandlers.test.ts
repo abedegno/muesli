@@ -450,7 +450,7 @@ describe('ipc handlers', () => {
     const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
       seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
       return new Response(
-        JSON.stringify({ id: 't1', name: 'Default', sections: [], built_in: false }),
+        JSON.stringify({ id: 't1', name: 'Default', phase: 'after', sections: [], built_in: false }),
         { status: 200 },
       )
     }
@@ -459,8 +459,8 @@ describe('ipc handlers', () => {
     const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
     const sections = [{ heading: 'Overview', instruction: 'Summarise' }]
     await handlers.listTemplates()
-    await handlers.createTemplate('Default', sections)
-    await handlers.updateTemplate('t1', 'Renamed', sections)
+    await handlers.createTemplate('Default', 'after', sections, true)
+    await handlers.updateTemplate('t1', 'Renamed', 'after', sections, false)
     await handlers.deleteTemplate('t1')
     expect(seen.some((s) => s.startsWith('GET') && s.endsWith('/api/templates'))).toBe(true)
     expect(seen.some((s) => s.startsWith('POST') && s.endsWith('/api/templates'))).toBe(true)

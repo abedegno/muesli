@@ -172,16 +172,21 @@ The contract is the project's most important interface — it's what makes Muesl
 pluggable and keeps audio off third-party SaaS. A plugin is any HTTP service
 exposing:
 
-| Endpoint           | Auth     | Purpose                                                                                                                                                                 |
-| ------------------ | -------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET /info`        | bearer   | `{name, version, plugin_api: 1, kind, config_schema}` — identity + JSON-Schema for its config.                                                                          |
-| `GET /health`      | **none** | Liveness probe.                                                                                                                                                         |
-| `POST /transcribe` | bearer   | `{audio_url, language_hint?, options?, config}` → `{segments:[{start_ms,end_ms,text,source,speaker?}], language, model, duration_ms}`.                                  |
-| `POST /generate`   | bearer   | `{transcript:[seg], notes_markdown, template:{sections:[{heading,instruction}]}, options?, config}` → `{summary:{sections:[{heading,content_markdown,refs?}]}, model}`. |
+| Endpoint           | Auth     | Purpose                                                                                                                                                                                                       |
+| ------------------ | -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET /info`        | bearer   | `{name, version, plugin_api: 1, kind, config_schema}` — identity + JSON-Schema for its config.                                                                                                                |
+| `GET /health`      | **none** | Liveness probe.                                                                                                                                                                                               |
+| `POST /transcribe` | bearer   | `{audio_url, language_hint?, options?, config}` → `{segments:[{start_ms,end_ms,text,source,speaker?}], language, model, duration_ms}`.                                                                        |
+| `POST /generate`   | bearer   | `{transcript:[seg], notes_markdown, template:{sections:[{heading,instruction}]}, options?, config, system_prompt?, model?, temperature?}` → `{summary:{sections:[{heading,content_markdown,refs?}]}, model}`. |
 
 - **Auth:** `Authorization: Bearer <token>` plus `X-Muesli-Plugin-API: 1`.
 - **`refs`** are **0-based positional indices into the transcript array** (`[]int`),
   not segment IDs — used to cite which transcript spans support a summary point.
+- **`system_prompt`, `model`, `temperature`** on `/generate` are optional
+  per-template agent overrides (set from the resolved `model.Template`, see
+  `internal/store/templates.go`). Absent/empty/nil means "unset" — a
+  conformant agent falls back to its own default system prompt / plugin
+  `config` values, so plugins that predate this field can ignore it safely.
 - A plugin's `config_schema` (JSON Schema) drives the admin UI's config form;
   fields marked `writeOnly` / `format:"password"` are treated as secrets and
   sealed with AES-GCM before storage.

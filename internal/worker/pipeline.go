@@ -340,19 +340,12 @@ func (p *Processor) runSummarize(ctx context.Context, job model.Job) (bool, erro
 	if err != nil {
 		return true, err
 	}
-	templates, err := p.store.TemplatesForSummary(ctx, noteOwner)
+	tmpl, err := p.store.GetTemplate(ctx, noteOwner, pl.TemplateID)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, errors.New("template not found: " + pl.TemplateID)
+	}
 	if err != nil {
 		return true, err
-	}
-	var tmpl model.Template
-	for _, t := range templates {
-		if t.ID == pl.TemplateID {
-			tmpl = t
-			break
-		}
-	}
-	if tmpl.ID == "" {
-		return false, errors.New("template not found: " + pl.TemplateID)
 	}
 
 	plug, err := p.store.DefaultPlugin(ctx, p.crypto, model.PluginAgent)
@@ -373,12 +366,26 @@ func (p *Processor) runSummarize(ctx context.Context, job model.Job) (bool, erro
 	segments, notesMarkdown := applySpeakerAliases(transcript.Segments, body, aliasMap)
 
 	client := plugin.New(plug.EndpointURL, plug.Token)
-	resp, err := client.Generate(ctx, plugin.GenerateRequest{
+	genReq := plugin.GenerateRequest{
 		Transcript:    segments,
 		NotesMarkdown: notesMarkdown,
 		Template:      plugin.TemplatePayload{Sections: tmpl.Sections},
 		Config:        plug.Config,
-	})
+	}
+	// Only set the optional per-template agent overrides when the resolved
+	// template actually has them; absent template values leave the request
+	// fields at their zero value, preserving current behaviour (the agent
+	// falls back to its own default system prompt / plugin Config).
+	if tmpl.SystemPrompt != "" {
+		genReq.SystemPrompt = tmpl.SystemPrompt
+	}
+	if tmpl.Model != "" {
+		genReq.Model = tmpl.Model
+	}
+	if tmpl.Temperature != nil {
+		genReq.Temperature = tmpl.Temperature
+	}
+	resp, err := client.Generate(ctx, genReq)
 	if err != nil {
 		// Do NOT mark the summary failed or finalize here: the job row is still
 		// 'running' at this point. Process settles the job first, then (on a

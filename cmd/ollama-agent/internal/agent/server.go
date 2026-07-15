@@ -86,10 +86,25 @@ func (e *Engine) Generate(ctx context.Context, req pluginkit.GenerateRequest) (p
 		transcript = []model.Segment{}
 	}
 
+	// Per-request overrides (from the resolved template) win over the plugin's
+	// Config defaults: an empty Model or nil Temperature on the request leaves
+	// cfg (already resolved from req.Config / the plugin's own defaults)
+	// untouched.
+	if strings.TrimSpace(req.Model) != "" {
+		cfg.Model = strings.TrimSpace(req.Model)
+	}
+	if req.Temperature != nil {
+		cfg.Temperature = req.Temperature
+	}
+	sysPrompt := strings.TrimSpace(req.SystemPrompt)
+	if sysPrompt == "" {
+		sysPrompt = systemPrompt()
+	}
+
 	sections := make([]model.SummarySection, 0, len(req.Template.Sections))
 	reportedModel := ""
 	for idx, section := range req.Template.Sections {
-		out, err := e.generateSection(ctx, cfg, idx, section, transcript, req.NotesMarkdown, req.Options)
+		out, err := e.generateSection(ctx, cfg, sysPrompt, idx, section, transcript, req.NotesMarkdown, req.Options)
 		if err != nil {
 			return pluginkit.GenerateResponse{}, err
 		}
@@ -111,7 +126,7 @@ func (e *Engine) Generate(ctx context.Context, req pluginkit.GenerateRequest) (p
 	return resp, nil
 }
 
-func (e *Engine) generateSection(ctx context.Context, cfg pluginConfig, index int, section model.TemplateSection, transcript []model.Segment, notesMarkdown string, options json.RawMessage) (sectionOutput, error) {
+func (e *Engine) generateSection(ctx context.Context, cfg pluginConfig, sysPrompt string, index int, section model.TemplateSection, transcript []model.Segment, notesMarkdown string, options json.RawMessage) (sectionOutput, error) {
 	prompt := buildPrompt(index, section, transcript, notesMarkdown, options)
 	payload := ollamaChatRequest{
 		Model:  cfg.Model,
@@ -121,7 +136,7 @@ func (e *Engine) generateSection(ctx context.Context, cfg pluginConfig, index in
 			Role    string `json:"role"`
 			Content string `json:"content"`
 		}{
-			{Role: "system", Content: systemPrompt()},
+			{Role: "system", Content: sysPrompt},
 			{Role: "user", Content: prompt},
 		},
 	}

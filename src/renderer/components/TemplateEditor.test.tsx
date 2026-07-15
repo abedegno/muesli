@@ -42,11 +42,13 @@ describe('TemplateEditor', () => {
     const onSave = vi.fn().mockResolvedValue(undefined)
     render(<TemplateEditor open title="New template" onSave={onSave} onClose={() => {}} />)
     await userEvent.type(screen.getByLabelText('Template name'), '  Standup  ')
+    await userEvent.selectOptions(screen.getByLabelText('Phase'), 'pre')
+    await userEvent.click(screen.getByLabelText('Auto-run on new notes'))
     await userEvent.type(screen.getByLabelText('Section 1 heading'), 'Action items')
     await userEvent.type(screen.getByLabelText('Section 1 instruction'), 'List them')
     await userEvent.click(screen.getByRole('button', { name: /^save$/i }))
-    expect(onSave).toHaveBeenCalledWith('Standup', [
+    expect(onSave).toHaveBeenCalledWith('Standup', 'pre', [
       { heading: 'Action items', instruction: 'List them' },
-    ])
+    ], false)
   })
 })
