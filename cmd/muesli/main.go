@@ -283,6 +283,7 @@ func main() {
 			os.Exit(1)
 		}
 		slog.Info("registered embedded ollama agent plugin", "url", embeddedAgent.EndpointURL)
+		applyEmbeddedAgentDefault(&cfg, embeddedAgent.EndpointURL)
 	}
 
 	if embeddedMode {
@@ -304,6 +305,7 @@ func main() {
 			os.Exit(1)
 		}
 		slog.Info("registered embedded whisper transcriber plugin", "url", embeddedWhisper.EndpointURL)
+		applyEmbeddedTranscriberDefault(&cfg, embeddedWhisper.EndpointURL)
 	}
 
 	srv := api.NewServer(api.Deps{Store: st, Storage: prov, Crypto: cr, Worker: wpool, Config: cfg, Embedder: emb, BackupRunner: backup.PgDumpRunner{}, EmbeddedProgress: startupReporter})
