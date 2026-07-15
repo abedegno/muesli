@@ -27,13 +27,17 @@ func TestEnqueueSummarizeJobs(t *testing.T) {
 		t.Fatalf("enqueue: %v", err)
 	}
 
-	// One pending summary per built-in template (2).
+	// One pending summary per built-in template.
+	tmpls, err := st.BuiltInTemplates(ctx)
+	if err != nil {
+		t.Fatalf("BuiltInTemplates: %v", err)
+	}
 	sums, err := st.GetSummaries(ctx, noteID)
 	if err != nil {
 		t.Fatalf("GetSummaries: %v", err)
 	}
-	if len(sums) != 2 {
-		t.Fatalf("summaries = %d, want 2 built-ins", len(sums))
+	if len(sums) != len(tmpls) {
+		t.Fatalf("summaries = %d, want %d built-ins", len(sums), len(tmpls))
 	}
 	for _, s := range sums {
 		if s.Status != model.SummaryPending {
@@ -52,7 +56,7 @@ func TestEnqueueSummarizeJobs(t *testing.T) {
 
 	// One summarize job per template was enqueued.
 	jobs := 0
-	for i := 0; i < 5; i++ {
+	for i := 0; i < len(tmpls)+1; i++ {
 		job, ok, err := st.ClaimJob(ctx, 30*time.Second)
 		if err != nil {
 			t.Fatalf("ClaimJob: %v", err)
@@ -65,8 +69,71 @@ func TestEnqueueSummarizeJobs(t *testing.T) {
 		}
 		jobs++
 	}
-	if jobs != 2 {
-		t.Fatalf("enqueued jobs = %d, want 2", jobs)
+	if jobs != len(tmpls) {
+		t.Fatalf("enqueued jobs = %d, want %d", jobs, len(tmpls))
+	}
+}
+
+func TestEnqueueSummarizeJobsSkipsManualOnlyTemplates(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	if err := st.SeedBuiltInTemplates(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	noteID := seedNote(t, st)
+	ownerID, err := st.NoteOwnerID(ctx, noteID)
+	if err != nil {
+		t.Fatalf("owner: %v", err)
+	}
+
+	autoRunTmpl, err := st.CreateTemplate(ctx, ownerID, "Auto run", "after", []model.TemplateSection{{Heading: "A", Instruction: "A"}}, true, "", "", nil)
+	if err != nil {
+		t.Fatalf("create auto-run: %v", err)
+	}
+	manualOnlyTmpl, err := st.CreateTemplate(ctx, ownerID, "Manual only", "after", []model.TemplateSection{{Heading: "M", Instruction: "M"}}, false, "", "", nil)
+	if err != nil {
+		t.Fatalf("create manual-only: %v", err)
+	}
+
+	forSummary, err := st.TemplatesForSummary(ctx, ownerID)
+	if err != nil {
+		t.Fatalf("TemplatesForSummary: %v", err)
+	}
+	var sawAutoRun, sawManualOnly bool
+	for _, tmpl := range forSummary {
+		if tmpl.ID == autoRunTmpl.ID {
+			sawAutoRun = true
+		}
+		if tmpl.ID == manualOnlyTmpl.ID {
+			sawManualOnly = true
+		}
+		if !tmpl.AutoRun {
+			t.Fatalf("TemplatesForSummary included non-auto-run template: %+v", tmpl)
+		}
+	}
+	if !sawAutoRun {
+		t.Fatalf("TemplatesForSummary missing auto-run template: %+v", forSummary)
+	}
+	if sawManualOnly {
+		t.Fatalf("TemplatesForSummary included manual-only template: %+v", forSummary)
+	}
+
+	if err := st.EnqueueSummarizeJobs(ctx, ownerID, noteID); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	sums, err := st.GetSummaries(ctx, noteID)
+	if err != nil {
+		t.Fatalf("GetSummaries: %v", err)
+	}
+	if len(sums) != len(forSummary) {
+		t.Fatalf("summaries = %d, want %d auto-run templates", len(sums), len(forSummary))
+	}
+	for _, s := range sums {
+		if s.TemplateID == manualOnlyTmpl.ID {
+			t.Fatalf("manual-only template was enqueued: %+v", s)
+		}
 	}
 }
 
@@ -144,7 +211,7 @@ func TestSummaryLifecycle(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	tmpls, err := st.BuiltInTemplates(ctx)
-	if err != nil || len(tmpls) != 2 {
+	if err != nil || len(tmpls) < 2 {
 		t.Fatalf("templates: %v len=%d", err, len(tmpls))
 	}
 
@@ -207,7 +274,7 @@ func TestCompleteSummaryTruncatedRoundTrip(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	tmpls, err := st.BuiltInTemplates(ctx)
-	if err != nil || len(tmpls) != 2 {
+	if err != nil || len(tmpls) < 2 {
 		t.Fatalf("templates: %v len=%d", err, len(tmpls))
 	}
 

@@ -84,6 +84,61 @@ func TestGenerateSendsContractAndParsesResponse(t *testing.T) {
 	}
 }
 
+// TestGenerateSendsOptionalAgentOverridesWhenSet covers the optional
+// per-template agent override fields (SystemPrompt, Model, Temperature):
+// absent from the wire body when unset (preserving prior behaviour), present
+// when set on the request.
+func TestGenerateSendsOptionalAgentOverridesWhenSet(t *testing.T) {
+	var raw map[string]json.RawMessage
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&raw)
+		_ = json.NewEncoder(w).Encode(plugin.GenerateResponse{Model: "stub"})
+	}))
+	defer srv.Close()
+
+	c := plugin.New(srv.URL, "tok")
+
+	// Unset: fields must be entirely absent from the wire body.
+	_, err := c.Generate(context.Background(), plugin.GenerateRequest{
+		NotesMarkdown: "- a note",
+		Template:      plugin.TemplatePayload{Sections: []model.TemplateSection{{Heading: "Overview", Instruction: "Summarise."}}},
+		Config:        json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	for _, field := range []string{"system_prompt", "model", "temperature"} {
+		if _, ok := raw[field]; ok {
+			t.Errorf("unset override field %q should be absent from wire body, got %v", field, raw)
+		}
+	}
+
+	// Set: fields must be present and carry the resolved template's values.
+	temp := 0.5
+	_, err = c.Generate(context.Background(), plugin.GenerateRequest{
+		NotesMarkdown: "- a note",
+		Template:      plugin.TemplatePayload{Sections: []model.TemplateSection{{Heading: "Overview", Instruction: "Summarise."}}},
+		Config:        json.RawMessage(`{}`),
+		SystemPrompt:  "You are terse.",
+		Model:         "llama3.2:3b",
+		Temperature:   &temp,
+	})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	var gotSystemPrompt, gotModel string
+	var gotTemp float64
+	if err := json.Unmarshal(raw["system_prompt"], &gotSystemPrompt); err != nil || gotSystemPrompt != "You are terse." {
+		t.Errorf("system_prompt = %s (err=%v), want %q", raw["system_prompt"], err, "You are terse.")
+	}
+	if err := json.Unmarshal(raw["model"], &gotModel); err != nil || gotModel != "llama3.2:3b" {
+		t.Errorf("model = %s (err=%v), want %q", raw["model"], err, "llama3.2:3b")
+	}
+	if err := json.Unmarshal(raw["temperature"], &gotTemp); err != nil || gotTemp != 0.5 {
+		t.Errorf("temperature = %s (err=%v), want %v", raw["temperature"], err, 0.5)
+	}
+}
+
 func TestGenerateNilTranscriptSerializesAsEmptyArray(t *testing.T) {
 	// A nil Go slice marshals to JSON null, which the agent's Pydantic schema
 	// rejects with 422. The client must coerce it to an empty array so the agent

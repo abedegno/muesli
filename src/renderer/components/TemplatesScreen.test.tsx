@@ -1,33 +1,39 @@
 // @vitest-environment jsdom
-import { describe, it, expect, vi, afterEach } from 'vitest'
+import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { render, screen, cleanup, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { ToastProvider } from '@/components/ui/Toast'
 import type { Template } from '../../shared/types'
 
+const listTemplates = vi.hoisted(() => vi.fn())
+const deleteTemplate = vi.hoisted(() => vi.fn())
+const updateTemplate = vi.hoisted(() => vi.fn())
+const createTemplate = vi.hoisted(() => vi.fn())
+
 const builtIn: Template = {
   id: 'b1',
   name: 'General',
+  phase: 'after',
   sections: [{ heading: 'Summary', instruction: 'Summarize' }],
   built_in: true,
+  auto_run: true,
 }
 const custom: Template = {
   id: 'c1',
   name: 'My Standup',
+  phase: 'pre',
   sections: [{ heading: 'Updates', instruction: 'List updates' }],
   built_in: false,
+  auto_run: true,
 }
-
-const listTemplates = vi.fn().mockResolvedValue([builtIn, custom])
-const deleteTemplate = vi.fn().mockResolvedValue(undefined)
 
 vi.mock('@/api', () => ({
   muesli: {
     listTemplates: () => listTemplates(),
     deleteTemplate: (id: string) => deleteTemplate(id),
-    createTemplate: vi.fn().mockResolvedValue(undefined),
-    updateTemplate: vi.fn().mockResolvedValue(undefined),
+    createTemplate: (...args: Parameters<typeof createTemplate>) => createTemplate(...args),
+    updateTemplate: (...args: Parameters<typeof updateTemplate>) => updateTemplate(...args),
   },
 }))
 
@@ -36,6 +42,13 @@ import { TemplatesScreen } from './TemplatesScreen'
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+})
+
+beforeEach(() => {
+  listTemplates.mockResolvedValue([builtIn, custom])
+  deleteTemplate.mockResolvedValue(undefined)
+  updateTemplate.mockResolvedValue(undefined)
+  createTemplate.mockResolvedValue(undefined)
 })
 
 function renderScreen() {
@@ -55,7 +68,22 @@ describe('TemplatesScreen', () => {
     // the badge sits next to the template name within the same row
     const row = name.closest('li')!
     expect(row).toHaveTextContent('Built-in')
+    expect(row).toHaveTextContent('After')
     expect(screen.queryByRole('button', { name: 'Delete General' })).toBeNull()
+  })
+
+  it('shows the phase badge for custom templates', async () => {
+    renderScreen()
+    const name = await screen.findByText('My Standup')
+    const row = name.closest('li')!
+    expect(row).toHaveTextContent('Pre')
+  })
+
+  it('shows the auto-run state for custom templates', async () => {
+    renderScreen()
+    const name = await screen.findByText('My Standup')
+    const row = name.closest('li')!
+    expect(row).toHaveTextContent('Auto-run')
   })
 
   it('shows a Delete button for custom templates and deletes on click', async () => {
@@ -91,5 +119,18 @@ describe('TemplatesScreen', () => {
     await userEvent.click(confirmBtn)
     await waitFor(() => expect(deleteTemplate).toHaveBeenCalledOnce())
     expect(deleteTemplate).toHaveBeenCalledWith('c1')
+  })
+
+  it('toggles auto-run in the editor and saves it through updateTemplate', async () => {
+    renderScreen()
+    const edit = await screen.findByRole('button', { name: 'Edit' })
+    await userEvent.click(edit)
+    const toggle = await screen.findByLabelText('Auto-run on new notes')
+    await userEvent.click(toggle)
+    const save = await screen.findByRole('button', { name: /^save$/i })
+    await userEvent.click(save)
+    await waitFor(() => expect(updateTemplate).toHaveBeenCalledWith('c1', 'My Standup', 'pre', [
+      { heading: 'Updates', instruction: 'List updates' },
+    ], false))
   })
 })

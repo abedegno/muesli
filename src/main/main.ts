@@ -2,7 +2,7 @@ import { basename, join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from 'electron'
 import { IPC, type ConnectRequest, type CreateConversationRequest, type DiarizationReviewUpdate, type ExportRequestOptions, type SearchOptions, type SendMessageRequest, type UpdateActionItemRequest, type UpdatePersonRequest, type UploadAudioRequest } from '../shared/ipc'
-import type { CreateShareRequest, DigestConfig, EmbeddedStartupStatus, RetranscribeNoteRequest, RuleGroup, TemplateSection } from '../shared/types'
+import type { CreateShareRequest, DigestConfig, EmbeddedStartupStatus, RetranscribeNoteRequest, RuleGroup, TemplatePhase, TemplateSection } from '../shared/types'
 import { createHandlers } from './ipcHandlers'
 import { startEmbeddedStartupMonitor } from './embeddedStartupMonitor'
 import { NoteStreamRelay } from './noteStreamRelay'
@@ -157,8 +157,8 @@ app.whenReady().then(async () => {
     ipcMain.handle(IPC.addNoteFolder, (_e, noteId: string, folderId: string) => handlers.addNoteFolder(noteId, folderId))
     ipcMain.handle(IPC.removeNoteFolder, (_e, noteId: string, folderId: string) => handlers.removeNoteFolder(noteId, folderId))
     ipcMain.handle(IPC.listTemplates, () => handlers.listTemplates())
-    ipcMain.handle(IPC.createTemplate, (_e, name: string, sections: TemplateSection[]) => handlers.createTemplate(name, sections))
-    ipcMain.handle(IPC.updateTemplate, (_e, id: string, name: string, sections: TemplateSection[]) => handlers.updateTemplate(id, name, sections))
+    ipcMain.handle(IPC.createTemplate, (_e, name: string, phase: TemplatePhase, sections: TemplateSection[], autoRun: boolean) => handlers.createTemplate(name, phase, sections, autoRun))
+    ipcMain.handle(IPC.updateTemplate, (_e, id: string, name: string, phase: TemplatePhase, sections: TemplateSection[], autoRun: boolean) => handlers.updateTemplate(id, name, phase, sections, autoRun))
     ipcMain.handle(IPC.deleteTemplate, (_e, id: string) => handlers.deleteTemplate(id))
     ipcMain.handle(IPC.retryNote, (_, id: string) => handlers.retryNote(id))
     ipcMain.handle(IPC.processNextNote, (_, id: string) => handlers.processNextNote(id))

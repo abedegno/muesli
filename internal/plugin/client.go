@@ -69,12 +69,21 @@ type TemplatePayload struct {
 }
 
 // GenerateRequest is the POST /generate body.
+//
+// SystemPrompt, Model, and Temperature are optional per-template agent
+// overrides (see model.Template), mirrored from pluginkit.GenerateRequest.
+// They are absent/zero when the resolved template has no override set,
+// preserving prior behaviour (the agent falls back to its own default system
+// prompt / plugin Config values).
 type GenerateRequest struct {
 	Transcript    []model.Segment `json:"transcript"`
 	NotesMarkdown string          `json:"notes_markdown"`
 	Template      TemplatePayload `json:"template"`
 	Options       json.RawMessage `json:"options,omitempty"`
 	Config        json.RawMessage `json:"config"`
+	SystemPrompt  string          `json:"system_prompt,omitempty"`
+	Model         string          `json:"model,omitempty"`
+	Temperature   *float64        `json:"temperature,omitempty"`
 }
 
 // SummaryPayload is the produced summary in a /generate reply.

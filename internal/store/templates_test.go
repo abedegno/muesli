@@ -18,16 +18,28 @@ func TestSeedBuiltInTemplates(t *testing.T) {
 	if err := st.SeedBuiltInTemplates(ctx); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
-	// Idempotent: a second call doesn't duplicate.
+	namesBefore, err := st.BuiltInTemplateNames(ctx)
+	if err != nil {
+		t.Fatalf("list before reseed: %v", err)
+	}
+	if len(namesBefore) == 0 {
+		t.Fatal("expected at least one built-in template after first seed")
+	}
+	// Idempotent: a second call leaves the built-in template set unchanged.
 	if err := st.SeedBuiltInTemplates(ctx); err != nil {
 		t.Fatalf("seed 2: %v", err)
 	}
-	names, err := st.BuiltInTemplateNames(ctx)
+	namesAfter, err := st.BuiltInTemplateNames(ctx)
 	if err != nil {
-		t.Fatalf("list: %v", err)
+		t.Fatalf("list after reseed: %v", err)
 	}
-	if len(names) != 2 {
-		t.Fatalf("got %d templates, want 2: %v", len(names), names)
+	if len(namesBefore) != len(namesAfter) {
+		t.Fatalf("built-in template count changed after reseed: before=%d after=%d namesBefore=%v namesAfter=%v", len(namesBefore), len(namesAfter), namesBefore, namesAfter)
+	}
+	for i := range namesBefore {
+		if namesBefore[i] != namesAfter[i] {
+			t.Fatalf("built-in template names changed after reseed: before=%v after=%v", namesBefore, namesAfter)
+		}
 	}
 }
 
@@ -42,7 +54,7 @@ func TestTemplateCRUD(t *testing.T) {
 	if err := st.SeedBuiltInTemplates(ctx); err != nil {
 		t.Fatal(err)
 	}
-	tm, err := st.CreateTemplate(ctx, owner, "Standup", secs())
+	tm, err := st.CreateTemplate(ctx, owner, "Standup", "after", secs(), true, "", "", nil)
 	if err != nil || tm.ID == "" || tm.BuiltIn {
 		t.Fatalf("create: %v %+v", err, tm)
 	}
@@ -62,11 +74,93 @@ func TestTemplateCRUD(t *testing.T) {
 	if !sawBuiltIn || !sawMine {
 		t.Fatalf("list missing built-in or mine: %+v", list)
 	}
-	if err := st.UpdateTemplate(ctx, owner, tm.ID, "Standup 2", secs()); err != nil {
+	if err := st.UpdateTemplate(ctx, owner, tm.ID, "Standup 2", "after", secs(), true, "", "", nil); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	if err := st.DeleteTemplate(ctx, owner, tm.ID); err != nil {
 		t.Fatalf("delete: %v", err)
+	}
+}
+
+// TestTemplateAgentOverridesRoundTrip covers the optional per-template agent
+// overrides (system_prompt, model, temperature) round-tripping through
+// create, update, get, and list. nil/empty means unset.
+func TestTemplateAgentOverridesRoundTrip(t *testing.T) {
+	t.Parallel()
+	st, owner, _ := newStoreWithOwner(t)
+	ctx := context.Background()
+
+	temp := 0.7
+	tm, err := st.CreateTemplate(ctx, owner, "Overrides", "after", secs(), true,
+		"You are a terse summarizer.", "llama3.2:3b", &temp)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if tm.SystemPrompt != "You are a terse summarizer." || tm.Model != "llama3.2:3b" || tm.Temperature == nil || *tm.Temperature != 0.7 {
+		t.Fatalf("create did not round-trip overrides: %+v", tm)
+	}
+
+	got, err := st.GetTemplate(ctx, owner, tm.ID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.SystemPrompt != "You are a terse summarizer." || got.Model != "llama3.2:3b" || got.Temperature == nil || *got.Temperature != 0.7 {
+		t.Fatalf("get did not round-trip overrides: %+v", got)
+	}
+
+	list, err := st.ListTemplates(ctx, owner)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	var sawInList bool
+	for _, x := range list {
+		if x.ID == tm.ID {
+			sawInList = true
+			if x.SystemPrompt != "You are a terse summarizer." || x.Model != "llama3.2:3b" || x.Temperature == nil || *x.Temperature != 0.7 {
+				t.Fatalf("list did not round-trip overrides: %+v", x)
+			}
+		}
+	}
+	if !sawInList {
+		t.Fatalf("list missing created template: %+v", list)
+	}
+
+	// Update to a different override set.
+	newTemp := 1.2
+	if err := st.UpdateTemplate(ctx, owner, tm.ID, "Overrides 2", "after", secs(), true,
+		"Be verbose.", "llama3.2:70b", &newTemp); err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	got, err = st.GetTemplate(ctx, owner, tm.ID)
+	if err != nil {
+		t.Fatalf("get after update: %v", err)
+	}
+	if got.SystemPrompt != "Be verbose." || got.Model != "llama3.2:70b" || got.Temperature == nil || *got.Temperature != 1.2 {
+		t.Fatalf("update did not round-trip new overrides: %+v", got)
+	}
+
+	// Update to clear overrides (empty/nil = unset).
+	if err := st.UpdateTemplate(ctx, owner, tm.ID, "Overrides 3", "after", secs(), true, "", "", nil); err != nil {
+		t.Fatalf("update clear: %v", err)
+	}
+	got, err = st.GetTemplate(ctx, owner, tm.ID)
+	if err != nil {
+		t.Fatalf("get after clear: %v", err)
+	}
+	if got.SystemPrompt != "" || got.Model != "" || got.Temperature != nil {
+		t.Fatalf("update did not clear overrides: %+v", got)
+	}
+
+	// Out-of-range temperature is rejected.
+	badTemp := 5.0
+	if _, err := st.CreateTemplate(ctx, owner, "BadTemp", "after", secs(), true, "", "", &badTemp); err == nil {
+		t.Error("out-of-range temperature should fail validation")
+	}
+
+	// GetTemplate for a template belonging to another owner returns ErrNotFound.
+	other := addUser(t, st)
+	if _, err := st.GetTemplate(ctx, other, tm.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("cross-owner get: want ErrNotFound, got %v", err)
 	}
 }
 
@@ -76,14 +170,14 @@ func TestTemplateOwnerScopingAndBuiltInReadOnly(t *testing.T) {
 	other := addUser(t, st)
 	ctx := context.Background()
 	_ = st.SeedBuiltInTemplates(ctx)
-	tm, _ := st.CreateTemplate(ctx, owner, "Mine", secs())
-	if err := st.UpdateTemplate(ctx, other, tm.ID, "X", secs()); !errors.Is(err, store.ErrNotFound) {
+	tm, _ := st.CreateTemplate(ctx, owner, "Mine", "after", secs(), true, "", "", nil)
+	if err := st.UpdateTemplate(ctx, other, tm.ID, "X", "after", secs(), true, "", "", nil); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("cross-owner update: want ErrNotFound, got %v", err)
 	}
 	// built-in (owner_id NULL) cannot be updated/deleted by a user
 	builtins, _ := st.BuiltInTemplates(ctx)
 	if len(builtins) > 0 {
-		if err := st.UpdateTemplate(ctx, owner, builtins[0].ID, "Hacked", secs()); !errors.Is(err, store.ErrNotFound) {
+		if err := st.UpdateTemplate(ctx, owner, builtins[0].ID, "Hacked", "after", secs(), true, "", "", nil); !errors.Is(err, store.ErrNotFound) {
 			t.Errorf("built-in update: want ErrNotFound, got %v", err)
 		}
 		if err := st.DeleteTemplate(ctx, owner, builtins[0].ID); !errors.Is(err, store.ErrNotFound) {
@@ -96,19 +190,19 @@ func TestTemplateValidationAndDuplicate(t *testing.T) {
 	t.Parallel()
 	st, owner, _ := newStoreWithOwner(t)
 	ctx := context.Background()
-	if _, err := st.CreateTemplate(ctx, owner, "  ", secs()); err == nil {
+	if _, err := st.CreateTemplate(ctx, owner, "  ", "after", secs(), true, "", "", nil); err == nil {
 		t.Error("empty name should fail")
 	}
-	if _, err := st.CreateTemplate(ctx, owner, "X", nil); err == nil {
+	if _, err := st.CreateTemplate(ctx, owner, "X", "after", nil, true, "", "", nil); err == nil {
 		t.Error("no sections should fail")
 	}
-	if _, err := st.CreateTemplate(ctx, owner, "X", []model.TemplateSection{{Heading: "", Instruction: "y"}}); err == nil {
+	if _, err := st.CreateTemplate(ctx, owner, "X", "after", []model.TemplateSection{{Heading: "", Instruction: "y"}}, true, "", "", nil); err == nil {
 		t.Error("empty heading should fail")
 	}
-	if _, err := st.CreateTemplate(ctx, owner, "Dup", secs()); err != nil {
+	if _, err := st.CreateTemplate(ctx, owner, "Dup", "after", secs(), true, "", "", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateTemplate(ctx, owner, "dup", secs()); !errors.Is(err, store.ErrDuplicate) {
+	if _, err := st.CreateTemplate(ctx, owner, "dup", "after", secs(), true, "", "", nil); !errors.Is(err, store.ErrDuplicate) {
 		t.Errorf("dup name: want ErrDuplicate, got %v", err)
 	}
 	_ = strings.TrimSpace
@@ -124,7 +218,7 @@ func TestNoteOwnerIDAndTemplatesForSummary(t *testing.T) {
 	if err != nil || got != owner {
 		t.Fatalf("NoteOwnerID: %v %q want %q", err, got, owner)
 	}
-	tm, _ := st.CreateTemplate(ctx, owner, "Custom", secs())
+	tm, _ := st.CreateTemplate(ctx, owner, "Custom", "after", secs(), true, "", "", nil)
 	forSum, err := st.TemplatesForSummary(ctx, owner)
 	if err != nil {
 		t.Fatal(err)

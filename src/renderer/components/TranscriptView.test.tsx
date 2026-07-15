@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest'
-import { render, screen, cleanup, waitFor } from '@testing-library/react'
+import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { TranscriptView } from './TranscriptView'
 import type { TranscriptSegment } from '../../shared/types'
@@ -31,6 +31,13 @@ const speakerSegs: TranscriptSegment[] = [
   { start_ms: 2000, end_ms: 3000, text: 'now speaker two speaks', source: 'mixed', speaker: 'Speaker 2' },
   { start_ms: 3000, end_ms: 4000, text: 'speaker one returns',    source: 'mixed', speaker: 'Speaker 1' },
 ]
+
+const largeSegs: TranscriptSegment[] = Array.from({ length: 1000 }, (_, i) => ({
+  start_ms: i * 1000,
+  end_ms: (i + 1) * 1000,
+  text: i === 837 ? `segment ${i} budget focus` : `segment ${i}`,
+  source: 'mixed',
+}))
 
 describe('TranscriptView', () => {
   it('shows empty state when no segments', () => {
@@ -162,6 +169,53 @@ describe('TranscriptView', () => {
     render(<TranscriptView segments={segs} highlightIndex={null} />)
     await userEvent.type(screen.getByLabelText('Search transcript'), 'foo')
     expect(scroll).not.toHaveBeenCalled()
+  })
+
+  it('virtualizes a large transcript and keeps the rendered segment DOM bounded', () => {
+    render(<TranscriptView segments={largeSegs} />)
+    const renderedSegments = document.querySelectorAll('li[data-cited], li[data-playing], li').length
+    expect(renderedSegments).toBeLessThan(1000)
+    expect(renderedSegments).toBeLessThan(100)
+  })
+
+  it('scrolls an off-window citation into view and highlights it', async () => {
+    const { rerender } = render(<TranscriptView segments={largeSegs} highlightIndex={null} />)
+    const viewport = screen.getByTestId('transcript-viewport')
+    viewport.scrollTop = 12000
+    fireEvent.scroll(viewport)
+
+    rerender(<TranscriptView segments={largeSegs} highlightIndex={837} />)
+
+    const cited = await screen.findByText(/segment 837 budget focus/)
+    await waitFor(() => expect(cited.closest('[data-cited="true"]')).not.toBeNull())
+    expect(viewport.scrollTop).toBeGreaterThan(12000)
+  })
+
+  it('filters the rendered set and highlights search matches in the filtered list', async () => {
+    render(<TranscriptView segments={largeSegs} />)
+    await userEvent.type(screen.getByLabelText('Search transcript'), 'budget')
+
+    expect(document.querySelectorAll('li')).toHaveLength(1)
+    expect(screen.queryByText('segment 0')).not.toBeInTheDocument()
+    const marks = document.querySelectorAll('mark')
+    expect(marks).toHaveLength(1)
+    expect(marks[0].textContent).toBe('budget')
+  })
+
+  it('regresses if citation scrolling relies on the target already being rendered', async () => {
+    const { rerender } = render(<TranscriptView segments={largeSegs} highlightIndex={900} />)
+    const viewport = screen.getByTestId('transcript-viewport')
+    expect(viewport.scrollTop).toBeGreaterThan(0)
+
+    viewport.scrollTop = 0
+    fireEvent.scroll(viewport)
+    expect(screen.queryByText('segment 900')).not.toBeInTheDocument()
+
+    rerender(<TranscriptView segments={largeSegs} highlightIndex={12} />)
+
+    const cited = await screen.findByText('segment 12')
+    await waitFor(() => expect(cited.closest('[data-cited="true"]')).not.toBeNull())
+    expect(viewport.scrollTop).toBeLessThan(2000)
   })
 })
 

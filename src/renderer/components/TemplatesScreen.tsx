@@ -5,7 +5,21 @@ import { Badge } from '@/components/ui/Badge'
 import { Dialog } from '@/components/ui/Dialog'
 import { useToast } from '@/components/ui/Toast'
 import { TemplateEditor } from './TemplateEditor'
-import type { Template } from '../../shared/types'
+import type { Template, TemplatePhase } from '../../shared/types'
+
+function phaseLabel(phase: TemplatePhase): string {
+  switch (phase) {
+    case 'after':
+      return 'After'
+    case 'pre':
+      return 'Pre'
+    case 'during':
+      return 'During'
+    case 'cross':
+      return 'Cross'
+  }
+  return phase
+}
 
 export function TemplatesScreen() {
   const [templates, setTemplates] = useState<Template[]>([])
@@ -50,7 +64,9 @@ export function TemplatesScreen() {
                     {t.sections.length} section{t.sections.length === 1 ? '' : 's'}
                   </div>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex items-center gap-2">
+                  <Badge>{phaseLabel(t.phase)}</Badge>
+                  <Badge tone={t.auto_run ? 'primary' : 'neutral'}>{t.auto_run ? 'Auto-run' : 'Manual'}</Badge>
                   <Button variant="secondary" size="sm" onClick={() => setEditing({ template: t })}>
                     Edit
                   </Button>
@@ -80,8 +96,14 @@ export function TemplatesScreen() {
                 key={t.id}
                 className="flex items-center justify-between rounded-[var(--radius)] border border-border p-3"
               >
-                <span className="font-medium">{t.name}</span>
-                <Badge>Built-in</Badge>
+                <div className="flex items-center gap-2">
+                  <span className="font-medium">{t.name}</span>
+                  <Badge>{phaseLabel(t.phase)}</Badge>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge tone={t.auto_run ? 'primary' : 'neutral'}>{t.auto_run ? 'Auto-run' : 'Manual'}</Badge>
+                  <Badge>Built-in</Badge>
+                </div>
               </li>
             ))}
           </ul>
@@ -93,10 +115,10 @@ export function TemplatesScreen() {
           open
           title={editing.template ? 'Edit template' : 'New template'}
           initial={editing.template}
-          onSave={async (name, sections) => {
+          onSave={async (name, phase, sections, autoRun) => {
             try {
-              if (editing.template) await muesli.updateTemplate(editing.template.id, name, sections)
-              else await muesli.createTemplate(name, sections)
+              if (editing.template) await muesli.updateTemplate(editing.template.id, name, phase, sections, autoRun)
+              else await muesli.createTemplate(name, phase, sections, autoRun)
               await reload()
             } catch (err) {
               notify(err instanceof Error ? err.message : 'Could not save template', 'error')

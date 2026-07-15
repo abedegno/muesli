@@ -5,6 +5,7 @@ from .checks import (
     check_auth_enforced,
     check_auth_on_work_endpoint,
     check_empty_transcript,
+    check_generate_system_prompt_override,
     check_health,
     check_info,
     check_malformed_payload,
@@ -28,4 +29,5 @@ def run_conformance(client: httpx.Client, kind: str, token: str) -> Report:
     check_malformed_payload(client, token, kind, report)
     if kind == "agent":
         check_empty_transcript(client, token, report)
+        check_generate_system_prompt_override(client, token, report)
     return report
