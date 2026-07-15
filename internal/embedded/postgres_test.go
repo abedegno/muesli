@@ -1,8 +1,10 @@
 package embedded
 
 import (
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -95,6 +97,66 @@ func TestRemoveStalePostmasterPIDKeepsLivePID(t *testing.T) {
 	}
 	if _, err := os.Stat(pidPath); err != nil {
 		t.Fatalf("postmaster.pid unexpectedly removed: %v", err)
+	}
+}
+
+func TestReapOrphanPostgresStopsLiveOwnerProcess(t *testing.T) {
+	t.Setenv(embeddedPGBinaryEnv, "")
+	dataDir := t.TempDir()
+
+	proc := exec.Command("sleep", "30")
+	if err := proc.Start(); err != nil {
+		t.Fatalf("start dummy process: %v", err)
+	}
+	pid := proc.Process.Pid
+	t.Cleanup(func() { _ = proc.Process.Kill() })
+
+	pidBody := fmt.Sprintf("%d\n%s\n1700000000\n55999\n/tmp\nlocalhost\n  123 456\nready\n", pid, dataDir)
+	if err := os.WriteFile(filepath.Join(dataDir, postmasterPIDFile), []byte(pidBody), 0o600); err != nil {
+		t.Fatalf("write postmaster.pid: %v", err)
+	}
+
+	p := &PG{dataDir: dataDir}
+	reaped, err := p.reapOrphanPostgres(context.Background())
+	if err != nil {
+		t.Fatalf("reapOrphanPostgres: %v", err)
+	}
+	if !reaped {
+		t.Fatal("expected reaped=true for a live owner process")
+	}
+	if processAlive(pid) {
+		t.Fatal("expected the orphan process to be stopped")
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, postmasterPIDFile)); !os.IsNotExist(err) {
+		t.Fatalf("expected postmaster.pid removed, stat err=%v", err)
+	}
+}
+
+func TestReapOrphanPostgresLeavesForeignProcess(t *testing.T) {
+	t.Setenv(embeddedPGBinaryEnv, "")
+	dataDir := t.TempDir()
+	proc := exec.Command("sleep", "30")
+	if err := proc.Start(); err != nil {
+		t.Fatalf("start dummy process: %v", err)
+	}
+	pid := proc.Process.Pid
+	t.Cleanup(func() { _ = proc.Process.Kill() })
+
+	pidBody := fmt.Sprintf("%d\n%s\n1700000000\n55999\n/tmp\nlocalhost\n  123 456\nready\n", pid, filepath.Join(dataDir, "other"))
+	if err := os.WriteFile(filepath.Join(dataDir, postmasterPIDFile), []byte(pidBody), 0o600); err != nil {
+		t.Fatalf("write postmaster.pid: %v", err)
+	}
+
+	p := &PG{dataDir: dataDir}
+	reaped, err := p.reapOrphanPostgres(context.Background())
+	if err != nil {
+		t.Fatalf("reapOrphanPostgres: %v", err)
+	}
+	if reaped {
+		t.Fatal("expected reaped=false for a foreign owner dir")
+	}
+	if !processAlive(pid) {
+		t.Fatal("expected the foreign process to be left running")
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -155,11 +156,15 @@ func (p *PG) start(ctx context.Context) error {
 		}
 
 		if !staleRecovered {
+			reaped, err := p.reapOrphanPostgres(ctx)
+			if err != nil {
+				return err
+			}
 			removed, err := removeStalePostmasterPID(p.dataDir)
 			if err != nil {
 				return err
 			}
-			if removed {
+			if reaped || removed {
 				staleRecovered = true
 			}
 		}
@@ -178,11 +183,15 @@ func (p *PG) start(ctx context.Context) error {
 			return nil
 		} else {
 			if !staleRecovered && isStalePostmasterPIDError(err) {
+				reaped, reapErr := p.reapOrphanPostgres(ctx)
+				if reapErr != nil {
+					return reapErr
+				}
 				removed, rmErr := removeStalePostmasterPID(p.dataDir)
 				if rmErr != nil {
 					return rmErr
 				}
-				if removed {
+				if reaped || removed {
 					staleRecovered = true
 					continue
 				}
@@ -282,6 +291,97 @@ func readPostmasterPID(dataDir string) (int, error) {
 		return 0, fmt.Errorf("parse postmaster pid: invalid pid %d", pid)
 	}
 	return pid, nil
+}
+
+// readPostmasterInfo returns the pid (line 1) and the data directory the
+// postmaster recorded (line 2) from a postmaster.pid file.
+func readPostmasterInfo(dataDir string) (int, string, error) {
+	data, err := os.ReadFile(filepath.Join(dataDir, postmasterPIDFile))
+	if err != nil {
+		return 0, "", err
+	}
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	if len(lines) < 2 {
+		return 0, "", fmt.Errorf("postmaster pid: too few lines")
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(lines[0]))
+	if err != nil || pid <= 0 {
+		return 0, "", fmt.Errorf("postmaster pid: invalid pid")
+	}
+	return pid, strings.TrimSpace(lines[1]), nil
+}
+
+func (p *PG) pgCtlPath() string {
+	root := p.installRoot()
+	if root == "" {
+		return ""
+	}
+	return filepath.Join(root, "bin", "pg_ctl")
+}
+
+// reapOrphanPostgres detects a LIVE postmaster still holding p.dataDir -- an
+// orphan left by a previous app instance that exited without stopping Postgres --
+// and shuts it down so a fresh instance can start. It only acts on a postmaster
+// that records OUR data dir (guarding against pid reuse). Returns true if it
+// stopped one. Dead/parse-error pid files are left to removeStalePostmasterPID.
+func (p *PG) reapOrphanPostgres(ctx context.Context) (bool, error) {
+	pid, ownerDir, err := readPostmasterInfo(p.dataDir)
+	if err != nil {
+		return false, nil
+	}
+	if !processAlive(pid) {
+		return false, nil
+	}
+	if filepath.Clean(ownerDir) != filepath.Clean(p.dataDir) {
+		return false, nil
+	}
+
+	// Prefer pg_ctl: it verifies the postmaster owns the data dir and shuts it
+	// down cleanly (fast mode).
+	if ctl := p.pgCtlPath(); ctl != "" {
+		if _, statErr := os.Stat(ctl); statErr == nil {
+			cmd := exec.CommandContext(ctx, ctl, "stop", "-D", p.dataDir, "-m", "fast", "-w", "-t", "10")
+			if runErr := cmd.Run(); runErr == nil {
+				_ = os.Remove(filepath.Join(p.dataDir, postmasterPIDFile))
+				return true, nil
+			}
+		}
+	}
+
+	// Fallback: SIGINT is Postgres's fast-shutdown signal. Wait for exit.
+	var waitCh <-chan error
+	if proc, ferr := os.FindProcess(pid); ferr == nil {
+		_ = proc.Signal(syscall.SIGINT)
+		ch := make(chan error, 1)
+		waitCh = ch
+		go func() {
+			_, err := proc.Wait()
+			ch <- err
+		}()
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if waitCh != nil {
+			select {
+			case err := <-waitCh:
+				if err == nil {
+					_ = os.Remove(filepath.Join(p.dataDir, postmasterPIDFile))
+					return true, nil
+				}
+				waitCh = nil
+			default:
+			}
+		}
+		if !processAlive(pid) {
+			_ = os.Remove(filepath.Join(p.dataDir, postmasterPIDFile))
+			return true, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return false, err
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return false, fmt.Errorf("orphan postgres (pid %d) did not exit", pid)
 }
 
 func removeStalePostmasterPID(dataDir string) (bool, error) {
