@@ -89,6 +89,14 @@ func main() {
 		}
 		cfg.MasterKey = key
 	}
+	if isEmbeddedMode(cfg, os.Args) && os.Getenv("MUESLI_STORAGE_DIR") == "" {
+		storageDir, err := embedded.StorageDir()
+		if err != nil {
+			slog.Error("resolve embedded storage dir", "error", err)
+			os.Exit(1)
+		}
+		cfg.StorageDir = storageDir
+	}
 	if err := config.RequireMasterKey(cfg); err != nil {
 		slog.Error("config", "error", err)
 		os.Exit(1)
