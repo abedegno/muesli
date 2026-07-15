@@ -9,12 +9,14 @@ import type { Template } from '../../shared/types'
 const builtIn: Template = {
   id: 'b1',
   name: 'General',
+  phase: 'after',
   sections: [{ heading: 'Summary', instruction: 'Summarize' }],
   built_in: true,
 }
 const custom: Template = {
   id: 'c1',
   name: 'My Standup',
+  phase: 'pre',
   sections: [{ heading: 'Updates', instruction: 'List updates' }],
   built_in: false,
 }
@@ -55,7 +57,15 @@ describe('TemplatesScreen', () => {
     // the badge sits next to the template name within the same row
     const row = name.closest('li')!
     expect(row).toHaveTextContent('Built-in')
+    expect(row).toHaveTextContent('After')
     expect(screen.queryByRole('button', { name: 'Delete General' })).toBeNull()
+  })
+
+  it('shows the phase badge for custom templates', async () => {
+    renderScreen()
+    const name = await screen.findByText('My Standup')
+    const row = name.closest('li')!
+    expect(row).toHaveTextContent('Pre')
   })
 
   it('shows a Delete button for custom templates and deletes on click', async () => {

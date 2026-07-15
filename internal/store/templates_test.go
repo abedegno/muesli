@@ -54,7 +54,7 @@ func TestTemplateCRUD(t *testing.T) {
 	if err := st.SeedBuiltInTemplates(ctx); err != nil {
 		t.Fatal(err)
 	}
-	tm, err := st.CreateTemplate(ctx, owner, "Standup", secs())
+	tm, err := st.CreateTemplate(ctx, owner, "Standup", "after", secs())
 	if err != nil || tm.ID == "" || tm.BuiltIn {
 		t.Fatalf("create: %v %+v", err, tm)
 	}
@@ -74,7 +74,7 @@ func TestTemplateCRUD(t *testing.T) {
 	if !sawBuiltIn || !sawMine {
 		t.Fatalf("list missing built-in or mine: %+v", list)
 	}
-	if err := st.UpdateTemplate(ctx, owner, tm.ID, "Standup 2", secs()); err != nil {
+	if err := st.UpdateTemplate(ctx, owner, tm.ID, "Standup 2", "after", secs()); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	if err := st.DeleteTemplate(ctx, owner, tm.ID); err != nil {
@@ -88,14 +88,14 @@ func TestTemplateOwnerScopingAndBuiltInReadOnly(t *testing.T) {
 	other := addUser(t, st)
 	ctx := context.Background()
 	_ = st.SeedBuiltInTemplates(ctx)
-	tm, _ := st.CreateTemplate(ctx, owner, "Mine", secs())
-	if err := st.UpdateTemplate(ctx, other, tm.ID, "X", secs()); !errors.Is(err, store.ErrNotFound) {
+	tm, _ := st.CreateTemplate(ctx, owner, "Mine", "after", secs())
+	if err := st.UpdateTemplate(ctx, other, tm.ID, "X", "after", secs()); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("cross-owner update: want ErrNotFound, got %v", err)
 	}
 	// built-in (owner_id NULL) cannot be updated/deleted by a user
 	builtins, _ := st.BuiltInTemplates(ctx)
 	if len(builtins) > 0 {
-		if err := st.UpdateTemplate(ctx, owner, builtins[0].ID, "Hacked", secs()); !errors.Is(err, store.ErrNotFound) {
+		if err := st.UpdateTemplate(ctx, owner, builtins[0].ID, "Hacked", "after", secs()); !errors.Is(err, store.ErrNotFound) {
 			t.Errorf("built-in update: want ErrNotFound, got %v", err)
 		}
 		if err := st.DeleteTemplate(ctx, owner, builtins[0].ID); !errors.Is(err, store.ErrNotFound) {
@@ -108,19 +108,19 @@ func TestTemplateValidationAndDuplicate(t *testing.T) {
 	t.Parallel()
 	st, owner, _ := newStoreWithOwner(t)
 	ctx := context.Background()
-	if _, err := st.CreateTemplate(ctx, owner, "  ", secs()); err == nil {
+	if _, err := st.CreateTemplate(ctx, owner, "  ", "after", secs()); err == nil {
 		t.Error("empty name should fail")
 	}
-	if _, err := st.CreateTemplate(ctx, owner, "X", nil); err == nil {
+	if _, err := st.CreateTemplate(ctx, owner, "X", "after", nil); err == nil {
 		t.Error("no sections should fail")
 	}
-	if _, err := st.CreateTemplate(ctx, owner, "X", []model.TemplateSection{{Heading: "", Instruction: "y"}}); err == nil {
+	if _, err := st.CreateTemplate(ctx, owner, "X", "after", []model.TemplateSection{{Heading: "", Instruction: "y"}}); err == nil {
 		t.Error("empty heading should fail")
 	}
-	if _, err := st.CreateTemplate(ctx, owner, "Dup", secs()); err != nil {
+	if _, err := st.CreateTemplate(ctx, owner, "Dup", "after", secs()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateTemplate(ctx, owner, "dup", secs()); !errors.Is(err, store.ErrDuplicate) {
+	if _, err := st.CreateTemplate(ctx, owner, "dup", "after", secs()); !errors.Is(err, store.ErrDuplicate) {
 		t.Errorf("dup name: want ErrDuplicate, got %v", err)
 	}
 	_ = strings.TrimSpace
@@ -136,7 +136,7 @@ func TestNoteOwnerIDAndTemplatesForSummary(t *testing.T) {
 	if err != nil || got != owner {
 		t.Fatalf("NoteOwnerID: %v %q want %q", err, got, owner)
 	}
-	tm, _ := st.CreateTemplate(ctx, owner, "Custom", secs())
+	tm, _ := st.CreateTemplate(ctx, owner, "Custom", "after", secs())
 	forSum, err := st.TemplatesForSummary(ctx, owner)
 	if err != nil {
 		t.Fatal(err)

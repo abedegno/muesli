@@ -286,6 +286,7 @@ type TemplateSection struct {
 type Template struct {
 	ID       string            `json:"id"`
 	Name     string            `json:"name"`
+	Phase    string            `json:"phase"`
 	Sections []TemplateSection `json:"sections"`
 	BuiltIn  bool              `json:"built_in"`
 }

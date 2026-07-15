@@ -699,17 +699,17 @@ describe('MuesliClient', () => {
     const calls: Array<{ url: string; method?: string; body?: unknown }> = []
     const fetchMock: FetchLike = async (url, init) => {
       calls.push({ url: String(url), method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined })
-      return new Response(JSON.stringify({ id: 't1', name: 'Default', sections: [], built_in: false }), { status: 200 })
+      return new Response(JSON.stringify({ id: 't1', name: 'Default', phase: 'after', sections: [], built_in: false }), { status: 200 })
     }
     const c = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
     const sections = [{ heading: 'Overview', instruction: 'Summarise' }]
     await c.listTemplates()
-    await c.createTemplate('Default', sections)
-    await c.updateTemplate('t1', 'Renamed', sections)
+    await c.createTemplate('Default', 'after', sections)
+    await c.updateTemplate('t1', 'Renamed', 'after', sections)
     await c.deleteTemplate('t1')
     expect(calls[0]).toMatchObject({ url: 'http://x/api/templates', method: 'GET' })
-    expect(calls[1]).toMatchObject({ url: 'http://x/api/templates', method: 'POST', body: { name: 'Default', sections } })
-    expect(calls[2]).toMatchObject({ url: 'http://x/api/templates/t1', method: 'PUT', body: { name: 'Renamed', sections } })
+    expect(calls[1]).toMatchObject({ url: 'http://x/api/templates', method: 'POST', body: { name: 'Default', phase: 'after', sections } })
+    expect(calls[2]).toMatchObject({ url: 'http://x/api/templates/t1', method: 'PUT', body: { name: 'Renamed', phase: 'after', sections } })
     expect(calls[3]).toMatchObject({ url: 'http://x/api/templates/t1', method: 'DELETE' })
   })
 

@@ -217,9 +217,13 @@ export interface TemplateSection {
   heading: string
   instruction: string
 }
+
+export type TemplatePhase = 'after' | 'pre' | 'during' | 'cross'
+
 export interface Template {
   id: string
   name: string
+  phase: TemplatePhase
   sections: TemplateSection[]
   built_in: boolean
 }
