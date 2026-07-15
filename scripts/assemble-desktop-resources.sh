@@ -21,18 +21,16 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 RES="$ROOT/build/resources"
 
 # --- pinned vendored assets (bump alongside docs/EMBEDDED-POSTGRES-BUNDLE.md) ---
-PG_VER="v0.2.2"
 case "$TARGET" in
-  darwin-arm64)
-    PG_ASSET="postgres-full-darwin-arm64.tar.gz"
-    PG_SHA="cfb6621b3fa9fb36b558d5004ee4d0acec122c01fa84691d39b4004a69d2ceaf"
-    ;;
+  darwin-arm64) ;;
   *)
     echo "assemble: unsupported target '$TARGET' (only darwin-arm64 wired)" >&2
     exit 2
     ;;
 esac
-PG_URL="https://github.com/boomship/postgres-vector-embedded/releases/download/${PG_VER}/${PG_ASSET}"
+# Self-contained Postgres+pgvector, built by scripts/build-postgres-macos.sh.
+# MUESLI_PG_DIST points at that build's output tree (bin/ lib/ share/).
+PG_DIST="${MUESLI_PG_DIST:-$ROOT/build/pg-dist}"
 
 MODEL="ggml-tiny.en.bin"
 MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${MODEL}"
@@ -58,20 +56,13 @@ for b in muesli whisper-cpp-transcriber ollama-agent; do
   fi
 done
 
-# 2) Postgres + pgvector bundle
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
-echo "assemble: fetching $PG_ASSET"
-curl -fsSL "$PG_URL" -o "$TMP/pg.tgz"
-verify "$TMP/pg.tgz" "$PG_SHA"
-mkdir -p "$TMP/x"; tar -xzf "$TMP/pg.tgz" -C "$TMP/x"
-PGBIN="$(find "$TMP/x" -type f -path '*/bin/postgres' | head -1)"
-[ -n "$PGBIN" ] || { echo "assemble: postgres binary not found in bundle" >&2; exit 1; }
-PGROOT="$(dirname "$(dirname "$PGBIN")")"
-cp -R "$PGROOT/." "$RES/pg/"
-# Split pgvector artifacts into pgvector/. The embedded code (internal/embedded)
-# skips the copy when the bundle already ships vector.control, but still needs
-# MUESLI_EMBEDDED_PGVECTOR_DIR pointed at a real dir to run CREATE EXTENSION.
-find "$RES/pg" \( -name 'vector.dylib' -o -name 'vector.so' -o -name 'vector.control' -o -name 'vector--*.sql' \) \
+# 2) Postgres + pgvector (self-contained; built by scripts/build-postgres-macos.sh)
+[ -x "$PG_DIST/bin/postgres" ] || { echo "assemble: PG dist missing at $PG_DIST (run scripts/build-postgres-macos.sh first)" >&2; exit 1; }
+cp -R "$PG_DIST/." "$RES/pg/"
+# MUESLI_EMBEDDED_PGVECTOR_DIR points at pgvector/; the bundle already ships
+# pgvector built in (+ share/extension/vector.control for the embedded check),
+# so this is a fallback copy of the pgvector artifacts.
+find "$RES/pg" \( -name 'vector.dylib' -o -name 'vector.control' -o -name 'vector--*.sql' \) \
   -exec cp {} "$RES/pgvector/" \; 2>/dev/null || true
 echo "assemble: pg/ ($(du -sh "$RES/pg" | awk '{print $1}')) + pgvector/ ($(ls "$RES/pgvector" 2>/dev/null | wc -l | tr -d ' ') files)"
 

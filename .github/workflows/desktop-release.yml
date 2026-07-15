@@ -66,6 +66,9 @@ jobs:
       - name: Install node deps (brings ffmpeg-static)
         run: npm ci
 
+      - name: Build self-contained Postgres + pgvector
+        run: bash scripts/build-postgres-macos.sh "$PWD/build/pg-dist"
+
       - name: Assemble desktop resources
         run: bash scripts/assemble-desktop-resources.sh darwin-arm64
 

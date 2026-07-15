@@ -16,6 +16,7 @@ describe('resourcePaths', () => {
       isPackaged: true,
       resourcesPath: '/R',
     })).toEqual({
+      MUESLI_MODE: 'embedded',
       MUESLI_EMBEDDED_PG_BINARIES: join('/R', 'pg'),
       MUESLI_EMBEDDED_PGVECTOR_DIR: join('/R', 'pgvector'),
       MUESLI_WHISPER_CPP_TRANSCRIBER_BIN: join('/R', 'server', 'whisper-cpp-transcriber'),
