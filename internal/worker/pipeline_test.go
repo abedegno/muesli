@@ -125,6 +125,9 @@ func drain(t *testing.T, proc *worker.Processor, st *store.Store) {
 			return
 		}
 		proc.Process(ctx, job)
+		if _, err := st.Pool().Exec(ctx, "UPDATE jobs SET lease_expires_at = NULL WHERE id=$1", job.ID); err != nil {
+			t.Fatalf("clear retry lease: %v", err)
+		}
 	}
 	t.Fatal("drain did not terminate")
 }
@@ -399,6 +402,9 @@ func TestPipelinePartialSuccessSummaryFails(t *testing.T) {
 	cur := first
 	for {
 		proc.Process(ctx, cur)
+		if _, err := st.Pool().Exec(ctx, "UPDATE jobs SET lease_expires_at = NULL WHERE id=$1", cur.ID); err != nil {
+			t.Fatalf("clear retry lease: %v", err)
+		}
 		rc, ok, _ := st.ClaimJob(ctx, 30*time.Second)
 		if !ok {
 			break
@@ -458,6 +464,9 @@ func TestPipeline_PartialSummarizeFailure(t *testing.T) {
 	cur := first
 	for {
 		proc.Process(ctx, cur)
+		if _, err := st.Pool().Exec(ctx, "UPDATE jobs SET lease_expires_at = NULL WHERE id=$1", cur.ID); err != nil {
+			t.Fatalf("clear retry lease: %v", err)
+		}
 		rc, ok, _ := st.ClaimJob(ctx, 30*time.Second)
 		if !ok {
 			break
@@ -658,6 +667,9 @@ func TestPipelineTranscribeTerminalFailureMarksNoteFailed(t *testing.T) {
 			break
 		}
 		proc.Process(ctx, job)
+		if _, err := st.Pool().Exec(ctx, "UPDATE jobs SET lease_expires_at = NULL WHERE id=$1", job.ID); err != nil {
+			t.Fatalf("clear retry lease: %v", err)
+		}
 	}
 
 	// Terminal transcribe failure leaves the note 'failed' — never 'ready', never
@@ -1114,6 +1126,9 @@ func TestFinalizeNoteWebhookSummaryPresentWhenZeroReadySummaries(t *testing.T) {
 			break
 		}
 		proc.Process(ctx, j)
+		if _, err := st.Pool().Exec(ctx, "UPDATE jobs SET lease_expires_at = NULL WHERE id=$1", j.ID); err != nil {
+			t.Fatalf("clear retry lease: %v", err)
+		}
 	}
 
 	n, _ := st.GetNoteByID(ctx, noteID)

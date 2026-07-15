@@ -167,7 +167,9 @@ func TestEndToEndTranscriberTerminalFailure(t *testing.T) {
 	// The note never becomes ready; the transcribe job ends 'failed' and surfaces
 	// in the admin monitor, and the note itself is set to 'failed' (terminal
 	// transcribe failure → note failed, never ready, never stuck in transcribing).
-	deadline := time.Now().Add(5 * time.Second)
+	// The worker now honors backoff between retries, so allow enough wall-clock
+	// time for the 2s + 4s retry delays plus processing slack.
+	deadline := time.Now().Add(20 * time.Second)
 	for time.Now().Before(deadline) {
 		rec := doJSON(t, srv, http.MethodGet, "/api/admin/jobs?status=failed", nil, hdr)
 		var jobs []map[string]any
