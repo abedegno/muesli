@@ -140,3 +140,39 @@ func TestAppDataDirOverride(t *testing.T) {
 		t.Fatalf("%q is not a directory", got)
 	}
 }
+
+func TestStorageDir(t *testing.T) {
+	origGOOS := goos
+	origUserHomeDir := userHomeDir
+	origGetenv := getenv
+	origMkdirAll := mkdirAll
+	t.Cleanup(func() {
+		goos = origGOOS
+		userHomeDir = origUserHomeDir
+		getenv = origGetenv
+		mkdirAll = origMkdirAll
+	})
+
+	home := t.TempDir()
+	goos = "linux"
+	userHomeDir = func() (string, error) { return home, nil }
+	getenv = func(key string) string {
+		switch key {
+		case "MUESLI_APPDATA":
+			return ""
+		case "XDG_DATA_HOME":
+			return filepath.Join(home, ".local", "share")
+		default:
+			return ""
+		}
+	}
+
+	got, err := StorageDir()
+	if err != nil {
+		t.Fatalf("StorageDir() error: %v", err)
+	}
+	want := filepath.Join(home, ".local", "share", "muesli", "storage", "audio")
+	if got != want {
+		t.Fatalf("StorageDir() = %q, want %q", got, want)
+	}
+}
