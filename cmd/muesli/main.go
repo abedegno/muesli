@@ -78,6 +78,17 @@ func main() {
 		}
 		return
 	}
+	if isEmbeddedMode(cfg, os.Args) && cfg.MasterKey == "" {
+		// Embedded/desktop mode has no operator to set MUESLI_MASTER_KEY; manage
+		// one automatically (generate + persist in the app data dir) so the key
+		// requirement below is satisfied on first and subsequent launches.
+		key, err := embedded.EnsureMasterKey()
+		if err != nil {
+			slog.Error("embedded master key", "error", err)
+			os.Exit(1)
+		}
+		cfg.MasterKey = key
+	}
 	if err := config.RequireMasterKey(cfg); err != nil {
 		slog.Error("config", "error", err)
 		os.Exit(1)
