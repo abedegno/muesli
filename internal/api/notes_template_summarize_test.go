@@ -41,12 +41,20 @@ func TestSummarizeTemplateAPI(t *testing.T) {
 		t.Fatalf("no note id; body %s", rec.Body)
 	}
 
+	ownerID, err := st.NoteOwnerID(ctx, note.ID)
+	if err != nil {
+		t.Fatalf("NoteOwnerID: %v", err)
+	}
+	targetTmpl, err := st.CreateTemplate(ctx, ownerID, "Manual only", "after",
+		[]model.TemplateSection{{Heading: "H", Instruction: "I"}}, false, "", "", nil)
+	if err != nil {
+		t.Fatalf("CreateTemplate: %v", err)
+	}
 	tmpls, err := st.BuiltInTemplates(ctx)
-	if err != nil || len(tmpls) < 2 {
+	if err != nil || len(tmpls) < 1 {
 		t.Fatalf("BuiltInTemplates: %v (%d templates)", err, len(tmpls))
 	}
-	targetTmpl := tmpls[0]
-	otherTmpl := tmpls[1]
+	otherTmpl := tmpls[0]
 
 	// Without a transcript -> 409.
 	rec = doJSON(t, srv, http.MethodPost,

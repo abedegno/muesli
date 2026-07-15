@@ -15,6 +15,7 @@ type templateRequest struct {
 	Name     string                  `json:"name"`
 	Phase    string                  `json:"phase"`
 	Sections []model.TemplateSection `json:"sections"`
+	AutoRun  *bool                   `json:"auto_run,omitempty"`
 	// SystemPrompt, Model, and Temperature are optional per-template agent
 	// overrides. Empty/nil means unset (falls back to the agent's default
 	// system prompt / plugin Config values).
@@ -40,8 +41,12 @@ func (s *Server) handleCreateTemplate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+	autoRun := true
+	if req.AutoRun != nil {
+		autoRun = *req.AutoRun
+	}
 	tm, err := s.deps.Store.CreateTemplate(r.Context(), uid, req.Name, req.Phase, req.Sections,
-		req.SystemPrompt, req.Model, req.Temperature)
+		autoRun, req.SystemPrompt, req.Model, req.Temperature)
 	if errors.Is(err, store.ErrDuplicate) {
 		writeError(w, http.StatusConflict, "a template with that name already exists")
 		return
@@ -62,13 +67,26 @@ func (s *Server) handleUpdateTemplate(w http.ResponseWriter, r *http.Request) {
 	if !validID(w, r, id) {
 		return
 	}
+	current, err := s.deps.Store.GetTemplate(r.Context(), uid, id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if err != nil {
+		log.Printf("handleUpdateTemplate lookup: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 	var req templateRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	err := s.deps.Store.UpdateTemplate(r.Context(), uid, id, req.Name, req.Phase, req.Sections,
-		req.SystemPrompt, req.Model, req.Temperature)
+	autoRun := current.AutoRun
+	if req.AutoRun != nil {
+		autoRun = *req.AutoRun
+	}
+	err = s.deps.Store.UpdateTemplate(r.Context(), uid, id, req.Name, req.Phase, req.Sections,
+		autoRun, req.SystemPrompt, req.Model, req.Temperature)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return

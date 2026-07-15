@@ -66,6 +66,7 @@ export function TemplatesScreen() {
                 </div>
                 <div className="flex items-center gap-2">
                   <Badge>{phaseLabel(t.phase)}</Badge>
+                  <Badge tone={t.auto_run ? 'primary' : 'neutral'}>{t.auto_run ? 'Auto-run' : 'Manual'}</Badge>
                   <Button variant="secondary" size="sm" onClick={() => setEditing({ template: t })}>
                     Edit
                   </Button>
@@ -99,7 +100,10 @@ export function TemplatesScreen() {
                   <span className="font-medium">{t.name}</span>
                   <Badge>{phaseLabel(t.phase)}</Badge>
                 </div>
-                <Badge>Built-in</Badge>
+                <div className="flex items-center gap-2">
+                  <Badge tone={t.auto_run ? 'primary' : 'neutral'}>{t.auto_run ? 'Auto-run' : 'Manual'}</Badge>
+                  <Badge>Built-in</Badge>
+                </div>
               </li>
             ))}
           </ul>
@@ -111,10 +115,10 @@ export function TemplatesScreen() {
           open
           title={editing.template ? 'Edit template' : 'New template'}
           initial={editing.template}
-          onSave={async (name, phase, sections) => {
+          onSave={async (name, phase, sections, autoRun) => {
             try {
-              if (editing.template) await muesli.updateTemplate(editing.template.id, name, phase, sections)
-              else await muesli.createTemplate(name, phase, sections)
+              if (editing.template) await muesli.updateTemplate(editing.template.id, name, phase, sections, autoRun)
+              else await muesli.createTemplate(name, phase, sections, autoRun)
               await reload()
             } catch (err) {
               notify(err instanceof Error ? err.message : 'Could not save template', 'error')

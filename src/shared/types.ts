@@ -226,6 +226,7 @@ export interface Template {
   phase: TemplatePhase
   sections: TemplateSection[]
   built_in: boolean
+  auto_run: boolean
 }
 
 // A node is a group iff it has an `op` and a `children` array; otherwise it's a

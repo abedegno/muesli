@@ -14,11 +14,12 @@ export function TemplateEditor({
   open: boolean
   title: string
   initial?: Template
-  onSave: (name: string, phase: TemplatePhase, sections: TemplateSection[]) => Promise<void>
+  onSave: (name: string, phase: TemplatePhase, sections: TemplateSection[], autoRun: boolean) => Promise<void>
   onClose: () => void
 }) {
   const [name, setName] = useState(initial?.name ?? '')
   const [phase, setPhase] = useState<TemplatePhase>(initial?.phase ?? 'after')
+  const [autoRun, setAutoRun] = useState(initial?.auto_run ?? true)
   const [sections, setSections] = useState<TemplateSection[]>(
     initial?.sections ?? [{ heading: '', instruction: '' }],
   )
@@ -28,6 +29,7 @@ export function TemplateEditor({
     if (!open) return
     setName(initial?.name ?? '')
     setPhase(initial?.phase ?? 'after')
+    setAutoRun(initial?.auto_run ?? true)
     setSections(initial?.sections ?? [{ heading: '', instruction: '' }])
     setBusy(false)
   }, [initial, open])
@@ -66,6 +68,17 @@ export function TemplateEditor({
           <option value="during">During</option>
           <option value="cross">Cross</option>
         </select>
+      </label>
+      <label htmlFor="template-editor-auto-run" className="mb-3 flex items-center gap-2 text-sm">
+        <input
+          id="template-editor-auto-run"
+          aria-label="Auto-run on new notes"
+          type="checkbox"
+          checked={autoRun}
+          onChange={(e) => setAutoRun(e.target.checked)}
+          className="h-4 w-4 rounded border border-input"
+        />
+        <span className="font-medium">Auto-run on new notes</span>
       </label>
       <div className="mb-4 flex max-h-80 flex-col gap-3 overflow-y-auto">
         {sections.map((section, i) => (
@@ -127,6 +140,7 @@ export function TemplateEditor({
                 name.trim(),
                 phase,
                 sections.map((s) => ({ heading: s.heading.trim(), instruction: s.instruction.trim() })),
+                autoRun,
               )
               onClose()
             } catch {
