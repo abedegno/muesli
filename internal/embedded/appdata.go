@@ -54,6 +54,16 @@ func AppDataDir() (string, error) {
 	return ensureDir(dir)
 }
 
+// StorageDir returns the embedded desktop storage root (audio blobs), under the
+// app-data dir alongside the managed Postgres data and master key.
+func StorageDir() (string, error) {
+	dir, err := AppDataDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, "storage", "audio"), nil
+}
+
 func ensureDir(dir string) (string, error) {
 	if err := mkdirAll(dir, 0o700); err != nil {
 		return "", fmt.Errorf("create app data dir %q: %w", dir, err)
