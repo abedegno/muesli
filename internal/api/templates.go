@@ -13,6 +13,7 @@ import (
 
 type templateRequest struct {
 	Name     string                  `json:"name"`
+	Phase    string                  `json:"phase"`
 	Sections []model.TemplateSection `json:"sections"`
 }
 
@@ -33,7 +34,7 @@ func (s *Server) handleCreateTemplate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	tm, err := s.deps.Store.CreateTemplate(r.Context(), uid, req.Name, req.Sections)
+	tm, err := s.deps.Store.CreateTemplate(r.Context(), uid, req.Name, req.Phase, req.Sections)
 	if errors.Is(err, store.ErrDuplicate) {
 		writeError(w, http.StatusConflict, "a template with that name already exists")
 		return
@@ -59,7 +60,7 @@ func (s *Server) handleUpdateTemplate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	err := s.deps.Store.UpdateTemplate(r.Context(), uid, id, req.Name, req.Sections)
+	err := s.deps.Store.UpdateTemplate(r.Context(), uid, id, req.Name, req.Phase, req.Sections)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return

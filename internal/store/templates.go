@@ -16,6 +16,13 @@ type templateSection struct {
 	Instruction string `json:"instruction"`
 }
 
+const (
+	templatePhaseAfter  = "after"
+	templatePhasePre    = "pre"
+	templatePhaseDuring = "during"
+	templatePhaseCross  = "cross"
+)
+
 var builtInTemplates = []struct {
 	Name     string
 	Sections []templateSection
@@ -79,10 +86,10 @@ func (s *Store) SeedBuiltInTemplates(ctx context.Context) error {
 			return err
 		}
 		_, err = s.pool.Exec(ctx,
-			`INSERT INTO templates (id, owner_id, name, sections)
-			 SELECT $1, NULL, $2, $3::jsonb
+			`INSERT INTO templates (id, owner_id, name, phase, sections)
+			 SELECT $1, NULL, $2, $4, $3::jsonb
 			 WHERE NOT EXISTS (SELECT 1 FROM templates WHERE owner_id IS NULL AND name=$2)`,
-			uuid.NewString(), t.Name, string(sections))
+			uuid.NewString(), t.Name, string(sections), templatePhaseAfter)
 		if err != nil {
 			return err
 		}
@@ -93,7 +100,7 @@ func (s *Store) SeedBuiltInTemplates(ctx context.Context) error {
 // BuiltInTemplates returns the seeded built-in templates with parsed sections.
 func (s *Store) BuiltInTemplates(ctx context.Context) ([]model.Template, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, sections FROM templates WHERE owner_id IS NULL ORDER BY name`)
+		`SELECT id, name, phase, sections FROM templates WHERE owner_id IS NULL ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -102,7 +109,7 @@ func (s *Store) BuiltInTemplates(ctx context.Context) ([]model.Template, error) 
 	for rows.Next() {
 		var tm model.Template
 		var sectionsJSON []byte
-		if err := rows.Scan(&tm.ID, &tm.Name, &sectionsJSON); err != nil {
+		if err := rows.Scan(&tm.ID, &tm.Name, &tm.Phase, &sectionsJSON); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(sectionsJSON, &tm.Sections); err != nil {
@@ -155,9 +162,25 @@ func validateTemplate(name string, sections []model.TemplateSection) error {
 	return nil
 }
 
+func normalizeTemplatePhase(phase string) string {
+	if phase == "" {
+		return templatePhaseAfter
+	}
+	return phase
+}
+
+func validateTemplatePhase(phase string) error {
+	switch phase {
+	case templatePhaseAfter, templatePhasePre, templatePhaseDuring, templatePhaseCross:
+		return nil
+	default:
+		return ValidationError("template phase invalid")
+	}
+}
+
 func (s *Store) ListTemplates(ctx context.Context, ownerID string) ([]model.Template, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, sections, (owner_id IS NULL) AS built_in
+		`SELECT id, name, phase, sections, (owner_id IS NULL) AS built_in
 		   FROM templates WHERE owner_id IS NULL OR owner_id=$1
 		   ORDER BY (owner_id IS NULL) DESC, lower(name)`, ownerID)
 	if err != nil {
@@ -168,7 +191,7 @@ func (s *Store) ListTemplates(ctx context.Context, ownerID string) ([]model.Temp
 	for rows.Next() {
 		var tm model.Template
 		var sectionsJSON []byte
-		if err := rows.Scan(&tm.ID, &tm.Name, &sectionsJSON, &tm.BuiltIn); err != nil {
+		if err := rows.Scan(&tm.ID, &tm.Name, &tm.Phase, &sectionsJSON, &tm.BuiltIn); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(sectionsJSON, &tm.Sections); err != nil {
@@ -199,8 +222,12 @@ func (s *Store) nameTaken(ctx context.Context, ownerID, name, excludeID string) 
 	return exists, err
 }
 
-func (s *Store) CreateTemplate(ctx context.Context, ownerID, name string, sections []model.TemplateSection) (model.Template, error) {
+func (s *Store) CreateTemplate(ctx context.Context, ownerID, name, phase string, sections []model.TemplateSection) (model.Template, error) {
+	phase = normalizeTemplatePhase(phase)
 	if err := validateTemplate(name, sections); err != nil {
+		return model.Template{}, err
+	}
+	if err := validateTemplatePhase(phase); err != nil {
 		return model.Template{}, err
 	}
 	name = strings.TrimSpace(name)
@@ -213,15 +240,19 @@ func (s *Store) CreateTemplate(ctx context.Context, ownerID, name string, sectio
 	if err != nil {
 		return model.Template{}, err
 	}
-	tm := model.Template{ID: uuid.NewString(), Name: name, Sections: sections, BuiltIn: false}
+	tm := model.Template{ID: uuid.NewString(), Name: name, Phase: phase, Sections: sections, BuiltIn: false}
 	_, err = s.pool.Exec(ctx,
-		`INSERT INTO templates (id, owner_id, name, sections) VALUES ($1,$2,$3,$4::jsonb)`,
-		tm.ID, ownerID, name, string(secJSON))
+		`INSERT INTO templates (id, owner_id, name, phase, sections) VALUES ($1,$2,$3,$4,$5::jsonb)`,
+		tm.ID, ownerID, name, phase, string(secJSON))
 	return tm, err
 }
 
-func (s *Store) UpdateTemplate(ctx context.Context, ownerID, id, name string, sections []model.TemplateSection) error {
+func (s *Store) UpdateTemplate(ctx context.Context, ownerID, id, name, phase string, sections []model.TemplateSection) error {
+	phase = normalizeTemplatePhase(phase)
 	if err := validateTemplate(name, sections); err != nil {
+		return err
+	}
+	if err := validateTemplatePhase(phase); err != nil {
 		return err
 	}
 	name = strings.TrimSpace(name)
@@ -235,8 +266,8 @@ func (s *Store) UpdateTemplate(ctx context.Context, ownerID, id, name string, se
 		return err
 	}
 	ct, err := s.pool.Exec(ctx,
-		`UPDATE templates SET name=$1, sections=$2::jsonb WHERE id=$3 AND owner_id=$4`,
-		name, string(secJSON), id, ownerID)
+		`UPDATE templates SET name=$1, phase=$2, sections=$3::jsonb WHERE id=$4 AND owner_id=$5`,
+		name, phase, string(secJSON), id, ownerID)
 	if err != nil {
 		return err
 	}
