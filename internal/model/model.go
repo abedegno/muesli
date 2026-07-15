@@ -295,6 +295,7 @@ type Template struct {
 	Phase        string            `json:"phase"`
 	Sections     []TemplateSection `json:"sections"`
 	BuiltIn      bool              `json:"built_in"`
+	AutoRun      bool              `json:"auto_run"`
 	SystemPrompt string            `json:"system_prompt,omitempty"`
 	Model        string            `json:"model,omitempty"`
 	Temperature  *float64          `json:"temperature,omitempty"`

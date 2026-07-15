@@ -536,9 +536,9 @@ describe('NoteView — truncation badge', () => {
 
 // TPL01 — full template list (all owner-visible templates, not just ones with
 // an existing summary) + per-template Regenerate.
-const tplA: Template = { id: 'tpl-a', name: 'Action items', phase: 'after', sections: [], built_in: true }
-const tplB: Template = { id: 'tpl-b', name: 'General meeting', phase: 'after', sections: [], built_in: true }
-const tplC: Template = { id: 'tpl-c', name: 'Retro', phase: 'cross', sections: [], built_in: false }
+const tplA: Template = { id: 'tpl-a', name: 'Action items', phase: 'after', sections: [], built_in: true, auto_run: true }
+const tplB: Template = { id: 'tpl-b', name: 'General meeting', phase: 'after', sections: [], built_in: true, auto_run: true }
+const tplC: Template = { id: 'tpl-c', name: 'Retro', phase: 'cross', sections: [], built_in: false, auto_run: true }
 
 const fullWithTemplateIds: FullNote = {
   note: { id: '4', title: 'Planning', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
@@ -624,8 +624,8 @@ describe('NoteView — selection survives the async-template-list reorder race (
   // (built-ins always win the DESC tiebreak) and then "general update" sorts
   // before "zebra notes" alphabetically. So the two orderings disagree, and
   // the entry the user had selected (by position) moves.
-  const tplUser: Template = { id: 'tpl-user', name: 'Zebra notes', phase: 'during', sections: [], built_in: false }
-  const tplBuiltin: Template = { id: 'tpl-builtin', name: 'general update', phase: 'after', sections: [], built_in: true }
+  const tplUser: Template = { id: 'tpl-user', name: 'Zebra notes', phase: 'during', sections: [], built_in: false, auto_run: true }
+  const tplBuiltin: Template = { id: 'tpl-builtin', name: 'general update', phase: 'after', sections: [], built_in: true, auto_run: true }
 
   const fullRace: FullNote = {
     note: { id: '5', title: 'Race', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },

@@ -100,7 +100,7 @@ func (s *Store) SeedBuiltInTemplates(ctx context.Context) error {
 // BuiltInTemplates returns the seeded built-in templates with parsed sections.
 func (s *Store) BuiltInTemplates(ctx context.Context) ([]model.Template, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, phase, sections, system_prompt, model, temperature
+		`SELECT id, name, phase, sections, auto_run, system_prompt, model, temperature
 		   FROM templates WHERE owner_id IS NULL ORDER BY name`)
 	if err != nil {
 		return nil, err
@@ -112,7 +112,7 @@ func (s *Store) BuiltInTemplates(ctx context.Context) ([]model.Template, error) 
 		var sectionsJSON []byte
 		var systemPrompt, modelName *string
 		var temperature *float64
-		if err := rows.Scan(&tm.ID, &tm.Name, &tm.Phase, &sectionsJSON, &systemPrompt, &modelName, &temperature); err != nil {
+		if err := rows.Scan(&tm.ID, &tm.Name, &tm.Phase, &sectionsJSON, &tm.AutoRun, &systemPrompt, &modelName, &temperature); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(sectionsJSON, &tm.Sections); err != nil {
@@ -220,7 +220,7 @@ func validateTemplatePhase(phase string) error {
 
 func (s *Store) ListTemplates(ctx context.Context, ownerID string) ([]model.Template, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, phase, sections, (owner_id IS NULL) AS built_in,
+		`SELECT id, name, phase, sections, (owner_id IS NULL) AS built_in, auto_run,
 		        system_prompt, model, temperature
 		   FROM templates WHERE owner_id IS NULL OR owner_id=$1
 		   ORDER BY (owner_id IS NULL) DESC, lower(name)`, ownerID)
@@ -234,7 +234,7 @@ func (s *Store) ListTemplates(ctx context.Context, ownerID string) ([]model.Temp
 		var sectionsJSON []byte
 		var systemPrompt, modelName *string
 		var temperature *float64
-		if err := rows.Scan(&tm.ID, &tm.Name, &tm.Phase, &sectionsJSON, &tm.BuiltIn,
+		if err := rows.Scan(&tm.ID, &tm.Name, &tm.Phase, &sectionsJSON, &tm.BuiltIn, &tm.AutoRun,
 			&systemPrompt, &modelName, &temperature); err != nil {
 			return nil, err
 		}
@@ -256,10 +256,10 @@ func (s *Store) GetTemplate(ctx context.Context, ownerID, id string) (model.Temp
 	var systemPrompt, modelName *string
 	var temperature *float64
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, name, phase, sections, (owner_id IS NULL) AS built_in,
+		`SELECT id, name, phase, sections, (owner_id IS NULL) AS built_in, auto_run,
 		        system_prompt, model, temperature
 		   FROM templates WHERE id=$1 AND (owner_id IS NULL OR owner_id=$2)`,
-		id, ownerID).Scan(&tm.ID, &tm.Name, &tm.Phase, &sectionsJSON, &tm.BuiltIn,
+		id, ownerID).Scan(&tm.ID, &tm.Name, &tm.Phase, &sectionsJSON, &tm.BuiltIn, &tm.AutoRun,
 		&systemPrompt, &modelName, &temperature)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return model.Template{}, ErrNotFound
@@ -274,9 +274,20 @@ func (s *Store) GetTemplate(ctx context.Context, ownerID, id string) (model.Temp
 	return tm, nil
 }
 
-// TemplatesForSummary returns built-ins + the owner's templates for the summarize fan-out.
+// TemplatesForSummary returns the owner's visible templates that are opted in
+// to auto-run, for summarize fan-out.
 func (s *Store) TemplatesForSummary(ctx context.Context, ownerID string) ([]model.Template, error) {
-	return s.ListTemplates(ctx, ownerID)
+	templates, err := s.ListTemplates(ctx, ownerID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]model.Template, 0, len(templates))
+	for _, tmpl := range templates {
+		if tmpl.AutoRun {
+			out = append(out, tmpl)
+		}
+	}
+	return out, nil
 }
 
 func (s *Store) nameTaken(ctx context.Context, ownerID, name, excludeID string) (bool, error) {
@@ -297,7 +308,7 @@ func (s *Store) nameTaken(ctx context.Context, ownerID, name, excludeID string) 
 // CreateTemplate creates an owner-scoped template. systemPrompt, modelName,
 // and temperature are optional per-template agent overrides: an empty
 // systemPrompt/modelName or a nil temperature means "unset".
-func (s *Store) CreateTemplate(ctx context.Context, ownerID, name, phase string, sections []model.TemplateSection, systemPrompt, modelName string, temperature *float64) (model.Template, error) {
+func (s *Store) CreateTemplate(ctx context.Context, ownerID, name, phase string, sections []model.TemplateSection, autoRun bool, systemPrompt, modelName string, temperature *float64) (model.Template, error) {
 	phase = normalizeTemplatePhase(phase)
 	if err := validateTemplate(name, sections); err != nil {
 		return model.Template{}, err
@@ -322,20 +333,21 @@ func (s *Store) CreateTemplate(ctx context.Context, ownerID, name, phase string,
 	}
 	tm := model.Template{
 		ID: uuid.NewString(), Name: name, Phase: phase, Sections: sections, BuiltIn: false,
+		AutoRun:      autoRun,
 		SystemPrompt: systemPrompt, Model: modelName, Temperature: temperature,
 	}
 	_, err = s.pool.Exec(ctx,
-		`INSERT INTO templates (id, owner_id, name, phase, sections, system_prompt, model, temperature)
-		 VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8)`,
+		`INSERT INTO templates (id, owner_id, name, phase, sections, auto_run, system_prompt, model, temperature)
+		 VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9)`,
 		tm.ID, ownerID, name, phase, string(secJSON),
-		nullableTemplateStr(systemPrompt), nullableTemplateStr(modelName), temperature)
+		autoRun, nullableTemplateStr(systemPrompt), nullableTemplateStr(modelName), temperature)
 	return tm, err
 }
 
 // UpdateTemplate updates an owner-scoped template, including its optional
 // agent overrides. Passing an empty systemPrompt/modelName or a nil
 // temperature clears that override (unset).
-func (s *Store) UpdateTemplate(ctx context.Context, ownerID, id, name, phase string, sections []model.TemplateSection, systemPrompt, modelName string, temperature *float64) error {
+func (s *Store) UpdateTemplate(ctx context.Context, ownerID, id, name, phase string, sections []model.TemplateSection, autoRun bool, systemPrompt, modelName string, temperature *float64) error {
 	phase = normalizeTemplatePhase(phase)
 	if err := validateTemplate(name, sections); err != nil {
 		return err
@@ -359,9 +371,9 @@ func (s *Store) UpdateTemplate(ctx context.Context, ownerID, id, name, phase str
 		return err
 	}
 	ct, err := s.pool.Exec(ctx,
-		`UPDATE templates SET name=$1, phase=$2, sections=$3::jsonb, system_prompt=$4, model=$5, temperature=$6
-		  WHERE id=$7 AND owner_id=$8`,
-		name, phase, string(secJSON), nullableTemplateStr(systemPrompt), nullableTemplateStr(modelName), temperature,
+		`UPDATE templates SET name=$1, phase=$2, sections=$3::jsonb, auto_run=$4, system_prompt=$5, model=$6, temperature=$7
+		  WHERE id=$8 AND owner_id=$9`,
+		name, phase, string(secJSON), autoRun, nullableTemplateStr(systemPrompt), nullableTemplateStr(modelName), temperature,
 		id, ownerID)
 	if err != nil {
 		return err

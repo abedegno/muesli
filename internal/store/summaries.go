@@ -3,15 +3,16 @@ package store
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/google/uuid"
 )
 
 // EnqueueSummarizeJobs fans out one pending summary + summarize job per template the
-// owner sees (built-ins + their own), and sets the note to 'summarizing'. If the owner
-// has no templates the note is set 'ready' (nothing to summarize). Used by the post-
-// transcription pipeline AND the resummarize endpoint.
+// owner sees and has opted into auto-run for, and sets the note to 'summarizing'. If
+// the owner has no auto-run templates the note is set 'ready' (nothing to summarize).
+// Used by the post-transcription pipeline AND the resummarize endpoint.
 func (s *Store) EnqueueSummarizeJobs(ctx context.Context, ownerID, noteID string) error {
 	templates, err := s.TemplatesForSummary(ctx, ownerID)
 	if err != nil {
@@ -148,19 +149,10 @@ func (s *Store) deleteNoteTemplateSummary(ctx context.Context, ownerID, noteID, 
 // one summarize job for it, and sets the note to 'summarizing' so the existing
 // FinalizeNote path flips it back to 'ready' once this one job settles.
 func (s *Store) EnqueueTemplateSummarizeJob(ctx context.Context, ownerID, noteID, templateID string) error {
-	templates, err := s.TemplatesForSummary(ctx, ownerID)
-	if err != nil {
-		return err
-	}
-	visible := false
-	for _, tmpl := range templates {
-		if tmpl.ID == templateID {
-			visible = true
-			break
-		}
-	}
-	if !visible {
+	if _, err := s.GetTemplate(ctx, ownerID, templateID); errors.Is(err, ErrNotFound) {
 		return ErrNotFound
+	} else if err != nil {
+		return err
 	}
 	if err := s.deleteNoteTemplateSummary(ctx, ownerID, noteID, templateID); err != nil {
 		return err

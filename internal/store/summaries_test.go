@@ -74,6 +74,69 @@ func TestEnqueueSummarizeJobs(t *testing.T) {
 	}
 }
 
+func TestEnqueueSummarizeJobsSkipsManualOnlyTemplates(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	if err := st.SeedBuiltInTemplates(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	noteID := seedNote(t, st)
+	ownerID, err := st.NoteOwnerID(ctx, noteID)
+	if err != nil {
+		t.Fatalf("owner: %v", err)
+	}
+
+	autoRunTmpl, err := st.CreateTemplate(ctx, ownerID, "Auto run", "after", []model.TemplateSection{{Heading: "A", Instruction: "A"}}, true, "", "", nil)
+	if err != nil {
+		t.Fatalf("create auto-run: %v", err)
+	}
+	manualOnlyTmpl, err := st.CreateTemplate(ctx, ownerID, "Manual only", "after", []model.TemplateSection{{Heading: "M", Instruction: "M"}}, false, "", "", nil)
+	if err != nil {
+		t.Fatalf("create manual-only: %v", err)
+	}
+
+	forSummary, err := st.TemplatesForSummary(ctx, ownerID)
+	if err != nil {
+		t.Fatalf("TemplatesForSummary: %v", err)
+	}
+	var sawAutoRun, sawManualOnly bool
+	for _, tmpl := range forSummary {
+		if tmpl.ID == autoRunTmpl.ID {
+			sawAutoRun = true
+		}
+		if tmpl.ID == manualOnlyTmpl.ID {
+			sawManualOnly = true
+		}
+		if !tmpl.AutoRun {
+			t.Fatalf("TemplatesForSummary included non-auto-run template: %+v", tmpl)
+		}
+	}
+	if !sawAutoRun {
+		t.Fatalf("TemplatesForSummary missing auto-run template: %+v", forSummary)
+	}
+	if sawManualOnly {
+		t.Fatalf("TemplatesForSummary included manual-only template: %+v", forSummary)
+	}
+
+	if err := st.EnqueueSummarizeJobs(ctx, ownerID, noteID); err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	sums, err := st.GetSummaries(ctx, noteID)
+	if err != nil {
+		t.Fatalf("GetSummaries: %v", err)
+	}
+	if len(sums) != len(forSummary) {
+		t.Fatalf("summaries = %d, want %d auto-run templates", len(sums), len(forSummary))
+	}
+	for _, s := range sums {
+		if s.TemplateID == manualOnlyTmpl.ID {
+			t.Fatalf("manual-only template was enqueued: %+v", s)
+		}
+	}
+}
+
 func TestEnqueueSummarizeJobsNoTemplatesSetsReady(t *testing.T) {
 	t.Parallel()
 	st := store.New(testutil.NewPool(t))
