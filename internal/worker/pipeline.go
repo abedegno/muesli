@@ -209,7 +209,7 @@ func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, err
 
 	plug, err := p.store.DefaultPlugin(ctx, p.crypto, model.PluginTranscriber)
 	if errors.Is(err, store.ErrNotFound) {
-		return true, errors.New("no default transcriber plugin configured")
+		return false, errors.New("no default transcriber plugin configured")
 	}
 	if err != nil {
 		return true, err
@@ -350,7 +350,7 @@ func (p *Processor) runSummarize(ctx context.Context, job model.Job) (bool, erro
 
 	plug, err := p.store.DefaultPlugin(ctx, p.crypto, model.PluginAgent)
 	if errors.Is(err, store.ErrNotFound) {
-		return true, errors.New("no default agent plugin configured")
+		return false, errors.New("no default agent plugin configured")
 	}
 	if err != nil {
 		return true, err
