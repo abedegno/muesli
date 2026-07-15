@@ -15,6 +15,10 @@ export function resolveResourceEnv(opts: { isPackaged: boolean; resourcesPath: s
   if (!opts.isPackaged) return {}
 
   return {
+    // Signal embedded mode to the Go server via env: config.Load reads
+    // MUESLI_MODE (not the --embedded arg), and only then skips the external
+    // DATABASE_URL requirement and provisions the managed Postgres itself.
+    MUESLI_MODE: 'embedded',
     MUESLI_EMBEDDED_PG_BINARIES: join(opts.resourcesPath, 'pg'),
     MUESLI_EMBEDDED_PGVECTOR_DIR: join(opts.resourcesPath, 'pgvector'),
     MUESLI_WHISPER_CPP_TRANSCRIBER_BIN: join(opts.resourcesPath, 'server', 'whisper-cpp-transcriber'),

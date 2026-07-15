@@ -179,9 +179,13 @@ func Load(get func(string) string) (Config, error) {
 		return Config{}, fmt.Errorf("MUESLI_AUDIO_RETENTION must be 'keep' or 'discard', got %q", cfg.AudioRetention)
 	}
 	if cfg.DatabaseURL == "" {
-		return Config{}, fmt.Errorf("DATABASE_URL is required")
-	}
-	if err := validatePostgresURL("DATABASE_URL", cfg.DatabaseURL); err != nil {
+		// Embedded mode provisions its own managed Postgres and sets the URL
+		// after config load (see embedded.Start / cmd/muesli main); an external
+		// DATABASE_URL is only required for non-embedded (server) mode.
+		if !cfg.Embedded {
+			return Config{}, fmt.Errorf("DATABASE_URL is required")
+		}
+	} else if err := validatePostgresURL("DATABASE_URL", cfg.DatabaseURL); err != nil {
 		return Config{}, err
 	}
 	if err := validateHTTPURL("MUESLI_EMBEDDINGS_URL", cfg.EmbeddingsURL); err != nil {
