@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import { basename, join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import { app, BrowserWindow, dialog, ipcMain, safeStorage, shell } from 'electron'
@@ -5,7 +6,9 @@ import { IPC, type ConnectRequest, type CreateConversationRequest, type Diarizat
 import type { CreateShareRequest, DigestConfig, EmbeddedStartupStatus, RetranscribeNoteRequest, RuleGroup, TemplatePhase, TemplateSection } from '../shared/types'
 import { createHandlers } from './ipcHandlers'
 import { startEmbeddedStartupMonitor } from './embeddedStartupMonitor'
+import { MuesliClient } from './muesliClient'
 import { NoteStreamRelay } from './noteStreamRelay'
+import { SecretStore } from './secretStore'
 import { makeServerLogPath, startServerSupervisor } from './serverSupervisor'
 import { TokenStore } from './tokenStore'
 
@@ -72,13 +75,24 @@ app.whenReady().then(async () => {
       onStatus: pushStartupStatus,
     })
 
-    const tokenStore = new TokenStore(app.getPath('userData'), safeStorage)
+    const userDataDir = app.getPath('userData')
+    const tokenStore = new TokenStore(userDataDir, safeStorage)
+    const secretStore = new SecretStore(userDataDir, safeStorage)
+    const fetchImpl = globalThis.fetch?.bind(globalThis)
     const noteStream = new NoteStreamRelay({
       getConfig: () => tokenStore.load(),
       emit: (event) => mainWindow?.webContents.send(IPC.noteStreamEvent, event),
     })
     const handlers = createHandlers({
       tokenStore,
+      embedded: true,
+      embeddedBaseUrl: supervisor.baseUrl,
+      secretStore,
+      makeClient: (baseUrl: string) => new MuesliClient({ baseUrl, fetch: fetchImpl }),
+      generatePassword: () => randomBytes(32).toString('base64url'),
+      log: (msg: string, err?: unknown) => {
+        console.warn(msg, err)
+      },
       openExternal: async (url: string) => {
         await shell.openExternal(url)
       },
@@ -88,6 +102,7 @@ app.whenReady().then(async () => {
     ipcMain.handle(IPC.getConfig, () => handlers.getConfig())
     ipcMain.handle(IPC.connect, (_e, req: ConnectRequest) => handlers.connect(req))
     ipcMain.handle(IPC.disconnect, () => handlers.disconnect())
+    ipcMain.handle(IPC.resetToBuiltIn, () => handlers.resetToBuiltIn())
     ipcMain.handle(IPC.listNotes, (_e, folderId?: string) => handlers.listNotes(folderId))
     ipcMain.handle(IPC.listPeople, () => handlers.listPeople())
     ipcMain.handle(IPC.listCompanies, () => handlers.listCompanies())

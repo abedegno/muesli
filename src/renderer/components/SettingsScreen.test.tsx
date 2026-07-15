@@ -6,6 +6,7 @@ import { MemoryRouter } from 'react-router-dom'
 
 const getConfig = vi.fn()
 const disconnect = vi.fn()
+const resetToBuiltIn = vi.fn()
 const getGoogleCalendarOAuthStatus = vi.fn()
 const openGoogleCalendarOAuthStart = vi.fn()
 const getMicrosoftCalendarOAuthStatus = vi.fn()
@@ -17,6 +18,7 @@ vi.mock('@/api', () => ({
   muesli: {
     getConfig: () => getConfig(),
     disconnect: () => disconnect(),
+    resetToBuiltIn: () => resetToBuiltIn(),
     getGoogleCalendarOAuthStatus: () => getGoogleCalendarOAuthStatus(),
     openGoogleCalendarOAuthStart: () => openGoogleCalendarOAuthStart(),
     getMicrosoftCalendarOAuthStatus: () => getMicrosoftCalendarOAuthStatus(),
@@ -49,7 +51,7 @@ function renderScreen(serverUrl = 'http://localhost:8080') {
   vi.stubGlobal('fetch', fetchMock)
   return render(
     <MemoryRouter>
-      <SettingsScreen onDisconnected={vi.fn()} />
+      <SettingsScreen onDisconnected={vi.fn()} onResetToBuiltIn={vi.fn()} />
     </MemoryRouter>,
   )
 }
@@ -207,5 +209,14 @@ describe('SettingsScreen', () => {
 
     expect(toggle).toBeChecked()
     expect(localStorage.getItem('muesli.calendar.autoRecordDetectedMeetings')).toBe('1')
+  })
+
+  it('calls the built-in reset action', async () => {
+    const user = userEvent.setup()
+
+    renderScreen()
+
+    await user.click(await screen.findByRole('button', { name: "Use this device's built-in server" }))
+    expect(resetToBuiltIn).toHaveBeenCalledTimes(1)
   })
 })

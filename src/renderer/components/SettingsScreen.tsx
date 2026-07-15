@@ -19,7 +19,13 @@ function versionFromHealth(data: Record<string, unknown>): string | undefined {
   return undefined
 }
 
-export function SettingsScreen({ onDisconnected }: { onDisconnected: () => void }) {
+export function SettingsScreen({
+  onDisconnected,
+  onResetToBuiltIn,
+}: {
+  onDisconnected: () => void
+  onResetToBuiltIn: () => void
+}) {
   const [serverUrl, setServerUrl] = useState('')
   const [googleOAuthConfigured, setGoogleOAuthConfigured] = useState<boolean | null>(null)
   const [microsoftOAuthConfigured, setMicrosoftOAuthConfigured] = useState<boolean | null>(null)
@@ -207,6 +213,19 @@ export function SettingsScreen({ onDisconnected }: { onDisconnected: () => void 
       >
         Disconnect
       </Button>
+      <div className="mt-3">
+        <Button
+          variant="secondary"
+          onClick={async () => {
+            await muesli.resetToBuiltIn()
+            const cfg = await muesli.getConfig()
+            setServerUrl(cfg?.serverUrl ?? '')
+            await onResetToBuiltIn()
+          }}
+        >
+          Use this device&apos;s built-in server
+        </Button>
+      </div>
     </div>
   )
 }

@@ -7,6 +7,7 @@ const bridge: MuesliBridge = {
   getConfig: () => ipcRenderer.invoke(IPC.getConfig),
   connect: (req) => ipcRenderer.invoke(IPC.connect, req),
   disconnect: () => ipcRenderer.invoke(IPC.disconnect),
+  resetToBuiltIn: () => ipcRenderer.invoke(IPC.resetToBuiltIn),
   listNotes: (folderId?: string) => ipcRenderer.invoke(IPC.listNotes, folderId),
   listPeople: () => ipcRenderer.invoke(IPC.listPeople),
   listCompanies: () => ipcRenderer.invoke(IPC.listCompanies),

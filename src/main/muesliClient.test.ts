@@ -20,6 +20,27 @@ describe('MuesliClient', () => {
     expect(appToken).toMatch(/^app-/)
   })
 
+  it('setupNeeded checks the public setup status endpoint', async () => {
+    let needsSetup = true
+    const fetchMock: FetchLike = async (url, init) => {
+      const path = new URL(String(url)).pathname
+      if (path === '/api/setup/status') {
+        return new Response(JSON.stringify({ needs_setup: needsSetup }), { status: 200 })
+      }
+      if (path === '/api/setup' && (init?.method ?? 'GET').toUpperCase() === 'POST') {
+        needsSetup = false
+        return new Response(JSON.stringify({ id: 'u1', email: 'owner@example.com' }), { status: 200 })
+      }
+      return new Response('unexpected', { status: 500 })
+    }
+
+    const c = new MuesliClient({ baseUrl: BASE, fetch: fetchMock })
+    expect(await c.setupNeeded()).toBe(true)
+
+    await c.setup('owner@example.com', 'password123')
+    expect(await c.setupNeeded()).toBe(false)
+  })
+
   it('rejects setup once an account exists', async () => {
     server.seedUser('owner@example.com', 'password123')
     const c = new MuesliClient({ baseUrl: BASE, fetch: server.fetch })
