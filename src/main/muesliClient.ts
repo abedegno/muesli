@@ -358,11 +358,11 @@ export class MuesliClient {
   async listTemplates(): Promise<Template[]> {
     return this.json<Template[]>('GET', '/api/templates')
   }
-  async createTemplate(name: string, sections: TemplateSection[]): Promise<Template> {
-    return this.json<Template>('POST', '/api/templates', { name, sections })
+  async createTemplate(name: string, phase: Template['phase'], sections: TemplateSection[]): Promise<Template> {
+    return this.json<Template>('POST', '/api/templates', { name, phase, sections })
   }
-  async updateTemplate(id: string, name: string, sections: TemplateSection[]): Promise<void> {
-    await this.json('PUT', `/api/templates/${id}`, { name, sections })
+  async updateTemplate(id: string, name: string, phase: Template['phase'], sections: TemplateSection[]): Promise<void> {
+    await this.json('PUT', `/api/templates/${id}`, { name, phase, sections })
   }
   async deleteTemplate(id: string): Promise<void> {
     await this.json('DELETE', `/api/templates/${id}`)

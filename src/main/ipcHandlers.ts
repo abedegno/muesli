@@ -80,8 +80,8 @@ interface Handlers {
   addNoteFolder(noteId: string, folderId: string): Promise<void>
   removeNoteFolder(noteId: string, folderId: string): Promise<void>
   listTemplates(): Promise<Template[]>
-  createTemplate(name: string, sections: TemplateSection[]): Promise<Template>
-  updateTemplate(id: string, name: string, sections: TemplateSection[]): Promise<void>
+  createTemplate(name: string, phase: Template['phase'], sections: TemplateSection[]): Promise<Template>
+  updateTemplate(id: string, name: string, phase: Template['phase'], sections: TemplateSection[]): Promise<void>
   deleteTemplate(id: string): Promise<void>
   exportNote(noteId: string, format: string, options?: ExportRequestOptions): Promise<NoteExportData>
   exportFolder(folderId: string, format: string, options?: ExportRequestOptions): Promise<NoteExportData>
@@ -433,11 +433,11 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     async listTemplates() {
       return authedClient().listTemplates()
     },
-    async createTemplate(name, sections) {
-      return authedClient().createTemplate(name, sections)
+    async createTemplate(name, phase, sections) {
+      return authedClient().createTemplate(name, phase, sections)
     },
-    async updateTemplate(id, name, sections) {
-      await authedClient().updateTemplate(id, name, sections)
+    async updateTemplate(id, name, phase, sections) {
+      await authedClient().updateTemplate(id, name, phase, sections)
     },
     async deleteTemplate(id) {
       await authedClient().deleteTemplate(id)
