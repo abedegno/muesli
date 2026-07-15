@@ -28,9 +28,16 @@ case "$TARGET" in
     exit 2
     ;;
 esac
-# Self-contained Postgres+pgvector, built by scripts/build-postgres-macos.sh.
-# MUESLI_PG_DIST points at that build's output tree (bin/ lib/ share/).
-PG_DIST="${MUESLI_PG_DIST:-$ROOT/build/pg-dist}"
+
+# Postgres: zonky's relocatable UNIVERSAL binaries (arm64+x86_64), pinned.
+ZONKY_PG_VERSION="17.5.0"
+ZONKY_ARTIFACT="embedded-postgres-binaries-darwin-arm64v8"
+ZONKY_JAR_SHA="e9d3398e10c2ec926395498b03e75ad1a24eeaed82895e756a7e173b202cf6de"
+
+# pgvector: pinned artifact from abedegno/embedded-postgres-vector.
+PGVECTOR_TAG="pgvector-0.8.0-pg17-1"
+PGVECTOR_ASSET="pgvector-darwin-arm64.tar.gz"
+PGVECTOR_SHA="7ba554ea5a1a13bd1d57845f7bfe704428207e3990413d7a1bff52367b46331f"
 
 MODEL="ggml-tiny.en.bin"
 MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/${MODEL}"
@@ -56,15 +63,36 @@ for b in muesli whisper-cpp-transcriber ollama-agent; do
   fi
 done
 
-# 2) Postgres + pgvector (self-contained; built by scripts/build-postgres-macos.sh)
-[ -x "$PG_DIST/bin/postgres" ] || { echo "assemble: PG dist missing at $PG_DIST (run scripts/build-postgres-macos.sh first)" >&2; exit 1; }
-cp -R "$PG_DIST/." "$RES/pg/"
-# MUESLI_EMBEDDED_PGVECTOR_DIR points at pgvector/; the bundle already ships
-# pgvector built in (+ share/extension/vector.control for the embedded check),
-# so this is a fallback copy of the pgvector artifacts.
-find "$RES/pg" \( -name 'vector.dylib' -o -name 'vector.control' -o -name 'vector--*.sql' \) \
-  -exec cp {} "$RES/pgvector/" \; 2>/dev/null || true
-echo "assemble: pg/ ($(du -sh "$RES/pg" | awk '{print $1}')) + pgvector/ ($(ls "$RES/pgvector" 2>/dev/null | wc -l | tr -d ' ') files)"
+# 2) Postgres (zonky) + pgvector (pinned), pre-injected into the bundle.
+TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+
+echo "assemble: fetching zonky Postgres $ZONKY_PG_VERSION"
+ZURL="https://repo1.maven.org/maven2/io/zonky/test/postgres/$ZONKY_ARTIFACT/$ZONKY_PG_VERSION/$ZONKY_ARTIFACT-$ZONKY_PG_VERSION.jar"
+curl -fsSL "$ZURL" -o "$TMP/zonky.jar"
+verify "$TMP/zonky.jar" "$ZONKY_JAR_SHA"
+unzip -o -q "$TMP/zonky.jar" -d "$TMP/zonky-jar"
+ZTXZ="$(find "$TMP/zonky-jar" -name '*.txz' -o -name '*.tar.xz' | head -1)"
+tar xJf "$ZTXZ" -C "$RES/pg"
+[ -x "$RES/pg/bin/postgres" ] || { echo "assemble: zonky extract missing bin/postgres" >&2; exit 1; }
+
+echo "assemble: fetching pgvector $PGVECTOR_TAG"
+PVURL="https://github.com/abedegno/embedded-postgres-vector/releases/download/$PGVECTOR_TAG/$PGVECTOR_ASSET"
+curl -fsSL "$PVURL" -o "$TMP/pgvector.tgz"
+verify "$TMP/pgvector.tgz" "$PGVECTOR_SHA"
+mkdir -p "$TMP/pgv"; tar xzf "$TMP/pgvector.tgz" -C "$TMP/pgv"
+
+# Pre-inject pgvector into zonky's STANDARD paths so CREATE EXTENSION finds it,
+# and stage a share/extension/vector.control so the Go server's runtime pgvector
+# check passes and InstallPgvector is skipped (the signed bundle stays read-only).
+PKGLIB="$RES/pg/lib/postgresql"; EXTDIR="$RES/pg/share/postgresql/extension"
+mkdir -p "$PKGLIB" "$EXTDIR" "$RES/pg/share/extension"
+cp "$TMP/pgv/vector.dylib" "$PKGLIB/"
+cp "$TMP/pgv/vector.control" "$TMP/pgv"/vector--*.sql "$EXTDIR/"
+cp "$TMP/pgv/vector.control" "$RES/pg/share/extension/"
+
+# Flat fallback copy (MUESLI_EMBEDDED_PGVECTOR_DIR), matching the prior layout.
+cp "$TMP/pgv/vector.dylib" "$TMP/pgv/vector.control" "$TMP/pgv"/vector--*.sql "$RES/pgvector/"
+echo "assemble: pg/ ($(du -sh "$RES/pg" | awk '{print $1}')) with pgvector injected + pgvector/ fallback"
 
 # 3) whisper model
 echo "assemble: fetching $MODEL"

@@ -1,28 +1,45 @@
 # Embedded Postgres Bundle
 
-muesli needs Postgres + pgvector in two contexts, sourced differently:
+muesli uses Postgres + pgvector in two separate contexts:
 
-**Linux (hosted / CI integration tests)** vendors the prebuilt
-`boomship/postgres-vector-embedded` bundle (v0.2.2, PostgreSQL 17.5 + pgvector
-0.8.0, MIT):
+**Linux hosted / CI integration tests** use the Docker image
+`pgvector/pgvector:pg16`. This path does not use the desktop bundle.
 
-- Linux asset:
-  `https://github.com/boomship/postgres-vector-embedded/releases/download/v0.2.2/postgres-full-linux-x64.tar.gz`
-- SHA256:
-  `5b62bbc684d8d8fc813b42b88613c3ed631fbbe18440a6f68be873f406337a83`
+**macOS desktop app** ships a preassembled, relocatable bundle built from two
+pinned artifacts:
 
-**macOS (desktop app)** builds its OWN self-contained Postgres via
-`scripts/build-postgres-macos.sh` (PostgreSQL 17.5 `--without-icu` + pgvector
-0.8.0). The prebuilt macOS bundles are NOT usable: they link Homebrew ICU by
-absolute build-machine path and are not relocatable, so Postgres cannot start on
-a user's Mac. Building `--without-icu` (Postgres falls back to libc collation)
-leaves only Postgres's own dylibs as non-system deps, which the script relocates
-to `@loader_path`. `.github/workflows/desktop-release.yml` runs the script and
-`scripts/assemble-desktop-resources.sh` stages the result into the app.
+- zonky embedded Postgres `17.5.0`
+- jar SHA256:
+  `e9d3398e10c2ec926395498b03e75ad1a24eeaed82895e756a7e173b202cf6de`
+- artifact:
+  `embedded-postgres-binaries-darwin-arm64v8`
+
+The bundle is consumed by `github.com/fergusstrange/embedded-postgres` through
+`BinariesPath`, so the app does not build PostgreSQL from source at release
+time.
+
+pgvector is supplied as a separate pinned artifact and injected into the
+desktop bundle:
+
+- release tag:
+  `pgvector-0.8.0-pg17-1`
+- asset:
+  `pgvector-darwin-arm64.tar.gz`
+- asset SHA256:
+  `7ba554ea5a1a13bd1d57845f7bfe704428207e3990413d7a1bff52367b46331f`
+
+The desktop assembly script stages pgvector into:
+
+- `pg/lib/postgresql/vector.dylib`
+- `pg/share/postgresql/extension/vector.control`
+
+and also places `pg/share/extension/vector.control` as the runtime-skip marker
+so the embedded server skips `InstallPgvector` when the bundle is already
+present.
 
 ## Bump Process
 
-To update the bundle, change the version and download URL, fetch the new
-archive, recompute the SHA256, and update this document and
-`.github/workflows/ci.yml` together. Keep the checksum pinned in CI so the job
-fails loudly if the asset changes unexpectedly.
+Update the zonky Postgres pin and SHA together, and update the pgvector release
+tag and SHA together. If the Postgres major version changes, publish or select a
+matching `pgvector-<version>-pg<major>-<rev>` release first, then update both
+pins in lockstep.
