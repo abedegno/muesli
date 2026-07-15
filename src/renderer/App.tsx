@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { muesli } from './api'
 import { EmbeddedStartupGate } from './components/StartupScreen'
+import { SetupWizard } from './components/SetupWizard'
 import { AppLayout } from './components/shell/AppLayout'
 import { ConnectScreen } from './components/ConnectScreen'
 import { NotesListScreen } from './components/NotesListScreen'
@@ -24,12 +25,18 @@ const NoteScreen = lazy(() => import('./components/NoteScreen').then((m) => ({ d
 
 function AppContent() {
   const [connected, setConnected] = useState<boolean | null>(null)
+  const [onboarded, setOnboarded] = useState<boolean | null>(null)
   async function refreshConnection() {
     try {
-      const cfg = await muesli.getConfig?.()
+      const onboardedPromise = muesli.getOnboarded
+        ? muesli.getOnboarded().catch(() => false)
+        : Promise.resolve(false)
+      const [cfg, nextOnboarded] = await Promise.all([muesli.getConfig?.(), onboardedPromise])
       setConnected(!!cfg)
+      setOnboarded(nextOnboarded ?? false)
     } catch {
       setConnected(false)
+      setOnboarded(false)
     }
   }
 
@@ -46,7 +53,15 @@ function AppContent() {
       {connected === false && (
         <ConnectScreen onConnected={() => setConnected(true)} />
       )}
-      {connected === true && (
+      {connected === true && onboarded === false && (
+        <SetupWizard
+          onDone={() => {
+            void muesli.setOnboarded(true)
+            setOnboarded(true)
+          }}
+        />
+      )}
+      {connected === true && onboarded === true && (
         <Suspense fallback={<div className="p-8 text-muted-foreground">Loading…</div>}>
           <Routes>
             <Route element={<AppLayout />}>
@@ -79,6 +94,9 @@ function AppContent() {
             </Route>
           </Routes>
         </Suspense>
+      )}
+      {connected === true && onboarded === null && (
+        <div className="p-8 text-muted-foreground">Loading…</div>
       )}
     </AnnouncerProvider>
   )

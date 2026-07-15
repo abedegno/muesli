@@ -15,6 +15,7 @@ export interface SecretCreds {
 interface PersistedShape {
   encrypted: boolean
   manualServer: boolean
+  onboarded: boolean
   creds?: string
 }
 
@@ -46,6 +47,7 @@ export class SecretStore {
       return {
         encrypted: typeof raw.encrypted === 'boolean' ? raw.encrypted : this.safe.isEncryptionAvailable(),
         manualServer: raw.manualServer === true,
+        onboarded: raw.onboarded === true,
         creds: typeof raw.creds === 'string' ? raw.creds : undefined,
       }
     } catch {
@@ -83,6 +85,7 @@ export class SecretStore {
     this.writePersisted({
       encrypted,
       manualServer: current?.manualServer ?? false,
+      onboarded: current?.onboarded ?? false,
       creds: stored,
     })
   }
@@ -98,6 +101,7 @@ export class SecretStore {
     this.writePersisted({
       encrypted: current.encrypted,
       manualServer: true,
+      onboarded: current.onboarded,
     })
   }
 
@@ -110,6 +114,22 @@ export class SecretStore {
     const shape: PersistedShape = {
       encrypted: current?.encrypted ?? this.safe.isEncryptionAvailable(),
       manualServer,
+      onboarded: current?.onboarded ?? false,
+    }
+    if (current?.creds) shape.creds = current.creds
+    this.writePersisted(shape)
+  }
+
+  getOnboarded(): boolean {
+    return this.readPersisted()?.onboarded ?? false
+  }
+
+  setOnboarded(onboarded: boolean): void {
+    const current = this.readPersisted()
+    const shape: PersistedShape = {
+      encrypted: current?.encrypted ?? this.safe.isEncryptionAvailable(),
+      manualServer: current?.manualServer ?? false,
+      onboarded,
     }
     if (current?.creds) shape.creds = current.creds
     this.writePersisted(shape)

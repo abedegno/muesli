@@ -19,7 +19,10 @@ interface HandlerDeps {
   openExternal?: (url: string) => Promise<void>
   embedded?: boolean
   embeddedBaseUrl?: string
-  secretStore?: Pick<SecretStore, 'loadCreds' | 'saveCreds' | 'clearCreds' | 'getManualServer' | 'setManualServer'>
+  secretStore?: Pick<
+    SecretStore,
+    'loadCreds' | 'saveCreds' | 'clearCreds' | 'getManualServer' | 'setManualServer' | 'getOnboarded' | 'setOnboarded'
+  >
   makeClient?: (baseUrl: string) => Pick<MuesliClient, 'setupNeeded' | 'setup' | 'login' | 'createToken'>
   generatePassword?: () => string
   log?: (msg: string, err?: unknown) => void
@@ -27,6 +30,9 @@ interface HandlerDeps {
 
 interface Handlers {
   getConfig(): Promise<ServerConfig | null>
+  getOnboarded(): Promise<boolean>
+  setOnboarded(onboarded: boolean): Promise<void>
+  getReadyz(): Promise<{ ollamaDetected: boolean } | null>
   connect(req: ConnectRequest): Promise<{ serverUrl: string }>
   disconnect(): Promise<void>
   resetToBuiltIn(): Promise<void>
@@ -154,7 +160,12 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       clearCreds: () => {},
       getManualServer: () => false,
       setManualServer: () => {},
-    } satisfies Pick<SecretStore, 'loadCreds' | 'saveCreds' | 'clearCreds' | 'getManualServer' | 'setManualServer'>)
+      getOnboarded: () => false,
+      setOnboarded: () => {},
+    } satisfies Pick<
+      SecretStore,
+      'loadCreds' | 'saveCreds' | 'clearCreds' | 'getManualServer' | 'setManualServer' | 'getOnboarded' | 'setOnboarded'
+    >)
   const makeClient =
     deps.makeClient ??
     ((baseUrl: string) => new MuesliClient({ baseUrl, fetch: fetchImpl }))
@@ -169,6 +180,7 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       loadCreds: () => secretStore.loadCreds(),
       saveCreds: (creds: { email: string; password: string }) => secretStore.saveCreds(creds),
       getManualServer: () => secretStore.getManualServer(),
+      getOnboarded: () => secretStore.getOnboarded(),
     },
     makeClient,
     generatePassword: deps.generatePassword ?? (() => ''),
@@ -190,6 +202,29 @@ export function createHandlers(deps: HandlerDeps): Handlers {
         deps.log?.('ensureLocalSession failed', err)
       }
       return tokenStore.load()
+    },
+
+    async getOnboarded() {
+      return secretStore.getOnboarded()
+    },
+
+    async setOnboarded(onboarded) {
+      secretStore.setOnboarded(onboarded)
+    },
+
+    async getReadyz() {
+      const baseUrl = deps.embeddedBaseUrl?.trim()
+      if (!baseUrl || !fetchImpl) return null
+      try {
+        const cfg = tokenStore.load()
+        const headers = new Headers()
+        if (cfg?.token) headers.set('Authorization', `Bearer ${cfg.token}`)
+        const res = await fetchImpl(new URL('/readyz', baseUrl), { headers })
+        const body = (await res.json()) as { embedded?: { ollamaDetected?: boolean } }
+        return { ollamaDetected: body.embedded?.ollamaDetected ?? false }
+      } catch {
+        return null
+      }
     },
 
     async connect(req) {

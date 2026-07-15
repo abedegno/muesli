@@ -7,6 +7,9 @@ describe('IPC channels', () => {
 
     expect(IPC.listNotes).toBe('muesli:listNotes')
     expect(IPC.getConfig).toBe('muesli:getConfig')
+    expect(IPC.getOnboarded).toBe('muesli:getOnboarded')
+    expect(IPC.setOnboarded).toBe('muesli:setOnboarded')
+    expect(IPC.getReadyz).toBe('muesli:getReadyz')
     expect(IPC.openMicrosoftCalendarOAuthStart).toBe('muesli:openMicrosoftCalendarOAuthStart')
     expect(IPC.startNoteStream).toBe('muesli:startNoteStream')
     expect(IPC.noteStreamEvent).toBe('muesli:noteStreamEvent')
