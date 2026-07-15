@@ -50,23 +50,22 @@ export function useFindReplace(text: string, query: string): FindReplaceResult {
 
   // Clamp currentIndex when matches shrink (e.g. text changed after replace)
   useEffect(() => {
-    setCurrentIndex(prev => {
+    setCurrentIndex((prev) => {
       if (matches.length === 0) return -1
       if (prev < 0) return 0
       if (prev >= matches.length) return matches.length - 1
       return prev
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [matches.length])
 
   const next = useCallback(() => {
     if (matches.length === 0) return
-    setCurrentIndex(i => (i + 1) % matches.length)
+    setCurrentIndex((i) => (i + 1) % matches.length)
   }, [matches.length])
 
   const prev = useCallback(() => {
     if (matches.length === 0) return
-    setCurrentIndex(i => (i - 1 + matches.length) % matches.length)
+    setCurrentIndex((i) => (i - 1 + matches.length) % matches.length)
   }, [matches.length])
 
   const replaceOne = useCallback(

@@ -92,6 +92,45 @@ describe('ipc handlers', () => {
     }
   })
 
+  it('getReadyz forwards the bearer token and parses ollama detection', async () => {
+    const seen: { auth?: string }[] = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      const parsed = new URL(String(url))
+      seen.push({ auth: new Headers(init?.headers).get('Authorization') ?? undefined })
+      if (parsed.pathname === '/readyz') {
+        return new Response(JSON.stringify({ embedded: { ollamaDetected: true } }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response('unexpected', { status: 500 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost:1234', token: 'app-token' })
+    const h = createHandlers({
+      tokenStore,
+      fetch: fetchMock,
+      onProgress: () => {},
+      embedded: true,
+      embeddedBaseUrl: 'http://127.0.0.1:9000',
+    })
+
+    await expect(h.getReadyz()).resolves.toEqual({ ollamaDetected: true })
+    expect(seen).toEqual([{ auth: 'Bearer app-token' }])
+  })
+
+  it('getReadyz returns null when the fetch payload is invalid', async () => {
+    const h = createHandlers({
+      tokenStore: new TokenStore(dir, fakeSafe),
+      fetch: async () => new Response('not-json', { status: 200 }),
+      onProgress: () => {},
+      embedded: true,
+      embeddedBaseUrl: 'http://127.0.0.1:9000',
+    })
+
+    await expect(h.getReadyz()).resolves.toBeNull()
+  })
+
   it('connect always allows https to any host', async () => {
     server.seedUser('o@example.com', 'password123')
     const h = makeHandlers()

@@ -53,4 +53,16 @@ describe('SecretStore', () => {
     again.setManualServer(false)
     expect(new SecretStore(dir, fakeSafe).getManualServer()).toBe(false)
   })
+
+  it('persists the onboarded flag across instances and toggles it', () => {
+    const store = new SecretStore(dir, fakeSafe)
+    expect(store.getOnboarded()).toBe(false)
+
+    store.setOnboarded(true)
+    expect(new SecretStore(dir, fakeSafe).getOnboarded()).toBe(true)
+
+    const again = new SecretStore(dir, fakeSafe)
+    again.setOnboarded(false)
+    expect(new SecretStore(dir, fakeSafe).getOnboarded()).toBe(false)
+  })
 })
