@@ -47,6 +47,13 @@ export class MuesliClient {
   }
 
   // --- Auth / onboarding ---
+  async setupNeeded(): Promise<boolean> {
+    const res = await this.fetchImpl(new URL('/api/setup/status', this.baseUrl).toString())
+    if (!res.ok) throw new ApiError(res.status, `setup status: ${res.status}`)
+    const body = (await res.json()) as { needs_setup: boolean }
+    return body.needs_setup
+  }
+
   async setup(email: string, password: string): Promise<{ id: string; email: string }> {
     return this.json('POST', '/api/setup', { email, password })
   }

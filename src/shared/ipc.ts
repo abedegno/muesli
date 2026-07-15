@@ -6,6 +6,7 @@ export const IPC = {
   getConfig: 'muesli:getConfig',
   connect: 'muesli:connect',
   disconnect: 'muesli:disconnect',
+  resetToBuiltIn: 'muesli:resetToBuiltIn',
   listNotes: 'muesli:listNotes',
   listPeople: 'muesli:listPeople',
   listCompanies: 'muesli:listCompanies',
@@ -214,6 +215,7 @@ export interface MuesliBridge {
   getConfig(): Promise<ServerConfig | null>
   connect(req: ConnectRequest): Promise<{ serverUrl: string }>
   disconnect(): Promise<void>
+  resetToBuiltIn(): Promise<void>
   listNotes(folderId?: string): Promise<Note[]>
   listPeople(): Promise<PersonWithCompany[]>
   listCompanies(): Promise<CompanyWithCount[]>

@@ -24,8 +24,17 @@ const NoteScreen = lazy(() => import('./components/NoteScreen').then((m) => ({ d
 
 function AppContent() {
   const [connected, setConnected] = useState<boolean | null>(null)
+  async function refreshConnection() {
+    try {
+      const cfg = await muesli.getConfig?.()
+      setConnected(!!cfg)
+    } catch {
+      setConnected(false)
+    }
+  }
+
   useEffect(() => {
-    muesli.getConfig?.()?.then((cfg) => setConnected(!!cfg)).catch(() => setConnected(false))
+    void refreshConnection()
   }, [])
 
   return (
@@ -44,7 +53,17 @@ function AppContent() {
               <Route path="/" element={<NotesListScreen />} />
               <Route path="/notes/:id" element={<NoteScreen />} />
               <Route path="/new" element={<NewMeetingScreen />} />
-              <Route path="/settings" element={<SettingsScreen onDisconnected={() => setConnected(false)} />} />
+              <Route
+                path="/settings"
+                element={
+                  <SettingsScreen
+                    onDisconnected={() => setConnected(false)}
+                    onResetToBuiltIn={async () => {
+                      await refreshConnection()
+                    }}
+                  />
+                }
+              />
               <Route path="/templates" element={<TemplatesScreen />} />
               <Route path="/chat" element={<ChatScreen />} />
               <Route path="/settings/tags" element={<TagsPage />} />
