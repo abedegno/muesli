@@ -125,6 +125,9 @@ func drain(t *testing.T, proc *worker.Processor, st *store.Store) {
 			return
 		}
 		proc.Process(ctx, job)
+		if _, err := st.Pool().Exec(ctx, "UPDATE jobs SET lease_expires_at = NULL WHERE id=$1", job.ID); err != nil {
+			t.Fatalf("clear retry lease: %v", err)
+		}
 	}
 	t.Fatal("drain did not terminate")
 }
