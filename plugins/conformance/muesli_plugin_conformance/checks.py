@@ -178,6 +178,40 @@ def canonical_generate_payload() -> dict:
     }
 
 
+def check_generate_system_prompt_override(client: httpx.Client, token: str, report: Report) -> None:
+    """POST /generate with the optional system_prompt/model/temperature agent
+    overrides set must still return 200 + a schema-valid response.
+
+    These are OPTIONAL per-template overrides threaded from the Muesli server
+    (see internal/pluginkit.GenerateRequest / internal/plugin.GenerateRequest).
+    A plugin that does not support them must tolerate the extra fields
+    (ignore them) rather than reject the request; a plugin that DOES support
+    them must still conform to the same response schema.
+    """
+    payload = canonical_generate_payload()
+    payload["system_prompt"] = "You are a terse bullet-point summarizer."
+    payload["model"] = "llama3.2:3b"
+    payload["temperature"] = 0.1
+    try:
+        r = client.post("/generate", json=payload, headers=_auth(token))
+    except Exception as e:  # noqa: BLE001
+        report.add("generate.system_prompt_override", False, str(e))
+        return
+    if r.status_code != 200:
+        report.add(
+            "generate.system_prompt_override",
+            False,
+            f"/generate with system_prompt/model/temperature set got {r.status_code} (want 200)",
+        )
+        return
+    try:
+        validate(r.json(), schemas.GENERATE_RESPONSE_SCHEMA)
+    except ValidationError as e:
+        report.add("generate.system_prompt_override", False, e.message)
+        return
+    report.add("generate.system_prompt_override", True)
+
+
 def check_roundtrip(client: httpx.Client, token: str, kind: str, report: Report) -> None:
     if kind == "transcriber":
         path, payload, schema = "/transcribe", canonical_transcribe_payload(), schemas.TRANSCRIBE_RESPONSE_SCHEMA

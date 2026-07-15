@@ -114,6 +114,142 @@ func TestGenerateMultiSectionAndNilTranscript(t *testing.T) {
 	}
 }
 
+// TestGenerateUsesDefaultSystemPromptWhenUnset verifies that req.SystemPrompt
+// empty (the common case today) still sends the agent's hardcoded default
+// system prompt, i.e. current behaviour is unchanged.
+func TestGenerateUsesDefaultSystemPromptWhenUnset(t *testing.T) {
+	t.Parallel()
+
+	var gotSystem string
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		gotSystem = req.Messages[0].Content
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"message": map[string]any{"content": `{"content_markdown":"ok"}`},
+		})
+	}))
+	defer ollama.Close()
+
+	eng := New(Config{OllamaURL: ollama.URL, Model: "fallback-model"})
+	reqBody := pluginkit.GenerateRequest{
+		Template: pluginkit.TemplatePayload{Sections: []model.TemplateSection{
+			{Heading: "Summary", Instruction: "Summarize."},
+		}},
+		Config: json.RawMessage(`{"ollama_url":"` + ollama.URL + `"}`),
+	}
+
+	if _, err := eng.Generate(context.Background(), reqBody); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if gotSystem != systemPrompt() {
+		t.Fatalf("system message = %q, want default systemPrompt(): %q", gotSystem, systemPrompt())
+	}
+}
+
+// TestGenerateUsesRequestSystemPromptOverride verifies that a non-empty
+// req.SystemPrompt (from a template override) replaces the hardcoded default
+// system prompt in the outbound Ollama chat call.
+func TestGenerateUsesRequestSystemPromptOverride(t *testing.T) {
+	t.Parallel()
+
+	const override = "You are a terse bullet-point summarizer. Never use full sentences."
+	var gotSystem string
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Messages []struct {
+				Role    string `json:"role"`
+				Content string `json:"content"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		gotSystem = req.Messages[0].Content
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"message": map[string]any{"content": `{"content_markdown":"ok"}`},
+		})
+	}))
+	defer ollama.Close()
+
+	eng := New(Config{OllamaURL: ollama.URL, Model: "fallback-model"})
+	reqBody := pluginkit.GenerateRequest{
+		Template: pluginkit.TemplatePayload{Sections: []model.TemplateSection{
+			{Heading: "Summary", Instruction: "Summarize."},
+		}},
+		Config:       json.RawMessage(`{"ollama_url":"` + ollama.URL + `"}`),
+		SystemPrompt: override,
+	}
+
+	if _, err := eng.Generate(context.Background(), reqBody); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if gotSystem != override {
+		t.Fatalf("system message = %q, want override %q", gotSystem, override)
+	}
+	if gotSystem == systemPrompt() {
+		t.Fatalf("system message unexpectedly matches the hardcoded default")
+	}
+}
+
+// TestGenerateRequestModelAndTemperatureOverridePluginConfig verifies that
+// req.Model and req.Temperature (from a template override) win over the
+// plugin's Config defaults in the actual outbound Ollama call.
+func TestGenerateRequestModelAndTemperatureOverridePluginConfig(t *testing.T) {
+	t.Parallel()
+
+	var gotModel string
+	var gotTemp any
+	ollama := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Model   string         `json:"model"`
+			Options map[string]any `json:"options"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		gotModel = req.Model
+		gotTemp = req.Options["temperature"]
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"model":   req.Model,
+			"message": map[string]any{"content": `{"content_markdown":"ok"}`},
+		})
+	}))
+	defer ollama.Close()
+
+	eng := New(Config{OllamaURL: ollama.URL, Model: "fallback-model", Temperature: 0.2})
+	temp := 0.9
+	reqBody := pluginkit.GenerateRequest{
+		Template: pluginkit.TemplatePayload{Sections: []model.TemplateSection{
+			{Heading: "Summary", Instruction: "Summarize."},
+		}},
+		Config:      json.RawMessage(`{"model":"config-model","ollama_url":"` + ollama.URL + `","temperature":0.3}`),
+		Model:       "override-model",
+		Temperature: &temp,
+	}
+
+	resp, err := eng.Generate(context.Background(), reqBody)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if gotModel != "override-model" {
+		t.Fatalf("outbound model = %q, want override-model (request override should win over config)", gotModel)
+	}
+	if gotTemp != 0.9 {
+		t.Fatalf("outbound temperature = %v, want 0.9 (request override should win over config)", gotTemp)
+	}
+	if resp.Model != "override-model" {
+		t.Fatalf("resp.Model = %q, want override-model", resp.Model)
+	}
+}
+
 func TestGenerateNilTranscriptUsesEmptyList(t *testing.T) {
 	t.Parallel()
 

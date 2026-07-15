@@ -15,6 +15,12 @@ type templateRequest struct {
 	Name     string                  `json:"name"`
 	Phase    string                  `json:"phase"`
 	Sections []model.TemplateSection `json:"sections"`
+	// SystemPrompt, Model, and Temperature are optional per-template agent
+	// overrides. Empty/nil means unset (falls back to the agent's default
+	// system prompt / plugin Config values).
+	SystemPrompt string   `json:"system_prompt,omitempty"`
+	Model        string   `json:"model,omitempty"`
+	Temperature  *float64 `json:"temperature,omitempty"`
 }
 
 func (s *Server) handleListTemplates(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +40,8 @@ func (s *Server) handleCreateTemplate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	tm, err := s.deps.Store.CreateTemplate(r.Context(), uid, req.Name, req.Phase, req.Sections)
+	tm, err := s.deps.Store.CreateTemplate(r.Context(), uid, req.Name, req.Phase, req.Sections,
+		req.SystemPrompt, req.Model, req.Temperature)
 	if errors.Is(err, store.ErrDuplicate) {
 		writeError(w, http.StatusConflict, "a template with that name already exists")
 		return
@@ -60,7 +67,8 @@ func (s *Server) handleUpdateTemplate(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	err := s.deps.Store.UpdateTemplate(r.Context(), uid, id, req.Name, req.Phase, req.Sections)
+	err := s.deps.Store.UpdateTemplate(r.Context(), uid, id, req.Name, req.Phase, req.Sections,
+		req.SystemPrompt, req.Model, req.Temperature)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return

@@ -100,7 +100,8 @@ func (s *Store) SeedBuiltInTemplates(ctx context.Context) error {
 // BuiltInTemplates returns the seeded built-in templates with parsed sections.
 func (s *Store) BuiltInTemplates(ctx context.Context) ([]model.Template, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, phase, sections FROM templates WHERE owner_id IS NULL ORDER BY name`)
+		`SELECT id, name, phase, sections, system_prompt, model, temperature
+		   FROM templates WHERE owner_id IS NULL ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -109,12 +110,15 @@ func (s *Store) BuiltInTemplates(ctx context.Context) ([]model.Template, error) 
 	for rows.Next() {
 		var tm model.Template
 		var sectionsJSON []byte
-		if err := rows.Scan(&tm.ID, &tm.Name, &tm.Phase, &sectionsJSON); err != nil {
+		var systemPrompt, modelName *string
+		var temperature *float64
+		if err := rows.Scan(&tm.ID, &tm.Name, &tm.Phase, &sectionsJSON, &systemPrompt, &modelName, &temperature); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(sectionsJSON, &tm.Sections); err != nil {
 			return nil, err
 		}
+		applyTemplateOverrides(&tm, systemPrompt, modelName, temperature)
 		out = append(out, tm)
 	}
 	if out == nil {
@@ -139,6 +143,42 @@ func (s *Store) BuiltInTemplateNames(ctx context.Context) ([]string, error) {
 		out = append(out, n)
 	}
 	return out, rows.Err()
+}
+
+// applyTemplateOverrides copies scanned nullable system_prompt/model/temperature
+// columns onto tm. A nil systemPrompt/modelName scans as "" (unset); temperature
+// is copied as-is (nil = unset).
+func applyTemplateOverrides(tm *model.Template, systemPrompt, modelName *string, temperature *float64) {
+	if systemPrompt != nil {
+		tm.SystemPrompt = *systemPrompt
+	}
+	if modelName != nil {
+		tm.Model = *modelName
+	}
+	tm.Temperature = temperature
+}
+
+// nullableTemplateStr returns nil (SQL NULL) for a blank string, else the
+// trimmed string, for writing optional system_prompt/model columns.
+func nullableTemplateStr(v string) any {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil
+	}
+	return v
+}
+
+func validateTemplateOverrides(systemPrompt, modelName string, temperature *float64) error {
+	if len([]rune(strings.TrimSpace(systemPrompt))) > 4000 {
+		return ValidationError("template system prompt too long")
+	}
+	if len([]rune(strings.TrimSpace(modelName))) > 200 {
+		return ValidationError("template model invalid")
+	}
+	if temperature != nil && (*temperature < 0 || *temperature > 2) {
+		return ValidationError("template temperature must be between 0 and 2")
+	}
+	return nil
 }
 
 func validateTemplate(name string, sections []model.TemplateSection) error {
@@ -180,7 +220,8 @@ func validateTemplatePhase(phase string) error {
 
 func (s *Store) ListTemplates(ctx context.Context, ownerID string) ([]model.Template, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, phase, sections, (owner_id IS NULL) AS built_in
+		`SELECT id, name, phase, sections, (owner_id IS NULL) AS built_in,
+		        system_prompt, model, temperature
 		   FROM templates WHERE owner_id IS NULL OR owner_id=$1
 		   ORDER BY (owner_id IS NULL) DESC, lower(name)`, ownerID)
 	if err != nil {
@@ -191,15 +232,46 @@ func (s *Store) ListTemplates(ctx context.Context, ownerID string) ([]model.Temp
 	for rows.Next() {
 		var tm model.Template
 		var sectionsJSON []byte
-		if err := rows.Scan(&tm.ID, &tm.Name, &tm.Phase, &sectionsJSON, &tm.BuiltIn); err != nil {
+		var systemPrompt, modelName *string
+		var temperature *float64
+		if err := rows.Scan(&tm.ID, &tm.Name, &tm.Phase, &sectionsJSON, &tm.BuiltIn,
+			&systemPrompt, &modelName, &temperature); err != nil {
 			return nil, err
 		}
 		if err := json.Unmarshal(sectionsJSON, &tm.Sections); err != nil {
 			return nil, err
 		}
+		applyTemplateOverrides(&tm, systemPrompt, modelName, temperature)
 		out = append(out, tm)
 	}
 	return out, rows.Err()
+}
+
+// GetTemplate returns a single template by id, visible to ownerID when it is
+// either a built-in (owner_id NULL) or owned by ownerID. Returns ErrNotFound
+// otherwise (including cross-owner lookups).
+func (s *Store) GetTemplate(ctx context.Context, ownerID, id string) (model.Template, error) {
+	var tm model.Template
+	var sectionsJSON []byte
+	var systemPrompt, modelName *string
+	var temperature *float64
+	err := s.pool.QueryRow(ctx,
+		`SELECT id, name, phase, sections, (owner_id IS NULL) AS built_in,
+		        system_prompt, model, temperature
+		   FROM templates WHERE id=$1 AND (owner_id IS NULL OR owner_id=$2)`,
+		id, ownerID).Scan(&tm.ID, &tm.Name, &tm.Phase, &sectionsJSON, &tm.BuiltIn,
+		&systemPrompt, &modelName, &temperature)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.Template{}, ErrNotFound
+	}
+	if err != nil {
+		return model.Template{}, err
+	}
+	if err := json.Unmarshal(sectionsJSON, &tm.Sections); err != nil {
+		return model.Template{}, err
+	}
+	applyTemplateOverrides(&tm, systemPrompt, modelName, temperature)
+	return tm, nil
 }
 
 // TemplatesForSummary returns built-ins + the owner's templates for the summarize fan-out.
@@ -222,7 +294,10 @@ func (s *Store) nameTaken(ctx context.Context, ownerID, name, excludeID string) 
 	return exists, err
 }
 
-func (s *Store) CreateTemplate(ctx context.Context, ownerID, name, phase string, sections []model.TemplateSection) (model.Template, error) {
+// CreateTemplate creates an owner-scoped template. systemPrompt, modelName,
+// and temperature are optional per-template agent overrides: an empty
+// systemPrompt/modelName or a nil temperature means "unset".
+func (s *Store) CreateTemplate(ctx context.Context, ownerID, name, phase string, sections []model.TemplateSection, systemPrompt, modelName string, temperature *float64) (model.Template, error) {
 	phase = normalizeTemplatePhase(phase)
 	if err := validateTemplate(name, sections); err != nil {
 		return model.Template{}, err
@@ -230,7 +305,12 @@ func (s *Store) CreateTemplate(ctx context.Context, ownerID, name, phase string,
 	if err := validateTemplatePhase(phase); err != nil {
 		return model.Template{}, err
 	}
+	if err := validateTemplateOverrides(systemPrompt, modelName, temperature); err != nil {
+		return model.Template{}, err
+	}
 	name = strings.TrimSpace(name)
+	systemPrompt = strings.TrimSpace(systemPrompt)
+	modelName = strings.TrimSpace(modelName)
 	if taken, err := s.nameTaken(ctx, ownerID, name, ""); err != nil {
 		return model.Template{}, err
 	} else if taken {
@@ -240,14 +320,22 @@ func (s *Store) CreateTemplate(ctx context.Context, ownerID, name, phase string,
 	if err != nil {
 		return model.Template{}, err
 	}
-	tm := model.Template{ID: uuid.NewString(), Name: name, Phase: phase, Sections: sections, BuiltIn: false}
+	tm := model.Template{
+		ID: uuid.NewString(), Name: name, Phase: phase, Sections: sections, BuiltIn: false,
+		SystemPrompt: systemPrompt, Model: modelName, Temperature: temperature,
+	}
 	_, err = s.pool.Exec(ctx,
-		`INSERT INTO templates (id, owner_id, name, phase, sections) VALUES ($1,$2,$3,$4,$5::jsonb)`,
-		tm.ID, ownerID, name, phase, string(secJSON))
+		`INSERT INTO templates (id, owner_id, name, phase, sections, system_prompt, model, temperature)
+		 VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8)`,
+		tm.ID, ownerID, name, phase, string(secJSON),
+		nullableTemplateStr(systemPrompt), nullableTemplateStr(modelName), temperature)
 	return tm, err
 }
 
-func (s *Store) UpdateTemplate(ctx context.Context, ownerID, id, name, phase string, sections []model.TemplateSection) error {
+// UpdateTemplate updates an owner-scoped template, including its optional
+// agent overrides. Passing an empty systemPrompt/modelName or a nil
+// temperature clears that override (unset).
+func (s *Store) UpdateTemplate(ctx context.Context, ownerID, id, name, phase string, sections []model.TemplateSection, systemPrompt, modelName string, temperature *float64) error {
 	phase = normalizeTemplatePhase(phase)
 	if err := validateTemplate(name, sections); err != nil {
 		return err
@@ -255,7 +343,12 @@ func (s *Store) UpdateTemplate(ctx context.Context, ownerID, id, name, phase str
 	if err := validateTemplatePhase(phase); err != nil {
 		return err
 	}
+	if err := validateTemplateOverrides(systemPrompt, modelName, temperature); err != nil {
+		return err
+	}
 	name = strings.TrimSpace(name)
+	systemPrompt = strings.TrimSpace(systemPrompt)
+	modelName = strings.TrimSpace(modelName)
 	if taken, err := s.nameTaken(ctx, ownerID, name, id); err != nil {
 		return err
 	} else if taken {
@@ -266,8 +359,10 @@ func (s *Store) UpdateTemplate(ctx context.Context, ownerID, id, name, phase str
 		return err
 	}
 	ct, err := s.pool.Exec(ctx,
-		`UPDATE templates SET name=$1, phase=$2, sections=$3::jsonb WHERE id=$4 AND owner_id=$5`,
-		name, phase, string(secJSON), id, ownerID)
+		`UPDATE templates SET name=$1, phase=$2, sections=$3::jsonb, system_prompt=$4, model=$5, temperature=$6
+		  WHERE id=$7 AND owner_id=$8`,
+		name, phase, string(secJSON), nullableTemplateStr(systemPrompt), nullableTemplateStr(modelName), temperature,
+		id, ownerID)
 	if err != nil {
 		return err
 	}
