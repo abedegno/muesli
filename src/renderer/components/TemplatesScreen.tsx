@@ -21,6 +21,17 @@ function phaseLabel(phase: TemplatePhase): string {
   return phase
 }
 
+function uniqueDuplicateName(base: string, existing: string[]): string {
+  const taken = new Set(existing.map((n) => n.toLowerCase()))
+  let candidate = `${base} (copy)`
+  let n = 2
+  while (taken.has(candidate.toLowerCase())) {
+    candidate = `${base} (copy ${n})`
+    n += 1
+  }
+  return candidate
+}
+
 export function TemplatesScreen() {
   const [templates, setTemplates] = useState<Template[]>([])
   const [editing, setEditing] = useState<{ template?: Template } | null>(null)
@@ -35,6 +46,16 @@ export function TemplatesScreen() {
 
   const builtIns = templates.filter((t) => t.built_in)
   const mine = templates.filter((t) => !t.built_in)
+  const duplicate = async (t: Template) => {
+    const name = uniqueDuplicateName(t.name, mine.map((m) => m.name))
+    try {
+      await muesli.createTemplate(name, t.phase, t.sections, t.auto_run)
+      await reload()
+      notify(`Duplicated as "${name}"`, 'info')
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Could not duplicate template', 'error')
+    }
+  }
 
   return (
     <div className="mx-auto max-w-2xl p-6">
@@ -67,6 +88,9 @@ export function TemplatesScreen() {
                 <div className="flex items-center gap-2">
                   <Badge>{phaseLabel(t.phase)}</Badge>
                   <Badge tone={t.auto_run ? 'primary' : 'neutral'}>{t.auto_run ? 'Auto-run' : 'Manual'}</Badge>
+                  <Button variant="secondary" size="sm" aria-label={`Duplicate ${t.name}`} onClick={() => duplicate(t)}>
+                    Duplicate
+                  </Button>
                   <Button variant="secondary" size="sm" onClick={() => setEditing({ template: t })}>
                     Edit
                   </Button>
@@ -102,6 +126,9 @@ export function TemplatesScreen() {
                 </div>
                 <div className="flex items-center gap-2">
                   <Badge tone={t.auto_run ? 'primary' : 'neutral'}>{t.auto_run ? 'Auto-run' : 'Manual'}</Badge>
+                  <Button variant="secondary" size="sm" aria-label={`Duplicate ${t.name}`} onClick={() => duplicate(t)}>
+                    Duplicate
+                  </Button>
                   <Badge>Built-in</Badge>
                 </div>
               </li>
