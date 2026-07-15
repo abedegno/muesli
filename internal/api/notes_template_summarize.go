@@ -31,20 +31,11 @@ func (s *Server) handleSummarizeTemplate(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	templates, err := s.deps.Store.TemplatesForSummary(r.Context(), uid)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	visible := false
-	for _, tmpl := range templates {
-		if tmpl.ID == templateID {
-			visible = true
-			break
-		}
-	}
-	if !visible {
+	if _, err := s.deps.Store.GetTemplate(r.Context(), uid, templateID); errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	// Need a transcript to (re)summarize.

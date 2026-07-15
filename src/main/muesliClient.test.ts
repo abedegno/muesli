@@ -704,8 +704,8 @@ describe('MuesliClient', () => {
     const c = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
     const sections = [{ heading: 'Overview', instruction: 'Summarise' }]
     await c.listTemplates()
-    await c.createTemplate('Default', 'after', sections)
-    await c.updateTemplate('t1', 'Renamed', 'after', sections)
+    await c.createTemplate('Default', 'after', sections, true)
+    await c.updateTemplate('t1', 'Renamed', 'after', sections, false)
     await c.deleteTemplate('t1')
     expect(calls[0]).toMatchObject({ url: 'http://x/api/templates', method: 'GET' })
     expect(calls[1]).toMatchObject({ url: 'http://x/api/templates', method: 'POST', body: { name: 'Default', phase: 'after', sections } })

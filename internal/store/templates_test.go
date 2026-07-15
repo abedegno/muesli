@@ -54,7 +54,7 @@ func TestTemplateCRUD(t *testing.T) {
 	if err := st.SeedBuiltInTemplates(ctx); err != nil {
 		t.Fatal(err)
 	}
-	tm, err := st.CreateTemplate(ctx, owner, "Standup", "after", secs(), "", "", nil)
+	tm, err := st.CreateTemplate(ctx, owner, "Standup", "after", secs(), true, "", "", nil)
 	if err != nil || tm.ID == "" || tm.BuiltIn {
 		t.Fatalf("create: %v %+v", err, tm)
 	}
@@ -74,7 +74,7 @@ func TestTemplateCRUD(t *testing.T) {
 	if !sawBuiltIn || !sawMine {
 		t.Fatalf("list missing built-in or mine: %+v", list)
 	}
-	if err := st.UpdateTemplate(ctx, owner, tm.ID, "Standup 2", "after", secs(), "", "", nil); err != nil {
+	if err := st.UpdateTemplate(ctx, owner, tm.ID, "Standup 2", "after", secs(), true, "", "", nil); err != nil {
 		t.Fatalf("update: %v", err)
 	}
 	if err := st.DeleteTemplate(ctx, owner, tm.ID); err != nil {
@@ -91,7 +91,7 @@ func TestTemplateAgentOverridesRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
 	temp := 0.7
-	tm, err := st.CreateTemplate(ctx, owner, "Overrides", "after", secs(),
+	tm, err := st.CreateTemplate(ctx, owner, "Overrides", "after", secs(), true,
 		"You are a terse summarizer.", "llama3.2:3b", &temp)
 	if err != nil {
 		t.Fatalf("create: %v", err)
@@ -127,7 +127,7 @@ func TestTemplateAgentOverridesRoundTrip(t *testing.T) {
 
 	// Update to a different override set.
 	newTemp := 1.2
-	if err := st.UpdateTemplate(ctx, owner, tm.ID, "Overrides 2", "after", secs(),
+	if err := st.UpdateTemplate(ctx, owner, tm.ID, "Overrides 2", "after", secs(), true,
 		"Be verbose.", "llama3.2:70b", &newTemp); err != nil {
 		t.Fatalf("update: %v", err)
 	}
@@ -140,7 +140,7 @@ func TestTemplateAgentOverridesRoundTrip(t *testing.T) {
 	}
 
 	// Update to clear overrides (empty/nil = unset).
-	if err := st.UpdateTemplate(ctx, owner, tm.ID, "Overrides 3", "after", secs(), "", "", nil); err != nil {
+	if err := st.UpdateTemplate(ctx, owner, tm.ID, "Overrides 3", "after", secs(), true, "", "", nil); err != nil {
 		t.Fatalf("update clear: %v", err)
 	}
 	got, err = st.GetTemplate(ctx, owner, tm.ID)
@@ -153,7 +153,7 @@ func TestTemplateAgentOverridesRoundTrip(t *testing.T) {
 
 	// Out-of-range temperature is rejected.
 	badTemp := 5.0
-	if _, err := st.CreateTemplate(ctx, owner, "BadTemp", "after", secs(), "", "", &badTemp); err == nil {
+	if _, err := st.CreateTemplate(ctx, owner, "BadTemp", "after", secs(), true, "", "", &badTemp); err == nil {
 		t.Error("out-of-range temperature should fail validation")
 	}
 
@@ -170,14 +170,14 @@ func TestTemplateOwnerScopingAndBuiltInReadOnly(t *testing.T) {
 	other := addUser(t, st)
 	ctx := context.Background()
 	_ = st.SeedBuiltInTemplates(ctx)
-	tm, _ := st.CreateTemplate(ctx, owner, "Mine", "after", secs(), "", "", nil)
-	if err := st.UpdateTemplate(ctx, other, tm.ID, "X", "after", secs(), "", "", nil); !errors.Is(err, store.ErrNotFound) {
+	tm, _ := st.CreateTemplate(ctx, owner, "Mine", "after", secs(), true, "", "", nil)
+	if err := st.UpdateTemplate(ctx, other, tm.ID, "X", "after", secs(), true, "", "", nil); !errors.Is(err, store.ErrNotFound) {
 		t.Errorf("cross-owner update: want ErrNotFound, got %v", err)
 	}
 	// built-in (owner_id NULL) cannot be updated/deleted by a user
 	builtins, _ := st.BuiltInTemplates(ctx)
 	if len(builtins) > 0 {
-		if err := st.UpdateTemplate(ctx, owner, builtins[0].ID, "Hacked", "after", secs(), "", "", nil); !errors.Is(err, store.ErrNotFound) {
+		if err := st.UpdateTemplate(ctx, owner, builtins[0].ID, "Hacked", "after", secs(), true, "", "", nil); !errors.Is(err, store.ErrNotFound) {
 			t.Errorf("built-in update: want ErrNotFound, got %v", err)
 		}
 		if err := st.DeleteTemplate(ctx, owner, builtins[0].ID); !errors.Is(err, store.ErrNotFound) {
@@ -190,19 +190,19 @@ func TestTemplateValidationAndDuplicate(t *testing.T) {
 	t.Parallel()
 	st, owner, _ := newStoreWithOwner(t)
 	ctx := context.Background()
-	if _, err := st.CreateTemplate(ctx, owner, "  ", "after", secs(), "", "", nil); err == nil {
+	if _, err := st.CreateTemplate(ctx, owner, "  ", "after", secs(), true, "", "", nil); err == nil {
 		t.Error("empty name should fail")
 	}
-	if _, err := st.CreateTemplate(ctx, owner, "X", "after", nil, "", "", nil); err == nil {
+	if _, err := st.CreateTemplate(ctx, owner, "X", "after", nil, true, "", "", nil); err == nil {
 		t.Error("no sections should fail")
 	}
-	if _, err := st.CreateTemplate(ctx, owner, "X", "after", []model.TemplateSection{{Heading: "", Instruction: "y"}}, "", "", nil); err == nil {
+	if _, err := st.CreateTemplate(ctx, owner, "X", "after", []model.TemplateSection{{Heading: "", Instruction: "y"}}, true, "", "", nil); err == nil {
 		t.Error("empty heading should fail")
 	}
-	if _, err := st.CreateTemplate(ctx, owner, "Dup", "after", secs(), "", "", nil); err != nil {
+	if _, err := st.CreateTemplate(ctx, owner, "Dup", "after", secs(), true, "", "", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := st.CreateTemplate(ctx, owner, "dup", "after", secs(), "", "", nil); !errors.Is(err, store.ErrDuplicate) {
+	if _, err := st.CreateTemplate(ctx, owner, "dup", "after", secs(), true, "", "", nil); !errors.Is(err, store.ErrDuplicate) {
 		t.Errorf("dup name: want ErrDuplicate, got %v", err)
 	}
 	_ = strings.TrimSpace
@@ -218,7 +218,7 @@ func TestNoteOwnerIDAndTemplatesForSummary(t *testing.T) {
 	if err != nil || got != owner {
 		t.Fatalf("NoteOwnerID: %v %q want %q", err, got, owner)
 	}
-	tm, _ := st.CreateTemplate(ctx, owner, "Custom", "after", secs(), "", "", nil)
+	tm, _ := st.CreateTemplate(ctx, owner, "Custom", "after", secs(), true, "", "", nil)
 	forSum, err := st.TemplatesForSummary(ctx, owner)
 	if err != nil {
 		t.Fatal(err)

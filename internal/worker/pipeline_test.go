@@ -538,7 +538,7 @@ func TestSummarizeFansOutOwnerTemplates(t *testing.T) {
 
 	custom, err := st.CreateTemplate(ctx, ownerID, "My Custom", "after", []model.TemplateSection{
 		{Heading: "Recap", Instruction: "Summarise in one sentence."},
-	}, "", "", nil)
+	}, true, "", "", nil)
 	if err != nil {
 		t.Fatalf("CreateTemplate: %v", err)
 	}
