@@ -78,6 +78,33 @@ func EnsureModel(ctx context.Context, dir, modelURL string, onProgress func(done
 	return target, nil
 }
 
+// ResolveModel returns a usable local path to a model, preferring a PRE-BUNDLED
+// file. If name is set and `<name>` (or `<name>.bin`) already exists in dir,
+// that path is returned directly with NO download -- this is how the packaged
+// desktop app loads its bundled ggml model when no MODEL_URL is set. Otherwise
+// it falls back to EnsureModel (download + cache from modelURL). It errors when
+// there is neither a bundled file nor a modelURL.
+func ResolveModel(ctx context.Context, dir, name, modelURL string, onProgress func(done, total int64)) (string, error) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		return "", fmt.Errorf("pluginkit: model dir is required")
+	}
+	if name = strings.TrimSpace(name); name != "" {
+		fname := name
+		if !strings.HasSuffix(fname, ".bin") {
+			fname += ".bin"
+		}
+		bundled := filepath.Join(dir, fname)
+		if fi, err := os.Stat(bundled); err == nil && !fi.IsDir() {
+			return bundled, nil
+		}
+	}
+	if strings.TrimSpace(modelURL) == "" {
+		return "", fmt.Errorf("pluginkit: no bundled model file for %q in %q and no model-url to download from", name, dir)
+	}
+	return EnsureModel(ctx, dir, modelURL, onProgress)
+}
+
 func cachedModelPath(dir, modelURL string) string {
 	sum := sha256.Sum256([]byte(modelURL))
 	name := hex.EncodeToString(sum[:])

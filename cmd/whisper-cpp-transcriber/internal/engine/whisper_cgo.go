@@ -143,11 +143,14 @@ func (e *Engine) Transcribe(ctx context.Context, pcm []float32, opts pluginkit.T
 
 func (e *Engine) ensureModel(ctx context.Context) error {
 	e.modelOnce.Do(func() {
-		if e.cfg.ModelDir == "" || e.cfg.ModelURL == "" {
-			e.modelErr = errors.New("whisper_cgo: model-dir and model-url are required")
+		if e.cfg.ModelDir == "" {
+			e.modelErr = errors.New("whisper_cgo: model-dir is required")
 			return
 		}
-		path, err := pluginkit.EnsureModel(ctx, e.cfg.ModelDir, e.cfg.ModelURL, nil)
+		// Prefer a pre-bundled model file (the packaged app ships one at
+		// ModelDir/<Model>.bin, no MODEL_URL); fall back to downloading from
+		// model-url for dev/hosted. See pluginkit.ResolveModel.
+		path, err := pluginkit.ResolveModel(ctx, e.cfg.ModelDir, e.cfg.Model, e.cfg.ModelURL, nil)
 		if err != nil {
 			e.modelErr = fmt.Errorf("whisper_cgo: ensure model: %w", err)
 			return
