@@ -86,6 +86,62 @@ describe('TemplatesScreen', () => {
     expect(row).toHaveTextContent('Auto-run')
   })
 
+  it('duplicates a custom template with a "(copy)" suffix', async () => {
+    const user = userEvent.setup()
+    renderScreen()
+    const duplicate = await screen.findByRole('button', { name: 'Duplicate My Standup' })
+    await user.click(duplicate)
+    await waitFor(() => expect(createTemplate).toHaveBeenCalledWith(
+      'My Standup (copy)',
+      'pre',
+      custom.sections,
+      true,
+    ))
+  })
+
+  it('duplicates a built-in template into an owned copy', async () => {
+    const user = userEvent.setup()
+    renderScreen()
+    const duplicate = await screen.findByRole('button', { name: 'Duplicate General' })
+    await user.click(duplicate)
+    await waitFor(() => expect(createTemplate).toHaveBeenCalledWith(
+      'General (copy)',
+      'after',
+      builtIn.sections,
+      true,
+    ))
+  })
+
+  it('increments the suffix when a "(copy)" already exists', async () => {
+    const user = userEvent.setup()
+    listTemplates.mockResolvedValueOnce([
+      builtIn,
+      custom,
+      { ...custom, id: 'c2', name: 'My Standup (copy)' },
+    ])
+
+    renderScreen()
+    const duplicate = await screen.findByRole('button', { name: 'Duplicate My Standup' })
+    await user.click(duplicate)
+    await waitFor(() => expect(createTemplate).toHaveBeenCalledWith(
+      'My Standup (copy 2)',
+      'pre',
+      custom.sections,
+      true,
+    ))
+  })
+
+  it('shows an error toast if duplicate fails', async () => {
+    const user = userEvent.setup()
+    createTemplate.mockRejectedValueOnce(new Error('a template with that name already exists'))
+
+    renderScreen()
+    const duplicate = await screen.findByRole('button', { name: 'Duplicate My Standup' })
+    await user.click(duplicate)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('a template with that name already exists')
+  })
+
   it('shows a Delete button for custom templates and deletes on click', async () => {
     renderScreen()
     // Step 1: click the Delete button to open the dialog
