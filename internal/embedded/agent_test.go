@@ -1,11 +1,16 @@
 package embedded
 
 import (
+	"bufio"
+	"context"
 	"encoding/json"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBuildOllamaAgentCmdAndConfigJSON(t *testing.T) {
@@ -85,5 +90,103 @@ func TestLocateOllamaAgentBinaryOverride(t *testing.T) {
 	}
 	if got != bin {
 		t.Fatalf("binary = %q, want %q", got, bin)
+	}
+}
+
+// newFakeAgentHandle spawns the current test binary re-invoked as
+// TestHelperProcess (the standard os/exec test double pattern), standing in
+// for the ollama-agent child process without touching the network or the real
+// binary. mode selects the helper's behavior on SIGINT.
+func newFakeAgentHandle(t *testing.T, mode string) (*AgentHandle, *exec.Cmd, <-chan struct{}) {
+	t.Helper()
+
+	cmd := exec.Command(os.Args[0], "-test.run=TestHelperProcess", "--", mode)
+	cmd.Env = append(os.Environ(), "GO_WANT_HELPER_PROCESS=1")
+
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatalf("stdout pipe: %v", err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start fake process: %v", err)
+	}
+	t.Cleanup(func() {
+		if cmd.Process != nil {
+			_ = cmd.Process.Kill()
+		}
+	})
+
+	// Block until the helper has installed its signal handling and reported
+	// readiness, so the SIGINT sent below can never race the child's startup.
+	reader := bufio.NewReader(stdout)
+	line, err := reader.ReadString('\n')
+	if err != nil || strings.TrimSpace(line) != "ready" {
+		t.Fatalf("helper process did not signal ready: line=%q err=%v", line, err)
+	}
+
+	handle := &AgentHandle{
+		cmd:  cmd,
+		done: make(chan error, 1),
+	}
+	exited := make(chan struct{})
+	go func() {
+		// Drain any remaining stdout so Wait doesn't block on pending pipe I/O.
+		_, _ = io.Copy(io.Discard, reader)
+	}()
+	go func() {
+		handle.done <- cmd.Wait()
+		close(exited)
+	}()
+
+	return handle, cmd, exited
+}
+
+func TestAgentHandleStopSignalsThenExits(t *testing.T) {
+	t.Parallel()
+
+	handle, cmd, _ := newFakeAgentHandle(t, "exit-on-interrupt")
+
+	if err := handle.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop() error: %v", err)
+	}
+	if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+		t.Fatal("expected process to have exited cleanly after SIGINT")
+	}
+
+	// Calling Stop again must be a no-op (sync.Once) and return the same result.
+	if err := handle.Stop(context.Background()); err != nil {
+		t.Fatalf("second Stop() error: %v", err)
+	}
+}
+
+func TestStopAgentStartupCleanupDoesNotHangForever(t *testing.T) {
+	t.Parallel()
+
+	handle, _, exited := newFakeAgentHandle(t, "ignore-interrupt")
+
+	// stopAgentStartupCleanup must bound its Stop() call: this is the regression
+	// this test guards against (it previously passed context.Background(),
+	// which never cancels, to the startup-cleanup Stop call, so a child
+	// that ignores SIGINT would hang server startup forever).
+	cleanupDone := make(chan error, 1)
+	go func() {
+		cleanupDone <- stopAgentStartupCleanup(handle)
+	}()
+
+	assertCtx, assertCancel := context.WithTimeout(context.Background(), startupCleanupStopTimeout+3*time.Second)
+	defer assertCancel()
+	select {
+	case err := <-cleanupDone:
+		if err == nil {
+			t.Fatal("stopAgentStartupCleanup() error = nil, want non-nil after killing an unresponsive child")
+		}
+	case <-assertCtx.Done():
+		t.Fatal("stopAgentStartupCleanup did not return within a bounded time against an unresponsive child")
+	}
+
+	select {
+	case <-exited:
+	case <-time.After(2 * time.Second):
+		t.Fatal("child process did not exit after stopAgentStartupCleanup's Kill fallback")
 	}
 }

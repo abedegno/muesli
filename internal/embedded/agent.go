@@ -100,7 +100,7 @@ func StartOllamaAgent(ctx context.Context, ollamaURL string) (*AgentHandle, erro
 	}()
 
 	if err := waitForAgentReady(ctx, handle.EndpointURL); err != nil {
-		if stopErr := handle.Stop(context.Background()); stopErr != nil {
+		if stopErr := stopAgentStartupCleanup(handle); stopErr != nil {
 			return nil, fmt.Errorf("wait for ollama agent: %w (cleanup stop failed: %v)", err, stopErr)
 		}
 		return nil, fmt.Errorf("wait for ollama agent: %w", err)
@@ -145,6 +145,17 @@ func agentConfigJSON(ollamaURL, model string, temperature float64) string {
 	}
 	b, _ := json.Marshal(cfg)
 	return string(b)
+}
+
+// stopAgentStartupCleanup stops a child process that failed its readiness
+// check during StartOllamaAgent, bounded by startupCleanupStopTimeout so an
+// unresponsive (e.g. SIGINT-ignoring) child can never hang server startup
+// forever; Stop falls back to Kill once that bound elapses. Mirrors
+// stopStartupCleanup in whisper.go for WhisperHandle.
+func stopAgentStartupCleanup(h *AgentHandle) error {
+	stopCtx, cancel := context.WithTimeout(context.Background(), startupCleanupStopTimeout)
+	defer cancel()
+	return h.Stop(stopCtx)
 }
 
 func locateOllamaAgentBinary() (string, error) {
