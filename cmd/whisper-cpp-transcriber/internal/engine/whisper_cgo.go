@@ -41,7 +41,7 @@ const (
 	DefaultLanguage = "auto"
 )
 
-var ConfigSchema = json.RawMessage(`{"type":"object","properties":{"model":{"type":"string","title":"Model","description":"Model name reported by the whisper.cpp transcriber","default":"ggml-tiny.en"},"language":{"type":"string","title":"Language","description":"Language code to force, or \"auto\" to let whisper.cpp detect it","default":"auto"}},"additionalProperties":false}`)
+var ConfigSchema = json.RawMessage(`{"type":"object","properties":{"model":{"type":"string","title":"Model","description":"Model name reported by the whisper.cpp transcriber","default":"ggml-tiny.en"},"language":{"type":"string","title":"Language","description":"Language code to force, or \"auto\" to let whisper.cpp detect it","default":"auto"},"multitrack":{"type":"boolean","title":"Multitrack","description":"Split stereo input into per-channel transcription passes","default":false}},"additionalProperties":false}`)
 
 // Config configures the whisper.cpp cgo engine. Fields mirror the stub
 // engine's Config so that main.go and its tests work unchanged under either

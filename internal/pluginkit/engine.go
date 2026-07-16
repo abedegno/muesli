@@ -78,6 +78,19 @@ func TranscriberHandler(cfg Config, eng Transcriber) http.Handler {
 			badRequest(w, err)
 			return
 		}
+		var mt struct {
+			Multitrack bool `json:"multitrack"`
+		}
+		_ = json.Unmarshal(req.Config, &mt)
+		if mt.Multitrack {
+			res, err := runMultitrack(r.Context(), req.AudioURL, eng, req)
+			if err != nil {
+				internalServerError(w, err)
+				return
+			}
+			writeJSON(w, http.StatusOK, res)
+			return
+		}
 		pcm, err := DecodePCM(r.Context(), req.AudioURL)
 		if err != nil {
 			badRequest(w, err)
@@ -187,6 +200,17 @@ func (e httpStatusError) Error() string { return e.err.Error() }
 func handleTranscribeLike(ctx context.Context, eng Transcriber, req TranscribeRequest) (TranscribeResult, error) {
 	if err := validateTranscribeRequest(req); err != nil {
 		return TranscribeResult{}, httpStatusError{status: http.StatusBadRequest, err: err}
+	}
+	var mt struct {
+		Multitrack bool `json:"multitrack"`
+	}
+	_ = json.Unmarshal(req.Config, &mt)
+	if mt.Multitrack {
+		res, err := runMultitrack(ctx, req.AudioURL, eng, req)
+		if err != nil {
+			return TranscribeResult{}, httpStatusError{status: http.StatusBadRequest, err: err}
+		}
+		return res, nil
 	}
 	pcm, err := DecodePCM(ctx, req.AudioURL)
 	if err != nil {
