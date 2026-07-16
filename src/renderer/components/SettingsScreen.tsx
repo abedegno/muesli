@@ -196,6 +196,7 @@ export function SettingsScreen({
       <Button
         variant="destructive"
         onClick={async () => {
+          if (!window.confirm('Disconnect from this server? You will need to sign in again to reconnect.')) return
           await muesli.disconnect()
           onDisconnected()
         }}
@@ -206,6 +207,12 @@ export function SettingsScreen({
         <Button
           variant="secondary"
           onClick={async () => {
+            if (
+              !window.confirm(
+                "Switch to this device's built-in server? Your connection to the current server will be forgotten.",
+              )
+            )
+              return
             await muesli.resetToBuiltIn()
             const cfg = await muesli.getConfig()
             setServerUrl(cfg?.serverUrl ?? '')
