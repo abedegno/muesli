@@ -36,6 +36,15 @@ function StartupBanner({ onDismiss }: { onDismiss: () => void }) {
             <a className="underline underline-offset-2 hover:no-underline" href="https://ollama.com/download" target="_blank" rel="noreferrer">
               Download Ollama
             </a>
+            {' – '}
+            <a
+              className="underline underline-offset-2 hover:no-underline"
+              href="https://github.com/abedegno/muesli/blob/main/docs/DESKTOP-ONBOARDING.md"
+              target="_blank"
+              rel="noreferrer"
+            >
+              Learn more
+            </a>
           </p>
         </div>
         <button
