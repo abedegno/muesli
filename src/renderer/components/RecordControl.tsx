@@ -4,6 +4,7 @@ import { muesli } from '@/api'
 import { Button } from '@/components/ui/Button'
 import { useAnnouncer } from '@/hooks/useAnnouncer'
 import { loadAudioPrefs, saveAudioPrefs } from '@/lib/audioPrefs'
+import type { SysAudioStatus } from '../../main/systemAudioPermission'
 
 export type RecordState = 'idle' | 'recording' | 'processing'
 
@@ -57,6 +58,7 @@ export function RecordControl({
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>(prefs.deviceId)
   const [gainPct, setGainPct] = useState<number>(Math.round(prefs.gain * 100))
+  const [systemAudioStatus, setSystemAudioStatus] = useState<SysAudioStatus | null>(null)
 
   // Announce recording state changes via the live region.
   useEffect(() => {
@@ -107,6 +109,22 @@ export function RecordControl({
       /* unavailable */
     }
     return cleanup
+  }, [])
+
+  useEffect(() => {
+    if (!isMacOS()) return
+    let cancelled = false
+    void (async () => {
+      try {
+        const status = await muesli.systemAudioStatus?.()
+        if (!cancelled) setSystemAudioStatus(status ?? 'unknown')
+      } catch {
+        if (!cancelled) setSystemAudioStatus('unknown')
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   function handleDeviceChange(e: React.ChangeEvent<HTMLSelectElement>) {
@@ -205,6 +223,8 @@ export function RecordControl({
     )
   }
 
+  const showSystemAudioNotice = isMacOS() && systemAudioStatus != null && systemAudioStatus !== 'granted'
+
   const disabled = state !== 'idle'
 
   const controls = (
@@ -263,6 +283,27 @@ export function RecordControl({
     }
     return (
       <div className="flex flex-col gap-3">
+        {showSystemAudioNotice ? (
+          <div
+            role="alert"
+            className="rounded-[var(--radius)] border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+          >
+            <p className="font-medium text-amber-600">System audio capture is not enabled.</p>
+            <p className="mt-1 text-muted-foreground">
+              You can still record microphone-only. Open System Settings to grant access if you want both sides of the call.
+            </p>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="mt-2"
+              onClick={() => {
+                void muesli.systemAudioOpenSettings?.()
+              }}
+            >
+              Open System Settings
+            </Button>
+          </div>
+        ) : null}
         {controls}
         <Button variant="primary" onClick={onStart}>
           <Mic size={18} /> Record
@@ -273,6 +314,27 @@ export function RecordControl({
   if (state === 'recording') {
     return (
       <div className="flex flex-col gap-3">
+        {showSystemAudioNotice ? (
+          <div
+            role="alert"
+            className="rounded-[var(--radius)] border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+          >
+            <p className="font-medium text-amber-600">System audio capture is not enabled.</p>
+            <p className="mt-1 text-muted-foreground">
+              You can still record microphone-only. Open System Settings to grant access if you want both sides of the call.
+            </p>
+            <Button
+              variant="secondary"
+              size="sm"
+              className="mt-2"
+              onClick={() => {
+                void muesli.systemAudioOpenSettings?.()
+              }}
+            >
+              Open System Settings
+            </Button>
+          </div>
+        ) : null}
         {controls}
         <div className="flex items-center gap-3" role="status" aria-live="polite">
           <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-destructive" aria-hidden />
