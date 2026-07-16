@@ -36,7 +36,16 @@ export function TemplateEditor({
 
   const valid =
     name.trim().length > 0 &&
-    sections.every((s) => s.heading.trim().length > 0 && s.instruction.trim().length > 0)
+    name.trim().length <= 80 &&
+    sections.length > 0 &&
+    sections.length <= 12 &&
+    sections.every(
+      (s) =>
+        s.heading.trim().length > 0 &&
+        s.heading.trim().length <= 80 &&
+        s.instruction.trim().length > 0 &&
+        s.instruction.trim().length <= 500,
+    )
 
   const update = (i: number, patch: Partial<TemplateSection>) =>
     setSections(sections.map((s, j) => (j === i ? { ...s, ...patch } : s)))
@@ -52,7 +61,13 @@ export function TemplateEditor({
     <Dialog open={open} onOpenChange={(o) => !o && onClose()} title={title}>
       <label htmlFor="template-editor-name" className="mb-3 block text-sm">
         <span className="mb-1 block font-medium">Template name</span>
-        <Input id="template-editor-name" aria-label="Template name" value={name} onChange={(e) => setName(e.target.value)} />
+        <Input
+          id="template-editor-name"
+          aria-label="Template name"
+          value={name}
+          maxLength={80}
+          onChange={(e) => setName(e.target.value)}
+        />
       </label>
       <label htmlFor="template-editor-phase" className="mb-3 block text-sm">
         <span className="mb-1 block font-medium">Phase</span>
@@ -86,6 +101,7 @@ export function TemplateEditor({
             <Input
               aria-label={`Section ${i + 1} heading`}
               value={section.heading}
+              maxLength={80}
               onChange={(e) => update(i, { heading: e.target.value })}
               placeholder="Heading"
               className="mb-2"
@@ -93,6 +109,7 @@ export function TemplateEditor({
             <textarea
               aria-label={`Section ${i + 1} instruction`}
               value={section.instruction}
+              maxLength={500}
               onChange={(e) => update(i, { instruction: e.target.value })}
               placeholder="Instruction"
               rows={3}
@@ -122,9 +139,10 @@ export function TemplateEditor({
             </div>
           </div>
         ))}
-        <Button variant="secondary" size="sm" className="self-start" onClick={add}>
+        <Button variant="secondary" size="sm" className="self-start" onClick={add} disabled={sections.length >= 12}>
           + Add section
         </Button>
+        {sections.length >= 12 && <p className="text-xs text-muted-foreground">Maximum 12 sections</p>}
       </div>
       <div className="flex items-center justify-end gap-2">
         <Button variant="secondary" size="sm" onClick={onClose}>
