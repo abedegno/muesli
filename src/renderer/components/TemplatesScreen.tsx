@@ -55,6 +55,7 @@ export function TemplatesScreen() {
   const [templates, setTemplates] = useState<Template[]>([])
   const [editing, setEditing] = useState<{ template?: Template } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<Template | null>(null)
+  const [previewing, setPreviewing] = useState<Template | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { notify } = useToast()
 
@@ -179,6 +180,9 @@ export function TemplatesScreen() {
                   <Badge>{phaseLabel(t.phase)}</Badge>
                 </div>
                 <div className="flex items-center gap-2">
+                  <Button variant="ghost" size="sm" aria-label={`View ${t.name} sections`} onClick={() => setPreviewing(t)}>
+                    View
+                  </Button>
                   <Badge tone={t.auto_run ? 'primary' : 'neutral'}>{t.auto_run ? 'Auto-run' : 'Manual'}</Badge>
                   <Button variant="secondary" size="sm" aria-label={`Duplicate ${t.name}`} onClick={() => duplicate(t)}>
                     Duplicate
@@ -246,6 +250,34 @@ export function TemplatesScreen() {
               }}
             >
               Delete
+            </Button>
+          </div>
+        </Dialog>
+      )}
+
+      {previewing !== null && (
+        <Dialog
+          open
+          onOpenChange={(o) => { if (!o) setPreviewing(null) }}
+          title={previewing.name}
+        >
+          <div className="mb-3 flex items-center gap-2">
+            <Badge>{phaseLabel(previewing.phase)}</Badge>
+            <Badge tone={previewing.auto_run ? 'primary' : 'neutral'}>
+              {previewing.auto_run ? 'Auto-run' : 'Manual'}
+            </Badge>
+          </div>
+          <ul className="flex max-h-80 flex-col gap-3 overflow-y-auto">
+            {previewing.sections.map((s, i) => (
+              <li key={i} className="rounded-[var(--radius)] border border-border p-3">
+                <div className="mb-1 font-medium">{s.heading}</div>
+                <div className="text-sm text-muted-foreground">{s.instruction}</div>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-4 flex justify-end">
+            <Button variant="secondary" size="sm" onClick={() => setPreviewing(null)}>
+              Close
             </Button>
           </div>
         </Dialog>
