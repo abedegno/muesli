@@ -8,14 +8,15 @@ within the `docs/` directory.
 
 ## Understand the system
 
-| Document                                   | What's in it                                                                    |
-| ------------------------------------------ | ------------------------------------------------------------------------------- |
-| [`../README.md`](../README.md)             | Project intro, quickstart, and Docker Compose setup.                            |
-| [`GETTING_STARTED.md`](GETTING_STARTED.md) | First-run walkthrough for setup, client connect, and a first meeting.           |
-| [`ARCHITECTURE.md`](ARCHITECTURE.md)       | Components, processing pipeline, package map, and plugin contract.              |
-| [`../CONTEXT.md`](../CONTEXT.md)           | Shared language, domain glossary, and architecture map for contributors.        |
-| [`../CHANGELOG.md`](../CHANGELOG.md)       | What's changed across releases.                                                 |
-| [`../ROADMAP.md`](../ROADMAP.md)           | High-level milestones (v2 → v5) closing the gap to Granola and into enterprise. |
+| Document                                         | What's in it                                                                    |
+| ------------------------------------------------ | ------------------------------------------------------------------------------- |
+| [`../README.md`](../README.md)                   | Project intro, quickstart, and Docker Compose setup.                            |
+| [`GETTING_STARTED.md`](GETTING_STARTED.md)       | First-run walkthrough for setup, client connect, and a first meeting.           |
+| [`DESKTOP-ONBOARDING.md`](DESKTOP-ONBOARDING.md) | Desktop onboarding for embedded mode, degraded mode, and Ollama setup.          |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md)             | Components, processing pipeline, package map, and plugin contract.              |
+| [`../CONTEXT.md`](../CONTEXT.md)                 | Shared language, domain glossary, and architecture map for contributors.        |
+| [`../CHANGELOG.md`](../CHANGELOG.md)             | What's changed across releases.                                                 |
+| [`../ROADMAP.md`](../ROADMAP.md)                 | High-level milestones (v2 → v5) closing the gap to Granola and into enterprise. |
 
 ---
 
