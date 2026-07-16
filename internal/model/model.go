@@ -357,6 +357,14 @@ const (
 	ReviewStateCompleted = "completed"
 )
 
+// Deterministic speaker labels produced by channel-based multitrack attribution
+// (the mic channel is the local user, the system channel is the other side).
+// These are ground truth, so they do not trigger the diarization review gate.
+const (
+	SpeakerYou  = "You"
+	SpeakerThem = "Them"
+)
+
 // DiarizationReview is the payload returned by the diarization review
 // endpoints. Turns are sorted ascending by confidence (NULLs last) then by
 // start_ms, so the lowest-confidence segments appear first for human review.
