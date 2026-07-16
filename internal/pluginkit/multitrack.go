@@ -45,9 +45,9 @@ func isNearSilent(pcm []float32) bool {
 func channelSpeaker(rawIndex int) string {
 	switch rawIndex {
 	case 0:
-		return "You"
+		return model.SpeakerYou
 	case 1:
-		return "Them"
+		return model.SpeakerThem
 	default:
 		return fmt.Sprintf("Speaker %d", rawIndex+1)
 	}

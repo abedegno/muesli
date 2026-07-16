@@ -17,8 +17,10 @@ import (
 // transcript row per note even under concurrent/retried transcribe jobs.
 //
 // review_state is set automatically:
-//   - If any segment has a non-empty Speaker, diarization ran → "pending".
-//   - Otherwise → "completed" (no diarization, nothing to review).
+//   - Acoustic diarization guesses speaker labels ("SPEAKER_00", ...) and needs
+//     confirming before summarizing → "pending".
+//   - Channel-based multitrack ("You"/"Them") is deterministic, and no-speaker
+//     transcripts have nothing to review → "completed".
 func (s *Store) SaveTranscript(ctx context.Context, tr model.Transcript) (model.Transcript, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -32,10 +34,13 @@ func (s *Store) SaveTranscript(ctx context.Context, tr model.Transcript) (model.
 		return model.Transcript{}, err
 	}
 
-	// Determine review_state: if any segment has a speaker, diarization ran.
+	// Determine review_state. Acoustic diarization guesses speaker labels
+	// (e.g. "SPEAKER_00") that a user confirms before summarizing -> "pending".
+	// Channel-based multitrack attribution (the deterministic "You"/"Them"
+	// role labels) is ground truth and needs no review -> stays "completed".
 	reviewState := model.ReviewStateCompleted
 	for _, seg := range tr.Segments {
-		if seg.Speaker != "" {
+		if seg.Speaker != "" && seg.Speaker != model.SpeakerYou && seg.Speaker != model.SpeakerThem {
 			reviewState = model.ReviewStatePending
 			break
 		}
