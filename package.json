@@ -21,7 +21,7 @@
     "url": "git+https://github.com/abedegno/muesli.git"
   },
   "keywords": [],
-  "author": "",
+  "author": "Muesli contributors",
   "license": "AGPL-3.0-or-later",
   "type": "commonjs",
   "bugs": {
