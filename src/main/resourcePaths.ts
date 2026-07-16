@@ -22,6 +22,21 @@ export function resolveServerBin(opts: {
   throw new Error('MUESLI_SERVER_BIN must point to the muesli server binary in development')
 }
 
+export function resolveAudiotapBin(opts: {
+  isPackaged: boolean
+  resourcesPath: string
+  env: NodeJS.ProcessEnv
+  platform?: NodeJS.Platform
+}): string {
+  const platform = opts.platform ?? process.platform
+
+  if (opts.isPackaged) {
+    return join(opts.resourcesPath, 'server', `muesli-audiotap${exeSuffix(platform)}`)
+  }
+
+  return opts.env.MUESLI_AUDIOTAP_BIN?.trim() ?? ''
+}
+
 export function resolveResourceEnv(opts: { isPackaged: boolean; resourcesPath: string; platform?: NodeJS.Platform }): Record<string, string> {
   const platform = opts.platform ?? process.platform
 
@@ -34,6 +49,7 @@ export function resolveResourceEnv(opts: { isPackaged: boolean; resourcesPath: s
     MUESLI_MODE: 'embedded',
     MUESLI_EMBEDDED_PG_BINARIES: join(opts.resourcesPath, 'pg'),
     MUESLI_EMBEDDED_PGVECTOR_DIR: join(opts.resourcesPath, 'pgvector'),
+    MUESLI_AUDIOTAP_BIN: join(opts.resourcesPath, 'server', `muesli-audiotap${exeSuffix(platform)}`),
     MUESLI_WHISPER_CPP_TRANSCRIBER_BIN: join(opts.resourcesPath, 'server', `whisper-cpp-transcriber${exeSuffix(platform)}`),
     MUESLI_WHISPER_MODEL_DIR: join(opts.resourcesPath, 'models', 'whisper'),
     MUESLI_WHISPER_MODEL: 'ggml-tiny.en',
