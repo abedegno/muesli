@@ -30,16 +30,31 @@ function makeDestination() {
   }
 }
 
+class TestBlob {
+  readonly type: string
+
+  constructor(_parts: BlobPart[], options?: BlobPropertyBag) {
+    this.type = options?.type ?? ''
+  }
+
+  async arrayBuffer(): Promise<ArrayBuffer> {
+    return new ArrayBuffer(0)
+  }
+}
+
 function makeAudioContext(gainNode: ReturnType<typeof makeGainNode>) {
   const source = makeMediaStreamSource()
   const destination = makeDestination()
+  const merger = { connect: vi.fn() }
   const ctx = {
     createMediaStreamSource: vi.fn(() => source),
     createGain: vi.fn(() => gainNode),
     createMediaStreamDestination: vi.fn(() => destination),
+    createChannelMerger: vi.fn(() => merger),
     close: vi.fn().mockResolvedValue(undefined),
     source,
     destination,
+    merger,
   }
   return ctx
 }
@@ -66,6 +81,7 @@ function makeMediaRecorder() {
 
 beforeEach(() => {
   vi.restoreAllMocks()
+  vi.stubGlobal('Blob', TestBlob as unknown as typeof Blob)
 })
 
 // ---------------------------------------------------------------------------
@@ -111,7 +127,6 @@ describe('ElectronCapture', () => {
     vi.stubGlobal('navigator', {
       mediaDevices: {
         getUserMedia: vi.fn().mockResolvedValue(makeMicStream()),
-        getDisplayMedia: vi.fn().mockRejectedValue(new Error('no display')),
       },
     })
 
@@ -120,8 +135,100 @@ describe('ElectronCapture', () => {
 
     expect(ctx.createGain).toHaveBeenCalledOnce()
     expect(gainNode.gain.value).toBe(0.5)
+    expect(ctx.createChannelMerger).not.toHaveBeenCalled()
     expect(ctx.source.connect).toHaveBeenCalledWith(gainNode)
     expect(gainNode.connect).toHaveBeenCalledWith(ctx.destination)
+
+    const result = await capture.stop()
+    expect(result.hasSystemAudio).toBe(false)
+  })
+
+  it('routes mic to merger input 0 and system to merger input 1 when a system stream is provided', async () => {
+    const gainNode = makeGainNode()
+    const ctx = makeAudioContext(gainNode)
+    const rec = makeMediaRecorder()
+
+    vi.stubGlobal('AudioContext', vi.fn(() => ctx))
+    vi.stubGlobal('MediaRecorder', Object.assign(vi.fn(() => rec), {
+      isTypeSupported: vi.fn(() => true),
+    }))
+
+    vi.stubGlobal('navigator', {
+      mediaDevices: {
+        getUserMedia: vi.fn().mockResolvedValue(makeMicStream()),
+      },
+    })
+
+    const capture = new ElectronCapture({
+      getSystemAudioStream: async () => makeMicStream(),
+    })
+    await capture.start()
+
+    expect(ctx.createChannelMerger).toHaveBeenCalledWith(2)
+    expect(gainNode.connect).toHaveBeenCalledWith(ctx.merger, 0, 0)
+    expect(ctx.source.connect).toHaveBeenCalledWith(ctx.merger, 0, 1)
+    expect(ctx.merger.connect).toHaveBeenCalledWith(ctx.destination)
+
+    const result = await capture.stop()
+    expect(result.hasSystemAudio).toBe(true)
+  })
+
+  it('falls back to mono mic and hasSystemAudio=false when no system stream', async () => {
+    const gainNode = makeGainNode()
+    const ctx = makeAudioContext(gainNode)
+    const rec = makeMediaRecorder()
+
+    vi.stubGlobal('AudioContext', vi.fn(() => ctx))
+    vi.stubGlobal('MediaRecorder', Object.assign(vi.fn(() => rec), {
+      isTypeSupported: vi.fn(() => true),
+    }))
+
+    vi.stubGlobal('navigator', {
+      mediaDevices: {
+        getUserMedia: vi.fn().mockResolvedValue(makeMicStream()),
+      },
+    })
+
+    const capture = new ElectronCapture({
+      getSystemAudioStream: async () => null,
+    })
+    await capture.start()
+
+    expect(ctx.createChannelMerger).not.toHaveBeenCalled()
+    expect(gainNode.connect).toHaveBeenCalledWith(ctx.destination)
+
+    const result = await capture.stop()
+    expect(result.hasSystemAudio).toBe(false)
+  })
+
+  it('treats a throwing provider as no system audio', async () => {
+    const gainNode = makeGainNode()
+    const ctx = makeAudioContext(gainNode)
+    const rec = makeMediaRecorder()
+
+    vi.stubGlobal('AudioContext', vi.fn(() => ctx))
+    vi.stubGlobal('MediaRecorder', Object.assign(vi.fn(() => rec), {
+      isTypeSupported: vi.fn(() => true),
+    }))
+
+    vi.stubGlobal('navigator', {
+      mediaDevices: {
+        getUserMedia: vi.fn().mockResolvedValue(makeMicStream()),
+      },
+    })
+
+    const capture = new ElectronCapture({
+      getSystemAudioStream: async () => {
+        throw new Error('x')
+      },
+    })
+    await capture.start()
+
+    expect(ctx.createChannelMerger).not.toHaveBeenCalled()
+    expect(gainNode.connect).toHaveBeenCalledWith(ctx.destination)
+
+    const result = await capture.stop()
+    expect(result.hasSystemAudio).toBe(false)
   })
 
   it('throws MicPermissionDeniedError (code mic-permission-denied) when getUserMedia rejects with NotAllowedError', async () => {

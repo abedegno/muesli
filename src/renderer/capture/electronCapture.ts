@@ -1,14 +1,12 @@
 import type { AudioCapture, CaptureResult } from '../../main/capture/audioCapture'
 import { PcmFrameEncoder } from '../../shared/pcm'
 
-// ElectronCapture (v1): microphone via getUserMedia, system audio via
-// getDisplayMedia (Chromium loopback where the OS allows it). Both streams are
-// mixed in a single AudioContext and encoded to WebM/Opus with MediaRecorder.
+// ElectronCapture (v1): microphone via getUserMedia, optional system audio via
+// an injected provider. Both streams are mixed in a single AudioContext and
+// encoded to WebM/Opus with MediaRecorder.
 //
-// LIMITATIONS (see plan + backlog): system-audio loopback is reliable on
-// Windows, partial on macOS (screen-share audio only / needs a loopback driver),
-// and PipeWire-dependent on Linux. When system audio is unavailable we record
-// mic-only and set hasSystemAudio=false so the UI can warn the user.
+// When system audio is unavailable we record mic-only and set hasSystemAudio=
+// false so the UI can warn the user.
 
 /** Thrown when the user denies microphone permission (NotAllowedError). */
 export class MicPermissionDeniedError extends Error {
@@ -33,6 +31,8 @@ export interface ElectronCaptureConfig {
   deviceId?: string
   /** Linear gain multiplier applied to the mic (0 = silent, 1 = unity, 2 = double). Defaults to 1.0. */
   gainLinear?: number
+  /** Optional provider for a system-audio MediaStream. */
+  getSystemAudioStream?: () => Promise<MediaStream | null>
   /** Optional PCM callback used by the live transcript stream. */
   onPcmFrame?: (frame: ArrayBuffer) => void
 }
@@ -51,11 +51,13 @@ export class ElectronCapture implements AudioCapture {
 
   private readonly deviceId?: string
   private readonly gainLinear: number
+  private readonly getSystemAudioStream?: () => Promise<MediaStream | null>
   private readonly onPcmFrame?: (frame: ArrayBuffer) => void
 
   constructor(config: ElectronCaptureConfig = {}) {
     this.deviceId = config.deviceId
     this.gainLinear = config.gainLinear ?? 1.0
+    this.getSystemAudioStream = config.getSystemAudioStream
     this.onPcmFrame = config.onPcmFrame
   }
 
@@ -69,6 +71,7 @@ export class ElectronCapture implements AudioCapture {
     const ctx = new AudioContext()
     this.audioCtx = ctx
     const destination = ctx.createMediaStreamDestination()
+    let gainNode: GainNode | undefined
     this.pcmEncoder = this.onPcmFrame ? new PcmFrameEncoder({ inputSampleRate: ctx.sampleRate }) : undefined
     if (this.pcmEncoder && this.onPcmFrame) {
       const tap = ctx.createScriptProcessor(4096, 2, 1)
@@ -106,11 +109,9 @@ export class ElectronCapture implements AudioCapture {
       })
       this.streams.push(mic)
       const micSource = ctx.createMediaStreamSource(mic)
-      const gainNode = ctx.createGain()
+      gainNode = ctx.createGain()
       gainNode.gain.value = this.gainLinear
       micSource.connect(gainNode)
-      gainNode.connect(destination)
-      if (this.pcmTap) gainNode.connect(this.pcmTap)
       this.hasMic = true
     } catch (err) {
       if (err instanceof Error && err.name === 'NotAllowedError') {
@@ -126,26 +127,27 @@ export class ElectronCapture implements AudioCapture {
       this.hasMic = false
     }
 
-    // System audio (best-effort; Chromium requires a video track to grant audio,
-    // so we request video then immediately drop its track).
-    try {
-      const display = await navigator.mediaDevices.getDisplayMedia({
-        audio: true,
-        video: true,
-      })
-      this.streams.push(display)
-      display.getVideoTracks().forEach((t) => {
-        t.stop()
-        display.removeTrack(t)
-      })
-      if (display.getAudioTracks().length > 0) {
-        const displaySource = ctx.createMediaStreamSource(display)
-        displaySource.connect(destination)
-        if (this.pcmTap) displaySource.connect(this.pcmTap)
-        this.hasSystem = true
+    if (gainNode) {
+      let systemStream: MediaStream | null = null
+      try {
+        systemStream = (await this.getSystemAudioStream?.()) ?? null
+      } catch {
+        systemStream = null
       }
-    } catch {
-      this.hasSystem = false
+
+      if (systemStream && this.hasMic) {
+        this.streams.push(systemStream)
+        const systemSource = ctx.createMediaStreamSource(systemStream)
+        const merger = ctx.createChannelMerger(2)
+        gainNode.connect(merger, 0, 0) // mic -> left
+        systemSource.connect(merger, 0, 1) // system -> right
+        merger.connect(destination)
+        if (this.pcmTap) merger.connect(this.pcmTap)
+        this.hasSystem = true
+      } else {
+        gainNode.connect(destination) // mono fallback (today's behavior)
+        if (this.pcmTap) gainNode.connect(this.pcmTap)
+      }
     }
 
     if (!this.hasMic && !this.hasSystem) {
