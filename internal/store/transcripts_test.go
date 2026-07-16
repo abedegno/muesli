@@ -259,7 +259,8 @@ func seedNoteWithOwner(t *testing.T, st *store.Store) (ownerID, noteID string) {
 }
 
 // TestSaveTranscript_reviewState verifies that SaveTranscript sets review_state
-// to "pending" when any segment has a speaker, and "completed" otherwise.
+// to "pending" for guessed (acoustic) speaker labels, and "completed" when there
+// are no speakers or only deterministic channel-based You/Them labels.
 func TestSaveTranscript_reviewState(t *testing.T) {
 	t.Parallel()
 	st := store.New(testutil.NewPool(t))
@@ -316,6 +317,26 @@ func TestSaveTranscript_reviewState(t *testing.T) {
 		}
 		if got.ReviewState != model.ReviewStateCompleted {
 			t.Errorf("persisted review_state: want %q, got %q", model.ReviewStateCompleted, got.ReviewState)
+		}
+	})
+
+	t.Run("multitrack_youthem_completed", func(t *testing.T) {
+		_, noteID := seedNoteWithOwner(t, st)
+		tr := model.Transcript{
+			NoteID:            noteID,
+			TranscriberPlugin: "whisper",
+			Model:             "base",
+			Segments: []model.Segment{
+				{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic", Speaker: model.SpeakerYou},
+				{StartMS: 1000, EndMS: 2000, Text: "hello", Source: "system", Speaker: model.SpeakerThem},
+			},
+		}
+		saved, err := st.SaveTranscript(ctx, tr)
+		if err != nil {
+			t.Fatalf("save: %v", err)
+		}
+		if saved.ReviewState != model.ReviewStateCompleted {
+			t.Errorf("channel-based You/Them needs no review: want %q, got %q", model.ReviewStateCompleted, saved.ReviewState)
 		}
 	})
 }
