@@ -13,6 +13,7 @@ const getMicrosoftCalendarOAuthStatus = vi.fn()
 const openMicrosoftCalendarOAuthStart = vi.fn()
 const getDigestConfig = vi.fn()
 const updateDigestConfig = vi.fn()
+const getServerHealth = vi.fn()
 
 vi.mock('@/api', () => ({
   muesli: {
@@ -25,12 +26,11 @@ vi.mock('@/api', () => ({
     openMicrosoftCalendarOAuthStart: () => openMicrosoftCalendarOAuthStart(),
     getDigestConfig: () => getDigestConfig(),
     updateDigestConfig: (cadence: string) => updateDigestConfig(cadence),
+    getServerHealth: () => getServerHealth(),
   },
 }))
 
 import { ServerHealthBadge, SettingsScreen } from './SettingsScreen'
-
-const fetchMock = vi.fn<typeof fetch>()
 
 afterEach(() => {
   cleanup()
@@ -48,7 +48,6 @@ beforeEach(() => {
 
 function renderScreen(serverUrl = 'http://localhost:8080') {
   getConfig.mockResolvedValue({ serverUrl })
-  vi.stubGlobal('fetch', fetchMock)
   return render(
     <MemoryRouter>
       <SettingsScreen onDisconnected={vi.fn()} onResetToBuiltIn={vi.fn()} />
@@ -126,32 +125,26 @@ describe('SettingsScreen', () => {
   })
 
   it('shows Connected for an ok health response', async () => {
-    fetchMock.mockResolvedValue({
-      ok: true,
-      json: async () => ({ status: 'ok' }),
-    } as Response)
+    getServerHealth.mockResolvedValue({ reachable: true })
 
     renderScreen()
 
     expect(await screen.findByText('Connected')).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent('Connected')
-    expect(fetchMock).toHaveBeenCalledWith('http://localhost:8080/healthz', expect.objectContaining({ signal: expect.any(AbortSignal) }))
+    expect(getServerHealth).toHaveBeenCalledTimes(1)
   })
 
-  it('shows a version when health includes one and normalizes trailing slashes', async () => {
-    fetchMock.mockResolvedValue({
-      ok: true,
-      json: async () => ({ status: 'ok', version: '1.2.3' }),
-    } as Response)
+  it('shows a version when health includes one', async () => {
+    getServerHealth.mockResolvedValue({ reachable: true, version: '1.2.3' })
 
     renderScreen('http://localhost:8080/')
 
     expect(await screen.findByText('Connected · v1.2.3')).toBeInTheDocument()
-    expect(fetchMock).toHaveBeenCalledWith('http://localhost:8080/healthz', expect.anything())
+    expect(getServerHealth).toHaveBeenCalledTimes(1)
   })
 
   it('shows Unreachable when the health request rejects', async () => {
-    fetchMock.mockRejectedValue(new Error('offline'))
+    getServerHealth.mockRejectedValue(new Error('offline'))
 
     renderScreen()
 
@@ -159,10 +152,7 @@ describe('SettingsScreen', () => {
   })
 
   it('shows Unreachable for a non-ok health response', async () => {
-    fetchMock.mockResolvedValue({
-      ok: false,
-      json: async () => ({ status: 'ok' }),
-    } as Response)
+    getServerHealth.mockResolvedValue({ reachable: false })
 
     renderScreen()
 
@@ -173,27 +163,22 @@ describe('SettingsScreen', () => {
     renderScreen('')
 
     expect(await screen.findByText('Not connected')).toBeInTheDocument()
-    await waitFor(() => expect(fetchMock).not.toHaveBeenCalled())
+    await waitFor(() => expect(getServerHealth).not.toHaveBeenCalled())
     expect(screen.queryByText('Connected')).toBeNull()
     expect(screen.queryByText('Unreachable')).toBeNull()
   })
 
   it('checks health again when the server URL changes', async () => {
-    fetchMock.mockResolvedValue({
-      ok: true,
-      json: async () => ({ status: 'ok' }),
-    } as Response)
-    vi.stubGlobal('fetch', fetchMock)
+    getServerHealth.mockResolvedValue({ reachable: true })
 
     const { rerender } = render(<ServerHealthBadge serverUrl="http://localhost:8080" />)
 
     expect(await screen.findByText('Connected')).toBeInTheDocument()
-    expect(fetchMock).toHaveBeenCalledWith('http://localhost:8080/healthz', expect.anything())
+    expect(getServerHealth).toHaveBeenCalledTimes(1)
 
     rerender(<ServerHealthBadge serverUrl="http://localhost:9090/" />)
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
-    expect(fetchMock).toHaveBeenLastCalledWith('http://localhost:9090/healthz', expect.anything())
+    await waitFor(() => expect(getServerHealth).toHaveBeenCalledTimes(2))
   })
 
   it('renders the auto-record toggle, defaults it off, and persists changes', async () => {

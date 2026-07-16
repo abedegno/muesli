@@ -109,6 +109,7 @@ app.whenReady().then(async () => {
     ipcMain.handle(IPC.getOnboarded, () => handlers.getOnboarded())
     ipcMain.handle(IPC.setOnboarded, (_e, onboarded: boolean) => handlers.setOnboarded(onboarded))
     ipcMain.handle(IPC.getReadyz, () => handlers.getReadyz())
+    ipcMain.handle(IPC.getServerHealth, () => handlers.getServerHealth())
     ipcMain.handle(IPC.connect, (_e, req: ConnectRequest) => handlers.connect(req))
     ipcMain.handle(IPC.disconnect, () => handlers.disconnect())
     ipcMain.handle(IPC.resetToBuiltIn, () => handlers.resetToBuiltIn())
