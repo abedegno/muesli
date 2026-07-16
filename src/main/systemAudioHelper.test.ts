@@ -50,7 +50,7 @@ describe('systemAudioHelper', () => {
     const helper = makeSystemAudioHelper({ platform: 'linux', binPath: '/tmp/muesli-audiotap' })
 
     expect(helper.available()).toBe(false)
-    expect(await helper.start()).toBeNull()
+    expect(await helper.start(() => {})).toBeNull()
     expect(spawnMock).not.toHaveBeenCalled()
   })
 
@@ -59,11 +59,11 @@ describe('systemAudioHelper', () => {
     const helper = makeSystemAudioHelper({ platform: 'darwin', binPath: '' })
 
     expect(helper.available()).toBe(false)
-    expect(await helper.start()).toBeNull()
+    expect(await helper.start(() => {})).toBeNull()
     expect(spawnMock).not.toHaveBeenCalled()
   })
 
-  it('starts the helper, reads the device id, and stops it with SIGTERM', async () => {
+  it('parses the META header and streams PCM', async () => {
     const { makeSystemAudioHelper } = await loadHelper()
     const child = createFakeChild()
     spawnMock.mockReturnValue(child)
@@ -73,15 +73,54 @@ describe('systemAudioHelper', () => {
       spawnImpl: spawnMock,
     })
 
-    const started = helper.start()
-    child.stdout.write('AudioTap:UID-123\n')
+    const pcm: Uint8Array[] = []
+    const started = helper.start((c) => pcm.push(c))
+    child.stdout.write('META sr=48000 ch=2 fmt=f32le\n')
 
-    await expect(started).resolves.toEqual({ deviceId: 'AudioTap:UID-123' })
+    await expect(started).resolves.toEqual({ sampleRate: 48000, channels: 2 })
+    child.stdout.write(Buffer.from([1, 2, 3, 4]))
+    expect(pcm.at(-1)).toEqual(new Uint8Array([1, 2, 3, 4]))
     await helper.stop()
 
     expect(spawnMock).toHaveBeenCalledWith('/tmp/muesli-audiotap', ['--start'], expect.objectContaining({
       stdio: ['ignore', 'pipe', 'pipe'],
     }))
     expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+  })
+
+  it('handles header + PCM in one chunk', async () => {
+    const { makeSystemAudioHelper } = await loadHelper()
+    const child = createFakeChild()
+    spawnMock.mockReturnValue(child)
+    const helper = makeSystemAudioHelper({
+      platform: 'darwin',
+      binPath: '/tmp/muesli-audiotap',
+      spawnImpl: spawnMock,
+    })
+
+    const pcm: Uint8Array[] = []
+    const started = helper.start((c) => pcm.push(c))
+    child.stdout.write(Buffer.concat([Buffer.from('META sr=48000 ch=2 fmt=f32le\n'), Buffer.from([9, 9])]))
+
+    await expect(started).resolves.toEqual({ sampleRate: 48000, channels: 2 })
+    expect(pcm).toEqual([new Uint8Array([9, 9])])
+    await helper.stop()
+  })
+
+  it('resolves null when the process exits before a header', async () => {
+    const { makeSystemAudioHelper } = await loadHelper()
+    const child = createFakeChild()
+    spawnMock.mockReturnValue(child)
+    const helper = makeSystemAudioHelper({
+      platform: 'darwin',
+      binPath: '/tmp/muesli-audiotap',
+      spawnImpl: spawnMock,
+    })
+
+    const started = helper.start(() => {})
+    child.emit('exit', 1, null)
+
+    await expect(started).resolves.toBeNull()
+    await helper.stop()
   })
 })

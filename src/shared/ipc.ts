@@ -1,6 +1,7 @@
 import type { ActionItem, ActionItemStatus, AudioUrlGrant, CalendarEvent, ChatSource, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, EmbeddedStartupStatus, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from './types'
 import type { UploadProgress } from '../main/uploadMachine'
 import type { MicStatus } from '../main/micPermission'
+import type { SystemAudioFormat } from '../main/systemAudioHelper'
 import type { SysAudioStatus } from '../main/systemAudioPermission'
 import type { ExportOptions } from './export'
 
@@ -115,6 +116,7 @@ export const IPC = {
   systemAudioOpenSettings: 'muesli:systemAudioOpenSettings',
   systemAudioAvailable: 'muesli:systemAudioAvailable',
   systemAudioStart: 'muesli:systemAudioStart',
+  systemAudioPcm: 'muesli:systemAudioPcm',
   systemAudioStop: 'muesli:systemAudioStop',
   writeClipboardText: 'muesli:writeClipboardText',
   getDigestConfig: 'muesli:getDigestConfig',
@@ -340,7 +342,8 @@ export interface MuesliBridge {
   systemAudioRequest(): Promise<SysAudioStatus>
   systemAudioOpenSettings(): Promise<void>
   systemAudioAvailable(): Promise<boolean>
-  systemAudioStart(): Promise<{ deviceId: string } | null>
+  systemAudioStart(): Promise<SystemAudioFormat | null>
+  onSystemAudioPcm(cb: (chunk: Uint8Array) => void): () => void
   systemAudioStop(): Promise<void>
   writeClipboardText(text: string): Promise<void>
   getDigestConfig(): Promise<DigestConfig>

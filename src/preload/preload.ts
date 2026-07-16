@@ -112,6 +112,11 @@ const bridge: MuesliBridge = {
   systemAudioOpenSettings: () => ipcRenderer.invoke(IPC.systemAudioOpenSettings),
   systemAudioAvailable: () => ipcRenderer.invoke(IPC.systemAudioAvailable),
   systemAudioStart: () => ipcRenderer.invoke(IPC.systemAudioStart),
+  onSystemAudioPcm: (cb: (chunk: Uint8Array) => void) => {
+    const listener = (_e: unknown, chunk: Uint8Array) => cb(chunk)
+    ipcRenderer.on(IPC.systemAudioPcm, listener)
+    return () => ipcRenderer.removeListener(IPC.systemAudioPcm, listener)
+  },
   systemAudioStop: () => ipcRenderer.invoke(IPC.systemAudioStop),
   writeClipboardText: (text) => ipcRenderer.invoke(IPC.writeClipboardText, text),
   getDigestConfig: () => ipcRenderer.invoke(IPC.getDigestConfig),

@@ -943,13 +943,9 @@ export function NoteScreen() {
           onPcmFrame: (frame) => {
             void muesli.sendNoteStreamAudio?.(id, frame)?.catch(() => {})
           },
-          getSystemAudioStream: async () => {
-            const result = await muesli.systemAudioStart()
-            if (!result) return null
-            return navigator.mediaDevices.getUserMedia({
-              audio: { deviceId: { exact: result.deviceId } },
-            })
-          },
+          // System-audio capture is mic-only until the PCM -> MediaStream injection
+          // (main streams tap PCM via onSystemAudioPcm) is wired in a follow-up.
+          getSystemAudioStream: async () => null,
         }),
         { onWarning: (w) => notify(w, 'info') },
       )
