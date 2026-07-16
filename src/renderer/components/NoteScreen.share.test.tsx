@@ -132,6 +132,7 @@ describe('NoteScreen sharing', () => {
 
     render(<NoteScreen />)
 
+    await user.click(await screen.findByRole('button', { name: 'Details' }))
     await screen.findByRole('heading', { name: 'Sharing' })
     await user.click(screen.getByRole('button', { name: 'Create share link' }))
 
@@ -148,6 +149,7 @@ describe('NoteScreen sharing', () => {
 
     render(<NoteScreen />)
 
+    await user.click(await screen.findByRole('button', { name: 'Details' }))
     await screen.findByText('Public share')
     await user.click(screen.getByRole('button', { name: 'Revoke' }))
 
