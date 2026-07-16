@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
-import { render, screen, cleanup, waitFor } from '@testing-library/react'
+import { render, screen, cleanup, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { ToastProvider } from '@/components/ui/Toast'
@@ -169,6 +169,39 @@ describe('TemplatesScreen', () => {
       builtIn.sections,
       true,
     ))
+  })
+
+  it("opens a read-only preview of a built-in template's sections", async () => {
+    const user = userEvent.setup()
+    renderScreen()
+
+    await user.click(await screen.findByRole('button', { name: 'View General sections' }))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('Summary')).toBeInTheDocument()
+    expect(within(dialog).getByText('Summarize')).toBeInTheDocument()
+    expect(within(dialog).queryByLabelText('Template name')).toBeNull()
+  })
+
+  it('closes the preview dialog on Close', async () => {
+    const user = userEvent.setup()
+    renderScreen()
+
+    await user.click(await screen.findByRole('button', { name: 'View General sections' }))
+    await user.click(await screen.findByRole('button', { name: 'Close' }))
+
+    expect(screen.queryByText('Summarize')).toBeNull()
+  })
+
+  it('preview shows the phase and auto-run badges', async () => {
+    const user = userEvent.setup()
+    renderScreen()
+
+    await user.click(await screen.findByRole('button', { name: 'View General sections' }))
+
+    const dialog = await screen.findByRole('dialog')
+    expect(within(dialog).getByText('After')).toBeInTheDocument()
+    expect(within(dialog).getByText('Auto-run')).toBeInTheDocument()
   })
 
   it('increments the suffix when a "(copy)" already exists', async () => {
