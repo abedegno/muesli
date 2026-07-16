@@ -70,6 +70,13 @@ const fullSingle: FullNote = {
   ],
 }
 
+const fullNoSummaries: FullNote = {
+  note: { id: '3', title: 'Empty', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
+  body_markdown: 'raw notes',
+  transcript: { segments: [{ start_ms: 0, end_ms: 500, text: 'hi there', source: 'mixed' }] },
+  summaries: [],
+}
+
 describe('NoteView — template switcher', () => {
   it('defaults to the richest panel (General meeting, 2 sections)', () => {
     render(<NoteView full={full} onSaveBody={async () => {}} />)
@@ -566,6 +573,28 @@ describe('NoteView — full template list + regenerate (TPL01)', () => {
     await userEvent.click(screen.getByRole('button', { name: /switch template/i }))
     await userEvent.click(screen.getByRole('option', { name: /Retro/ }))
     expect(screen.getByText('No summary yet.')).toBeInTheDocument()
+  })
+
+  it('shows the no-agent empty state and opens transcript when no template has ever summarized', async () => {
+    render(<NoteView full={fullNoSummaries} onSaveBody={async () => {}} />)
+
+    expect(screen.getByText(/No AI summary is available for this note/)).toBeInTheDocument()
+    expect(screen.queryByText('No summary yet.')).not.toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'View transcript' }))
+    expect(screen.getByRole('button', { name: 'Close transcript' })).toBeInTheDocument()
+  })
+
+  it('keeps the plain empty state when processing is still in progress', () => {
+    const inProgress: FullNote = {
+      ...fullNoSummaries,
+      note: { ...fullNoSummaries.note, status: 'summarizing' },
+    }
+
+    render(<NoteView full={inProgress} onSaveBody={async () => {}} />)
+
+    expect(screen.getByText('No summary yet.')).toBeInTheDocument()
+    expect(screen.queryByText(/No AI summary is available for this note/)).not.toBeInTheDocument()
   })
 
   it('renders a Regenerate control for the currently-selected template', () => {

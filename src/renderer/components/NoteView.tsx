@@ -16,6 +16,7 @@ import { useAnnouncer } from '@/hooks/useAnnouncer'
 // The Markdown editor pulls in TipTap (the bulk of the renderer bundle); load it
 // lazily so it's only fetched when the user opens the My-notes tab.
 const NoteEditor = lazy(() => import('./NoteEditor').then((m) => ({ default: m.NoteEditor })))
+import { isTerminal } from '../../shared/types'
 import type { FullNote, SpeakerAlias, SummarySection, Template } from '../../shared/types'
 
 type Tab = 'enhanced' | 'notes'
@@ -192,6 +193,15 @@ interface TemplateEntry {
 function richestTemplateId(list: TemplateEntry[]): string | null {
   if (!list.length) return null
   return list.reduce((best, e) => ((e.summary?.sections.length ?? 0) > (best.summary?.sections.length ?? 0) ? e : best)).templateId
+}
+
+// True once EVERY template-summary entry for this note is either absent or has
+// zero rendered sections -- i.e. no template has ever produced a usable summary,
+// as opposed to just the CURRENTLY SELECTED template lacking one (a sibling
+// template on the same note may already have a real summary -- see TPL01's
+// "Retro" case, which must keep the plain "No summary yet." message).
+function noTemplateHasEverSummarized(entries: TemplateEntry[]): boolean {
+  return entries.every((e) => (e.summary?.sections.length ?? 0) === 0)
 }
 
 export function NoteView({
@@ -655,6 +665,14 @@ export function NoteView({
                   </section>
                 ))}
               </>
+            ) : isTerminal(full.note.status) && transcriptSegments.length > 0 && noTemplateHasEverSummarized(entries) ? (
+              <div className="max-w-md text-sm text-muted-foreground">
+                <p className="mb-3">No AI summary is available for this note -- no summarization agent is configured (e.g. Ollama isn&apos;t installed).</p>
+                <p className="mb-3">Your recorded transcript is still available.</p>
+                <Button type="button" variant="secondary" size="sm" onClick={() => setShowTranscript(true)}>
+                  View transcript
+                </Button>
+              </div>
             ) : (
               <p className="text-sm text-muted-foreground">No summary yet.</p>
             ))}
