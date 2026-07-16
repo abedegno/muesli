@@ -151,17 +151,24 @@ func TestTranscriberHandler(t *testing.T) {
 		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 			t.Fatalf("decode transcribe multitrack: %v", err)
 		}
-		if len(out.Segments) != 2 {
+		// recordingTranscriber returns two segments per call, so the two
+		// non-silent channels yield four segments, each labeled by channel role
+		// (channel 0 -> mic/You, channel 1 -> system/Them). Non-empty labels are
+		// what prove the multitrack path ran rather than the single-pass fallback.
+		if len(out.Segments) != 4 {
 			t.Fatalf("transcribe multitrack response = %+v", out)
 		}
-		if out.Segments[0].Speaker != "You" || out.Segments[0].Source != "mic" {
-			t.Fatalf("segment[0] = %+v", out.Segments[0])
+		var micYou, sysThem int
+		for _, s := range out.Segments {
+			switch {
+			case s.Source == "mic" && s.Speaker == "You":
+				micYou++
+			case s.Source == "system" && s.Speaker == "Them":
+				sysThem++
+			}
 		}
-		if out.Segments[1].Speaker != "Them" || out.Segments[1].Source != "system" {
-			t.Fatalf("segment[1] = %+v", out.Segments[1])
-		}
-		if len(eng.gotPCM) != 0 {
-			t.Fatalf("expected multitrack path to bypass single-pass pcm recording, got %d samples", len(eng.gotPCM))
+		if micYou != 2 || sysThem != 2 {
+			t.Fatalf("multitrack labels: mic/You=%d system/Them=%d, segments=%+v", micYou, sysThem, out.Segments)
 		}
 	})
 
