@@ -1,4 +1,5 @@
 :root {
+  color-scheme: light;
   --background: #ffffff;
   --app-chrome: #f8fafc;
   --card: #ffffff;
@@ -19,6 +20,7 @@
 }
 
 .dark {
+  color-scheme: dark;
   --background: #0b1220;
   --app-chrome: #0f172a;
   --card: #0f172a;
