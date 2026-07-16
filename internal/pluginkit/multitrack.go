@@ -4,11 +4,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"math"
 	"os/exec"
+	"regexp"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/abedegno/muesli/internal/model"
 )
@@ -93,39 +95,58 @@ func orchestrateChannels(ctx context.Context, channels [][]float32, eng Transcri
 	return TranscribeResult{Segments: all, Language: language, Model: modelName, DurationMS: durationMS}, nil
 }
 
+// audioLayoutRe captures the channel-layout token from an ffmpeg "Audio:" line,
+// e.g. "Audio: opus, 48000 Hz, stereo, fltp" -> "stereo".
+var audioLayoutRe = regexp.MustCompile(`Audio:.*?\d+ Hz,\s*([^,\r\n]+)`)
+var dotLayoutRe = regexp.MustCompile(`(\d+)\.(\d+)`)
+var nChannelsRe = regexp.MustCompile(`(\d+) channels`)
+
+// probeChannelCount reports the number of audio channels in the source. ffprobe
+// is NOT bundled in the desktop app (only ffmpeg is), so we probe with ffmpeg:
+// `-i pipe:0` with no output exits non-zero but still writes the stream info to
+// stderr, from which we read the channel layout. Returns 1 on any failure so the
+// caller falls back to a single-pass mono decode.
 func probeChannelCount(ctx context.Context, audioURL string) (int, error) {
 	raw, err := fetchAudioBytes(ctx, audioURL)
 	if err != nil {
 		return 1, err
 	}
-
-	cmd := exec.CommandContext(ctx, "ffprobe",
-		"-hide_banner",
-		"-loglevel", "error",
-		"-select_streams", "a:0",
-		"-show_entries", "stream=channels",
-		"-of", "json",
-		"-i", "pipe:0",
-	)
+	cmd := exec.CommandContext(ctx, ffmpegBin(), "-hide_banner", "-i", "pipe:0")
 	cmd.Stdin = bytes.NewReader(raw)
-	out, err := cmd.Output()
-	if err != nil {
-		return 1, nil
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	_ = cmd.Run() // expected non-zero: no output file specified
+	return channelsFromFFmpegStderr(stderr.String()), nil
+}
+
+// channelsFromFFmpegStderr parses the channel count from ffmpeg's stderr banner.
+func channelsFromFFmpegStderr(stderr string) int {
+	m := audioLayoutRe.FindStringSubmatch(stderr)
+	if m == nil {
+		return 1
 	}
-	var probe struct {
-		Streams []struct {
-			Channels int `json:"channels"`
-		} `json:"streams"`
+	layout := strings.TrimSpace(m[1])
+	switch {
+	case strings.HasPrefix(layout, "mono"):
+		return 1
+	case strings.HasPrefix(layout, "stereo"):
+		return 2
+	case strings.HasPrefix(layout, "quad"):
+		return 4
 	}
-	if err := json.Unmarshal(out, &probe); err != nil {
-		return 1, nil
-	}
-	for _, stream := range probe.Streams {
-		if stream.Channels > 0 {
-			return stream.Channels, nil
+	if dm := dotLayoutRe.FindStringSubmatch(layout); dm != nil {
+		a, _ := strconv.Atoi(dm[1])
+		b, _ := strconv.Atoi(dm[2])
+		if a+b > 0 {
+			return a + b
 		}
 	}
-	return 1, nil
+	if nm := nChannelsRe.FindStringSubmatch(layout); nm != nil {
+		if n, _ := strconv.Atoi(nm[1]); n > 0 {
+			return n
+		}
+	}
+	return 1
 }
 
 func runMultitrack(ctx context.Context, audioURL string, eng Transcriber, req TranscribeRequest) (TranscribeResult, error) {
