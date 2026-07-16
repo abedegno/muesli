@@ -10,6 +10,9 @@ const listTemplates = vi.hoisted(() => vi.fn())
 const deleteTemplate = vi.hoisted(() => vi.fn())
 const updateTemplate = vi.hoisted(() => vi.fn())
 const createTemplate = vi.hoisted(() => vi.fn())
+const exportTemplateJSON = vi.hoisted(() => vi.fn(() => '{"mock":true}'))
+const parseTemplateImport = vi.hoisted(() => vi.fn())
+const triggerDownload = vi.hoisted(() => vi.fn())
 
 const builtIn: Template = {
   id: 'b1',
@@ -35,6 +38,13 @@ vi.mock('@/api', () => ({
     createTemplate: (...args: Parameters<typeof createTemplate>) => createTemplate(...args),
     updateTemplate: (...args: Parameters<typeof updateTemplate>) => updateTemplate(...args),
   },
+}))
+
+vi.mock('@/lib/templateImportExport', () => ({
+  exportTemplateJSON,
+  parseTemplateImport,
+  templateExportFilename: (name: string) => `${name}.json`,
+  triggerDownload,
 }))
 
 import { TemplatesScreen } from './TemplatesScreen'
@@ -97,6 +107,55 @@ describe('TemplatesScreen', () => {
       custom.sections,
       true,
     ))
+  })
+
+  it('exports a template as JSON', async () => {
+    const user = userEvent.setup()
+    renderScreen()
+    const exportButton = await screen.findByRole('button', { name: 'Export My Standup' })
+    await user.click(exportButton)
+    expect(triggerDownload).toHaveBeenCalledWith('My Standup.json', '{"mock":true}')
+  })
+
+  it('imports a template from a JSON file', async () => {
+    const user = userEvent.setup()
+    parseTemplateImport.mockReturnValue({
+      name: 'Imported',
+      phase: 'after',
+      sections: [{ heading: 'H', instruction: 'I' }],
+      auto_run: true,
+    })
+
+    renderScreen()
+
+    await user.upload(
+      screen.getByLabelText('Import template file'),
+      new File(['{}'], 't.json', { type: 'application/json' }),
+    )
+
+    await waitFor(() => expect(createTemplate).toHaveBeenCalledWith(
+      'Imported',
+      'after',
+      [{ heading: 'H', instruction: 'I' }],
+      true,
+    ))
+  })
+
+  it('shows an error toast for an invalid import file', async () => {
+    const user = userEvent.setup()
+    parseTemplateImport.mockImplementation(() => {
+      throw new Error('Not valid JSON')
+    })
+
+    renderScreen()
+
+    await user.upload(
+      screen.getByLabelText('Import template file'),
+      new File(['oops'], 'bad.json', { type: 'application/json' }),
+    )
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Not valid JSON')
+    expect(createTemplate).not.toHaveBeenCalled()
   })
 
   it('duplicates a built-in template into an owned copy', async () => {

@@ -1,9 +1,15 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { muesli } from '@/api'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Dialog } from '@/components/ui/Dialog'
 import { useToast } from '@/components/ui/Toast'
+import {
+  exportTemplateJSON,
+  parseTemplateImport,
+  templateExportFilename,
+  triggerDownload,
+} from '@/lib/templateImportExport'
 import { TemplateEditor } from './TemplateEditor'
 import type { Template, TemplatePhase } from '../../shared/types'
 
@@ -32,10 +38,24 @@ function uniqueDuplicateName(base: string, existing: string[]): string {
   return candidate
 }
 
+async function readTemplateFileText(file: File): Promise<string> {
+  if (typeof file.text === 'function') {
+    return file.text()
+  }
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(reader.error ?? new Error('Could not read file'))
+    reader.readAsText(file)
+  })
+}
+
 export function TemplatesScreen() {
   const [templates, setTemplates] = useState<Template[]>([])
   const [editing, setEditing] = useState<{ template?: Template } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<Template | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
   const { notify } = useToast()
 
   const reload = () => muesli.listTemplates().then(setTemplates)
@@ -66,9 +86,35 @@ export function TemplatesScreen() {
           <h2 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
             Your templates
           </h2>
-          <Button size="sm" onClick={() => setEditing({})}>
-            + New template
-          </Button>
+          <div className="flex items-center gap-2">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="application/json"
+              aria-label="Import template file"
+              className="hidden"
+              onChange={async (e) => {
+                const file = e.target.files?.[0]
+              e.target.value = ''
+              if (!file) return
+              try {
+                  const text = await readTemplateFileText(file)
+                  const data = parseTemplateImport(text)
+                  await muesli.createTemplate(data.name, data.phase, data.sections, data.auto_run)
+                  await reload()
+                  notify(`Imported "${data.name}"`, 'info')
+                } catch (err) {
+                  notify(err instanceof Error ? err.message : 'Could not import template', 'error')
+                }
+              }}
+            />
+            <Button size="sm" variant="secondary" onClick={() => fileInputRef.current?.click()}>
+              Import template
+            </Button>
+            <Button size="sm" onClick={() => setEditing({})}>
+              + New template
+            </Button>
+          </div>
         </div>
         {mine.length === 0 ? (
           <p className="text-sm text-muted-foreground">No custom templates yet.</p>
@@ -90,6 +136,14 @@ export function TemplatesScreen() {
                   <Badge tone={t.auto_run ? 'primary' : 'neutral'}>{t.auto_run ? 'Auto-run' : 'Manual'}</Badge>
                   <Button variant="secondary" size="sm" aria-label={`Duplicate ${t.name}`} onClick={() => duplicate(t)}>
                     Duplicate
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    aria-label={`Export ${t.name}`}
+                    onClick={() => triggerDownload(templateExportFilename(t.name), exportTemplateJSON(t))}
+                  >
+                    Export
                   </Button>
                   <Button variant="secondary" size="sm" onClick={() => setEditing({ template: t })}>
                     Edit
@@ -128,6 +182,14 @@ export function TemplatesScreen() {
                   <Badge tone={t.auto_run ? 'primary' : 'neutral'}>{t.auto_run ? 'Auto-run' : 'Manual'}</Badge>
                   <Button variant="secondary" size="sm" aria-label={`Duplicate ${t.name}`} onClick={() => duplicate(t)}>
                     Duplicate
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    aria-label={`Export ${t.name}`}
+                    onClick={() => triggerDownload(templateExportFilename(t.name), exportTemplateJSON(t))}
+                  >
+                    Export
                   </Button>
                   <Badge>Built-in</Badge>
                 </div>
