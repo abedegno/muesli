@@ -4,11 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -47,15 +45,49 @@ func DecodePCM(ctx context.Context, audioURL string) ([]float32, error) {
 		return nil, fmt.Errorf("ffmpeg decode failed: %w", err)
 	}
 
-	out := stdout.Bytes()
-	if len(out)%4 != 0 {
-		return nil, errors.New("ffmpeg returned truncated float32 pcm")
+	return decodeFFmpegF32LE(stdout.Bytes())
+}
+
+func DecodePCMChannels(ctx context.Context, audioURL string, channels int) ([][]float32, error) {
+	raw, err := fetchAudioBytes(ctx, audioURL)
+	if err != nil {
+		return nil, err
 	}
-	pcm := make([]float32, len(out)/4)
-	for i := range pcm {
-		pcm[i] = math.Float32frombits(binary.LittleEndian.Uint32(out[i*4 : (i+1)*4]))
+
+	cmd := exec.CommandContext(ctx, ffmpegBin(),
+		"-hide_banner",
+		"-loglevel", "error",
+		"-i", "pipe:0",
+		"-f", "f32le",
+		"-ar", "16000",
+		"pipe:1",
+	)
+	cmd.Stdin = bytes.NewReader(raw)
+
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg != "" {
+			return nil, fmt.Errorf("ffmpeg decode failed: %w: %s", err, msg)
+		}
+		return nil, fmt.Errorf("ffmpeg decode failed: %w", err)
 	}
-	return pcm, nil
+
+	pcm, err := decodeFFmpegF32LE(stdout.Bytes())
+	if err != nil {
+		return nil, err
+	}
+	if channels <= 0 {
+		channels = 1
+	}
+	if len(pcm)%channels != 0 {
+		return nil, errors.New("ffmpeg returned truncated multichannel pcm")
+	}
+	return deinterleave(pcm, channels), nil
 }
 
 func fetchAudioBytes(ctx context.Context, audioURL string) ([]byte, error) {

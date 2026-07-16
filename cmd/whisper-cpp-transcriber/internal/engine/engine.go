@@ -19,7 +19,7 @@ const (
 	DefaultLanguage = "en"
 )
 
-var ConfigSchema = json.RawMessage(`{"type":"object","properties":{"model":{"type":"string","title":"Model","description":"Model name reported by the stub transcriber","default":"whisper-cpp-stub"},"language":{"type":"string","title":"Language","description":"Language code reported by the stub transcriber","default":"en"}},"additionalProperties":false}`)
+var ConfigSchema = json.RawMessage(`{"type":"object","properties":{"model":{"type":"string","title":"Model","description":"Model name reported by the stub transcriber","default":"whisper-cpp-stub"},"language":{"type":"string","title":"Language","description":"Language code reported by the stub transcriber","default":"en"},"multitrack":{"type":"boolean","title":"Multitrack","description":"Split stereo input into per-channel transcription passes","default":false}},"additionalProperties":false}`)
 
 type Config struct {
 	ModelDir string
