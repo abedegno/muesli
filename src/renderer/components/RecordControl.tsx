@@ -223,7 +223,8 @@ export function RecordControl({
     )
   }
 
-  const showSystemAudioNotice = isMacOS() && systemAudioStatus != null && systemAudioStatus !== 'granted'
+  const showSystemAudioNotice =
+    isMacOS() && (systemAudioStatus === 'denied' || systemAudioStatus === 'restricted')
 
   const disabled = state !== 'idle'
 
