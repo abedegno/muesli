@@ -67,6 +67,11 @@ func TestIsRetryable(t *testing.T) {
 		t.Error("plain error should be retryable")
 	}
 
+	// 2xx responses with undecodable bodies are terminal contract violations.
+	if isRetryable(&plugin.ResponseError{StatusCode: http.StatusOK, Err: errors.New("invalid JSON")}) {
+		t.Error("ResponseError should not be retryable")
+	}
+
 	// 4xx responses are NOT retryable.
 	for _, code := range []int{
 		http.StatusBadRequest,

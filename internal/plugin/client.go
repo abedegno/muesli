@@ -132,6 +132,24 @@ func (e *HTTPError) Retryable() bool {
 	return e.StatusCode >= 500 || e.StatusCode == http.StatusTooManyRequests
 }
 
+// ResponseError is a 2xx response whose body could not be decoded as JSON.
+// It is intentionally safe to log: the summary omits the raw response body.
+type ResponseError struct {
+	StatusCode int
+	Err        error
+}
+
+// Error returns a safe summary of the plugin failure without echoing the raw
+// response body that triggered the JSON decode error.
+func (e *ResponseError) Error() string {
+	return fmt.Sprintf("plugin returned %d: invalid JSON response", e.StatusCode)
+}
+
+// Unwrap exposes the underlying decode error for structured inspection.
+func (e *ResponseError) Unwrap() error {
+	return e.Err
+}
+
 // AsHTTPError is a typed errors.As helper for callers/tests.
 func AsHTTPError(err error, target **HTTPError) bool {
 	return errors.As(err, target)
@@ -199,7 +217,10 @@ func (c *Client) doJSON(ctx context.Context, method, path string, body any, out 
 	if out == nil {
 		return nil
 	}
-	return json.Unmarshal(respBody, out)
+	if err := json.Unmarshal(respBody, out); err != nil {
+		return &ResponseError{StatusCode: resp.StatusCode, Err: err}
+	}
+	return nil
 }
 
 // PluginStatus is the response from GET /status on a plugin.

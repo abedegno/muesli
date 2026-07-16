@@ -3,6 +3,7 @@ package plugin_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -303,6 +304,52 @@ func TestNon2xxIsError(t *testing.T) {
 	var he *plugin.HTTPError
 	if !plugin.AsHTTPError(err, &he) || he.StatusCode != 500 {
 		t.Fatalf("want HTTPError 500, got %v", err)
+	}
+}
+
+func TestTranscribeReturnsResponseErrorForInvalidJSON(t *testing.T) {
+	body := "not-json-secret"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+
+	c := plugin.New(srv.URL, "tok")
+	_, err := c.Transcribe(context.Background(), plugin.TranscribeRequest{AudioURL: "u", Config: json.RawMessage(`{}`)})
+	if err == nil {
+		t.Fatal("expected error on invalid JSON body")
+	}
+	var re *plugin.ResponseError
+	if !errors.As(err, &re) || re.StatusCode != http.StatusOK {
+		t.Fatalf("want ResponseError 200, got %v", err)
+	}
+	if strings.Contains(err.Error(), body) {
+		t.Fatalf("Error() = %q, must not contain raw body %q", err.Error(), body)
+	}
+}
+
+func TestGenerateReturnsResponseErrorForEmptyBody(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := plugin.New(srv.URL, "tok")
+	_, err := c.Generate(context.Background(), plugin.GenerateRequest{
+		NotesMarkdown: "- a note",
+		Template:      plugin.TemplatePayload{Sections: []model.TemplateSection{{Heading: "Overview", Instruction: "Summarise."}}},
+		Config:        json.RawMessage(`{}`),
+	})
+	if err == nil {
+		t.Fatal("expected error on empty JSON body")
+	}
+	var re *plugin.ResponseError
+	if !errors.As(err, &re) || re.StatusCode != http.StatusOK {
+		t.Fatalf("want ResponseError 200, got %v", err)
+	}
+	if strings.Contains(err.Error(), "EOF") {
+		t.Fatalf("Error() = %q, must not expose decode details from the empty body", err.Error())
 	}
 }
 
