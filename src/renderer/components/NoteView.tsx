@@ -55,7 +55,8 @@ function countSummaryMatches(query: string, tab: Tab, selectedSummary: FullNote[
   return count
 }
 
-function countTranscriptMatches(full: FullNote, query: string): number {
+function countTranscriptMatches(full: FullNote, query: string, tab: Tab): number {
+  if (tab !== 'transcript') return 0
   const needle = query.trim()
   if (!needle) return 0
   let count = 0
@@ -261,7 +262,7 @@ export function NoteView({
   useEffect(() => { setSpeakerOverrides({}) }, [full.note.id])
   useEffect(() => {
     setTab(hasAnySummary(full.summaries) ? 'enhanced' : 'transcript')
-    // Re-derive only on note change, not on every summaries update — a summary
+    // Re-derive only on note change, not on every summaries update -- a summary
     // finishing generation mid-session must not yank the user off a tab they
     // deliberately picked. Mirrors the speakerOverrides reset effect above.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -401,10 +402,10 @@ export function NoteView({
   const findQueryTrimmed = findQuery.trim()
   const summaryMatchCount = useMemo(
     () => countSummaryMatches(findQueryTrimmed, tab, active),
-    [active, findQueryTrimmed, full, tab],
+    [active, findQueryTrimmed, tab],
   )
   const transcriptMatchCount = useMemo(
-    () => countTranscriptMatches(full, findQueryTrimmed),
+    () => countTranscriptMatches(full, findQueryTrimmed, tab),
     [findQueryTrimmed, full, tab],
   )
   const totalFindMatches = summaryMatchCount + transcriptMatchCount
@@ -638,7 +639,7 @@ export function NoteView({
           </div>
         </div>
 
-        <div className="mx-auto mt-4 max-w-[72ch]">
+          <div className="mx-auto mt-4 max-w-[72ch]">
           {tab === 'enhanced' &&
             (active && active.sections.length > 0 ? (
               <>

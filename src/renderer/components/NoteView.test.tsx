@@ -86,6 +86,26 @@ const fullNoSummaries: FullNote = {
   summaries: [],
 }
 
+const fullSearchRegression: FullNote = {
+  note: { id: 'search-regression', title: 'Search', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
+  body_markdown: '',
+  transcript: {
+    segments: [
+      { start_ms: 0, end_ms: 500, text: 'alpha transcript here', source: 'mixed' },
+      { start_ms: 500, end_ms: 1000, text: 'something else', source: 'mixed' },
+    ],
+  },
+  summaries: [
+    {
+      template_name: 'Default',
+      status: 'ready',
+      sections: [
+        { heading: 'Alpha heading', content_markdown: 'beta alpha summary' },
+      ],
+    },
+  ],
+}
+
 describe('NoteView — template switcher', () => {
   it('defaults to the richest panel (General meeting, 2 sections)', () => {
     render(<NoteView full={full} onSaveBody={async () => {}} />)
@@ -130,7 +150,27 @@ describe('NoteView — template switcher', () => {
     expect(screen.getByRole('radio', { name: 'Enhanced' })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: 'Transcript' })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: 'My notes' })).toBeInTheDocument()
-    expect(screen.queryByText('hello world')).not.toBeInTheDocument() // drawer closed
+    expect(screen.queryByText('hello world')).not.toBeInTheDocument()
+  })
+
+  it('keeps transcript matches out of the count while Enhanced is active', async () => {
+    render(<NoteView full={fullSearchRegression} onSaveBody={async () => {}} />)
+
+    const input = screen.getByLabelText('Find in note')
+    await userEvent.type(input, 'alpha')
+
+    await waitFor(() => expect(screen.getByText('1/2')).toBeInTheDocument())
+    expect(document.querySelectorAll('mark')).toHaveLength(2)
+
+    let current = document.querySelector('[data-note-search-current="true"]')
+    expect(current).not.toBeNull()
+    expect(current!.parentElement?.tagName).toBe('H3')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Next match' }))
+    await waitFor(() => expect(screen.getByText('2/2')).toBeInTheDocument())
+    current = document.querySelector('[data-note-search-current="true"]')
+    expect(current).not.toBeNull()
+    expect(current!.parentElement?.tagName).toBe('P')
   })
 
   it('defaults to the Transcript tab when the note has no summary', () => {
