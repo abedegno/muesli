@@ -8,17 +8,6 @@ import type { DigestConfig } from '../../shared/types'
 type Theme = 'system' | 'light' | 'dark'
 type HealthState = { status: 'idle' } | { status: 'checking' } | { status: 'connected'; version?: string } | { status: 'unreachable' }
 
-function healthUrlFor(serverUrl: string): string {
-  return new URL('healthz', `${serverUrl.replace(/\/+$/, '')}/`).toString()
-}
-
-function versionFromHealth(data: Record<string, unknown>): string | undefined {
-  const value = data.version ?? data.serverVersion ?? data.appVersion
-  if (typeof value === 'string') return value.trim() || undefined
-  if (typeof value === 'number') return String(value)
-  return undefined
-}
-
 export function SettingsScreen({
   onDisconnected,
   onResetToBuiltIn,
@@ -239,23 +228,16 @@ export function ServerHealthBadge({ serverUrl }: { serverUrl: string }) {
       return
     }
 
-    const controller = new AbortController()
     let cancelled = false
     setHealth({ status: 'checking' })
 
     async function checkHealth() {
       try {
-        const res = await fetch(healthUrlFor(serverUrl), { signal: controller.signal })
-        if (!res.ok) throw new Error('health check failed')
-        const data: unknown = await res.json()
-        if (!data || typeof data !== 'object' || (data as Record<string, unknown>).status !== 'ok') {
-          throw new Error('invalid health response')
-        }
-        if (!cancelled) setHealth({ status: 'connected', version: versionFromHealth(data as Record<string, unknown>) })
-      } catch (err) {
-        if (!cancelled && !(err instanceof DOMException && err.name === 'AbortError')) {
-          setHealth({ status: 'unreachable' })
-        }
+        const result = await muesli.getServerHealth()
+        if (cancelled) return
+        setHealth(result.reachable ? { status: 'connected', version: result.version } : { status: 'unreachable' })
+      } catch {
+        if (!cancelled) setHealth({ status: 'unreachable' })
       }
     }
 
@@ -263,7 +245,6 @@ export function ServerHealthBadge({ serverUrl }: { serverUrl: string }) {
 
     return () => {
       cancelled = true
-      controller.abort()
     }
   }, [serverUrl])
 
