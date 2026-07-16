@@ -20,7 +20,20 @@ export function nextStep(step: SetupWizardStep): SetupWizardStep {
   }
 }
 
-export type SetupWizardBridge = Pick<MuesliBridge, 'micStatus' | 'micRequest' | 'micOpenSettings' | 'getReadyz'>
+export type SetupWizardBridge = Pick<MuesliBridge, 'platform' | 'micStatus' | 'micRequest' | 'micOpenSettings' | 'getReadyz'>
+
+function ollamaInstallHint(platform: NodeJS.Platform): { label: string; command: string | null } {
+  switch (platform) {
+    case 'darwin':
+      return { label: 'macOS (Homebrew):', command: 'brew install ollama' }
+    case 'linux':
+      return { label: 'Linux:', command: 'curl -fsSL https://ollama.com/install.sh | sh' }
+    case 'win32':
+      return { label: 'Windows:', command: null }
+    default:
+      return { label: 'Download for your platform:', command: null }
+  }
+}
 
 export function SetupWizard({
   onDone,
@@ -87,6 +100,15 @@ export function SetupWizard({
       setMicStatus(status)
     } catch {
       setMicStatus(null)
+    }
+  }
+
+  async function refreshReadyz() {
+    try {
+      const status = await bridge.getReadyz()
+      setReadyz(status)
+    } catch {
+      setReadyz(null)
     }
   }
 
@@ -163,16 +185,27 @@ export function SetupWizard({
                   : 'Optional: install Ollama to enable AI summaries & semantic search.'}
               </p>
               {!readyz?.ollamaDetected ? (
-                <p className="text-sm text-muted-foreground">
-                  <a
-                    className="underline underline-offset-2 hover:no-underline"
-                    href="https://ollama.com"
-                    target="_blank"
-                    rel="noreferrer"
-                  >
-                    Visit ollama.com
-                  </a>
-                </p>
+                <div className="space-y-3">
+                  <p className="text-sm text-muted-foreground">{ollamaInstallHint(bridge.platform).label}</p>
+                  {ollamaInstallHint(bridge.platform).command ? (
+                    <code className="block rounded bg-muted px-3 py-2 text-xs">
+                      {ollamaInstallHint(bridge.platform).command}
+                    </code>
+                  ) : null}
+                  <p className="text-sm text-muted-foreground">
+                    <a
+                      className="underline underline-offset-2 hover:no-underline"
+                      href="https://ollama.com"
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      Visit ollama.com
+                    </a>
+                  </p>
+                  <Button type="button" variant="ghost" onClick={() => void refreshReadyz()}>
+                    Re-check
+                  </Button>
+                </div>
               ) : null}
             </div>
           )}
