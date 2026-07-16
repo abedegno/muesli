@@ -1,8 +1,10 @@
 package webhook
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -184,6 +186,29 @@ func newTestWorker(st webhookStore) *DeliveryWorker {
 // Tests
 // --------------------------------------------------------------------------
 
+func TestSignPayload(t *testing.T) {
+	const want = "sha256=9d16f6d63cf01c65ee5bc82fd3b8dc3f0ee9398963696447b4e31b8fe78ca50a"
+	const secret = "topsecret"
+	body := []byte(`{"event":"test"}`)
+
+	got := signPayload(secret, body)
+	if got != want {
+		t.Fatalf("signPayload() = %q, want %q", got, want)
+	}
+	if again := signPayload(secret, body); again != got {
+		t.Fatalf("signPayload() is not deterministic: first %q, second %q", got, again)
+	}
+	if changed := signPayload("different", body); changed == got {
+		t.Fatalf("signPayload() did not change when secret changed: %q", changed)
+	}
+	if changed := signPayload(secret, []byte(`{"event":"other"}`)); changed == got {
+		t.Fatalf("signPayload() did not change when body changed: %q", changed)
+	}
+	if empty := signPayload("", body); empty == "" {
+		t.Fatal("signPayload() with empty secret returned an empty string")
+	}
+}
+
 // TestDeliverySuccess verifies a single successful delivery:
 // the server returns 200, the delivery is marked delivered after 1 attempt.
 func TestDeliverySuccess(t *testing.T) {
@@ -235,6 +260,116 @@ func TestDeliverySuccess(t *testing.T) {
 	}
 	if hits.Load() != 1 {
 		t.Fatalf("server hit count = %d, want 1", hits.Load())
+	}
+}
+
+func TestDeliverySignsPayload(t *testing.T) {
+	var hits atomic.Int32
+	var gotBody []byte
+	var gotSig string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request body: %v", err)
+		}
+		gotBody = append([]byte(nil), body...)
+		gotSig = r.Header.Get("X-Muesli-Signature")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	st := newMemStore()
+	secret := "topsecret"
+	wh := model.Webhook{ID: uuid.New().String(), URL: srv.URL + "/hook", Secret: secret, Enabled: true}
+	st.addWebhook(wh)
+	d := makeDelivery(wh.ID, 5)
+	st.addDelivery(d)
+
+	worker := newTestWorker(st)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = worker.Run(ctx)
+	}()
+
+	for {
+		got, ok := st.getDelivery(d.ID)
+		if ok && got.Status == model.DeliveryDelivered {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("timed out waiting for signed delivery to be marked delivered")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	cancel()
+	<-done
+
+	if hits.Load() != 1 {
+		t.Fatalf("server hit count = %d, want 1", hits.Load())
+	}
+	if want := signPayload(secret, gotBody); gotSig != want {
+		t.Fatalf("signature header = %q, want %q", gotSig, want)
+	}
+}
+
+func TestDeliverySkipsEmptySecretSignature(t *testing.T) {
+	var hits atomic.Int32
+	var gotSig string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		if body, err := io.ReadAll(r.Body); err != nil {
+			t.Fatalf("read request body: %v", err)
+		} else if !bytes.Equal(body, []byte(`{"event":"test"}`)) {
+			t.Fatalf("request body = %q, want %q", body, []byte(`{"event":"test"}`))
+		}
+		gotSig = r.Header.Get("X-Muesli-Signature")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	st := newMemStore()
+	wh := model.Webhook{ID: uuid.New().String(), URL: srv.URL + "/hook", Enabled: true}
+	st.addWebhook(wh)
+	d := makeDelivery(wh.ID, 5)
+	st.addDelivery(d)
+
+	worker := newTestWorker(st)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = worker.Run(ctx)
+	}()
+
+	for {
+		got, ok := st.getDelivery(d.ID)
+		if ok && got.Status == model.DeliveryDelivered {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("timed out waiting for delivery with empty secret to be marked delivered")
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+	cancel()
+	<-done
+
+	if hits.Load() != 1 {
+		t.Fatalf("server hit count = %d, want 1", hits.Load())
+	}
+	if gotSig != "" {
+		t.Fatalf("signature header = %q, want empty string", gotSig)
 	}
 }
 
