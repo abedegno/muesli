@@ -11,6 +11,7 @@ beforeEach(() => {
 
 function makeBridge(overrides: Partial<SetupWizardBridge> = {}): SetupWizardBridge {
   return {
+    platform: 'darwin',
     micStatus: vi.fn().mockResolvedValue('granted'),
     micRequest: vi.fn().mockResolvedValue('granted'),
     micOpenSettings: vi.fn().mockResolvedValue(undefined),
@@ -89,10 +90,10 @@ describe('SetupWizard', () => {
     expect(await screen.findByText(/ai summaries & semantic search are ready/i)).toBeInTheDocument()
   })
 
-  it.each([[{ ollamaDetected: false }], [null]])('shows the install prompt when readyz returns %s', async (readyz) => {
+  it('re-checks ollama detection when Re-check is clicked on the ai step', async () => {
     const bridge = makeBridge({
       micStatus: vi.fn().mockResolvedValue('granted'),
-      getReadyz: vi.fn().mockResolvedValue(readyz),
+      getReadyz: vi.fn().mockResolvedValueOnce({ ollamaDetected: false }).mockResolvedValueOnce({ ollamaDetected: true }),
     })
 
     render(<SetupWizard onDone={() => {}} bridge={bridge} />)
@@ -102,8 +103,60 @@ describe('SetupWizard', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /continue/i })).toBeEnabled())
     await userEvent.click(await screen.findByRole('button', { name: /continue/i }))
     expect(await screen.findByText(/optional: install ollama/i)).toBeInTheDocument()
-    await userEvent.click(screen.getByRole('button', { name: /skip/i }))
-    await waitFor(() => expect(screen.queryByText(/optional: install ollama/i)).toBeNull())
+    await userEvent.click(screen.getByRole('button', { name: /re-check/i }))
+    await waitFor(() => expect(bridge.getReadyz).toHaveBeenCalledTimes(2))
+    expect(await screen.findByText(/ai summaries & semantic search are ready/i)).toBeInTheDocument()
+  })
+
+  it('shows a Homebrew install hint on darwin', async () => {
+    const bridge = makeBridge({
+      platform: 'darwin',
+      micStatus: vi.fn().mockResolvedValue('granted'),
+      getReadyz: vi.fn().mockResolvedValue({ ollamaDetected: false }),
+    })
+
+    render(<SetupWizard onDone={() => {}} bridge={bridge} />)
+
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }))
+    expect(await screen.findByText(/microphone access granted/i)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: /continue/i })).toBeEnabled())
+    await userEvent.click(await screen.findByRole('button', { name: /continue/i }))
+    expect(await screen.findByText(/brew install ollama/i)).toBeInTheDocument()
+  })
+
+  it('shows a curl install hint on linux', async () => {
+    const bridge = makeBridge({
+      platform: 'linux',
+      micStatus: vi.fn().mockResolvedValue('granted'),
+      getReadyz: vi.fn().mockResolvedValue({ ollamaDetected: false }),
+    })
+
+    render(<SetupWizard onDone={() => {}} bridge={bridge} />)
+
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }))
+    expect(await screen.findByText(/microphone access granted/i)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: /continue/i })).toBeEnabled())
+    await userEvent.click(await screen.findByRole('button', { name: /continue/i }))
+    expect(await screen.findByText(/curl -fssl https:\/\/ollama\.com\/install\.sh/i)).toBeInTheDocument()
+  })
+
+  it('shows no shell command on win32', async () => {
+    const bridge = makeBridge({
+      platform: 'win32',
+      micStatus: vi.fn().mockResolvedValue('granted'),
+      getReadyz: vi.fn().mockResolvedValue({ ollamaDetected: false }),
+    })
+
+    render(<SetupWizard onDone={() => {}} bridge={bridge} />)
+
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }))
+    expect(await screen.findByText(/microphone access granted/i)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: /continue/i })).toBeEnabled())
+    await userEvent.click(await screen.findByRole('button', { name: /continue/i }))
+    expect(screen.queryByText(/brew install ollama/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/curl -fssl https:\/\/ollama\.com\/install\.sh/i)).not.toBeInTheDocument()
+    expect(document.querySelector('code')).toBeNull()
+    expect(screen.getByRole('link', { name: /visit ollama\.com/i })).toBeInTheDocument()
   })
 
   it('calls onDone when the wizard reaches the done step', async () => {

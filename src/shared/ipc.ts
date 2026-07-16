@@ -219,6 +219,7 @@ export interface SendMessageResponse {
 }
 
 export interface MuesliBridge {
+  platform: NodeJS.Platform
   getConfig(): Promise<ServerConfig | null>
   getOnboarded(): Promise<boolean>
   setOnboarded(b: boolean): Promise<void>
