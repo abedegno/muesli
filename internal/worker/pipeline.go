@@ -254,19 +254,19 @@ func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, err
 		slog.WarnContext(ctx, "failed to clear partial transcript flag", "error", err, "job_id", job.ID, "job_type", job.Type, "note_id", job.NoteID)
 	}
 
-	// Retention: discard the audio object if configured.
-	if p.cfg.AudioRetention == "discard" {
-		if derr := p.storage.Delete(audioKey); derr != nil {
-			slog.WarnContext(ctx, "retention: failed to delete audio", "job_id", job.ID, "job_type", job.Type, "note_id", job.NoteID, "audio_key", audioKey, "error", derr)
-		} else {
-			_ = p.store.SetRetentionState(ctx, job.NoteID, "discarded")
-		}
-	} else {
-		_ = p.store.SetRetentionState(ctx, job.NoteID, "kept")
-	}
-
 	if saved.ReviewState != model.ReviewStateCompleted {
 		slog.InfoContext(ctx, "summarize held pending diarization review", "job_id", job.ID, "note_id", job.NoteID, "review_state", saved.ReviewState)
+		// It is safe to discard audio here because resummarize/review release works
+		// from the transcript, not the audio object.
+		if p.cfg.AudioRetention == "discard" {
+			if derr := p.storage.Delete(audioKey); derr != nil {
+				slog.WarnContext(ctx, "retention: failed to delete audio", "job_id", job.ID, "job_type", job.Type, "note_id", job.NoteID, "audio_key", audioKey, "error", derr)
+			} else {
+				_ = p.store.SetRetentionState(ctx, job.NoteID, "discarded")
+			}
+		} else {
+			_ = p.store.SetRetentionState(ctx, job.NoteID, "kept")
+		}
 		return false, nil
 	}
 
@@ -281,6 +281,19 @@ func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, err
 	}
 	if err := p.store.EnqueueSummarizeJobs(ctx, owner, job.NoteID); err != nil {
 		return true, err
+	}
+
+	// Audio must not be deleted until the note is either parked for review or the
+	// summarize jobs are durably enqueued, so no retryable path can strand a note
+	// without the audio required for a retry.
+	if p.cfg.AudioRetention == "discard" {
+		if derr := p.storage.Delete(audioKey); derr != nil {
+			slog.WarnContext(ctx, "retention: failed to delete audio", "job_id", job.ID, "job_type", job.Type, "note_id", job.NoteID, "audio_key", audioKey, "error", derr)
+		} else {
+			_ = p.store.SetRetentionState(ctx, job.NoteID, "discarded")
+		}
+	} else {
+		_ = p.store.SetRetentionState(ctx, job.NoteID, "kept")
 	}
 	return false, nil
 }

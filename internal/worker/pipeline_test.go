@@ -56,6 +56,42 @@ func pipelineFixtureWithLanguageAndTranscriber(t *testing.T, retention, transcri
 	return pipelineFixtureWithDefaults(t, retention, transcribeLanguage, tr, true, true)
 }
 
+func pipelineFixtureWithStorage(t *testing.T, retention string, tr *plugintest.Stub) (*worker.Processor, *store.Store, string, *plugintest.Stub, *plugintest.Stub, storage.Provider) {
+	t.Helper()
+	ctx := context.Background()
+	st := store.New(testutil.NewPool(t))
+	cr := testCrypto(t)
+	_ = st.SeedBuiltInTemplates(ctx)
+
+	prov, err := storage.NewLocal(t.TempDir(), "http://example.test", "http://example.test", []byte("test-signing-key-0123456789"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Cleanup(tr.Close)
+	ag := plugintest.NewAgent()
+	t.Cleanup(ag.Close)
+
+	tp, _ := st.CreatePlugin(ctx, cr, model.Plugin{Kind: model.PluginTranscriber, Name: "t", EndpointURL: tr.URL(), Token: "x", Enabled: true, Config: json.RawMessage(`{}`)})
+	ap, _ := st.CreatePlugin(ctx, cr, model.Plugin{Kind: model.PluginAgent, Name: "a", EndpointURL: ag.URL(), Token: "x", Enabled: true, Config: json.RawMessage(`{}`)})
+	_ = st.SetDefaultPlugin(ctx, tp.ID)
+	_ = st.SetDefaultPlugin(ctx, ap.ID)
+
+	u, _ := st.CreateUser(ctx, "o@example.com", "h")
+	n, _ := st.CreateNote(ctx, u.ID, "M")
+	key := "notes/" + n.ID + "/audio/a.webm"
+	grant, _ := prov.PresignUpload(key, time.Minute)
+	_ = grant
+	_ = st.SetNoteAudio(ctx, u.ID, n.ID, key)
+
+	cfg := config.Config{AudioRetention: retention}
+	proc := worker.NewProcessor(st, cr, prov, cfg, nil)
+
+	jobID, _ := st.EnqueueJob(ctx, n.ID, model.JobTranscribe, json.RawMessage(`{"audio_key":"`+key+`"}`))
+	_ = jobID
+	return proc, st, n.ID, tr, ag, prov
+}
+
 func pipelineFixtureWithDefaults(t *testing.T, retention, transcribeLanguage string, tr *plugintest.Stub, setTranscriberDefault, setAgentDefault bool) (*worker.Processor, *store.Store, string, *plugintest.Stub, *plugintest.Stub) {
 	t.Helper()
 	ctx := context.Background()
@@ -95,6 +131,36 @@ func pipelineFixtureWithDefaults(t *testing.T, retention, transcribeLanguage str
 	jobID, _ := st.EnqueueJob(ctx, n.ID, model.JobTranscribe, json.RawMessage(`{"audio_key":"`+key+`"}`))
 	_ = jobID
 	return proc, st, n.ID, tr, ag
+}
+
+func installOneShotSummarizeFanoutFailure(t *testing.T, st *store.Store) {
+	t.Helper()
+	ctx := context.Background()
+	_, err := st.Pool().Exec(ctx, `
+CREATE TEMP SEQUENCE fail_once_summarize_enqueue_seq START 1;
+CREATE OR REPLACE FUNCTION pg_temp.fail_once_summarize_enqueue() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+	IF NEW.type = 'summarize' AND nextval('pg_temp.fail_once_summarize_enqueue_seq'::regclass) = 1 THEN
+		RAISE EXCEPTION 'injected summarize enqueue failure';
+	END IF;
+	RETURN NEW;
+END;
+$$;
+CREATE TRIGGER fail_once_summarize_enqueue
+BEFORE INSERT ON jobs
+FOR EACH ROW
+EXECUTE FUNCTION pg_temp.fail_once_summarize_enqueue();
+`)
+	if err != nil {
+		t.Fatalf("install one-shot summarize enqueue failure: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = st.Pool().Exec(context.Background(), `
+DROP TRIGGER IF EXISTS fail_once_summarize_enqueue ON jobs;
+DROP FUNCTION IF EXISTS pg_temp.fail_once_summarize_enqueue();
+DROP SEQUENCE IF EXISTS pg_temp.fail_once_summarize_enqueue_seq;
+`)
+	})
 }
 
 // seedWebhook inserts a webhook row directly via SQL (there is no
@@ -271,11 +337,45 @@ func TestPipelineSkipsTrashedNote(t *testing.T) {
 }
 
 func TestPipelineRetentionDiscard(t *testing.T) {
-	proc, st, noteID, _, _ := pipelineFixture(t, "discard")
+	proc, st, noteID, _, _, prov := pipelineFixtureWithStorage(t, "discard", plugintest.NewTranscriber())
 	drain(t, proc, st)
-	n, _ := st.GetNoteByID(context.Background(), noteID)
+	ctx := context.Background()
+	n, _ := st.GetNoteByID(ctx, noteID)
 	if n.RetentionState != "discarded" {
 		t.Fatalf("retention state = %q, want discarded", n.RetentionState)
+	}
+	exists, _, err := prov.Verify(n.AudioObjectKey)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if exists {
+		t.Fatal("retention=discard should delete the stored audio object")
+	}
+}
+
+func TestPipelineRetryKeepsAudioUntilSummarizeFanoutSucceeds(t *testing.T) {
+	proc, st, noteID, _, _, prov := pipelineFixtureWithStorage(t, "discard", plugintest.NewTranscriber())
+	installOneShotSummarizeFanoutFailure(t, st)
+
+	drain(t, proc, st)
+
+	ctx := context.Background()
+	n, err := st.GetNoteByID(ctx, noteID)
+	if err != nil {
+		t.Fatalf("GetNoteByID: %v", err)
+	}
+	if n.Status != model.NoteReady {
+		t.Fatalf("note status = %q, want ready", n.Status)
+	}
+	if n.RetentionState != "discarded" {
+		t.Fatalf("retention state = %q, want discarded", n.RetentionState)
+	}
+	exists, _, err := prov.Verify(n.AudioObjectKey)
+	if err != nil {
+		t.Fatalf("Verify: %v", err)
+	}
+	if exists {
+		t.Fatal("audio should be deleted after the retried summarize fan-out succeeds")
 	}
 }
 
