@@ -286,7 +286,6 @@ def _run_multitrack(
     use_words: bool,
 ) -> TranscribeResponse:
     all_segments: list[Segment] = []
-    speaker_index = 0
     language = req.language_hint or ""
     duration_s = 0.0
 
@@ -299,8 +298,8 @@ def _run_multitrack(
             )
             continue
 
-        speaker_index += 1
-        speaker_label = f"Speaker {speaker_index}"
+        speaker_label = "You" if channel == 0 else "Them" if channel == 1 else f"Speaker {channel + 1}"
+        channel_source = "mic" if channel == 0 else "system" if channel == 1 else f"channel {channel}"
 
         channel_path = split_channel(path, channel)
         try:
@@ -329,7 +328,7 @@ def _run_multitrack(
                         start_ms=int(round(s.start * 1000)),
                         end_ms=int(round(s.end * 1000)),
                         text=s.text.strip(),
-                        source="mixed",
+                        source=channel_source,
                         speaker=speaker_label,
                         words=words or None,
                     )
