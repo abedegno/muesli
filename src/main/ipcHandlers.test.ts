@@ -1,7 +1,7 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeServer } from '../../test/fakeServer'
 import { createHandlers } from './ipcHandlers'
 import { TokenStore, type SafeStorageLike } from './tokenStore'
@@ -129,6 +129,25 @@ describe('ipc handlers', () => {
     })
 
     await expect(h.getReadyz()).resolves.toBeNull()
+  })
+
+  it('getReadyz falls back to the global fetch when the caller does not inject one', async () => {
+    vi.stubGlobal(
+      'fetch',
+      async () => new Response(JSON.stringify({ embedded: { ollamaDetected: true } }), { status: 200 }),
+    )
+    try {
+      const h = createHandlers({
+        tokenStore: new TokenStore(dir, fakeSafe),
+        onProgress: () => {},
+        embedded: true,
+        embeddedBaseUrl: 'http://127.0.0.1:9000',
+      })
+
+      await expect(h.getReadyz()).resolves.toEqual({ ollamaDetected: true })
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('getServerHealth returns reachable with version for an ok healthz response', async () => {
