@@ -109,6 +109,7 @@ export const IPC = {
   micStatus: 'muesli:micStatus',
   micRequest: 'muesli:micRequest',
   micOpenSettings: 'muesli:micOpenSettings',
+  writeClipboardText: 'muesli:writeClipboardText',
   getDigestConfig: 'muesli:getDigestConfig',
   updateDigestConfig: 'muesli:updateDigestConfig',
 } as const
@@ -328,6 +329,7 @@ export interface MuesliBridge {
   micStatus(): Promise<MicStatus>
   micRequest(): Promise<MicStatus>
   micOpenSettings(): Promise<void>
+  writeClipboardText(text: string): Promise<void>
   getDigestConfig(): Promise<DigestConfig>
   updateDigestConfig(cadence: DigestConfig['cadence']): Promise<DigestConfig>
 }
