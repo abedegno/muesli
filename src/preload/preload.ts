@@ -107,6 +107,7 @@ const bridge: MuesliBridge = {
   micStatus: () => ipcRenderer.invoke(IPC.micStatus),
   micRequest: () => ipcRenderer.invoke(IPC.micRequest),
   micOpenSettings: () => ipcRenderer.invoke(IPC.micOpenSettings),
+  writeClipboardText: (text) => ipcRenderer.invoke(IPC.writeClipboardText, text),
   getDigestConfig: () => ipcRenderer.invoke(IPC.getDigestConfig),
   updateDigestConfig: (cadence) => ipcRenderer.invoke(IPC.updateDigestConfig, cadence),
   onUploadProgress: (cb: (p: UploadProgress) => void) => {
