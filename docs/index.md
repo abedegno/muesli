@@ -24,6 +24,7 @@ within the `docs/` directory.
 | Document                                                     | What's in it                                                        |
 | ------------------------------------------------------------ | ------------------------------------------------------------------- |
 | [`CONFIGURATION.md`](CONFIGURATION.md)                       | Complete reference for all `MUESLI_*` environment variables.        |
+| [`DESKTOP-RELEASE.md`](DESKTOP-RELEASE.md)                   | Signed and notarized macOS desktop release runbook.                 |
 | [`EMBEDDED-POSTGRES-BUNDLE.md`](EMBEDDED-POSTGRES-BUNDLE.md) | Vendored embedded Postgres bundle, pinned checksum, and bump steps. |
 | [`DEPLOYMENT.md`](DEPLOYMENT.md)                             | Production TLS and reverse-proxy guide.                             |
 | [`PUBLISHED-IMAGES.md`](PUBLISHED-IMAGES.md)                 | GHCR image names for hosted deployments and a compose pull example. |
