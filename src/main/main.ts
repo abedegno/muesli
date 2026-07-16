@@ -153,7 +153,9 @@ app.whenReady().then(async () => {
     ipcMain.handle(IPC.systemAudioRequest, () => systemAudioPermission.request())
     ipcMain.handle(IPC.systemAudioOpenSettings, () => systemAudioPermission.openSettings())
     ipcMain.handle(IPC.systemAudioAvailable, () => systemAudioHelper.available())
-    ipcMain.handle(IPC.systemAudioStart, () => systemAudioHelper.start())
+    ipcMain.handle(IPC.systemAudioStart, () =>
+      systemAudioHelper.start((chunk) => mainWindow?.webContents.send(IPC.systemAudioPcm, chunk)),
+    )
     ipcMain.handle(IPC.systemAudioStop, () => systemAudioHelper.stop())
     ipcMain.handle(IPC.writeClipboardText, (_e, text: string) => {
       clipboard.writeText(text)
