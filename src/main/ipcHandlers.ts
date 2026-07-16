@@ -152,7 +152,8 @@ function insecureAllowedByEnv(): boolean {
 // createHandlers builds the IPC business logic with injected collaborators so it
 // is unit-testable without Electron. main.ts adapts these to ipcMain.handle.
 export function createHandlers(deps: HandlerDeps): Handlers {
-  const { tokenStore, fetch: fetchImpl, onProgress, openExternal } = deps
+  const { tokenStore, onProgress, openExternal } = deps
+  const fetchImpl = deps.fetch ?? globalThis.fetch?.bind(globalThis)
   const secretStore =
     deps.secretStore ??
     ({

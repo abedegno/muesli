@@ -91,6 +91,7 @@ app.whenReady().then(async () => {
     })
     const handlers = createHandlers({
       tokenStore,
+      fetch: fetchImpl,
       embedded: true,
       embeddedBaseUrl: supervisor.baseUrl,
       secretStore,
