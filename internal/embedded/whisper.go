@@ -149,7 +149,7 @@ func buildWhisperCppTranscriberCmd(binaryPath, addr, token string) *exec.Cmd {
 }
 
 func whisperConfigJSON() string {
-	return "{}"
+	return `{"multitrack":true}`
 }
 
 func locateWhisperCppTranscriberBinary() (string, error) {
