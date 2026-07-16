@@ -31,5 +31,11 @@ mac:
   extendInfo:
     NSMicrophoneUsageDescription: 'Muesli uses your microphone to record and transcribe meetings.'
   notarize: true
+linux:
+  category: Office
+  target:
+    - target: AppImage
+      arch:
+        - x64
 dmg:
   title: Muesli ${version}
