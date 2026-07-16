@@ -231,6 +231,38 @@ describe('ElectronCapture', () => {
     expect(result.hasSystemAudio).toBe(false)
   })
 
+  it('captures system audio only when mic fails with an unmatched error', async () => {
+    const gainNode = makeGainNode()
+    const ctx = makeAudioContext(gainNode)
+    const rec = makeMediaRecorder()
+
+    vi.stubGlobal('AudioContext', vi.fn(() => ctx))
+    vi.stubGlobal('MediaRecorder', Object.assign(vi.fn(() => rec), {
+      isTypeSupported: vi.fn(() => true),
+    }))
+
+    const notReadable = new Error('Mic busy')
+    notReadable.name = 'NotReadableError'
+
+    vi.stubGlobal('navigator', {
+      mediaDevices: {
+        getUserMedia: vi.fn().mockRejectedValue(notReadable),
+      },
+    })
+
+    const capture = new ElectronCapture({
+      getSystemAudioStream: async () => makeMicStream(),
+    })
+    await capture.start()
+
+    expect(ctx.createChannelMerger).not.toHaveBeenCalled()
+    expect(ctx.source.connect).toHaveBeenCalledWith(ctx.destination)
+
+    const result = await capture.stop()
+    expect(result.hasMicAudio).toBe(false)
+    expect(result.hasSystemAudio).toBe(true)
+  })
+
   it('throws MicPermissionDeniedError (code mic-permission-denied) when getUserMedia rejects with NotAllowedError', async () => {
     const gainNode = makeGainNode()
     const ctx = makeAudioContext(gainNode)
@@ -247,7 +279,6 @@ describe('ElectronCapture', () => {
     vi.stubGlobal('navigator', {
       mediaDevices: {
         getUserMedia: vi.fn().mockRejectedValue(notAllowed),
-        getDisplayMedia: vi.fn().mockRejectedValue(new Error('no display')),
       },
     })
 
@@ -277,7 +308,6 @@ describe('ElectronCapture', () => {
     vi.stubGlobal('navigator', {
       mediaDevices: {
         getUserMedia: vi.fn().mockRejectedValue(notAllowed),
-        getDisplayMedia: vi.fn().mockRejectedValue(new Error('no display')),
       },
     })
 
@@ -302,7 +332,6 @@ describe('ElectronCapture', () => {
     vi.stubGlobal('navigator', {
       mediaDevices: {
         getUserMedia: vi.fn().mockRejectedValue(overconstrained),
-        getDisplayMedia: vi.fn().mockRejectedValue(new Error('no display')),
       },
     })
 
@@ -333,7 +362,6 @@ describe('ElectronCapture', () => {
     vi.stubGlobal('navigator', {
       mediaDevices: {
         getUserMedia: vi.fn().mockRejectedValue(notFound),
-        getDisplayMedia: vi.fn().mockRejectedValue(new Error('no display')),
       },
     })
 

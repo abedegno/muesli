@@ -127,27 +127,31 @@ export class ElectronCapture implements AudioCapture {
       this.hasMic = false
     }
 
-    if (gainNode) {
-      let systemStream: MediaStream | null = null
-      try {
-        systemStream = (await this.getSystemAudioStream?.()) ?? null
-      } catch {
-        systemStream = null
-      }
+    let systemStream: MediaStream | null = null
+    try {
+      systemStream = (await this.getSystemAudioStream?.()) ?? null
+    } catch {
+      systemStream = null
+    }
 
-      if (systemStream && this.hasMic) {
-        this.streams.push(systemStream)
-        const systemSource = ctx.createMediaStreamSource(systemStream)
-        const merger = ctx.createChannelMerger(2)
-        gainNode.connect(merger, 0, 0) // mic -> left
-        systemSource.connect(merger, 0, 1) // system -> right
-        merger.connect(destination)
-        if (this.pcmTap) merger.connect(this.pcmTap)
-        this.hasSystem = true
-      } else {
-        gainNode.connect(destination) // mono fallback (today's behavior)
-        if (this.pcmTap) gainNode.connect(this.pcmTap)
-      }
+    if (systemStream && this.hasMic && gainNode) {
+      this.streams.push(systemStream)
+      const systemSource = ctx.createMediaStreamSource(systemStream)
+      const merger = ctx.createChannelMerger(2)
+      gainNode.connect(merger, 0, 0) // mic -> left
+      systemSource.connect(merger, 0, 1) // system -> right
+      merger.connect(destination)
+      if (this.pcmTap) merger.connect(this.pcmTap)
+      this.hasSystem = true
+    } else if (systemStream && !this.hasMic) {
+      this.streams.push(systemStream)
+      const systemSource = ctx.createMediaStreamSource(systemStream)
+      systemSource.connect(destination)
+      if (this.pcmTap) systemSource.connect(this.pcmTap)
+      this.hasSystem = true
+    } else if (this.hasMic && gainNode) {
+      gainNode.connect(destination) // mono fallback (today's behavior)
+      if (this.pcmTap) gainNode.connect(this.pcmTap)
     }
 
     if (!this.hasMic && !this.hasSystem) {
