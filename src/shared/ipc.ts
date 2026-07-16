@@ -1,6 +1,7 @@
 import type { ActionItem, ActionItemStatus, AudioUrlGrant, CalendarEvent, ChatSource, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, EmbeddedStartupStatus, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from './types'
 import type { UploadProgress } from '../main/uploadMachine'
 import type { MicStatus } from '../main/micPermission'
+import type { SysAudioStatus } from '../main/systemAudioPermission'
 import type { ExportOptions } from './export'
 
 export const IPC = {
@@ -109,6 +110,9 @@ export const IPC = {
   micStatus: 'muesli:micStatus',
   micRequest: 'muesli:micRequest',
   micOpenSettings: 'muesli:micOpenSettings',
+  systemAudioStatus: 'muesli:systemAudioStatus',
+  systemAudioRequest: 'muesli:systemAudioRequest',
+  systemAudioOpenSettings: 'muesli:systemAudioOpenSettings',
   systemAudioAvailable: 'muesli:systemAudioAvailable',
   systemAudioStart: 'muesli:systemAudioStart',
   systemAudioStop: 'muesli:systemAudioStop',
@@ -332,6 +336,9 @@ export interface MuesliBridge {
   micStatus(): Promise<MicStatus>
   micRequest(): Promise<MicStatus>
   micOpenSettings(): Promise<void>
+  systemAudioStatus(): Promise<SysAudioStatus>
+  systemAudioRequest(): Promise<SysAudioStatus>
+  systemAudioOpenSettings(): Promise<void>
   systemAudioAvailable(): Promise<boolean>
   systemAudioStart(): Promise<{ deviceId: string } | null>
   systemAudioStop(): Promise<void>

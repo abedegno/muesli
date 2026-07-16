@@ -30,6 +30,7 @@ mac:
   entitlementsInherit: build/entitlements.mac.inherit.plist
   extendInfo:
     NSMicrophoneUsageDescription: 'Muesli uses your microphone to record and transcribe meetings.'
+    NSAudioCaptureUsageDescription: 'Muesli captures system audio to transcribe the other side of your calls.'
   notarize: true
 linux:
   category: Office
