@@ -104,6 +104,9 @@ func TestTranscriberHandler(t *testing.T) {
 		if len(eng.gotPCM) == 0 {
 			t.Fatal("expected pcm to be decoded")
 		}
+		if eng.gotReq.Config == nil {
+			t.Fatal("expected config to be forwarded")
+		}
 
 		shimReqBody, _ := json.Marshal(map[string]any{"audio_url": tinyWAVDataURL(160)})
 		shimReq, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/audio/transcriptions", bytes.NewReader(shimReqBody))
@@ -123,6 +126,42 @@ func TestTranscriberHandler(t *testing.T) {
 		}
 		if shimOut["text"] != "alpha beta" {
 			t.Fatalf("shim text = %q", shimOut["text"])
+		}
+	})
+
+	t.Run("multitrack", func(t *testing.T) {
+		if _, err := exec.LookPath("ffmpeg"); err != nil {
+			t.Skip("ffmpeg not available on PATH")
+		}
+		eng.gotPCM = nil
+		body := map[string]any{"audio_url": stereoWAVDataURL(), "config": map[string]any{"multitrack": true}}
+		reqBody, _ := json.Marshal(body)
+		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/transcribe", bytes.NewReader(reqBody))
+		req.Header.Set("Authorization", "Bearer secret")
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("transcribe multitrack: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("transcribe multitrack status = %d", resp.StatusCode)
+		}
+		var out TranscribeResult
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			t.Fatalf("decode transcribe multitrack: %v", err)
+		}
+		if len(out.Segments) != 2 {
+			t.Fatalf("transcribe multitrack response = %+v", out)
+		}
+		if out.Segments[0].Speaker != "You" || out.Segments[0].Source != "mic" {
+			t.Fatalf("segment[0] = %+v", out.Segments[0])
+		}
+		if out.Segments[1].Speaker != "Them" || out.Segments[1].Source != "system" {
+			t.Fatalf("segment[1] = %+v", out.Segments[1])
+		}
+		if len(eng.gotPCM) != 0 {
+			t.Fatalf("expected multitrack path to bypass single-pass pcm recording, got %d samples", len(eng.gotPCM))
 		}
 	})
 
