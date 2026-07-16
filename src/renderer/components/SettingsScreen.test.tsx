@@ -36,6 +36,7 @@ afterEach(() => {
   cleanup()
   vi.clearAllMocks()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
   localStorage.clear()
 })
 
@@ -198,10 +199,44 @@ describe('SettingsScreen', () => {
 
   it('calls the built-in reset action', async () => {
     const user = userEvent.setup()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
 
     renderScreen()
 
     await user.click(await screen.findByRole('button', { name: "Use this device's built-in server" }))
     expect(resetToBuiltIn).toHaveBeenCalledTimes(1)
+    expect(window.confirm).toHaveBeenCalledWith(
+      "Switch to this device's built-in server? Your connection to the current server will be forgotten.",
+    )
+  })
+
+  it('does not reset to the built-in server when the confirmation is declined', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+    renderScreen()
+
+    await user.click(await screen.findByRole('button', { name: "Use this device's built-in server" }))
+    expect(resetToBuiltIn).not.toHaveBeenCalled()
+  })
+
+  it('disconnects after confirmation', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    renderScreen()
+
+    await user.click(await screen.findByRole('button', { name: 'Disconnect' }))
+    expect(disconnect).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not disconnect when the confirmation is declined', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(window, 'confirm').mockReturnValue(false)
+
+    renderScreen()
+
+    await user.click(await screen.findByRole('button', { name: 'Disconnect' }))
+    expect(disconnect).not.toHaveBeenCalled()
   })
 })
