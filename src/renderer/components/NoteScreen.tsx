@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams, useOutletContext } from 'react-router-dom'
+import { ChevronRight } from 'lucide-react'
 import { muesli } from '@/api'
 import { RecordingSession } from '../../main/recorder'
 import { ElectronCapture, MicPermissionDeniedError } from '../capture/electronCapture'
@@ -627,6 +628,7 @@ export function NoteScreen() {
   const [retryCount, setRetryCount] = useState(0)
   const [confirmDelete, setConfirmDelete] = useState(false)
   const [exportOptionsOpen, setExportOptionsOpen] = useState(false)
+  const [detailsOpen, setDetailsOpen] = useState(false)
   const [recordState, setRecordState] = useState<RecordState>('idle')
   const [elapsedMs, setElapsedMs] = useState(0)
   const [micError, setMicError] = useState<Error | null>(null)
@@ -1328,21 +1330,37 @@ export function NoteScreen() {
           catch (err) { notify(err instanceof Error ? err.message : 'Could not remove from folder', 'error') }
         }}
       />
-      <NoteSharesPanel noteId={id} />
-      <NoteLinksPanel
-        noteId={id}
-        allNotes={allNotes}
-        onOpenNote={(noteId) => navigate(`/notes/${noteId}`)}
-        refreshToken={linkRefreshToken}
-      />
-      <RelatedNotesPanel
-        noteId={id}
-        allNotes={allNotes}
-        onOpenNote={(noteId) => navigate(`/notes/${noteId}`)}
-        refreshToken={linkRefreshToken}
-        onLinked={() => setLinkRefreshToken((value) => value + 1)}
-      />
-      <NoteActionItemsPanel noteId={id} />
+      <div className="border-b border-border">
+        <button
+          type="button"
+          aria-expanded={detailsOpen}
+          aria-controls="note-details-panel"
+          onClick={() => setDetailsOpen((o) => !o)}
+          className="flex w-full items-center gap-2 px-6 py-3 text-left text-sm font-semibold uppercase tracking-wide text-muted-foreground hover:bg-muted/40"
+        >
+          <ChevronRight size={14} className={detailsOpen ? 'rotate-90 transition-transform' : 'transition-transform'} />
+          Details
+        </button>
+        {detailsOpen && (
+          <div id="note-details-panel">
+            <NoteSharesPanel noteId={id} />
+            <NoteLinksPanel
+              noteId={id}
+              allNotes={allNotes}
+              onOpenNote={(noteId) => navigate(`/notes/${noteId}`)}
+              refreshToken={linkRefreshToken}
+            />
+            <RelatedNotesPanel
+              noteId={id}
+              allNotes={allNotes}
+              onOpenNote={(noteId) => navigate(`/notes/${noteId}`)}
+              refreshToken={linkRefreshToken}
+              onLinked={() => setLinkRefreshToken((value) => value + 1)}
+            />
+            <NoteActionItemsPanel noteId={id} />
+          </div>
+        )}
+      </div>
       <div className="flex-1 overflow-y-auto px-6 py-4">
         {capture || full.note.status === 'recording' ? (
           <Suspense fallback={<div className="p-4 text-sm text-muted-foreground">Loading editor…</div>}>

@@ -126,6 +126,7 @@ describe('NoteScreen links panel', () => {
 
     render(<NoteScreen />)
 
+    await user.click(await screen.findByRole('button', { name: 'Details' }))
     const input = await screen.findByLabelText('Add link')
     await user.type(input, 'proj')
 
@@ -157,6 +158,7 @@ describe('NoteScreen links panel', () => {
 
     render(<NoteScreen />)
 
+    await user.click(await screen.findByRole('button', { name: 'Details' }))
     const projectPlan = await screen.findByRole('button', { name: 'Project Plan' })
     const fallbackLink = await screen.findByRole('button', { name: 'n4' })
     const weeklyRetro = await screen.findByRole('button', { name: 'Weekly Retro' })
@@ -172,19 +174,23 @@ describe('NoteScreen links panel', () => {
   })
 
   it('shows a loading state while links are pending', async () => {
+    const user = userEvent.setup()
     listNoteLinksMock.mockImplementation(() => new Promise<NoteLinksResponse>(() => {}))
 
     render(<NoteScreen />)
 
+    await user.click(await screen.findByRole('button', { name: 'Details' }))
     await screen.findByRole('heading', { name: 'Links' })
     expect(screen.getByText('Loading links...')).toBeInTheDocument()
   })
 
   it('shows an empty state when both link lists are empty', async () => {
+    const user = userEvent.setup()
     listNoteLinksMock.mockResolvedValue({ outgoing: [], backlinks: [] })
 
     render(<NoteScreen />)
 
+    await user.click(await screen.findByRole('button', { name: 'Details' }))
     await screen.findByRole('heading', { name: 'Links' })
     expect(screen.getByText('No links yet')).toBeInTheDocument()
   })
