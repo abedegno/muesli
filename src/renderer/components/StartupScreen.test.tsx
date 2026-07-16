@@ -94,6 +94,10 @@ describe('EmbeddedStartupGate', () => {
     expect(screen.getByText('App body')).toBeInTheDocument()
     expect(screen.getByText(/install ollama to enable summaries & search/i)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /download ollama/i })).toHaveAttribute('href', 'https://ollama.com/download')
+    expect(screen.getByRole('link', { name: /learn more/i })).toHaveAttribute(
+      'href',
+      'https://github.com/abedegno/muesli/blob/main/docs/DESKTOP-ONBOARDING.md',
+    )
 
     await user.click(screen.getByRole('button', { name: /dismiss/i }))
     expect(screen.getByText('App body')).toBeInTheDocument()
