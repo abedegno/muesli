@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { resolveResourceEnv, resolveServerBin } from './resourcePaths'
+import { resolveAudiotapBin, resolveResourceEnv, resolveServerBin } from './resourcePaths'
 
 describe('resourcePaths', () => {
   it('resolves the packaged server binary path', () => {
@@ -19,6 +19,7 @@ describe('resourcePaths', () => {
       MUESLI_MODE: 'embedded',
       MUESLI_EMBEDDED_PG_BINARIES: join('/R', 'pg'),
       MUESLI_EMBEDDED_PGVECTOR_DIR: join('/R', 'pgvector'),
+      MUESLI_AUDIOTAP_BIN: join('/R', 'server', 'muesli-audiotap'),
       MUESLI_WHISPER_CPP_TRANSCRIBER_BIN: join('/R', 'server', 'whisper-cpp-transcriber'),
       MUESLI_WHISPER_MODEL_DIR: join('/R', 'models', 'whisper'),
       MUESLI_WHISPER_MODEL: 'ggml-tiny.en',
@@ -78,10 +79,24 @@ describe('resourcePaths', () => {
       MUESLI_MODE: 'embedded',
       MUESLI_EMBEDDED_PG_BINARIES: join('/R', 'pg'),
       MUESLI_EMBEDDED_PGVECTOR_DIR: join('/R', 'pgvector'),
+      MUESLI_AUDIOTAP_BIN: join('/R', 'server', 'muesli-audiotap.exe'),
       MUESLI_WHISPER_CPP_TRANSCRIBER_BIN: join('/R', 'server', 'whisper-cpp-transcriber.exe'),
       MUESLI_WHISPER_MODEL_DIR: join('/R', 'models', 'whisper'),
       MUESLI_WHISPER_MODEL: 'ggml-tiny.en',
       MUESLI_FFMPEG_BIN: join('/R', 'bin', 'ffmpeg.exe'),
     })
+  })
+
+  it.each([
+    ['darwin', join('/R', 'server', 'muesli-audiotap')],
+    ['linux', join('/R', 'server', 'muesli-audiotap')],
+    ['win32', join('/R', 'server', 'muesli-audiotap.exe')],
+  ] as const)('resolves the packaged audiotap binary on %s', (platform, expected) => {
+    expect(resolveAudiotapBin({
+      isPackaged: true,
+      resourcesPath: '/R',
+      env: {},
+      platform,
+    })).toBe(expected)
   })
 })

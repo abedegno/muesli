@@ -704,6 +704,7 @@ export function NoteScreen() {
       pollAbortRef.current?.abort()
       tagAbortRef.current?.abort()
       void muesli.stopNoteStream?.(noteIdRef.current)?.catch(() => {})
+      void Promise.resolve(muesli.systemAudioStop?.()).catch(() => {})
       uploadProgressUnsubRef.current?.()
       uploadProgressUnsubRef.current = null
     }
@@ -746,6 +747,10 @@ export function NoteScreen() {
       notify(err instanceof Error ? err.message : 'Could not retry the pipeline', 'error')
     }
   }, [id, refresh, notify])
+
+  const stopSystemAudio = useCallback(async () => {
+    await Promise.resolve(muesli.systemAudioStop?.()).catch(() => {})
+  }, [])
 
   // Bumps this note's still-pending job(s) to the front of the queue so they
   // dequeue before other queued notes. Does not touch anything already running.
@@ -938,6 +943,13 @@ export function NoteScreen() {
           onPcmFrame: (frame) => {
             void muesli.sendNoteStreamAudio?.(id, frame)?.catch(() => {})
           },
+          getSystemAudioStream: async () => {
+            const result = await muesli.systemAudioStart()
+            if (!result) return null
+            return navigator.mediaDevices.getUserMedia({
+              audio: { deviceId: { exact: result.deviceId } },
+            })
+          },
         }),
         { onWarning: (w) => notify(w, 'info') },
       )
@@ -949,6 +961,7 @@ export function NoteScreen() {
       timerRef.current = setInterval(() => setElapsedMs(Date.now() - startedAt), 500)
     } catch (err) {
       void muesli.stopNoteStream?.(id)?.catch(() => {})
+      await stopSystemAudio()
       if (timerRef.current) clearInterval(timerRef.current)
       setRecordState('idle')
       if (
@@ -971,7 +984,7 @@ export function NoteScreen() {
         notify(err instanceof Error ? err.message : 'Could not start recording', 'error')
       }
     }
-  }, [gainLinear, id, notify, selectedDeviceId])
+  }, [gainLinear, id, notify, selectedDeviceId, stopSystemAudio])
 
   async function doUpload(audio: ArrayBuffer, mimeType: string) {
     setRecordState('processing')
@@ -1019,28 +1032,33 @@ export function NoteScreen() {
     const session = sessionRef.current
     if (!session) return
     if (timerRef.current) clearInterval(timerRef.current)
-    const result = await session.stop()
-    void muesli.stopNoteStream?.(id)?.catch(() => {})
-    setRecordState('processing')
-    const audio = result.bytes.slice().buffer as ArrayBuffer
-
     try {
-      const check = await muesli.checkAudioDedup(audio)
-      if (check.existingNoteId) {
-        setPendingUpload({
-          audio,
-          mimeType: result.mimeType,
-          existingNoteId: check.existingNoteId,
-          existingNoteTitle: check.existingNoteTitle ?? '',
-        })
-        setRecordState('idle')
-        return
-      }
-    } catch {
-      // network error — proceed with upload
-    }
+      const result = await session.stop()
+      void muesli.stopNoteStream?.(id)?.catch(() => {})
+      setRecordState('processing')
+      const audio = result.bytes.slice().buffer as ArrayBuffer
 
-    await doUpload(audio, result.mimeType)
+      try {
+        const check = await muesli.checkAudioDedup(audio)
+        if (check.existingNoteId) {
+          setPendingUpload({
+            audio,
+            mimeType: result.mimeType,
+            existingNoteId: check.existingNoteId,
+            existingNoteTitle: check.existingNoteTitle ?? '',
+          })
+          setRecordState('idle')
+          return
+        }
+      } catch {
+        // network error — proceed with upload
+      }
+
+      await doUpload(audio, result.mimeType)
+    }
+    finally {
+      await stopSystemAudio()
+    }
   }
 
   const exportServerNote = useCallback(async (format: string, options?: ExportOptionsValue) => {

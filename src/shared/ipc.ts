@@ -109,6 +109,9 @@ export const IPC = {
   micStatus: 'muesli:micStatus',
   micRequest: 'muesli:micRequest',
   micOpenSettings: 'muesli:micOpenSettings',
+  systemAudioAvailable: 'muesli:systemAudioAvailable',
+  systemAudioStart: 'muesli:systemAudioStart',
+  systemAudioStop: 'muesli:systemAudioStop',
   writeClipboardText: 'muesli:writeClipboardText',
   getDigestConfig: 'muesli:getDigestConfig',
   updateDigestConfig: 'muesli:updateDigestConfig',
@@ -329,6 +332,9 @@ export interface MuesliBridge {
   micStatus(): Promise<MicStatus>
   micRequest(): Promise<MicStatus>
   micOpenSettings(): Promise<void>
+  systemAudioAvailable(): Promise<boolean>
+  systemAudioStart(): Promise<{ deviceId: string } | null>
+  systemAudioStop(): Promise<void>
   writeClipboardText(text: string): Promise<void>
   getDigestConfig(): Promise<DigestConfig>
   updateDigestConfig(cadence: DigestConfig['cadence']): Promise<DigestConfig>
