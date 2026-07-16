@@ -33,6 +33,7 @@ interface Handlers {
   getOnboarded(): Promise<boolean>
   setOnboarded(onboarded: boolean): Promise<void>
   getReadyz(): Promise<{ ollamaDetected: boolean } | null>
+  getServerHealth(): Promise<{ reachable: boolean; version?: string }>
   connect(req: ConnectRequest): Promise<{ serverUrl: string }>
   disconnect(): Promise<void>
   resetToBuiltIn(): Promise<void>
@@ -224,6 +225,24 @@ export function createHandlers(deps: HandlerDeps): Handlers {
         return { ollamaDetected: body.embedded?.ollamaDetected ?? false }
       } catch {
         return null
+      }
+    },
+
+    async getServerHealth() {
+      const fetchFn = fetchImpl ?? globalThis.fetch?.bind(globalThis)
+      const cfg = tokenStore.load()
+      const serverUrl = cfg?.serverUrl?.trim()
+      if (!serverUrl || !fetchFn) return { reachable: false }
+      try {
+        const url = new URL('healthz', `${serverUrl.replace(/\/+$/, '')}/`)
+        const res = await fetchFn(url)
+        if (!res.ok) return { reachable: false }
+        const body = (await res.json()) as Record<string, unknown> | null
+        if (!body || body.status !== 'ok') return { reachable: false }
+        const version = typeof body.version === 'string' ? body.version : undefined
+        return { reachable: true, version }
+      } catch {
+        return { reachable: false }
       }
     },
 

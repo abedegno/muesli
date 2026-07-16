@@ -9,6 +9,7 @@ const bridge: MuesliBridge = {
   getOnboarded: () => ipcRenderer.invoke(IPC.getOnboarded),
   setOnboarded: (b) => ipcRenderer.invoke(IPC.setOnboarded, b),
   getReadyz: () => ipcRenderer.invoke(IPC.getReadyz),
+  getServerHealth: () => ipcRenderer.invoke(IPC.getServerHealth),
   connect: (req) => ipcRenderer.invoke(IPC.connect, req),
   disconnect: () => ipcRenderer.invoke(IPC.disconnect),
   resetToBuiltIn: () => ipcRenderer.invoke(IPC.resetToBuiltIn),

@@ -8,6 +8,7 @@ export const IPC = {
   getOnboarded: 'muesli:getOnboarded',
   setOnboarded: 'muesli:setOnboarded',
   getReadyz: 'muesli:getReadyz',
+  getServerHealth: 'muesli:getServerHealth',
   connect: 'muesli:connect',
   disconnect: 'muesli:disconnect',
   resetToBuiltIn: 'muesli:resetToBuiltIn',
@@ -224,6 +225,7 @@ export interface MuesliBridge {
   getOnboarded(): Promise<boolean>
   setOnboarded(b: boolean): Promise<void>
   getReadyz(): Promise<{ ollamaDetected: boolean } | null>
+  getServerHealth(): Promise<{ reachable: boolean; version?: string }>
   connect(req: ConnectRequest): Promise<{ serverUrl: string }>
   disconnect(): Promise<void>
   resetToBuiltIn(): Promise<void>

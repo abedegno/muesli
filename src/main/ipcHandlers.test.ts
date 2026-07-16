@@ -131,6 +131,52 @@ describe('ipc handlers', () => {
     await expect(h.getReadyz()).resolves.toBeNull()
   })
 
+  it('getServerHealth returns reachable with version for an ok healthz response', async () => {
+    const fetchMock = async (url: string | URL): Promise<Response> => {
+      expect(new URL(String(url)).pathname).toBe('/healthz')
+      return new Response(JSON.stringify({ status: 'ok', version: '1.2.3' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost:1234', token: 'app-token' })
+    const h = createHandlers({
+      tokenStore,
+      fetch: fetchMock,
+      onProgress: () => {},
+    })
+
+    await expect(h.getServerHealth()).resolves.toEqual({ reachable: true, version: '1.2.3' })
+  })
+
+  it('getServerHealth returns unreachable when the fetch rejects', async () => {
+    const h = createHandlers({
+      tokenStore: new TokenStore(dir, fakeSafe),
+      fetch: async () => {
+        throw new Error('offline')
+      },
+      onProgress: () => {},
+    })
+
+    await expect(h.getServerHealth()).resolves.toEqual({ reachable: false })
+  })
+
+  it('getServerHealth returns unreachable when no server is configured', async () => {
+    let called = false
+    const h = createHandlers({
+      tokenStore: new TokenStore(dir, fakeSafe),
+      fetch: async () => {
+        called = true
+        return new Response('unexpected', { status: 500 })
+      },
+      onProgress: () => {},
+    })
+
+    await expect(h.getServerHealth()).resolves.toEqual({ reachable: false })
+    expect(called).toBe(false)
+  })
+
   it('connect always allows https to any host', async () => {
     server.seedUser('o@example.com', 'password123')
     const h = makeHandlers()
