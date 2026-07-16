@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach } from 'vitest'
-import { render, cleanup, waitFor } from '@testing-library/react'
+import { render, cleanup, waitFor, screen, fireEvent } from '@testing-library/react'
 
 // --- Mocks -----------------------------------------------------------------
 
@@ -10,11 +10,20 @@ vi.mock('react-router-dom', () => ({
   useOutletContext: () => ({ refresh: vi.fn() }),
 }))
 
+function makeNote(id: string) {
+  return {
+    id,
+    title: 'Meeting — Jun 28, 3:00 PM',
+    status: 'recording' as const,
+    created_at: '2026-07-16T00:00:00.000Z',
+    updated_at: '2026-07-16T00:00:00.000Z',
+    partial_transcript: false,
+  }
+}
+
 vi.mock('@/api', () => ({
   muesli: {
-    createNote: vi.fn(() =>
-      Promise.resolve({ id: 'note-123', title: 'Meeting — Jun 28, 3:00 PM' }),
-    ),
+    createNote: vi.fn(() => Promise.resolve(makeNote('note-123'))),
   },
 }))
 
@@ -39,5 +48,26 @@ describe('NewMeetingScreen', () => {
     render(<NewMeetingScreen />)
     await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1))
     expect(navigate).toHaveBeenCalledWith('/notes/note-123?capture=1', { replace: true })
+  })
+
+  it('shows a retry option and does not navigate when createNote rejects', async () => {
+    vi.mocked(muesli.createNote).mockRejectedValueOnce(new Error('server not ready'))
+    render(<NewMeetingScreen />)
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('server not ready'))
+    expect(navigate).not.toHaveBeenCalled()
+  })
+
+  it('retrying after a failure calls createNote again and navigates on success', async () => {
+    vi.mocked(muesli.createNote)
+      .mockRejectedValueOnce(new Error('server not ready'))
+      .mockResolvedValueOnce(makeNote('note-456'))
+
+    render(<NewMeetingScreen />)
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }))
+
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/notes/note-456?capture=1', { replace: true }))
+    expect(muesli.createNote).toHaveBeenCalledTimes(2)
   })
 })
