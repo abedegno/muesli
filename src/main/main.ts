@@ -11,6 +11,7 @@ import { startEmbeddedStartupMonitor } from './embeddedStartupMonitor'
 import { MuesliClient } from './muesliClient'
 import { NoteStreamRelay } from './noteStreamRelay'
 import { SecretStore } from './secretStore'
+import { makeSystemAudioPermission } from './systemAudioPermission'
 import { makeSystemAudioHelper } from './systemAudioHelper'
 import { makeServerLogPath, startServerSupervisor } from './serverSupervisor'
 import { TokenStore } from './tokenStore'
@@ -87,6 +88,7 @@ app.whenReady().then(async () => {
     const secretStore = new SecretStore(userDataDir, safeStorage)
     const fetchImpl = globalThis.fetch?.bind(globalThis)
     const micPermission = makeMicPermission()
+    const systemAudioPermission = makeSystemAudioPermission()
     const systemAudioHelper = makeSystemAudioHelper({
       binPath: resolveAudiotapBin({
         isPackaged: app.isPackaged,
@@ -147,6 +149,9 @@ app.whenReady().then(async () => {
     ipcMain.handle(IPC.micStatus, () => micPermission.status())
     ipcMain.handle(IPC.micRequest, () => micPermission.request())
     ipcMain.handle(IPC.micOpenSettings, () => micPermission.openSettings())
+    ipcMain.handle(IPC.systemAudioStatus, () => systemAudioPermission.status())
+    ipcMain.handle(IPC.systemAudioRequest, () => systemAudioPermission.request())
+    ipcMain.handle(IPC.systemAudioOpenSettings, () => systemAudioPermission.openSettings())
     ipcMain.handle(IPC.systemAudioAvailable, () => systemAudioHelper.available())
     ipcMain.handle(IPC.systemAudioStart, () => systemAudioHelper.start())
     ipcMain.handle(IPC.systemAudioStop, () => systemAudioHelper.stop())

@@ -5,9 +5,11 @@ import userEvent from '@testing-library/user-event'
 import { RecordControl } from './RecordControl'
 
 const micOpenSettings = vi.hoisted(() => vi.fn())
+const systemAudioStatus = vi.hoisted(() => vi.fn())
+const systemAudioOpenSettings = vi.hoisted(() => vi.fn())
 
 vi.mock('@/api', () => ({
-  muesli: { micOpenSettings },
+  muesli: { micOpenSettings, systemAudioStatus, systemAudioOpenSettings },
 }))
 
 afterEach(cleanup)
@@ -15,6 +17,9 @@ beforeEach(() => {
   localStorage.clear()
   vi.restoreAllMocks()
   micOpenSettings.mockReset()
+  systemAudioStatus.mockReset()
+  systemAudioOpenSettings.mockReset()
+  Object.defineProperty(navigator, 'platform', { value: 'Linux x86_64', configurable: true })
 })
 
 // ---------------------------------------------------------------------------
@@ -312,6 +317,38 @@ describe('RecordControl — permission denied', () => {
     )
     expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.getByRole('button', { name: /record/i })).toBeInTheDocument()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// System audio notice
+// ---------------------------------------------------------------------------
+
+describe('RecordControl — system audio notice', () => {
+  it('shows a non-blocking notice on macOS when system audio is denied', async () => {
+    mockEnumerateDevices([])
+    Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true })
+    systemAudioStatus.mockResolvedValueOnce('denied')
+
+    render(<RecordControl state="idle" elapsedMs={0} onStart={() => {}} onStop={() => {}} />)
+
+    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
+    expect(screen.getByText(/system audio capture is not enabled/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /record/i })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: /open system settings/i }))
+    expect(systemAudioOpenSettings).toHaveBeenCalledOnce()
+  })
+
+  it('does not show the notice when system audio is granted', async () => {
+    mockEnumerateDevices([])
+    Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true })
+    systemAudioStatus.mockResolvedValueOnce('granted')
+
+    render(<RecordControl state="idle" elapsedMs={0} onStart={() => {}} onStop={() => {}} />)
+
+    await waitFor(() => expect(systemAudioStatus).toHaveBeenCalledOnce())
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 })
 
