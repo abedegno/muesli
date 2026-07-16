@@ -147,3 +147,60 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: dist-desktop/*.dmg
+  build-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install build toolchain (Linux)
+        run: sudo apt-get update -qq && sudo apt-get install -y build-essential cmake git
+
+      - name: Build whisper.cpp static libs (CPU, linux-amd64)
+        run: |
+          git clone https://github.com/ggml-org/whisper.cpp wcpp
+          git -C wcpp checkout "$WHISPER_REF"
+          ( cd wcpp/bindings/go && make whisper )
+          mkdir -p wlib/lib wlib/include
+          find wcpp/build_go \( -name 'libwhisper.a' -o -name 'libggml*.a' \) -exec cp {} wlib/lib/ \;
+          cp wcpp/include/*.h wlib/include/
+          cp wcpp/ggml/include/*.h wlib/include/
+          echo "WLIB=$PWD/wlib" >> "$GITHUB_ENV"
+
+      - name: Build Go binaries (native amd64)
+        run: |
+          mkdir -p build/bin
+          make build
+          cp bin/muesli build/bin/muesli
+          go build -o build/bin/ollama-agent ./cmd/ollama-agent
+          C_INCLUDE_PATH="$WLIB/include" LIBRARY_PATH="$WLIB/lib" CGO_ENABLED=1 \
+            go build -tags whisper_cgo -o build/bin/whisper-cpp-transcriber ./cmd/whisper-cpp-transcriber
+
+      - name: Install node deps (brings ffmpeg-static)
+        run: npm ci
+
+      - name: Assemble desktop resources
+        run: bash scripts/assemble-desktop-resources.sh linux-x64
+
+      - name: Build (unsigned AppImage)
+        run: |
+          npx electron-vite build
+          npx electron-builder --linux AppImage --publish never
+
+      - name: Upload AppImage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: muesli-linux-x64-appimage
+          path: dist-desktop/*.AppImage
+          retention-days: 30
+
+      - name: Attach to Release (tag only)
+        if: startsWith(github.ref, 'refs/tags/desktop-v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-desktop/*.AppImage
