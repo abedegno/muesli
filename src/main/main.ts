@@ -1,7 +1,7 @@
 import { randomBytes } from 'node:crypto'
 import { basename, join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, session, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, session, shell } from 'electron'
 import { IPC, type ConnectRequest, type CreateConversationRequest, type DiarizationReviewUpdate, type ExportRequestOptions, type SearchOptions, type SendMessageRequest, type UpdateActionItemRequest, type UpdatePersonRequest, type UploadAudioRequest } from '../shared/ipc'
 import type { CreateShareRequest, DigestConfig, EmbeddedStartupStatus, RetranscribeNoteRequest, RuleGroup, TemplatePhase, TemplateSection } from '../shared/types'
 import { createHandlers } from './ipcHandlers'
@@ -138,6 +138,9 @@ app.whenReady().then(async () => {
     ipcMain.handle(IPC.micStatus, () => micPermission.status())
     ipcMain.handle(IPC.micRequest, () => micPermission.request())
     ipcMain.handle(IPC.micOpenSettings, () => micPermission.openSettings())
+    ipcMain.handle(IPC.writeClipboardText, (_e, text: string) => {
+      clipboard.writeText(text)
+    })
     ipcMain.handle(IPC.getDigestConfig, () => handlers.getDigestConfig())
     ipcMain.handle(IPC.updateDigestConfig, (_e, cadence: DigestConfig['cadence']) => handlers.updateDigestConfig(cadence))
     ipcMain.handle(IPC.getFull, (_e, id: string) => handlers.getFull(id))
