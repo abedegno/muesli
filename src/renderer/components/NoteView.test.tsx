@@ -5,6 +5,10 @@ import userEvent from '@testing-library/user-event'
 import { NoteView, summaryToMarkdown } from './NoteView'
 import type { FullNote, Template } from '../../shared/types'
 
+const { writeClipboardTextMock } = vi.hoisted(() => ({
+  writeClipboardTextMock: vi.fn().mockResolvedValue(undefined),
+}))
+
 // --- Hoisted bridge mocks (speaker aliases + chat) --------------------------
 const {
   muesliMock,
@@ -35,6 +39,10 @@ vi.mock('@/api', () => ({
   muesli: muesliMock,
 }))
 
+vi.mock('@/lib/clipboard', () => ({
+  writeClipboardText: (text: string) => writeClipboardTextMock(text),
+}))
+
 beforeEach(() => {
   listSpeakerAliasesMock.mockReset().mockResolvedValue([])
   upsertSpeakerAliasMock.mockReset().mockResolvedValue({})
@@ -42,6 +50,7 @@ beforeEach(() => {
   listMessagesMock.mockReset().mockResolvedValue([])
   getNoteAudioUrlMock.mockReset().mockResolvedValue({ url: 'http://example.test/audio', expires_at: new Date().toISOString() })
   muesliMock.getNoteAudioUrl = getNoteAudioUrlMock
+  writeClipboardTextMock.mockReset().mockResolvedValue(undefined)
 })
 
 afterEach(cleanup)
@@ -116,35 +125,33 @@ describe('NoteView — template switcher', () => {
     expect(screen.getByText('Only content')).toBeInTheDocument()
   })
 
-  it('defaults to Enhanced with two tabs', () => {
+  it('defaults to Enhanced with three tabs', () => {
     render(<NoteView full={full} onSaveBody={async () => {}} />)
     expect(screen.getByRole('radio', { name: 'Enhanced' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Transcript' })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: 'My notes' })).toBeInTheDocument()
-    expect(screen.queryByRole('radio', { name: 'Transcript' })).not.toBeInTheDocument()
     expect(screen.queryByText('hello world')).not.toBeInTheDocument() // drawer closed
   })
 
-  it('toggles the transcript drawer open and closed', async () => {
-    render(<NoteView full={full} onSaveBody={async () => {}} />)
-    await userEvent.click(screen.getByRole('button', { name: 'Transcript' }))
-    expect(screen.getByText('hello world')).toBeInTheDocument()
-    await userEvent.click(screen.getByLabelText('Close transcript'))
-    expect(screen.queryByText('hello world')).not.toBeInTheDocument()
+  it('defaults to the Transcript tab when the note has no summary', () => {
+    render(<NoteView full={fullNoSummaries} onSaveBody={async () => {}} />)
+    const transcriptTab = screen.getByRole('radio', { name: 'Transcript' })
+    expect(transcriptTab).toHaveAttribute('data-state', 'on')
+    expect(screen.getByText('hi there')).toBeInTheDocument()
   })
 
-  it('keeps the drawer open while switching to My notes', async () => {
+  it("switching tabs hides the previous tab's content", async () => {
     render(<NoteView full={full} onSaveBody={async () => {}} />)
-    await userEvent.click(screen.getByRole('button', { name: 'Transcript' }))
-    await userEvent.click(screen.getByRole('radio', { name: 'My notes' }))
-    // NoteEditor is lazy-loaded (TipTap chunk) — await its mount.
-    await waitFor(() => expect(screen.getByLabelText('Note editor')).toBeInTheDocument(), { timeout: 5000 })
+    await userEvent.click(screen.getByRole('radio', { name: 'Transcript' }))
     expect(screen.getByText('hello world')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('radio', { name: 'My notes' }))
+    expect(screen.queryByText('hello world')).not.toBeInTheDocument()
   })
 
   it('renders no audio player when the server reports no audio URL', async () => {
     getNoteAudioUrlMock.mockResolvedValueOnce(null)
     render(<NoteView full={full} onSaveBody={async () => {}} />)
-    await userEvent.click(screen.getByRole('button', { name: 'Transcript' }))
+    await userEvent.click(screen.getByRole('radio', { name: 'Transcript' }))
     await screen.findByText('hello world')
     expect(document.querySelector('audio')).toBeNull()
   })
@@ -154,7 +161,7 @@ describe('NoteView — template switcher', () => {
     delete (muesliMock as { getNoteAudioUrl?: unknown }).getNoteAudioUrl
     try {
       render(<NoteView full={full} onSaveBody={async () => {}} />)
-      await userEvent.click(screen.getByRole('button', { name: 'Transcript' }))
+      await userEvent.click(screen.getByRole('radio', { name: 'Transcript' }))
       await screen.findByText('hello world')
       expect(document.querySelector('audio')).toBeNull()
     } finally {
@@ -308,11 +315,10 @@ describe('NoteView — summary citations', () => {
 
   it('opens the transcript drawer when a citation chip is clicked', async () => {
     render(<NoteView full={fullCited} onSaveBody={async () => {}} />)
-    // Drawer closed: only the toggle button exists, no heading and no close affordance.
-    expect(screen.queryByLabelText('Close transcript')).not.toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: /jump to transcript segment 4/i }))
-    expect(screen.getByRole('heading', { name: 'Transcript' })).toBeInTheDocument()
-    expect(screen.getByLabelText('Close transcript')).toBeInTheDocument()
+    const transcriptTab = screen.getByRole('radio', { name: 'Transcript' })
+    expect(transcriptTab).toHaveAttribute('data-state', 'on')
+    expect(screen.getByText('seg three')).toBeInTheDocument()
     // The cited segment (index 3) gets the cited marker
     const cited = document.querySelector('[data-cited="true"]')
     expect(cited).not.toBeNull()
@@ -342,12 +348,10 @@ describe('NoteView — Copy as Markdown', () => {
   it('copies the active enhanced panel as markdown to the clipboard', async () => {
     vi.useFakeTimers()
     try {
-      const writeText = vi.fn().mockResolvedValue(undefined)
-      Object.assign(navigator, { clipboard: { writeText } })
       render(<NoteView full={full} onSaveBody={async () => {}} />)
       fireEvent.click(screen.getByRole('button', { name: /copy/i }))
-      expect(writeText).toHaveBeenCalledTimes(1)
-      const md = writeText.mock.calls[0][0]
+      expect(writeClipboardTextMock).toHaveBeenCalledTimes(1)
+      const md = writeClipboardTextMock.mock.calls[0][0]
       expect(typeof md).toBe('string')
       expect(md).toContain('# Standup')
       expect(md).toContain('## Overview')
@@ -363,14 +367,29 @@ describe('NoteView — Copy as Markdown', () => {
   it('copies My notes body as markdown', async () => {
     vi.useFakeTimers()
     try {
-      const writeText = vi.fn().mockResolvedValue(undefined)
-      Object.assign(navigator, { clipboard: { writeText } })
       render(<NoteView full={full} onSaveBody={async () => {}} />)
       fireEvent.click(screen.getByRole('radio', { name: 'My notes' }))
       fireEvent.click(screen.getByRole('button', { name: /copy/i }))
-      const md = writeText.mock.calls[0][0]
+      const md = writeClipboardTextMock.mock.calls[0][0]
       expect(md).toContain('# Standup')
       expect(md).toContain('my raw notes')
+      await act(async () => {
+        vi.runOnlyPendingTimers()
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('copies the transcript as markdown when on the Transcript tab', async () => {
+    vi.useFakeTimers()
+    try {
+      render(<NoteView full={full} onSaveBody={async () => {}} />)
+      fireEvent.click(screen.getByRole('radio', { name: 'Transcript' }))
+      fireEvent.click(screen.getByRole('button', { name: /copy/i }))
+      const md = writeClipboardTextMock.mock.calls[0][0]
+      expect(md).toContain('# Standup')
+      expect(md).toContain('hello world')
       await act(async () => {
         vi.runOnlyPendingTimers()
       })
@@ -416,27 +435,20 @@ const fullAlreadyAliased: FullNote = {
   summaries: [],
 }
 
-async function openTranscript() {
-  await userEvent.click(screen.getByRole('button', { name: 'Transcript' }))
-}
-
 describe('NoteView — speaker legend (DZ03b)', () => {
   it('is absent when the transcript has no speakers', async () => {
     render(<NoteView full={fullNoSpeakers} onSaveBody={async () => {}} />)
-    await openTranscript()
     expect(screen.queryByText('Speakers')).not.toBeInTheDocument()
   })
 
   it('is absent when the transcript is null', async () => {
     const noTranscript: FullNote = { ...fullNoSpeakers, transcript: null }
     render(<NoteView full={noTranscript} onSaveBody={async () => {}} />)
-    await openTranscript()
     expect(screen.queryByText('Speakers')).not.toBeInTheDocument()
   })
 
   it('renders one row per distinct speaker in first-appearance order', async () => {
     render(<NoteView full={fullWithSpeakers} onSaveBody={async () => {}} />)
-    await openTranscript()
     expect(await screen.findByText('Speakers')).toBeInTheDocument()
     const inputs = screen.getAllByRole('textbox').filter((el) => el.getAttribute('aria-label')?.startsWith('Rename'))
     expect(inputs).toHaveLength(2)
@@ -446,7 +458,6 @@ describe('NoteView — speaker legend (DZ03b)', () => {
 
   it('renaming a never-aliased speaker calls the bridge with the raw label as the key', async () => {
     render(<NoteView full={fullWithSpeakers} onSaveBody={async () => {}} />)
-    await openTranscript()
     const input = await screen.findByLabelText('Rename SPEAKER_00')
     await userEvent.clear(input)
     await userEvent.type(input, 'Alice{Enter}')
@@ -458,7 +469,6 @@ describe('NoteView — speaker legend (DZ03b)', () => {
       { note_id: 'note-aliased', speaker_label: 'SPEAKER_00', alias_name: 'Alice' },
     ])
     render(<NoteView full={fullAlreadyAliased} onSaveBody={async () => {}} />)
-    await openTranscript()
     const input = await screen.findByLabelText('Rename Alice')
     expect(input).toHaveValue('Alice')
     await userEvent.clear(input)
@@ -469,7 +479,6 @@ describe('NoteView — speaker legend (DZ03b)', () => {
 
   it('after a successful rename, the transcript view shows the new name immediately without a refetch', async () => {
     render(<NoteView full={fullWithSpeakers} onSaveBody={async () => {}} />)
-    await openTranscript()
     expect(screen.getAllByText('SPEAKER_00').length).toBeGreaterThan(0)
     const input = await screen.findByLabelText('Rename SPEAKER_00')
     await userEvent.clear(input)
@@ -483,7 +492,6 @@ describe('NoteView — speaker legend (DZ03b)', () => {
 
   it('does not call the bridge when blurring without changing the value', async () => {
     render(<NoteView full={fullWithSpeakers} onSaveBody={async () => {}} />)
-    await openTranscript()
     const input = await screen.findByLabelText('Rename SPEAKER_00')
     fireEvent.blur(input)
     await new Promise((r) => setTimeout(r, 0))
@@ -495,7 +503,6 @@ describe('NoteView — speaker legend (DZ03b)', () => {
     listSpeakerAliasesMock.mockReturnValue(new Promise((res) => { resolveAliases = res }))
 
     render(<NoteView full={fullWithSpeakers} onSaveBody={async () => {}} />)
-    await openTranscript()
 
     const input = await screen.findByLabelText('Rename SPEAKER_00')
     expect(input).toBeDisabled()
@@ -515,7 +522,6 @@ describe('NoteView — speaker legend (DZ03b)', () => {
   it('shows an inline error when the rename fails, without silently reverting', async () => {
     upsertSpeakerAliasMock.mockRejectedValue(new Error('server exploded'))
     render(<NoteView full={fullWithSpeakers} onSaveBody={async () => {}} />)
-    await openTranscript()
     const input = await screen.findByLabelText('Rename SPEAKER_00')
     await userEvent.clear(input)
     await userEvent.type(input, 'Alice{Enter}')
@@ -578,11 +584,13 @@ describe('NoteView — full template list + regenerate (TPL01)', () => {
   it('shows the no-agent empty state and opens transcript when no template has ever summarized', async () => {
     render(<NoteView full={fullNoSummaries} onSaveBody={async () => {}} />)
 
-    expect(screen.getByText(/No AI summary is available for this note/)).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('radio', { name: 'Enhanced' }))
+    expect(screen.getByText('No AI summary yet')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Install Ollama' })).toHaveAttribute('href', 'https://ollama.com/download')
     expect(screen.queryByText('No summary yet.')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'View transcript' }))
-    expect(screen.getByRole('button', { name: 'Close transcript' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Transcript' })).toHaveAttribute('data-state', 'on')
   })
 
   it('keeps the plain empty state when processing is still in progress', () => {
@@ -593,8 +601,9 @@ describe('NoteView — full template list + regenerate (TPL01)', () => {
 
     render(<NoteView full={inProgress} onSaveBody={async () => {}} />)
 
+    fireEvent.click(screen.getByRole('radio', { name: 'Enhanced' }))
     expect(screen.getByText('No summary yet.')).toBeInTheDocument()
-    expect(screen.queryByText(/No AI summary is available for this note/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/No AI summary yet/)).not.toBeInTheDocument()
   })
 
   it('renders a Regenerate control for the currently-selected template', () => {
@@ -739,8 +748,8 @@ describe('NoteView — initialSegmentId (search hit jump-to-timestamp)', () => {
   it('opens the transcript panel and highlights the segment matching initialSegmentId', async () => {
     render(<NoteView full={fullForJump} initialSegmentId="seg-b" onSaveBody={async () => {}} />)
 
-    // The transcript panel opens automatically (no manual click needed).
-    expect(await screen.findByRole('heading', { name: 'Transcript' })).toBeInTheDocument()
+    // The transcript tab opens automatically (no manual click needed).
+    expect(screen.getByRole('radio', { name: 'Transcript' })).toHaveAttribute('data-state', 'on')
 
     // The segment whose id matches is resolved to its 0-based array index (1)
     // and highlighted via TranscriptView's existing citation mechanism.
@@ -752,25 +761,25 @@ describe('NoteView — initialSegmentId (search hit jump-to-timestamp)', () => {
 
   it('does nothing when initialSegmentId does not match any segment', () => {
     render(<NoteView full={fullForJump} initialSegmentId="seg-does-not-exist" onSaveBody={async () => {}} />)
-    expect(screen.queryByRole('heading', { name: 'Transcript' })).not.toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Transcript' })).toHaveAttribute('data-state', 'on')
   })
 
   it('does nothing when initialSegmentId is absent', () => {
     render(<NoteView full={fullForJump} onSaveBody={async () => {}} />)
-    expect(screen.queryByRole('heading', { name: 'Transcript' })).not.toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Transcript' })).toHaveAttribute('data-state', 'on')
   })
 
   it('only jumps once — closing the transcript panel afterwards does not reopen it on re-render', async () => {
     const { rerender } = render(<NoteView full={fullForJump} initialSegmentId="seg-a" onSaveBody={async () => {}} />)
-    expect(await screen.findByRole('heading', { name: 'Transcript' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Transcript' })).toHaveAttribute('data-state', 'on')
 
-    await userEvent.click(screen.getByRole('button', { name: 'Close transcript' }))
-    expect(screen.queryByRole('heading', { name: 'Transcript' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('radio', { name: 'Enhanced' }))
+    expect(screen.getByText('No AI summary yet')).toBeInTheDocument()
 
     // Re-rendering with the same props (e.g. a parent re-render) must not
     // reopen the panel — the jump already happened once.
     rerender(<NoteView full={fullForJump} initialSegmentId="seg-a" onSaveBody={async () => {}} />)
-    expect(screen.queryByRole('heading', { name: 'Transcript' })).not.toBeInTheDocument()
+    expect(screen.getByText('No AI summary yet')).toBeInTheDocument()
   })
 })
 
@@ -804,7 +813,7 @@ describe('NoteView — initialSegmentIndex (chat citation jump-to-segment)', () 
 
   it('opens the transcript panel and highlights the segment at initialSegmentIndex', async () => {
     render(<NoteView full={fullA} initialSegmentIndex={1} onSaveBody={async () => {}} />)
-    expect(await screen.findByRole('heading', { name: 'Transcript' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Transcript' })).toHaveAttribute('data-state', 'on')
     const cited = document.querySelector('[data-cited="true"]')
     expect(cited).not.toBeNull()
     expect(cited!.textContent).toContain('note A segment one')
@@ -812,21 +821,21 @@ describe('NoteView — initialSegmentIndex (chat citation jump-to-segment)', () 
 
   it('does nothing when initialSegmentIndex is absent or negative', () => {
     const { rerender } = render(<NoteView full={fullA} onSaveBody={async () => {}} />)
-    expect(screen.queryByRole('heading', { name: 'Transcript' })).not.toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Transcript' })).toHaveAttribute('data-state', 'on')
 
     rerender(<NoteView full={fullA} initialSegmentIndex={-1} onSaveBody={async () => {}} />)
-    expect(screen.queryByRole('heading', { name: 'Transcript' })).not.toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Transcript' })).toHaveAttribute('data-state', 'on')
   })
 
   it('only jumps once -- re-rendering with the same note + index afterwards does not reopen a closed panel', async () => {
     const { rerender } = render(<NoteView full={fullA} initialSegmentIndex={0} onSaveBody={async () => {}} />)
-    expect(await screen.findByRole('heading', { name: 'Transcript' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Transcript' })).toHaveAttribute('data-state', 'on')
 
-    await userEvent.click(screen.getByRole('button', { name: 'Close transcript' }))
-    expect(screen.queryByRole('heading', { name: 'Transcript' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('radio', { name: 'Enhanced' }))
+    expect(screen.getByText('No AI summary yet')).toBeInTheDocument()
 
     rerender(<NoteView full={fullA} initialSegmentIndex={0} onSaveBody={async () => {}} />)
-    expect(screen.queryByRole('heading', { name: 'Transcript' })).not.toBeInTheDocument()
+    expect(screen.getByText('No AI summary yet')).toBeInTheDocument()
   })
 
   // Regression for the cross-note suppression bug: react-router does not
@@ -839,17 +848,17 @@ describe('NoteView — initialSegmentIndex (chat citation jump-to-segment)', () 
   // for note B.
   it('still jumps in a different note that reuses the same segment_index after a jump was already consumed in a prior note', async () => {
     const { rerender } = render(<NoteView full={fullA} initialSegmentIndex={0} onSaveBody={async () => {}} />)
-    expect(await screen.findByRole('heading', { name: 'Transcript' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Transcript' })).toHaveAttribute('data-state', 'on')
     let cited = document.querySelector('[data-cited="true"]')
     expect(cited!.textContent).toContain('note A segment zero')
 
-    await userEvent.click(screen.getByRole('button', { name: 'Close transcript' }))
-    expect(screen.queryByRole('heading', { name: 'Transcript' })).not.toBeInTheDocument()
+    await userEvent.click(screen.getByRole('radio', { name: 'Enhanced' }))
+    expect(screen.getByText('No AI summary yet')).toBeInTheDocument()
 
     // Simulate navigating to a DIFFERENT note (via ChatScreen's onCiteClick)
     // whose citation happens to reuse the SAME segment_index (0).
     rerender(<NoteView full={fullB} initialSegmentIndex={0} onSaveBody={async () => {}} />)
-    expect(await screen.findByRole('heading', { name: 'Transcript' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Transcript' })).toHaveAttribute('data-state', 'on')
     cited = document.querySelector('[data-cited="true"]')
     expect(cited).not.toBeNull()
     expect(cited!.textContent).toContain('note B segment zero')

@@ -1,12 +1,14 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { MessageSquare, PanelRight, X, Sparkles, Copy, Check, RefreshCw, Search, ChevronUp, ChevronDown } from 'lucide-react'
+import { MessageSquare, Sparkles, Copy, Check, RefreshCw, Search, ChevronUp, ChevronDown } from 'lucide-react'
 import { muesli } from '@/api'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { SegmentedControl } from '@/components/ui/SegmentedControl'
 import { cn } from '@/lib/cn'
+import { writeClipboardText } from '@/lib/clipboard'
 import { countCaseInsensitiveMatches, highlightSearchText } from '@/lib/searchHighlight'
 import { segmentIndexAtTime } from '@/lib/transcriptPlayback'
+import { transcriptToPlainText } from '@/lib/transcriptText'
 const NoteChatPanel = lazy(() => import('./chat/NoteChatPanel').then((m) => ({ default: m.NoteChatPanel })))
 import { DiarizationReviewPanel } from './DiarizationReviewPanel'
 import { Markdown } from './Markdown'
@@ -19,7 +21,7 @@ const NoteEditor = lazy(() => import('./NoteEditor').then((m) => ({ default: m.N
 import { isTerminal } from '../../shared/types'
 import type { FullNote, SpeakerAlias, SummarySection, Template } from '../../shared/types'
 
-type Tab = 'enhanced' | 'notes'
+type Tab = 'enhanced' | 'transcript' | 'notes'
 
 /** Build a Markdown document from a summary's sections. Pure + unit-testable. */
 export function summaryToMarkdown(title: string, sections: SummarySection[]): string {
@@ -53,8 +55,7 @@ function countSummaryMatches(query: string, tab: Tab, selectedSummary: FullNote[
   return count
 }
 
-function countTranscriptMatches(full: FullNote, query: string, showTranscript: boolean): number {
-  if (!showTranscript) return 0
+function countTranscriptMatches(full: FullNote, query: string): number {
   const needle = query.trim()
   if (!needle) return 0
   let count = 0
@@ -204,6 +205,10 @@ function noTemplateHasEverSummarized(entries: TemplateEntry[]): boolean {
   return entries.every((e) => (e.summary?.sections.length ?? 0) === 0)
 }
 
+function hasAnySummary(summaries: FullNote['summaries']): boolean {
+  return summaries.some((s) => s.sections.length > 0)
+}
+
 export function NoteView({
   full,
   onSaveBody,
@@ -239,8 +244,7 @@ export function NoteView({
   initialSegmentIndex?: number
 }) {
   const { announce } = useAnnouncer()
-  const [tab, setTab] = useState<Tab>('enhanced')
-  const [showTranscript, setShowTranscript] = useState(false)
+  const [tab, setTab] = useState<Tab>(() => (hasAnySummary(full.summaries) ? 'enhanced' : 'transcript'))
   const [showChat, setShowChat] = useState(false)
   const [findQuery, setFindQuery] = useState('')
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0)
@@ -255,14 +259,21 @@ export function NoteView({
   // rename re-labels the transcript immediately without a refetch.
   const [speakerOverrides, setSpeakerOverrides] = useState<Record<string, string>>({})
   useEffect(() => { setSpeakerOverrides({}) }, [full.note.id])
+  useEffect(() => {
+    setTab(hasAnySummary(full.summaries) ? 'enhanced' : 'transcript')
+    // Re-derive only on note change, not on every summaries update — a summary
+    // finishing generation mid-session must not yank the user off a tab they
+    // deliberately picked. Mirrors the speakerOverrides reset effect above.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [full.note.id])
 
   const jumpToCitation = (ref: number) => {
     setCitationTarget(ref)
-    setShowTranscript(true)
+    setTab('transcript')
   }
 
   useEffect(() => {
-    if (!showTranscript) {
+    if (tab !== 'transcript') {
       setTranscriptAudioUrl(null)
       setAudioCurrentTime(0)
       return
@@ -280,7 +291,7 @@ export function NoteView({
         if (!cancelled) setTranscriptAudioUrl(null)
       })
     return () => { cancelled = true }
-  }, [showTranscript, full.note.id])
+  }, [tab, full.note.id])
 
   // Resolve `initialSegmentId` to a transcript-segment array index and jump to
   // it exactly once per (note, segment) pair — not on every re-render. Guarded
@@ -393,8 +404,8 @@ export function NoteView({
     [active, findQueryTrimmed, full, tab],
   )
   const transcriptMatchCount = useMemo(
-    () => countTranscriptMatches(full, findQueryTrimmed, showTranscript),
-    [findQueryTrimmed, full, showTranscript],
+    () => countTranscriptMatches(full, findQueryTrimmed),
+    [findQueryTrimmed, full, tab],
   )
   const totalFindMatches = summaryMatchCount + transcriptMatchCount
   const currentFindIndex = totalFindMatches > 0 ? Math.min(currentMatchIndex, totalFindMatches - 1) : 0
@@ -419,7 +430,7 @@ export function NoteView({
     const current = noteViewRef.current?.querySelector('[data-note-search-current="true"]') as HTMLElement | null
     if (!current || typeof current.scrollIntoView !== 'function') return
     current.scrollIntoView({ block: 'center', inline: 'nearest' })
-  }, [currentFindIndex, findQueryTrimmed, showTranscript, tab, totalFindMatches])
+  }, [currentFindIndex, findQueryTrimmed, tab, totalFindMatches])
 
   const updateFindQuery = (value: string) => {
     setFindQuery(value)
@@ -477,8 +488,10 @@ export function NoteView({
     const md =
       tab === 'enhanced'
         ? summaryToMarkdown(title, active?.sections ?? [])
-        : `# ${title}\n\n${full.body_markdown}`
-    if (navigator.clipboard) await navigator.clipboard.writeText(md)
+        : tab === 'transcript'
+          ? `# ${title}\n\n${transcriptToPlainText(transcriptSegments)}`
+          : `# ${title}\n\n${full.body_markdown}`
+    await writeClipboardText(md)
     setCopied(true)
     if (copyTimer.current) clearTimeout(copyTimer.current)
     copyTimer.current = setTimeout(() => setCopied(false), 1500)
@@ -498,9 +511,13 @@ export function NoteView({
           <SegmentedControl
             ariaLabel="Note view"
             value={tab}
-            onValueChange={(v) => setTab(v as Tab)}
+            onValueChange={(v) => {
+              const next = v as Tab
+              setTab(next)
+            }}
             options={[
               { value: 'enhanced', label: 'Enhanced' },
+              { value: 'transcript', label: 'Transcript' },
               { value: 'notes', label: 'My notes' },
             ]}
           />
@@ -608,18 +625,6 @@ export function NoteView({
             />
             <button
               type="button"
-              aria-label="Transcript"
-              aria-pressed={showTranscript}
-              onClick={() => setShowTranscript((s) => !s)}
-              className={cn(
-                'inline-flex items-center gap-1 rounded-[var(--radius)] px-3 py-1 text-sm font-medium',
-                showTranscript ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted',
-              )}
-            >
-              <PanelRight size={16} /> Transcript
-            </button>
-            <button
-              type="button"
               aria-label="Ask about this note"
               aria-pressed={showChat}
               onClick={() => setShowChat((s) => !s)}
@@ -666,10 +671,16 @@ export function NoteView({
                 ))}
               </>
             ) : isTerminal(full.note.status) && transcriptSegments.length > 0 && noTemplateHasEverSummarized(entries) ? (
-              <div className="max-w-md text-sm text-muted-foreground">
-                <p className="mb-3">No AI summary is available for this note -- no summarization agent is configured (e.g. Ollama isn&apos;t installed).</p>
-                <p className="mb-3">Your recorded transcript is still available.</p>
-                <Button type="button" variant="secondary" size="sm" onClick={() => setShowTranscript(true)}>
+              <div className="mx-auto flex max-w-sm flex-col items-center gap-2 rounded-[var(--radius)] border border-border bg-card px-6 py-10 text-center">
+                <p className="text-sm font-medium text-foreground">No AI summary yet</p>
+                <p className="text-sm text-muted-foreground">
+                  Muesli summarizes with Ollama.{' '}
+                  <a className="underline underline-offset-2 hover:no-underline" href="https://ollama.com/download" target="_blank" rel="noreferrer">
+                    Install Ollama
+                  </a>
+                </p>
+                <p className="text-sm text-muted-foreground">Your transcript is on the Transcript tab.</p>
+                <Button type="button" variant="secondary" size="sm" className="mt-2" onClick={() => setTab('transcript')}>
                   View transcript
                 </Button>
               </div>
@@ -681,53 +692,35 @@ export function NoteView({
               <NoteEditor initialMarkdown={full.body_markdown} onSave={onSaveBody} />
             </Suspense>
           )}
+          {tab === 'transcript' && (
+            <>
+              {transcriptAudioUrl && (
+                // eslint-disable-next-line jsx-a11y/media-has-caption
+                <audio
+                  ref={audioRef}
+                  controls
+                  src={transcriptAudioUrl}
+                  className="mb-3 w-full"
+                  onTimeUpdate={(e) => setAudioCurrentTime(e.currentTarget.currentTime)}
+                  onLoadedMetadata={(e) => setAudioCurrentTime(e.currentTarget.currentTime)}
+                />
+              )}
+              <SpeakerLegend full={full} overrides={speakerOverrides} setOverrides={setSpeakerOverrides} onRenameSpeaker={onRenameSpeaker} />
+              <TranscriptView
+                segments={transcriptSegments}
+                highlightIndex={citationTarget}
+                onSeek={seekTranscript}
+                playingIndex={playingIndex}
+                speakerAliases={speakerOverrides}
+                searchQuery={findQueryTrimmed}
+                searchCurrentIndex={currentFindIndex}
+                searchStartIndex={summaryMatchCount}
+                hideSearchInput
+              />
+            </>
+          )}
         </div>
       </div>
-
-      {showTranscript && (
-        <aside className="w-[20rem] shrink-0 border-l border-border pl-4">
-          <div className="mb-2 flex items-center justify-between">
-            <h3 className="text-sm font-semibold">Transcript</h3>
-            <button
-              type="button"
-              aria-label="Close transcript"
-              onClick={() => setShowTranscript(false)}
-              className="text-muted-foreground hover:text-foreground"
-            >
-              <X size={16} />
-            </button>
-          </div>
-          {transcriptAudioUrl && (
-            // No captions track exists for recorded meeting audio; this is a playback control only.
-            // eslint-disable-next-line jsx-a11y/media-has-caption
-            <audio
-              ref={audioRef}
-              controls
-              src={transcriptAudioUrl}
-              className="mb-3 w-full"
-              onTimeUpdate={(e) => setAudioCurrentTime(e.currentTarget.currentTime)}
-              onLoadedMetadata={(e) => setAudioCurrentTime(e.currentTarget.currentTime)}
-            />
-          )}
-          <SpeakerLegend
-            full={full}
-            overrides={speakerOverrides}
-            setOverrides={setSpeakerOverrides}
-            onRenameSpeaker={onRenameSpeaker}
-          />
-          <TranscriptView
-            segments={transcriptSegments}
-            highlightIndex={citationTarget}
-            onSeek={seekTranscript}
-            playingIndex={playingIndex}
-            speakerAliases={speakerOverrides}
-            searchQuery={showTranscript ? findQueryTrimmed : undefined}
-            searchCurrentIndex={showTranscript ? currentFindIndex : null}
-            searchStartIndex={summaryMatchCount}
-            hideSearchInput
-          />
-        </aside>
-      )}
 
       {showChat && (
         <aside className="w-[22rem] shrink-0 border-l border-border pl-4">
