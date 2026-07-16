@@ -63,6 +63,13 @@ jobs:
           C_INCLUDE_PATH="$WLIB/include" LIBRARY_PATH="$WLIB/lib" CGO_ENABLED=1 \
             go build -tags whisper_cgo -o build/bin/whisper-cpp-transcriber ./cmd/whisper-cpp-transcriber
 
+      - name: Build muesli-audiotap (Swift system-audio helper, macOS)
+        # Pin the deployment target: the Core Audio process-tap API is macOS 14.2+,
+        # and the runner toolchain's default target is lower (the helper is only
+        # spawned on 14.4+ anyway; on older macOS it won't launch and capture
+        # falls back to mic-only).
+        run: xcrun swiftc -O -target arm64-apple-macos14.4 native/muesli-audiotap/main.swift -o build/bin/muesli-audiotap
+
       - name: Install node deps (brings ffmpeg-static)
         run: npm ci
 

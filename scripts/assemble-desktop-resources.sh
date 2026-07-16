@@ -69,6 +69,16 @@ for b in muesli whisper-cpp-transcriber ollama-agent; do
   fi
 done
 
+# 1b) muesli-audiotap: macOS system-audio capture helper (darwin only).
+if [ "$TARGET" = "darwin-arm64" ]; then
+  if [ -x "$ROOT/build/bin/muesli-audiotap" ]; then
+    cp "$ROOT/build/bin/muesli-audiotap" "$RES/server/muesli-audiotap"; chmod +x "$RES/server/muesli-audiotap"
+    echo "assemble: server/muesli-audiotap"
+  else
+    echo "assemble: WARN build/bin/muesli-audiotap missing (macOS system-audio helper)" >&2
+  fi
+fi
+
 # 2) Postgres (zonky) + pgvector (pinned), pre-injected into the bundle.
 TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
 
