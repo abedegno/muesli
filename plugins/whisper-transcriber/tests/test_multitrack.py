@@ -119,7 +119,8 @@ def test_near_silent_channel_is_skipped(monkeypatch, settings, multitrack_model)
     assert [ch for (_path, ch) in split_calls] == [0]
     assert len(resp.segments) == 1
     assert resp.segments[0].text == "hello from mic one"
-    assert resp.segments[0].speaker == "Speaker 1"
+    assert resp.segments[0].speaker == "You"
+    assert resp.segments[0].source == "mic"
 
 
 def test_merged_segments_interleaved_by_start_ms_with_speaker_labels(
@@ -138,12 +139,12 @@ def test_merged_segments_interleaved_by_start_ms_with_speaker_labels(
     # merged output must be sorted by start_ms across channels.
     assert resp.segments[0].start_ms == 200
     assert resp.segments[0].text == "hello from mic two"
-    assert resp.segments[0].speaker == "Speaker 2"
+    assert resp.segments[0].speaker == "Them"
+    assert resp.segments[0].source == "system"
     assert resp.segments[1].start_ms == 1000
     assert resp.segments[1].text == "hello from mic one"
-    assert resp.segments[1].speaker == "Speaker 1"
-    # source stays consistent with today's convention (no new response field).
-    assert resp.segments[0].source == "mixed"
+    assert resp.segments[1].speaker == "You"
+    assert resp.segments[1].source == "mic"
 
 
 def test_multitrack_disabled_takes_single_pass_path(monkeypatch, settings, fake_model):
