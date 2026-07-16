@@ -50,8 +50,8 @@ func TestBuildWhisperCppTranscriberCmd(t *testing.T) {
 		}
 	}
 
-	if got := whisperConfigJSON(); got != "{}" {
-		t.Fatalf("whisperConfigJSON() = %q, want {}", got)
+	if got := whisperConfigJSON(); got != `{"multitrack":true}` {
+		t.Fatalf("whisperConfigJSON() = %q, want {\"multitrack\":true}", got)
 	}
 }
 
