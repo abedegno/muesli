@@ -6,10 +6,12 @@ import { IPC, type ConnectRequest, type CreateConversationRequest, type Diarizat
 import type { CreateShareRequest, DigestConfig, EmbeddedStartupStatus, RetranscribeNoteRequest, RuleGroup, TemplatePhase, TemplateSection } from '../shared/types'
 import { createHandlers } from './ipcHandlers'
 import { makeMicPermission } from './micPermission'
+import { resolveAudiotapBin } from './resourcePaths'
 import { startEmbeddedStartupMonitor } from './embeddedStartupMonitor'
 import { MuesliClient } from './muesliClient'
 import { NoteStreamRelay } from './noteStreamRelay'
 import { SecretStore } from './secretStore'
+import { makeSystemAudioHelper } from './systemAudioHelper'
 import { makeServerLogPath, startServerSupervisor } from './serverSupervisor'
 import { TokenStore } from './tokenStore'
 
@@ -85,6 +87,13 @@ app.whenReady().then(async () => {
     const secretStore = new SecretStore(userDataDir, safeStorage)
     const fetchImpl = globalThis.fetch?.bind(globalThis)
     const micPermission = makeMicPermission()
+    const systemAudioHelper = makeSystemAudioHelper({
+      binPath: resolveAudiotapBin({
+        isPackaged: app.isPackaged,
+        resourcesPath: process.resourcesPath,
+        env: process.env,
+      }),
+    })
     const noteStream = new NoteStreamRelay({
       getConfig: () => tokenStore.load(),
       emit: (event) => mainWindow?.webContents.send(IPC.noteStreamEvent, event),
@@ -138,6 +147,9 @@ app.whenReady().then(async () => {
     ipcMain.handle(IPC.micStatus, () => micPermission.status())
     ipcMain.handle(IPC.micRequest, () => micPermission.request())
     ipcMain.handle(IPC.micOpenSettings, () => micPermission.openSettings())
+    ipcMain.handle(IPC.systemAudioAvailable, () => systemAudioHelper.available())
+    ipcMain.handle(IPC.systemAudioStart, () => systemAudioHelper.start())
+    ipcMain.handle(IPC.systemAudioStop, () => systemAudioHelper.stop())
     ipcMain.handle(IPC.writeClipboardText, (_e, text: string) => {
       clipboard.writeText(text)
     })
