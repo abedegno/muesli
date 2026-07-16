@@ -63,6 +63,9 @@ jobs:
           C_INCLUDE_PATH="$WLIB/include" LIBRARY_PATH="$WLIB/lib" CGO_ENABLED=1 \
             go build -tags whisper_cgo -o build/bin/whisper-cpp-transcriber ./cmd/whisper-cpp-transcriber
 
+      - name: Build muesli-audiotap (Swift system-audio helper, macOS)
+        run: xcrun swiftc -O native/muesli-audiotap/main.swift -o build/bin/muesli-audiotap
+
       - name: Install node deps (brings ffmpeg-static)
         run: npm ci
 
