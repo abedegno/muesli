@@ -4,6 +4,7 @@ import { ChevronRight } from 'lucide-react'
 import { muesli } from '@/api'
 import { RecordingSession } from '../../main/recorder'
 import { ElectronCapture, MicPermissionDeniedError } from '../capture/electronCapture'
+import { startSystemAudioStream, type SystemAudioStreamHandle } from '../capture/systemAudioStream'
 import { pollNote } from '@/lib/pollNote'
 import { isProcessing } from '@/lib/status'
 import { useToast } from '@/components/ui/Toast'
@@ -649,6 +650,7 @@ export function NoteScreen() {
   const mountedRef = useRef(true)
   // Stores the onUploadProgress unsubscribe function; cleaned up on unmount.
   const uploadProgressUnsubRef = useRef<(() => void) | null>(null)
+  const systemAudioHandleRef = useRef<SystemAudioStreamHandle | null>(null)
 
   // Audio prefs — loaded on mount and kept in sync with RecordControl callbacks.
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>(() => loadAudioPrefs().deviceId)
@@ -704,7 +706,8 @@ export function NoteScreen() {
       pollAbortRef.current?.abort()
       tagAbortRef.current?.abort()
       void muesli.stopNoteStream?.(noteIdRef.current)?.catch(() => {})
-      void Promise.resolve(muesli.systemAudioStop?.()).catch(() => {})
+      systemAudioHandleRef.current?.stop()
+      systemAudioHandleRef.current = null
       uploadProgressUnsubRef.current?.()
       uploadProgressUnsubRef.current = null
     }
@@ -749,7 +752,10 @@ export function NoteScreen() {
   }, [id, refresh, notify])
 
   const stopSystemAudio = useCallback(async () => {
-    await Promise.resolve(muesli.systemAudioStop?.()).catch(() => {})
+    const handle = systemAudioHandleRef.current
+    systemAudioHandleRef.current = null
+    if (handle) handle.stop()
+    else await Promise.resolve(muesli.systemAudioStop?.()).catch(() => {})
   }, [])
 
   // Bumps this note's still-pending job(s) to the front of the queue so they
@@ -943,9 +949,12 @@ export function NoteScreen() {
           onPcmFrame: (frame) => {
             void muesli.sendNoteStreamAudio?.(id, frame)?.catch(() => {})
           },
-          // System-audio capture is mic-only until the PCM -> MediaStream injection
-          // (main streams tap PCM via onSystemAudioPcm) is wired in a follow-up.
-          getSystemAudioStream: async () => null,
+          // System audio: inject the main-process tap PCM as a MediaStream
+          // (mic-left / system-right). Returns null when unsupported -> mic-only.
+          getSystemAudioStream: async () => {
+            systemAudioHandleRef.current = await startSystemAudioStream()
+            return systemAudioHandleRef.current?.stream ?? null
+          },
         }),
         { onWarning: (w) => notify(w, 'info') },
       )
