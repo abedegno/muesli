@@ -113,35 +113,37 @@ describe('NoteScreen search', () => {
     render(<NoteScreen />)
 
     expect(await screen.findByTestId('note-header')).toHaveTextContent('Meeting note')
-    await user.click(screen.getByRole('button', { name: 'Transcript' }))
+    await user.click(screen.getByRole('radio', { name: 'Transcript' }))
+    await waitFor(() => expect(screen.getByRole('radio', { name: 'Transcript' })).toHaveAttribute('data-state', 'on'))
+    await waitFor(() => expect(screen.getByText('alpha transcript here')).toBeInTheDocument())
 
     const input = screen.getByLabelText('Find in note')
     await user.type(input, 'alpha')
 
-    await waitFor(() => expect(screen.getByText('1/3')).toBeInTheDocument())
-    expect(document.querySelectorAll('mark')).toHaveLength(3)
+    await waitFor(() => expect(screen.getByText('1/1')).toBeInTheDocument())
+    expect(document.querySelectorAll('mark')).toHaveLength(1)
 
     let current = document.querySelector('[data-note-search-current="true"]')
     expect(current).not.toBeNull()
-    expect(current!.parentElement?.tagName).toBe('H3')
+    expect(current!.parentElement?.tagName).toBe('SPAN')
 
     await user.click(screen.getByRole('button', { name: 'Next match' }))
-    await waitFor(() => expect(screen.getByText('2/3')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('1/1')).toBeInTheDocument())
     current = document.querySelector('[data-note-search-current="true"]')
     expect(current).not.toBeNull()
-    expect(current!.parentElement?.tagName).toBe('P')
+    expect(current!.parentElement?.tagName).toBe('SPAN')
 
     await user.click(screen.getByRole('button', { name: 'Next match' }))
-    await waitFor(() => expect(screen.getByText('3/3')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('1/1')).toBeInTheDocument())
     current = document.querySelector('[data-note-search-current="true"]')
     expect(current).not.toBeNull()
     expect(current!.parentElement?.tagName).toBe('SPAN')
 
     await user.click(screen.getByRole('button', { name: 'Previous match' }))
-    await waitFor(() => expect(screen.getByText('2/3')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText('1/1')).toBeInTheDocument())
     current = document.querySelector('[data-note-search-current="true"]')
     expect(current).not.toBeNull()
-    expect(current!.parentElement?.tagName).toBe('P')
+    expect(current!.parentElement?.tagName).toBe('SPAN')
 
     expect(Element.prototype.scrollIntoView).toHaveBeenCalled()
   })
