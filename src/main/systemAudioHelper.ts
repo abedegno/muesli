@@ -1,6 +1,11 @@
 import { spawn as nodeSpawn } from 'node:child_process'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 
+export interface SystemAudioFormat {
+  sampleRate: number
+  channels: number
+}
+
 export interface SystemAudioHelperDeps {
   platform?: NodeJS.Platform
   binPath?: string
@@ -15,28 +20,45 @@ export function makeSystemAudioHelper(deps: SystemAudioHelperDeps = {}) {
 
   const available = () => platform === 'darwin' && binPath.length > 0
 
-  async function start(): Promise<{ deviceId: string } | null> {
+  async function start(onPcm: (chunk: Uint8Array) => void): Promise<SystemAudioFormat | null> {
     if (!available()) return null
 
     try {
       const proc = spawn(binPath, ['--start'], { stdio: ['ignore', 'pipe', 'pipe'] }) as unknown as ChildProcessWithoutNullStreams
       child = proc
 
-      const deviceId = await new Promise<string | null>((resolve) => {
-        let buf = ''
+      return await new Promise<SystemAudioFormat | null>((resolve) => {
+        let header = ''
+        let headerDone = false
         const onData = (d: Buffer) => {
-          buf += d.toString('utf8')
-          const line = buf.split('\n').find((l) => l.trim().length > 0)
-          if (line) {
-            proc.stdout.off('data', onData)
-            resolve(line.trim())
+          if (headerDone) {
+            onPcm(new Uint8Array(d))
+            return
           }
+
+          const nl = d.indexOf(0x0a)
+          if (nl === -1) {
+            header += d.toString('utf8')
+            return
+          }
+
+          header += d.subarray(0, nl).toString('utf8')
+          headerDone = true
+          const sr = /sr=(\d+)/.exec(header)
+          const ch = /ch=(\d+)/.exec(header)
+          const rest = d.subarray(nl + 1)
+          if (rest.length > 0) onPcm(new Uint8Array(rest))
+          if (!sr || !ch) {
+            resolve(null)
+            return
+          }
+          resolve({ sampleRate: Number(sr[1]), channels: Number(ch[1]) })
         }
         proc.stdout.on('data', onData)
-        proc.once('exit', () => resolve(null))
+        proc.once('exit', () => {
+          if (!headerDone) resolve(null)
+        })
       })
-
-      return deviceId ? { deviceId } : null
     } catch {
       child = null
       return null
