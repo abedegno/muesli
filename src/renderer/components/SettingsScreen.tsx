@@ -103,7 +103,13 @@ export function SettingsScreen({
         <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">Appearance</h2>
         <div className="flex gap-2">
           {(['system', 'light', 'dark'] as Theme[]).map((t) => (
-            <Button key={t} variant={theme === t ? 'primary' : 'secondary'} size="sm" onClick={() => applyTheme(t)}>
+            <Button
+              key={t}
+              variant={theme === t ? 'primary' : 'secondary'}
+              size="sm"
+              aria-pressed={theme === t}
+              onClick={() => applyTheme(t)}
+            >
               {t}
             </Button>
           ))}
