@@ -34,7 +34,7 @@ export function TagBar({
           className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary"
         >
           #{t}
-          <button aria-label={`Remove ${t}`} onClick={() => onRemove(t)} className="rounded-full hover:bg-primary/20">
+          <button type="button" aria-label={`Remove ${t}`} onClick={() => onRemove(t)} className="rounded-full hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <X size={12} />
           </button>
         </span>
@@ -51,7 +51,7 @@ export function TagBar({
           }
         }}
         placeholder="Add tag…"
-        className="h-6 min-w-24 flex-1 bg-transparent text-xs focus:outline-none placeholder:text-muted-foreground"
+        className="h-6 min-w-24 flex-1 rounded bg-transparent text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring placeholder:text-muted-foreground"
       />
       <datalist id={listId}>
         {suggestions.map((s) => (
