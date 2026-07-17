@@ -20,6 +20,18 @@ describe('TagBar', () => {
     await userEvent.type(screen.getByLabelText('Add tag'), 'hiring{Enter}')
     expect(onAdd).toHaveBeenCalledWith('hiring')
   })
+  it('gives the add-tag input a visible focus ring', () => {
+    render(<TagBar tags={[]} suggestions={[]} onAdd={vi.fn()} onRemove={vi.fn()} />)
+    const input = screen.getByLabelText('Add tag')
+    expect(input.className).toContain('focus-visible:ring-2')
+    expect(input.className).toContain('focus-visible:ring-ring')
+  })
+  it('gives chip remove buttons an explicit type and a focus ring', () => {
+    render(<TagBar tags={['1on1']} suggestions={[]} onAdd={vi.fn()} onRemove={vi.fn()} />)
+    const remove = screen.getByRole('button', { name: /remove 1on1/i })
+    expect(remove).toHaveAttribute('type', 'button')
+    expect(remove.className).toContain('focus-visible:ring-2')
+  })
   it('ignores blank and duplicate (case-insensitive) adds', async () => {
     const onAdd = vi.fn().mockResolvedValue(undefined)
     render(<TagBar tags={['1on1']} suggestions={[]} onAdd={onAdd} onRemove={vi.fn()} />)
