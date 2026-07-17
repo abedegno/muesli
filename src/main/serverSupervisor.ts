@@ -119,6 +119,7 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
   private shutdownPromise: Promise<void> | null = null
   private quitting = false
   private childExited = false
+  private spawnError: Error | null = null
   private hasBecomeHealthy = false
   private reportedUnexpectedExit = false
 
@@ -142,6 +143,11 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
         this.onUnexpectedExit?.({ code, signal })
       }
     })
+    this.child.on('error', (err) => {
+      this.spawnError = err instanceof Error ? err : new Error(String(err))
+      this.childExited = true
+      this.logStream?.end()
+    })
     this.child.stdout.on('data', (chunk) => logChildOutput(this.logStream, 'stdout', chunk))
     this.child.stderr.on('data', (chunk) => logChildOutput(this.logStream, 'stderr', chunk))
   }
@@ -155,6 +161,9 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
     let lastError: unknown
 
     while (Date.now() < deadline) {
+      if (this.spawnError) {
+        throw new Error(`embedded server failed to start: ${this.spawnError.message}`)
+      }
       if (this.childExited) {
         throw new Error('embedded server exited before becoming healthy')
       }
