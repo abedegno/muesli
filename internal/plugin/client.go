@@ -19,6 +19,10 @@ import (
 // PluginAPIVersion is the contract version this client speaks.
 const PluginAPIVersion = "1"
 
+// RequestTimeout is the maximum time a plugin request may block before the
+// client treats it as failed.
+const RequestTimeout = 10 * time.Minute
+
 // Client calls a single plugin endpoint with a fixed bearer token.
 type Client struct {
 	baseURL string
@@ -32,7 +36,7 @@ func New(baseURL, token string) *Client {
 	return &Client{
 		baseURL: strings.TrimRight(baseURL, "/"),
 		token:   token,
-		http:    &http.Client{Timeout: 10 * time.Minute},
+		http:    &http.Client{Timeout: RequestTimeout},
 	}
 }
 
