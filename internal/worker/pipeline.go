@@ -632,6 +632,10 @@ func (p *Processor) enqueueNoteCompletedWebhooks(ctx context.Context, noteID str
 // isRetryable classifies a plugin error: HTTP 5xx/429 and transport errors
 // (timeouts, refused connections) retry; 4xx fails fast.
 func isRetryable(err error) bool {
+	var re *plugin.ResponseError
+	if errors.As(err, &re) {
+		return false
+	}
 	var he *plugin.HTTPError
 	if errors.As(err, &he) {
 		return he.Retryable()
