@@ -125,6 +125,21 @@ describe('SettingsScreen', () => {
     await waitFor(() => expect(updateDigestConfig).toHaveBeenCalledWith('weekly'))
   })
 
+  it('marks the active theme button with aria-pressed and updates on selection', async () => {
+    const user = userEvent.setup()
+
+    renderScreen()
+
+    expect(screen.getByRole('button', { name: 'system' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'light' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('button', { name: 'dark' })).toHaveAttribute('aria-pressed', 'false')
+
+    await user.click(screen.getByRole('button', { name: 'dark' }))
+
+    expect(screen.getByRole('button', { name: 'dark' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'system' })).toHaveAttribute('aria-pressed', 'false')
+  })
+
   it('shows Connected for an ok health response', async () => {
     getServerHealth.mockResolvedValue({ reachable: true })
 
