@@ -138,6 +138,66 @@ describe('serverSupervisor', () => {
     }))
   })
 
+  it('calls onUnexpectedExit when the child exits on its own after becoming healthy', async () => {
+    vi.useRealTimers()
+    appMock.requestSingleInstanceLock.mockReturnValue(true)
+    const child = createFakeChild()
+    spawnMock.mockReturnValue(child)
+
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
+    const onUnexpectedExit = vi.fn()
+
+    const { startServerSupervisor } = await loadSupervisor()
+    const supervisor = await startServerSupervisor({
+      env: {
+        MUESLI_SERVER_BIN: '/tmp/muesli',
+        MUESLI_ADDR: '127.0.0.1:4567',
+      },
+      fetchImpl: fetchMock,
+      healthPollIntervalMs: 10,
+      healthTimeoutMs: 100,
+      killTimeoutMs: 1_000,
+      onUnexpectedExit,
+    })
+
+    expect(supervisor?.baseUrl).toBe('http://127.0.0.1:4567')
+
+    child.emit('exit', 1, null)
+
+    expect(onUnexpectedExit).toHaveBeenCalledTimes(1)
+    expect(onUnexpectedExit).toHaveBeenCalledWith({ code: 1, signal: null })
+  })
+
+  it('reports the terminating signal', async () => {
+    vi.useRealTimers()
+    appMock.requestSingleInstanceLock.mockReturnValue(true)
+    const child = createFakeChild()
+    spawnMock.mockReturnValue(child)
+
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
+    const onUnexpectedExit = vi.fn()
+
+    const { startServerSupervisor } = await loadSupervisor()
+    await startServerSupervisor({
+      env: {
+        MUESLI_SERVER_BIN: '/tmp/muesli',
+        MUESLI_ADDR: '127.0.0.1:4567',
+      },
+      fetchImpl: fetchMock,
+      healthPollIntervalMs: 10,
+      healthTimeoutMs: 100,
+      killTimeoutMs: 1_000,
+      onUnexpectedExit,
+    })
+
+    child.emit('exit', null, 'SIGKILL')
+
+    expect(onUnexpectedExit).toHaveBeenCalledTimes(1)
+    expect(onUnexpectedExit).toHaveBeenCalledWith({ code: null, signal: 'SIGKILL' })
+  })
+
   it('resolves packaged server and resource paths from the app resources directory', async () => {
     vi.useRealTimers()
     appMock.isPackaged = true
@@ -246,6 +306,53 @@ describe('serverSupervisor', () => {
 
     expect(child.kill).toHaveBeenCalledWith('SIGKILL')
     expect(child.kill.mock.calls.map((call) => call[0])).toEqual(['SIGTERM', 'SIGKILL'])
+  })
+
+  it('does not call onUnexpectedExit during an intentional shutdown', async () => {
+    appMock.requestSingleInstanceLock.mockReturnValue(true)
+    const child = createFakeChild()
+    child.kill.mockImplementation((signal?: NodeJS.Signals | number) => {
+      if (signal === 'SIGTERM') {
+        child.signalCode = 'SIGTERM'
+        return true
+      }
+      if (signal === 'SIGKILL') {
+        child.signalCode = 'SIGKILL'
+        child.exitCode = 0
+        queueMicrotask(() => child.emit('exit', 0, 'SIGKILL'))
+        return true
+      }
+      return true
+    })
+    spawnMock.mockReturnValue(child)
+
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
+    const onUnexpectedExit = vi.fn()
+
+    const { startServerSupervisor } = await loadSupervisor()
+    const supervisor = await startServerSupervisor({
+      env: {
+        MUESLI_SERVER_BIN: '/tmp/muesli',
+        MUESLI_ADDR: '127.0.0.1:4569',
+      },
+      fetchImpl: fetchMock,
+      healthPollIntervalMs: 100,
+      healthTimeoutMs: 1_000,
+      killTimeoutMs: 250,
+      onUnexpectedExit,
+    })
+
+    expect(supervisor).not.toBeNull()
+
+    const shutdownPromise = supervisor!.shutdown()
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+
+    await vi.advanceTimersByTimeAsync(251)
+    await shutdownPromise
+
+    expect(child.kill).toHaveBeenCalledWith('SIGKILL')
+    expect(onUnexpectedExit).not.toHaveBeenCalled()
   })
 
   it('quits immediately without spawning when the single-instance lock is not acquired', async () => {
