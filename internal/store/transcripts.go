@@ -4,12 +4,21 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
+
+var deterministicChannelSpeakerRe = regexp.MustCompile(`^Speaker \d+$`)
+
+// isDeterministicChannelSpeaker stays coupled to pluginkit.channelSpeaker in
+// internal/pluginkit/multitrack.go so both packages agree on channel labels.
+func isDeterministicChannelSpeaker(speaker string) bool {
+	return speaker == model.SpeakerYou || speaker == model.SpeakerThem || deterministicChannelSpeakerRe.MatchString(speaker)
+}
 
 // SaveTranscript writes a transcript and its segments in one transaction,
 // replacing any prior transcript for the note (idempotent re-runs). The
@@ -40,7 +49,7 @@ func (s *Store) SaveTranscript(ctx context.Context, tr model.Transcript) (model.
 	// role labels) is ground truth and needs no review -> stays "completed".
 	reviewState := model.ReviewStateCompleted
 	for _, seg := range tr.Segments {
-		if seg.Speaker != "" && seg.Speaker != model.SpeakerYou && seg.Speaker != model.SpeakerThem {
+		if seg.Speaker != "" && !isDeterministicChannelSpeaker(seg.Speaker) {
 			reviewState = model.ReviewStatePending
 			break
 		}
