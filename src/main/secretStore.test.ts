@@ -1,4 +1,4 @@
-import { existsSync, statSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -33,6 +33,16 @@ describe('SecretStore', () => {
     expect(statSync(path).mode & 0o777).toBe(0o600)
   })
 
+  it('saveCreds() leaves no temp files and preserves mode 0600', () => {
+    const store = new SecretStore(dir, fakeSafe)
+    store.saveCreds({ email: 'desktop@localhost', password: 'secret-pw' })
+
+    expect(readdirSync(dir).sort()).toEqual(['local-session.json'])
+
+    const path = join(dir, 'local-session.json')
+    expect(statSync(path).mode & 0o777).toBe(0o600)
+  })
+
   it('clears stored credentials', () => {
     const store = new SecretStore(dir, fakeSafe)
     store.saveCreds({ email: 'desktop@localhost', password: 'secret-pw' })
@@ -60,9 +70,13 @@ describe('SecretStore', () => {
 
     store.setOnboarded(true)
     expect(new SecretStore(dir, fakeSafe).getOnboarded()).toBe(true)
+    expect(readdirSync(dir).sort()).toEqual(['local-session.json'])
+    expect(statSync(join(dir, 'local-session.json')).mode & 0o777).toBe(0o600)
 
     const again = new SecretStore(dir, fakeSafe)
     again.setOnboarded(false)
     expect(new SecretStore(dir, fakeSafe).getOnboarded()).toBe(false)
+    expect(readdirSync(dir).sort()).toEqual(['local-session.json'])
+    expect(statSync(join(dir, 'local-session.json')).mode & 0o777).toBe(0o600)
   })
 })

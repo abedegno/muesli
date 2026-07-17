@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 export interface SafeStorageLike {
@@ -20,6 +20,22 @@ interface PersistedShape {
 }
 
 const FILE = 'local-session.json'
+
+function writeFileAtomic(path: string, data: string): void {
+  const tempPath = `${path}.tmp-${process.pid}`
+  try {
+    writeFileSync(tempPath, data, { mode: 0o600 })
+    renameSync(tempPath, path)
+    chmodSync(path, 0o600)
+  } catch (error) {
+    try {
+      unlinkSync(tempPath)
+    } catch {
+      // Best-effort cleanup only.
+    }
+    throw error
+  }
+}
 
 function isSecretCreds(v: unknown): v is SecretCreds {
   return (
@@ -56,8 +72,7 @@ export class SecretStore {
   }
 
   private writePersisted(shape: PersistedShape): void {
-    writeFileSync(this.path, JSON.stringify(shape), { mode: 0o600 })
-    chmodSync(this.path, 0o600)
+    writeFileAtomic(this.path, JSON.stringify(shape))
   }
 
   loadCreds(): SecretCreds | null {
