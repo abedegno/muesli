@@ -98,6 +98,44 @@ func TestSetNoteHashes(t *testing.T) {
 	}
 }
 
+func TestFindNotesByAudioHash(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	owner, _ := st.CreateUser(ctx, "hashlookup@example.com", "h")
+
+	matching, err := st.CreateNote(ctx, owner.ID, "Matching note")
+	if err != nil {
+		t.Fatalf("create matching note: %v", err)
+	}
+	other, err := st.CreateNote(ctx, owner.ID, "Other note")
+	if err != nil {
+		t.Fatalf("create other note: %v", err)
+	}
+
+	const rawHash = "raw-hash"
+	if err := st.SetNoteHashes(ctx, matching.ID, rawHash, ""); err != nil {
+		t.Fatalf("set note hashes: %v", err)
+	}
+
+	notes, err := st.FindNotesByAudioHash(ctx, owner.ID, "", "")
+	if err != nil {
+		t.Fatalf("find empty hashes: %v", err)
+	}
+	if len(notes) != 0 {
+		t.Fatalf("empty hash lookup len=%d, want 0", len(notes))
+	}
+
+	notes, err = st.FindNotesByAudioHash(ctx, owner.ID, rawHash, "")
+	if err != nil {
+		t.Fatalf("find raw hash: %v", err)
+	}
+	if len(notes) != 1 || notes[0].ID != matching.ID {
+		t.Fatalf("raw hash lookup = %+v, want only %s", notes, matching.ID)
+	}
+	_ = other
+}
+
 func TestNoteBodyUpdate(t *testing.T) {
 	t.Parallel()
 	st := store.New(testutil.NewPool(t))
@@ -835,7 +873,7 @@ func TestRetryNoteResetsPartialTranscript(t *testing.T) {
 		t.Fatalf("SetNoteStatus: %v", err)
 	}
 
-	// RetryNote must atomically reset status → uploaded and clear partial_transcript.
+	// RetryNote must atomically reset status -> uploaded and clear partial_transcript.
 	if err := st.RetryNote(ctx, n.ID, "transcribe", nil); err != nil {
 		t.Fatalf("RetryNote: %v", err)
 	}

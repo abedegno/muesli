@@ -311,7 +311,7 @@ func (s *Store) SetNoteStatus(ctx context.Context, noteID, status string) error 
 // MarkNoteReady atomically transitions a note to ready and reports whether
 // THIS call performed the transition (won=true) via a single
 // UPDATE ... WHERE status <> 'ready' RowsAffected check. This is the only
-// correct way for a caller to detect "I performed the ready transition" —
+// correct way for a caller to detect "I performed the ready transition" -
 // deliberately not a separate read-then-write, which would be racy under
 // concurrent finalize calls (two callers could both read a non-ready status
 // and both proceed). Worker-side; not owner-scoped. A missing note also
@@ -629,7 +629,7 @@ func (s *Store) RestoreNote(ctx context.Context, ownerID, id string) error {
 func (s *Store) PurgeNote(ctx context.Context, ownerID, id string) (string, error) {
 	var audioKey string
 	// note_embeddings rows are cleaned up automatically by the ON DELETE CASCADE
-	// FK on notes(id) — no explicit DELETE FROM note_embeddings is needed here.
+	// FK on notes(id) - no explicit DELETE FROM note_embeddings is needed here.
 	err := s.pool.QueryRow(ctx,
 		`DELETE FROM notes WHERE id=$1 AND owner_id=$2 AND deleted_at IS NOT NULL
 		 RETURNING COALESCE(audio_object_key,'')`,
@@ -644,7 +644,7 @@ func (s *Store) PurgeNote(ctx context.Context, ownerID, id string) (string, erro
 }
 
 // PurgeExpired permanently removes every note trashed longer than olderThan ago (across
-// ALL owners — it is the auto-purge job, not owner-scoped) and returns the audio object
+// ALL owners - it is the auto-purge job, not owner-scoped) and returns the audio object
 // keys of everything purged.
 func (s *Store) PurgeExpired(ctx context.Context, olderThan time.Duration) ([]string, error) {
 	interval := fmt.Sprintf("%d seconds", int64(olderThan.Seconds()))
@@ -690,7 +690,7 @@ func snippet(body string) string {
 			}
 			if i > 0 && i < len(line) && line[i] == '.' {
 				if i+1 >= len(line) {
-					// "2." with nothing after — body is empty.
+					// "2." with nothing after - body is empty.
 					line = ""
 				} else if line[i+1] == ' ' {
 					line = strings.TrimSpace(line[i+2:])
@@ -729,10 +729,14 @@ func (s *Store) GetNoteAdmin(ctx context.Context, noteID string) (model.Note, er
 }
 
 // FindNotesByAudioHash returns live notes for the given owner whose audio_hash
-// or normalized_audio_hash match the provided values. At least one argument
-// must be non-empty (the handler enforces this). Returns an empty slice — not
-// an error — when there are no matches.
+// or normalized_audio_hash match the provided values. This method enforces
+// that at least one argument is non-empty. Returns an empty slice, not an
+// error, when there are no matches.
 func (s *Store) FindNotesByAudioHash(ctx context.Context, ownerID, audioHash, normalizedAudioHash string) ([]model.Note, error) {
+	if audioHash == "" && normalizedAudioHash == "" {
+		return []model.Note{}, nil
+	}
+
 	where := []string{"owner_id=$1", "deleted_at IS NULL"}
 	args := []any{ownerID}
 
