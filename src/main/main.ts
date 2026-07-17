@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto'
-import { basename, join } from 'node:path'
+import { appendFileSync, mkdirSync } from 'node:fs'
+import { basename, dirname, join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, session, shell } from 'electron'
 import { IPC, type ConnectRequest, type CreateConversationRequest, type DiarizationReviewUpdate, type ExportRequestOptions, type SearchOptions, type SendMessageRequest, type UpdateActionItemRequest, type UpdatePersonRequest, type UploadAudioRequest } from '../shared/ipc'
@@ -17,6 +18,49 @@ import { makeServerLogPath, startServerSupervisor } from './serverSupervisor'
 import { TokenStore } from './tokenStore'
 
 let mainWindow: BrowserWindow | null = null
+let fatalShutdownRequested = false
+
+function writeFatalMainProcessLog(kind: 'uncaughtException' | 'unhandledRejection', err: unknown) {
+  const logPath = makeServerLogPath(app.getPath('userData'))
+  const timestamp = new Date().toISOString()
+  const message =
+    err instanceof Error
+      ? err.stack ?? err.message
+      : typeof err === 'string'
+        ? err
+        : (() => {
+            try {
+              return JSON.stringify(err)
+            } catch {
+              return String(err)
+            }
+          })()
+  const entry = `${timestamp} [main:${kind}] ${message}\n`
+
+  try {
+    mkdirSync(dirname(logPath), { recursive: true })
+    appendFileSync(logPath, entry, 'utf8')
+  } catch (writeErr) {
+    console.error('[muesli-main fatal log]', writeErr)
+  }
+
+  console.error(`[muesli-main ${kind}]`, err)
+}
+
+function requestFatalMainProcessQuit(kind: 'uncaughtException' | 'unhandledRejection', err: unknown) {
+  writeFatalMainProcessLog(kind, err)
+  if (fatalShutdownRequested) return
+  fatalShutdownRequested = true
+  app.quit()
+}
+
+process.on('uncaughtException', (err) => {
+  requestFatalMainProcessQuit('uncaughtException', err)
+})
+
+process.on('unhandledRejection', (reason) => {
+  requestFatalMainProcessQuit('unhandledRejection', reason)
+})
 
 function createWindow() {
   mainWindow = new BrowserWindow({

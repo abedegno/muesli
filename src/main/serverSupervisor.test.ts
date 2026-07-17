@@ -263,6 +263,38 @@ describe('serverSupervisor', () => {
     expect((err as Error).message).toMatch(/timed out waiting for http:\/\/127\.0\.0\.1:4568\/healthz/i)
   })
 
+  it('rejects promptly when spawning the embedded server fails', async () => {
+    appMock.requestSingleInstanceLock.mockReturnValue(true)
+    const child = createFakeChild()
+    spawnMock.mockReturnValue(child)
+
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
+
+    const { startServerSupervisor } = await loadSupervisor()
+    const supervisor = await startServerSupervisor({
+      env: {
+        MUESLI_SERVER_BIN: '/tmp/muesli',
+        MUESLI_ADDR: '127.0.0.1:4573',
+      },
+      waitForHealthy: false,
+      fetchImpl: fetchMock,
+      healthPollIntervalMs: 10,
+      healthTimeoutMs: 30_000,
+      killTimeoutMs: 1,
+    })
+
+    expect(supervisor).not.toBeNull()
+
+    const spawnFailure = new Error('spawn ENOENT')
+    child.emit('error', spawnFailure)
+
+    const waitStart = Date.now()
+    await expect(supervisor!.waitUntilHealthy(fetchMock)).rejects.toThrow('embedded server failed to start: spawn ENOENT')
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(Date.now() - waitStart).toBe(0)
+  })
+
   it('sends SIGTERM on shutdown and escalates to SIGKILL after the kill timeout', async () => {
     appMock.requestSingleInstanceLock.mockReturnValue(true)
     const child = createFakeChild()
