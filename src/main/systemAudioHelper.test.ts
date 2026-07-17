@@ -107,6 +107,46 @@ describe('systemAudioHelper', () => {
     await helper.stop()
   })
 
+  it("resolves null when the child emits an 'error' event", async () => {
+    const { makeSystemAudioHelper } = await loadHelper()
+    const child = createFakeChild()
+    spawnMock.mockReturnValue(child)
+    const helper = makeSystemAudioHelper({
+      platform: 'darwin',
+      binPath: '/tmp/muesli-audiotap',
+      spawnImpl: spawnMock,
+    })
+
+    const pcm: Uint8Array[] = []
+    const started = helper.start((c) => pcm.push(c))
+    child.emit('error', new Error('ENOENT'))
+
+    await expect(started).resolves.toBeNull()
+    expect(pcm).toEqual([])
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+    await helper.stop()
+  })
+
+  it('resolves null and kills the child when no header arrives before the start timeout', async () => {
+    vi.useFakeTimers()
+    const { makeSystemAudioHelper } = await loadHelper()
+    const child = createFakeChild()
+    spawnMock.mockReturnValue(child)
+    const helper = makeSystemAudioHelper({
+      platform: 'darwin',
+      binPath: '/tmp/muesli-audiotap',
+      spawnImpl: spawnMock,
+      startTimeoutMs: 25,
+    })
+
+    const started = helper.start(() => {})
+    await vi.advanceTimersByTimeAsync(25)
+
+    await expect(started).resolves.toBeNull()
+    expect(child.kill).toHaveBeenCalledWith('SIGTERM')
+    vi.useRealTimers()
+  })
+
   it('resolves null when the process exits before a header', async () => {
     const { makeSystemAudioHelper } = await loadHelper()
     const child = createFakeChild()
@@ -121,6 +161,24 @@ describe('systemAudioHelper', () => {
     child.emit('exit', 1, null)
 
     await expect(started).resolves.toBeNull()
+    await helper.stop()
+  })
+
+  it('does not throw when exit fires after the header has already resolved', async () => {
+    const { makeSystemAudioHelper } = await loadHelper()
+    const child = createFakeChild()
+    spawnMock.mockReturnValue(child)
+    const helper = makeSystemAudioHelper({
+      platform: 'darwin',
+      binPath: '/tmp/muesli-audiotap',
+      spawnImpl: spawnMock,
+    })
+
+    const started = helper.start(() => {})
+    child.stdout.write('META sr=48000 ch=2 fmt=f32le\n')
+
+    await expect(started).resolves.toEqual({ sampleRate: 48000, channels: 2 })
+    expect(() => child.emit('exit', 0, null)).not.toThrow()
     await helper.stop()
   })
 })
