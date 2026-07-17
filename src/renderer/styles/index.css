@@ -61,3 +61,18 @@ body {
     overflow-y: auto;
   }
 }
+
+/* Respect the OS "reduce motion" setting: near-instant animations/transitions
+   so spinners, pulses, and button scale/transition effects don't cause
+   vestibular discomfort (WCAG 2.3.3). Kept as one global rule so no component
+   needs per-element handling. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
