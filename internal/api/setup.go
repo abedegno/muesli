@@ -2,9 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/abedegno/muesli/internal/auth"
+	"github.com/abedegno/muesli/internal/store"
 )
 
 type setupRequest struct {
@@ -19,22 +21,17 @@ func (s *Server) handleSetup(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "email and password (min 8 chars) required")
 		return
 	}
-	n, err := s.deps.Store.CountUsers(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	if n > 0 {
-		writeError(w, http.StatusConflict, "account already exists")
-		return
-	}
 	hash, err := auth.HashPassword(req.Password)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	u, err := s.deps.Store.CreateUser(r.Context(), req.Email, hash)
+	u, err := s.deps.Store.CreateFirstUser(r.Context(), req.Email, hash)
 	if err != nil {
+		if errors.Is(err, store.ErrAlreadySetUp) {
+			writeError(w, http.StatusConflict, "account already exists")
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}

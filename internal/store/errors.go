@@ -23,3 +23,6 @@ var ErrInvalidOwner = errors.New("invalid owner")
 
 // ErrSelfLink is returned when a note-link request tries to link a note to itself.
 var ErrSelfLink = errors.New("self link")
+
+// ErrAlreadySetUp is returned when first-run setup has already created a user.
+var ErrAlreadySetUp = errors.New("already set up")
