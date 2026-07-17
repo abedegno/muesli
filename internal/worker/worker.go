@@ -6,8 +6,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/abedegno/muesli/internal/plugin"
 	"github.com/abedegno/muesli/internal/store"
 )
+
+const defaultJobLease = plugin.RequestTimeout + 2*time.Minute
 
 // Pool runs N worker goroutines that poll for and process jobs.
 type Pool struct {
@@ -21,8 +24,10 @@ type Pool struct {
 	cancel context.CancelFunc
 }
 
-// NewPool builds a worker pool. workers is the goroutine count; lease bounds how
-// long a claimed job is owned before it can be reclaimed after a crash.
+// NewPool builds a worker pool. workers is the goroutine count; the lease must
+// exceed the maximum time a single job can legitimately block on a plugin
+// call, or long-running jobs can be reclaimed and re-run concurrently by a
+// second worker.
 func NewPool(st *store.Store, proc *Processor, workers int) *Pool {
 	if workers < 1 {
 		workers = 1
@@ -32,7 +37,7 @@ func NewPool(st *store.Store, proc *Processor, workers int) *Pool {
 		proc:     proc,
 		workers:  workers,
 		pollWait: time.Second,
-		lease:    2 * time.Minute,
+		lease:    defaultJobLease,
 	}
 }
 
