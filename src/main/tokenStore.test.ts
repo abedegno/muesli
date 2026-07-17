@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -40,6 +40,25 @@ describe('TokenStore', () => {
     // `enc:<token>`, which is then base64-encoded before being written, so the
     // base64 of the ciphertext is what appears in the file.
     expect(raw).toContain(Buffer.from('enc:app-secret-123', 'utf8').toString('base64'))
+  })
+
+  it('returns null on corrupt or truncated persisted JSON', () => {
+    const store = new TokenStore(dir, fakeSafe)
+    const path = join(dir, 'muesli-credentials.json')
+    writeFileSync(path, '{ "serverUrl": "https://x", "toke')
+
+    expect(() => store.load()).not.toThrow()
+    expect(store.load()).toBeNull()
+  })
+
+  it('save() leaves no leftover temp files and writes mode 0600', () => {
+    const store = new TokenStore(dir, fakeSafe)
+    store.save({ serverUrl: 'https://x', token: 't' })
+
+    expect(readdirSync(dir).sort()).toEqual(['muesli-credentials.json'])
+
+    const path = join(dir, 'muesli-credentials.json')
+    expect(statSync(path).mode & 0o777).toBe(0o600)
   })
 
   it('clear() removes the saved config', () => {
