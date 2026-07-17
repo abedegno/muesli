@@ -3,6 +3,9 @@ package webhook
 import (
 	"bytes"
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -124,6 +127,9 @@ func (w *DeliveryWorker) dispatch(ctx context.Context, d model.WebhookDelivery) 
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "muesli-webhooks/1")
+	if wh.Secret != "" {
+		req.Header.Set("X-Muesli-Signature", signPayload(wh.Secret, d.Payload))
+	}
 
 	resp, err := w.client.Do(req)
 	if err != nil {
@@ -176,6 +182,15 @@ func (w *DeliveryWorker) giveUp(ctx context.Context, id uuid.UUID, d model.Webho
 	}
 	slog.ErrorContext(ctx, "webhook worker: delivery permanently failed",
 		"id", id, "attempts", d.Attempts+1, "error", errStr)
+}
+
+// signPayload returns the outbound webhook signature for the exact bytes posted.
+// The scheme is HMAC-SHA256 keyed by the per-webhook secret, hex-encoded and
+// prefixed with "sha256=" so downstream consumers can verify the payload.
+func signPayload(secret string, body []byte) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write(body)
+	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
 
 // newGuardedClient returns an http.Client whose transport re-resolves DNS at
