@@ -2,7 +2,9 @@ package audiohash_test
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -50,6 +52,29 @@ func TestHashNormalized_WithFFmpeg(t *testing.T) {
 	}
 	if got == "" {
 		t.Fatal("expected non-empty normalized hash")
+	}
+}
+
+func TestHashNormalizedUsesConfiguredBinary(t *testing.T) {
+	dir := t.TempDir()
+	stubPath := filepath.Join(dir, "ffmpeg-stub")
+	stubOutput := []byte("stub-normalized-output")
+	if err := os.WriteFile(stubPath, []byte("#!/bin/sh\nprintf '%s' 'stub-normalized-output'\n"), 0o755); err != nil {
+		t.Fatalf("write stub: %v", err)
+	}
+	if err := os.Chmod(stubPath, 0o755); err != nil {
+		t.Fatalf("chmod stub: %v", err)
+	}
+	t.Setenv("MUESLI_FFMPEG_BIN", stubPath)
+
+	got, err := audiohash.HashNormalized("ignored-input")
+	if err != nil {
+		t.Fatalf("hash normalized: %v", err)
+	}
+	wantSum := sha256.Sum256(stubOutput)
+	want := hex.EncodeToString(wantSum[:])
+	if got != want {
+		t.Fatalf("hash normalized = %q, want %q", got, want)
 	}
 }
 
