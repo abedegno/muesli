@@ -29,6 +29,21 @@ describe('FolderBar', () => {
     expect(onAdd).toHaveBeenCalledWith('f2')
   })
 
+  it('exposes popup semantics on the add-to-folder trigger and toggles aria-expanded', async () => {
+    render(<FolderBar folders={folders} memberIds={['f1']} onAdd={vi.fn()} onCreate={vi.fn()} onRemove={vi.fn()} />)
+    const trigger = screen.getByRole('button', { name: /add to folder/i })
+    expect(trigger).toHaveAttribute('type', 'button')
+    expect(trigger).toHaveAttribute('aria-haspopup', 'menu')
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    await userEvent.click(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('gives chip remove buttons an explicit button type', () => {
+    render(<FolderBar folders={folders} memberIds={['f1']} onAdd={vi.fn()} onCreate={vi.fn()} onRemove={vi.fn()} />)
+    expect(screen.getByRole('button', { name: /Remove Clients/ })).toHaveAttribute('type', 'button')
+  })
+
   it('closes the picker when picking an item (and calls onAdd)', async () => {
     const user = userEvent.setup()
     const onAdd = vi.fn().mockResolvedValue(undefined)

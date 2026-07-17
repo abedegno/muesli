@@ -47,15 +47,18 @@ export function FolderBar({
       {members.map((f) => (
         <span key={f.id} className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium">
           {f.name}
-          <button aria-label={`Remove ${f.name}`} onClick={() => void onRemove(f.id)} className="rounded-full hover:bg-foreground/10">
+          <button type="button" aria-label={`Remove ${f.name}`} onClick={() => void onRemove(f.id)} className="rounded-full hover:bg-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
             <X size={12} />
           </button>
         </span>
       ))}
       <div className="relative" ref={pickerRef}>
         <button
+          type="button"
+          aria-haspopup="menu"
+          aria-expanded={open}
           onClick={() => setOpen((o) => !o)}
-          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted"
+          className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           <FolderPlus size={12} /> Add to folder
         </button>
