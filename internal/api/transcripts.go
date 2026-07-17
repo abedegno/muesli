@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/store"
 	"github.com/go-chi/chi/v5"
 )
@@ -85,6 +86,16 @@ func (s *Server) handlePostDiarizationReview(w http.ResponseWriter, r *http.Requ
 			}
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
+		}
+		if req.ReviewState == model.ReviewStateCompleted {
+			if err := s.deps.Store.DeleteNoteSummaries(ctx, uid, noteID); err != nil {
+				writeError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
+			if err := s.deps.Store.EnqueueSummarizeJobs(ctx, uid, noteID); err != nil {
+				writeError(w, http.StatusInternalServerError, "internal error")
+				return
+			}
 		}
 	}
 
