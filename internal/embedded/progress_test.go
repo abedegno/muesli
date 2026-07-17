@@ -91,3 +91,38 @@ func TestReporterProgressSequence(t *testing.T) {
 		})
 	}
 }
+
+func TestSetSourcePercent_AveragesAcrossSources(t *testing.T) {
+	t.Parallel()
+
+	r := NewReporter()
+	r.SetSourcePercent("embedding", 100)
+	r.SetSourcePercent("agent", 0)
+
+	if got, want := r.Snapshot().Percent, 50; got != want {
+		t.Fatalf("percent after embedding=100 and agent=0 = %d, want %d", got, want)
+	}
+
+	r.SetSourcePercent("agent", 40)
+	if got, want := r.Snapshot().Percent, 70; got != want {
+		t.Fatalf("percent after agent=40 = %d, want %d", got, want)
+	}
+
+	clamped := NewReporter()
+	clamped.SetSourcePercent("embedding", 120)
+	if got, want := clamped.Snapshot().Percent, 100; got != want {
+		t.Fatalf("percent after embedding=120 = %d, want %d", got, want)
+	}
+	clamped.SetSourcePercent("agent", -10)
+	if got, want := clamped.Snapshot().Percent, 50; got != want {
+		t.Fatalf("percent after agent=-10 = %d, want %d", got, want)
+	}
+
+	var nilReporter *Reporter
+	defer func() {
+		if r := recover(); r != nil {
+			t.Fatalf("nil reporter panicked: %v", r)
+		}
+	}()
+	nilReporter.SetSourcePercent("embedding", 50)
+}

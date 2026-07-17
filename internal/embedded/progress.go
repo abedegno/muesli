@@ -25,8 +25,9 @@ type Progress struct {
 
 // Reporter tracks startup progress across concurrent embedded startup steps.
 type Reporter struct {
-	mu sync.Mutex
-	p  Progress
+	mu      sync.Mutex
+	p       Progress
+	sources map[string]int
 }
 
 // NewReporter returns a new startup progress reporter.
@@ -71,6 +72,34 @@ func (r *Reporter) SetPercent(percent int) {
 
 	r.mu.Lock()
 	r.p.Percent = percent
+	r.mu.Unlock()
+}
+
+// SetSourcePercent updates a named source's progress and recomputes the
+// aggregate percent as the floored average across all known sources.
+func (r *Reporter) SetSourcePercent(source string, percent int) {
+	if r == nil {
+		return
+	}
+
+	if percent < 0 {
+		percent = 0
+	}
+	if percent > 100 {
+		percent = 100
+	}
+
+	r.mu.Lock()
+	if r.sources == nil {
+		r.sources = make(map[string]int)
+	}
+	r.sources[source] = percent
+
+	total := 0
+	for _, sourcePercent := range r.sources {
+		total += sourcePercent
+	}
+	r.p.Percent = total / len(r.sources)
 	r.mu.Unlock()
 }
 

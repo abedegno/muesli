@@ -9,6 +9,8 @@ import (
 	"github.com/abedegno/muesli/internal/embedded"
 )
 
+const modelPullTimeout = 30 * time.Minute
+
 type embeddedStartupHooks struct {
 	migrate       func(string) error
 	detect        func(context.Context, string) bool
@@ -62,18 +64,20 @@ func runEmbeddedStartupPhases(ctx context.Context, cfg *config.Config, reporter 
 
 	go func() {
 		defer pulls.Done()
-		pullCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+		pullCtx, cancel := context.WithTimeout(ctx, modelPullTimeout)
 		defer cancel()
 		if err := hooks.pullEmbedding(pullCtx, ollamaURL, cfg.EmbeddingsModel, func(percent int) {
-			reporter.SetPercent(percent)
+			reporter.SetSourcePercent("embedding", percent)
 		}); err != nil {
 			// The caller logs failures; the progress feed should still advance.
 		}
 	}()
 	go func() {
 		defer pulls.Done()
-		if err := hooks.pullModel(ctx, ollamaURL, embedded.DefaultOllamaAgentModel, func(percent int) {
-			reporter.SetPercent(percent)
+		pullCtx, cancel := context.WithTimeout(ctx, modelPullTimeout)
+		defer cancel()
+		if err := hooks.pullModel(pullCtx, ollamaURL, embedded.DefaultOllamaAgentModel, func(percent int) {
+			reporter.SetSourcePercent("agent", percent)
 		}); err != nil {
 			// The caller logs failures; the progress feed should still advance.
 		}
