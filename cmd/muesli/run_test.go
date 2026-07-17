@@ -13,6 +13,12 @@ import (
 )
 
 func TestRunEmbeddedModeCleansUpPostgresOnLateFailure(t *testing.T) {
+	if os.Geteuid() == 0 {
+		// Embedded Postgres refuses to bootstrap as root, so this test would
+		// otherwise pass vacuously here without ever exercising the cleanup path.
+		t.Skip("embedded postgres bootstrap needs a non-root user")
+	}
+
 	root := t.TempDir()
 	appDataDir := filepath.Join(root, "appdata")
 	storagePath := filepath.Join(root, "storage.bin")
@@ -55,7 +61,10 @@ func TestRunEmbeddedModeCleansUpPostgresOnLateFailure(t *testing.T) {
 	if len(lines) < 2 {
 		t.Fatalf("postmaster pid file malformed: %q", string(data))
 	}
-	pid, err := strconv.Atoi(strings.TrimSpace(lines[1]))
+	if got, want := strings.TrimSpace(lines[1]), filepath.Join(appDataDir, "postgres", "data"); got != want {
+		t.Fatalf("postmaster data dir = %q, want %q", got, want)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(lines[0]))
 	if err != nil {
 		t.Fatalf("parse postmaster pid: %v", err)
 	}
