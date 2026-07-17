@@ -339,6 +339,34 @@ func TestSaveTranscript_reviewState(t *testing.T) {
 			t.Errorf("channel-based You/Them needs no review: want %q, got %q", model.ReviewStateCompleted, saved.ReviewState)
 		}
 	})
+
+	t.Run("multitrack_three_channels_completed", func(t *testing.T) {
+		_, noteID := seedNoteWithOwner(t, st)
+		tr := model.Transcript{
+			NoteID:            noteID,
+			TranscriberPlugin: "whisper",
+			Model:             "base",
+			Segments: []model.Segment{
+				{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic", Speaker: model.SpeakerYou},
+				{StartMS: 1000, EndMS: 2000, Text: "hello", Source: "system", Speaker: model.SpeakerThem},
+				{StartMS: 2000, EndMS: 3000, Text: "third", Source: "channel 2", Speaker: "Speaker 3"},
+			},
+		}
+		saved, err := st.SaveTranscript(ctx, tr)
+		if err != nil {
+			t.Fatalf("save: %v", err)
+		}
+		if saved.ReviewState != model.ReviewStateCompleted {
+			t.Errorf("multitrack channel labels need no review: want %q, got %q", model.ReviewStateCompleted, saved.ReviewState)
+		}
+		got, err := st.GetTranscript(ctx, noteID)
+		if err != nil {
+			t.Fatalf("get: %v", err)
+		}
+		if got.ReviewState != model.ReviewStateCompleted {
+			t.Errorf("persisted review_state: want %q, got %q", model.ReviewStateCompleted, got.ReviewState)
+		}
+	})
 }
 
 // TestGetDiarizationReview verifies segments are returned sorted by confidence
