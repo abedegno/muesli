@@ -78,7 +78,8 @@ func main() {
 		}
 		return
 	}
-	if isEmbeddedMode(cfg, os.Args) && cfg.MasterKey == "" {
+	embeddedMode := isEmbeddedMode(cfg, os.Args)
+	if embeddedMode && cfg.MasterKey == "" {
 		// Embedded/desktop mode has no operator to set MUESLI_MASTER_KEY; manage
 		// one automatically (generate + persist in the app data dir) so the key
 		// requirement below is satisfied on first and subsequent launches.
@@ -89,7 +90,7 @@ func main() {
 		}
 		cfg.MasterKey = key
 	}
-	if isEmbeddedMode(cfg, os.Args) && os.Getenv("MUESLI_STORAGE_DIR") == "" {
+	if embeddedMode && os.Getenv("MUESLI_STORAGE_DIR") == "" {
 		storageDir, err := embedded.StorageDir()
 		if err != nil {
 			slog.Error("resolve embedded storage dir", "error", err)
@@ -107,23 +108,33 @@ func main() {
 			os.Exit(1)
 		}
 	}
+	cfg.Embedded = embeddedMode
+	if err := run(ctx, cfg); err != nil {
+		slog.Error("startup", "error", err)
+		os.Exit(1)
+	}
+}
+
+// run owns the embedded child-process lifecycle so deferred cleanup always
+// executes before any fatal error escapes to main and can call os.Exit.
+func run(ctx context.Context, cfg config.Config) (err error) {
 	cr, err := crypto.New(cfg.MasterKey)
 	if err != nil {
 		slog.Error("master key", "error", err, "hint", "set MUESLI_MASTER_KEY to a base64 32-byte key")
-		os.Exit(1)
+		return fmt.Errorf("master key: %w", err)
 	}
 	var embeddedAgent *embedded.AgentHandle
 	var embeddedWhisper *embedded.WhisperHandle
 	var completeEmbeddedStartup func()
 	var startupReporter *embedded.Reporter
 	ollamaURL := embedded.OllamaBaseURL()
-	embeddedMode := isEmbeddedMode(cfg, os.Args)
+	embeddedMode := cfg.Embedded
 	if embeddedMode {
 		startupReporter = embedded.NewReporter()
 		databaseURL, embeddedStop, err := embedded.Start(ctx, startupReporter)
 		if err != nil {
 			slog.Error("embedded startup", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("embedded startup: %w", err)
 		}
 		cfg.DatabaseURL = databaseURL
 		defer func() {
@@ -166,26 +177,26 @@ func main() {
 		})
 		if err != nil {
 			slog.Error("embedded startup", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("embedded startup: %w", err)
 		}
 	}
 	if !embeddedMode {
 		if err := db.Migrate(cfg.DatabaseURL); err != nil {
 			slog.Error("migrate", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("migrate: %w", err)
 		}
 	}
 	pool, err := db.Connect(ctx, cfg.DatabaseURL)
 	if err != nil {
 		slog.Error("db connect", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("db connect: %w", err)
 	}
 	defer pool.Close()
 
 	st := store.New(pool)
 	if err := st.SeedBuiltInTemplates(ctx); err != nil {
 		slog.Error("seed templates", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("seed templates: %w", err)
 	}
 
 	// Auto-register default plugins from config so a fresh deployment works
@@ -195,7 +206,7 @@ func main() {
 		if err := st.EnsureDefaultPlugin(ctx, cr, model.PluginTranscriber, "Default transcriber",
 			cfg.DefaultTranscriberURL, cfg.DefaultTranscriberToken, cfg.DefaultTranscriberConfig); err != nil {
 			slog.Error("register default transcriber", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("register default transcriber: %w", err)
 		}
 		slog.Info("registered default transcriber plugin", "url", cfg.DefaultTranscriberURL)
 	}
@@ -203,7 +214,7 @@ func main() {
 		if err := st.EnsureDefaultPlugin(ctx, cr, model.PluginStreamingTranscriber, "Default streaming transcriber",
 			cfg.DefaultStreamingTranscriberURL, cfg.DefaultStreamingTranscriberToken, cfg.DefaultStreamingTranscriberConfig); err != nil {
 			slog.Error("register default streaming transcriber", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("register default streaming transcriber: %w", err)
 		}
 		slog.Info("registered default streaming transcriber plugin", "url", cfg.DefaultStreamingTranscriberURL)
 	}
@@ -211,7 +222,7 @@ func main() {
 		if err := st.EnsureDefaultPlugin(ctx, cr, model.PluginAgent, "Default agent",
 			cfg.DefaultAgentURL, cfg.DefaultAgentToken, cfg.DefaultAgentConfig); err != nil {
 			slog.Error("register default agent", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("register default agent: %w", err)
 		}
 		slog.Info("registered default agent plugin", "url", cfg.DefaultAgentURL)
 	}
@@ -222,12 +233,12 @@ func main() {
 	signingKey := storageSigningKey(cfg)
 	if len(signingKey) == 0 {
 		slog.Error("no storage signing key", "hint", "set MUESLI_STORAGE_SIGNING_KEY (or MUESLI_MASTER_KEY)")
-		os.Exit(1)
+		return fmt.Errorf("no storage signing key")
 	}
 	prov, err := storage.NewLocal(cfg.StorageDir, cfg.PublicURL, cfg.InternalURL, signingKey)
 	if err != nil {
 		slog.Error("storage", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("storage: %w", err)
 	}
 	// HRD01: MUESLI_UPLOAD_ALLOWED_CONTENT_TYPES overrides the audio
 	// Content-Type allowlist enforced on the upload PUT path; empty leaves the
@@ -275,14 +286,14 @@ func main() {
 		embeddedAgent, err = embedded.StartOllamaAgent(ctx, ollamaURL)
 		if err != nil {
 			slog.Error("start embedded ollama agent", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("start embedded ollama agent: %w", err)
 		}
 		// Embedded Ollama takes precedence over any hosted default agent so the
 		// desktop-first path stays local when Ollama is available.
 		if err := st.EnsureDefaultPlugin(ctx, cr, model.PluginAgent, embedded.DefaultOllamaAgentName,
 			embeddedAgent.EndpointURL, embeddedAgent.Token, embeddedAgent.ConfigJSON); err != nil {
 			slog.Error("register embedded ollama agent", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("register embedded ollama agent: %w", err)
 		}
 		slog.Info("registered embedded ollama agent plugin", "url", embeddedAgent.EndpointURL)
 		applyEmbeddedAgentDefault(&cfg, embeddedAgent.EndpointURL)
@@ -293,7 +304,7 @@ func main() {
 		embeddedWhisper, err = embedded.StartWhisperTranscriber(ctx)
 		if err != nil {
 			slog.Error("start embedded whisper transcriber", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("start embedded whisper transcriber: %w", err)
 		}
 		// The bundled whisper.cpp binary is the desktop default transcriber in
 		// --embedded mode, mirroring how the embedded Ollama agent above is the
@@ -304,7 +315,7 @@ func main() {
 		if err := st.EnsureDefaultPlugin(ctx, cr, model.PluginTranscriber, embedded.DefaultWhisperName,
 			embeddedWhisper.EndpointURL, embeddedWhisper.Token, embeddedWhisper.ConfigJSON); err != nil {
 			slog.Error("register embedded whisper transcriber", "error", err)
-			os.Exit(1)
+			return fmt.Errorf("register embedded whisper transcriber: %w", err)
 		}
 		slog.Info("registered embedded whisper transcriber plugin", "url", embeddedWhisper.EndpointURL)
 		applyEmbeddedTranscriberDefault(&cfg, embeddedWhisper.EndpointURL)
@@ -318,8 +329,9 @@ func main() {
 	}
 	if err := srv.Run(ctx, cfg.Addr); err != nil {
 		slog.Error("server error", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("server error: %w", err)
 	}
+	return nil
 }
 
 // storageSigningKey derives a stable HMAC key for presigned upload URLs.
