@@ -225,6 +225,10 @@ func TestHandlePostDiarizationReview_completionEnqueuesSummaries(t *testing.T) {
 		t.Fatalf("save: %v", err)
 	}
 
+	if err := st.SetNoteStatus(ctx, note.ID, model.NoteTranscribing); err != nil {
+		t.Fatalf("set note status: %v", err)
+	}
+
 	before, err := st.GetNote(ctx, owner.ID, note.ID)
 	if err != nil {
 		t.Fatalf("get note before: %v", err)
