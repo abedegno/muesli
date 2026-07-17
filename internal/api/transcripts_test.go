@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/abedegno/muesli/internal/auth"
 	"github.com/abedegno/muesli/internal/model"
 )
 
@@ -183,6 +184,138 @@ func TestHandlePostDiarizationReview_advanceState(t *testing.T) {
 		map[string]string{"review_state": model.ReviewStateInReview}, hdr)
 	if r422.Code != http.StatusUnprocessableEntity {
 		t.Errorf("illegal transition: want 422, got %d body=%s", r422.Code, r422.Body)
+	}
+}
+
+// TestHandlePostDiarizationReview_completionEnqueuesSummaries verifies that
+// completing diarization review fans out summarization work instead of leaving
+// the note stuck in transcribing.
+func TestHandlePostDiarizationReview_completionEnqueuesSummaries(t *testing.T) {
+	t.Parallel()
+	srv, st := newTestServer(t)
+	ctx := context.Background()
+
+	owner, err := st.CreateUser(ctx, "rev5@example.com", "hash")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	raw, hash, err := auth.GenerateToken()
+	if err != nil {
+		t.Fatalf("generate token: %v", err)
+	}
+	if err := st.CreateToken(ctx, owner.ID, "session", hash, "session"); err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+	hdr := map[string]string{"Authorization": "Bearer " + raw}
+
+	noteRec := doJSON(t, srv, http.MethodPost, "/api/notes", map[string]string{"title": "M"}, hdr)
+	var note struct{ ID string }
+	_ = json.Unmarshal(noteRec.Body.Bytes(), &note)
+
+	tr := model.Transcript{
+		NoteID:            note.ID,
+		TranscriberPlugin: "whisper",
+		Model:             "base",
+		Segments: []model.Segment{
+			{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic", Speaker: "SPEAKER_00"},
+			{StartMS: 1000, EndMS: 2000, Text: "there", Source: "mic", Speaker: "SPEAKER_01"},
+		},
+	}
+	if _, err := st.SaveTranscript(ctx, tr); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	if err := st.SetNoteStatus(ctx, note.ID, model.NoteTranscribing); err != nil {
+		t.Fatalf("set note status: %v", err)
+	}
+
+	before, err := st.GetNote(ctx, owner.ID, note.ID)
+	if err != nil {
+		t.Fatalf("get note before: %v", err)
+	}
+	if before.Status != model.NoteTranscribing {
+		t.Fatalf("before completion status = %q, want %q", before.Status, model.NoteTranscribing)
+	}
+
+	r := doJSON(t, srv, http.MethodPost, "/api/notes/"+note.ID+"/transcript/review",
+		map[string]string{"review_state": model.ReviewStateInReview}, hdr)
+	if r.Code != http.StatusOK {
+		t.Fatalf("advance to in_review: status=%d body=%s", r.Code, r.Body)
+	}
+
+	r = doJSON(t, srv, http.MethodPost, "/api/notes/"+note.ID+"/transcript/review",
+		map[string]string{"review_state": model.ReviewStateCompleted}, hdr)
+	if r.Code != http.StatusOK {
+		t.Fatalf("complete review: status=%d body=%s", r.Code, r.Body)
+	}
+
+	after, err := st.GetNote(ctx, owner.ID, note.ID)
+	if err != nil {
+		t.Fatalf("get note after: %v", err)
+	}
+	if after.Status == model.NoteTranscribing {
+		t.Fatalf("after completion status = %q, want %q or %q", after.Status, model.NoteSummarizing, model.NoteReady)
+	}
+	if after.Status != model.NoteSummarizing && after.Status != model.NoteReady {
+		t.Fatalf("after completion status = %q, want %q or %q", after.Status, model.NoteSummarizing, model.NoteReady)
+	}
+}
+
+// TestHandlePostDiarizationReview_segmentOnlyDoesNotEnqueueSummaries verifies
+// that confirming a segment speaker without advancing review state leaves the
+// note status unchanged.
+func TestHandlePostDiarizationReview_segmentOnlyDoesNotEnqueueSummaries(t *testing.T) {
+	t.Parallel()
+	srv, st := newTestServer(t)
+	ctx := context.Background()
+
+	owner, err := st.CreateUser(ctx, "rev6@example.com", "hash")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	raw, hash, err := auth.GenerateToken()
+	if err != nil {
+		t.Fatalf("generate token: %v", err)
+	}
+	if err := st.CreateToken(ctx, owner.ID, "session", hash, "session"); err != nil {
+		t.Fatalf("create token: %v", err)
+	}
+	hdr := map[string]string{"Authorization": "Bearer " + raw}
+
+	noteRec := doJSON(t, srv, http.MethodPost, "/api/notes", map[string]string{"title": "M"}, hdr)
+	var note struct{ ID string }
+	_ = json.Unmarshal(noteRec.Body.Bytes(), &note)
+
+	tr := model.Transcript{
+		NoteID:            note.ID,
+		TranscriberPlugin: "whisper",
+		Model:             "base",
+		Segments: []model.Segment{
+			{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic", Speaker: "SPEAKER_00"},
+		},
+	}
+	saved, err := st.SaveTranscript(ctx, tr)
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	before, err := st.GetNote(ctx, owner.ID, note.ID)
+	if err != nil {
+		t.Fatalf("get note before: %v", err)
+	}
+
+	r := doJSON(t, srv, http.MethodPost, "/api/notes/"+note.ID+"/transcript/review",
+		map[string]string{"segment_id": saved.Segments[0].ID, "speaker": "X"}, hdr)
+	if r.Code != http.StatusOK {
+		t.Fatalf("confirm segment: status=%d body=%s", r.Code, r.Body)
+	}
+
+	after, err := st.GetNote(ctx, owner.ID, note.ID)
+	if err != nil {
+		t.Fatalf("get note after: %v", err)
+	}
+	if after.Status != before.Status {
+		t.Fatalf("status changed: before=%q after=%q", before.Status, after.Status)
 	}
 }
 
