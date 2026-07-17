@@ -16,15 +16,26 @@ import (
 )
 
 const (
-	DefaultOllamaURL       = "http://127.0.0.1:11434"
-	embeddedDegradedReason = "summaries & semantic search need Ollama"
-	ollamaProbeTimeout     = 1500 * time.Millisecond
+	DefaultOllamaURL            = "http://127.0.0.1:11434"
+	DefaultOllamaDetectAttempts = 5
+	DefaultOllamaDetectInterval = 1 * time.Second
+	embeddedDegradedReason      = "summaries & semantic search need Ollama"
+	ollamaProbeTimeout          = 1500 * time.Millisecond
 )
 
 var ollamaHTTPClient = &http.Client{
 	CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 		return http.ErrUseLastResponse
 	},
+}
+
+var ollamaRetrySleep = func(ctx context.Context, d time.Duration) error {
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(d):
+		return nil
+	}
 }
 
 func normalizeOllamaBaseURL(baseURL string) string {
@@ -65,6 +76,35 @@ func DetectOllama(ctx context.Context, baseURL string) bool {
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode >= 200 && resp.StatusCode < 300
+}
+
+// DetectOllamaWithRetry probes the Ollama version endpoint up to attempts
+// times, sleeping between failures when the context remains active.
+func DetectOllamaWithRetry(ctx context.Context, baseURL string, attempts int, interval time.Duration) bool {
+	if ctx.Err() != nil {
+		return false
+	}
+
+	if attempts <= 0 {
+		attempts = 1
+	}
+
+	for i := 0; i < attempts; i++ {
+		if ctx.Err() != nil {
+			return false
+		}
+		if DetectOllama(ctx, baseURL) {
+			return true
+		}
+		if i == attempts-1 {
+			return false
+		}
+		if err := ollamaRetrySleep(ctx, interval); err != nil {
+			return false
+		}
+	}
+
+	return false
 }
 
 // PullModel requests the named Ollama model and drains the streamed response

@@ -144,8 +144,10 @@ func main() {
 			}
 		}()
 		completeEmbeddedStartup, err = runEmbeddedStartupPhases(ctx, &cfg, startupReporter, ollamaURL, embeddedStartupHooks{
-			migrate:   db.Migrate,
-			detect:    embedded.DetectOllama,
+			migrate: db.Migrate,
+			detect: func(ctx context.Context, url string) bool {
+				return embedded.DetectOllamaWithRetry(ctx, url, embedded.DefaultOllamaDetectAttempts, embedded.DefaultOllamaDetectInterval)
+			},
 			configure: embedded.ConfigureEmbeddedOllama,
 			pullEmbedding: func(pullCtx context.Context, url, model string, onProgress embedded.PullProgressFunc) error {
 				if err := embedded.PullEmbeddingModel(pullCtx, url, model, onProgress); err != nil {
