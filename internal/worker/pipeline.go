@@ -264,18 +264,25 @@ func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, err
 
 	if saved.ReviewState != model.ReviewStateCompleted {
 		slog.InfoContext(ctx, "summarize held pending diarization review", "job_id", job.ID, "note_id", job.NoteID, "review_state", saved.ReviewState)
-		// It is safe to discard audio here because resummarize/review release works
-		// from the transcript, not the audio object.
-		if p.cfg.AudioRetention == "discard" {
-			if derr := p.storage.Delete(audioKey); derr != nil {
-				slog.WarnContext(ctx, "retention: failed to delete audio", "job_id", job.ID, "job_type", job.Type, "note_id", job.NoteID, "audio_key", audioKey, "error", derr)
-			} else {
-				_ = p.store.SetRetentionState(ctx, job.NoteID, "discarded")
+		if p.cfg.Embedded {
+			if err := p.store.SetReviewState(ctx, job.NoteID, model.ReviewStateCompleted); err != nil {
+				slog.ErrorContext(ctx, "embedded diarization review auto-complete failed", "error", err, "job_id", job.ID, "note_id", job.NoteID)
+				return true, err
 			}
 		} else {
-			_ = p.store.SetRetentionState(ctx, job.NoteID, "kept")
+			// It is safe to discard audio here because resummarize/review release works
+			// from the transcript, not the audio object.
+			if p.cfg.AudioRetention == "discard" {
+				if derr := p.storage.Delete(audioKey); derr != nil {
+					slog.WarnContext(ctx, "retention: failed to delete audio", "job_id", job.ID, "job_type", job.Type, "note_id", job.NoteID, "audio_key", audioKey, "error", derr)
+				} else {
+					_ = p.store.SetRetentionState(ctx, job.NoteID, "discarded")
+				}
+			} else {
+				_ = p.store.SetRetentionState(ctx, job.NoteID, "kept")
+			}
+			return false, nil
 		}
-		return false, nil
 	}
 
 	// Fan out one summarize job per template the note's owner sees (built-ins + their
