@@ -12,6 +12,9 @@ import (
 // ErrNotFound is returned when a row does not exist.
 var ErrNotFound = errors.New("not found")
 
+// setupAdvisoryLockKey serializes first-run setup across replicas.
+const setupAdvisoryLockKey int64 = 7293161372302018804
+
 func (s *Store) CreateUser(ctx context.Context, email, passwordHash string) (model.User, error) {
 	u := model.User{ID: uuid.NewString(), Email: email, PasswordHash: passwordHash}
 	err := s.pool.QueryRow(ctx,
@@ -21,6 +24,34 @@ func (s *Store) CreateUser(ctx context.Context, email, passwordHash string) (mod
 		return model.User{}, err
 	}
 	return u, nil
+}
+
+func (s *Store) CreateFirstUser(ctx context.Context, email, passwordHash string) (model.User, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return model.User{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1)`, setupAdvisoryLockKey); err != nil {
+		return model.User{}, err
+	}
+
+	var n int
+	if err := tx.QueryRow(ctx, `SELECT count(*) FROM users`).Scan(&n); err != nil {
+		return model.User{}, err
+	}
+	if n > 0 {
+		return model.User{}, ErrAlreadySetUp
+	}
+
+	u := model.User{ID: uuid.NewString(), Email: email, PasswordHash: passwordHash}
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO users (id, email, password_hash) VALUES ($1,$2,$3) RETURNING created_at`,
+		u.ID, u.Email, u.PasswordHash).Scan(&u.CreatedAt); err != nil {
+		return model.User{}, err
+	}
+	return u, tx.Commit(ctx)
 }
 
 func (s *Store) GetUserByEmail(ctx context.Context, email string) (model.User, error) {
