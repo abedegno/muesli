@@ -115,6 +115,14 @@ describe('TranscriptView', () => {
     expect(onSeek).toHaveBeenCalledWith(5000)
   })
 
+  it('gives interactive segment buttons a visible focus ring', () => {
+    render(<TranscriptView segments={segs} onSeek={vi.fn()} />)
+    const btn = screen.getByRole('button', { name: /foo bar baz/i })
+    expect(btn.className).toContain('focus-visible:outline-none')
+    expect(btn.className).toContain('focus-visible:ring-2')
+    expect(btn.className).toContain('focus-visible:ring-ring')
+  })
+
   it('marks the playing segment with a distinct playing marker', () => {
     render(<TranscriptView segments={segs} playingIndex={2} />)
     const playing = document.querySelector('[data-playing="true"]')
