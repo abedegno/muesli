@@ -20,6 +20,7 @@ export interface ServerSupervisorOptions {
   healthTimeoutMs?: number
   killTimeoutMs?: number
   onSecondInstance?: () => void
+  onUnexpectedExit?: (info: { code: number | null; signal: NodeJS.Signals | null }) => void
   waitForHealthy?: boolean
   spawnImpl?: typeof spawn
 }
@@ -113,12 +114,15 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
   private readonly healthTimeoutMs: number
   private readonly killTimeoutMs: number
   private readonly onSecondInstance?: () => void
+  private readonly onUnexpectedExit?: (info: { code: number | null; signal: NodeJS.Signals | null }) => void
   private readonly logStream: WriteStream | null
   private shutdownPromise: Promise<void> | null = null
   private quitting = false
   private childExited = false
+  private hasBecomeHealthy = false
+  private reportedUnexpectedExit = false
 
-  constructor(child: ChildProcessWithoutNullStreams, baseUrl: string, logPath: string, logStream: WriteStream | null, opts: Required<Pick<ServerSupervisorOptions, 'healthPollIntervalMs' | 'healthTimeoutMs' | 'killTimeoutMs'>> & Pick<ServerSupervisorOptions, 'onSecondInstance'>) {
+  constructor(child: ChildProcessWithoutNullStreams, baseUrl: string, logPath: string, logStream: WriteStream | null, opts: Required<Pick<ServerSupervisorOptions, 'healthPollIntervalMs' | 'healthTimeoutMs' | 'killTimeoutMs'>> & Pick<ServerSupervisorOptions, 'onSecondInstance' | 'onUnexpectedExit'>) {
     this.child = child
     this.baseUrl = baseUrl
     this.logPath = logPath
@@ -127,14 +131,23 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
     this.healthTimeoutMs = opts.healthTimeoutMs
     this.killTimeoutMs = opts.killTimeoutMs
     this.onSecondInstance = opts.onSecondInstance
+    this.onUnexpectedExit = opts.onUnexpectedExit
     this.logStream = logStream
 
-    this.child.once('exit', () => {
+    this.child.once('exit', (code, signal) => {
       this.childExited = true
       this.logStream?.end()
+      if (this.shouldReportUnexpectedExit()) {
+        this.reportedUnexpectedExit = true
+        this.onUnexpectedExit?.({ code, signal })
+      }
     })
     this.child.stdout.on('data', (chunk) => logChildOutput(this.logStream, 'stdout', chunk))
     this.child.stderr.on('data', (chunk) => logChildOutput(this.logStream, 'stderr', chunk))
+  }
+
+  private shouldReportUnexpectedExit(): boolean {
+    return this.hasBecomeHealthy && !this.quitting && this.shutdownPromise == null && !this.reportedUnexpectedExit
   }
 
   async waitUntilHealthy(fetchImpl: typeof fetch): Promise<void> {
@@ -148,7 +161,10 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
 
       try {
         const res = await fetchImpl(this.healthUrl)
-        if (res.ok) return
+        if (res.ok) {
+          this.hasBecomeHealthy = true
+          return
+        }
         lastError = new Error(`health check returned ${res.status} ${res.statusText}`)
       } catch (err) {
         lastError = err
@@ -265,6 +281,7 @@ export async function startServerSupervisor(opts: ServerSupervisorOptions = {}):
     healthTimeoutMs: opts.healthTimeoutMs ?? DEFAULT_HEALTH_TIMEOUT_MS,
     killTimeoutMs: opts.killTimeoutMs ?? DEFAULT_KILL_TIMEOUT_MS,
     onSecondInstance: opts.onSecondInstance,
+    onUnexpectedExit: opts.onUnexpectedExit,
   })
 
   supervisor.installLifecycleHooks()
