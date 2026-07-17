@@ -19,7 +19,7 @@ beforeEach(() => {
   micOpenSettings.mockReset()
   systemAudioStatus.mockReset()
   systemAudioOpenSettings.mockReset()
-  Object.defineProperty(navigator, 'platform', { value: 'Linux x86_64', configurable: true })
+  setPlatform('Linux x86_64')
 })
 
 // ---------------------------------------------------------------------------
@@ -36,6 +36,10 @@ function mockEnumerateDevices(devices: Partial<MediaDeviceInfo>[]) {
     writable: true,
   })
   return enumerateDevices
+}
+
+function setPlatform(platform: string) {
+  Object.defineProperty(navigator, 'platform', { value: platform, configurable: true })
 }
 
 // ---------------------------------------------------------------------------
@@ -328,14 +332,14 @@ describe('RecordControl — system audio notice', () => {
   it.each([
     ['denied' as const],
     ['restricted' as const],
-  ])('shows a non-blocking notice on macOS when system audio is %s', async (status) => {
+  ])('shows the notice on macOS in idle state when system audio is %s', async (status) => {
     mockEnumerateDevices([])
-    Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true })
+    setPlatform('MacIntel')
     systemAudioStatus.mockResolvedValueOnce(status)
 
     render(<RecordControl state="idle" elapsedMs={0} onStart={() => {}} onStop={() => {}} />)
 
-    await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
     expect(screen.getByText(/system audio capture is not enabled/i)).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /record/i })).toBeInTheDocument()
 
@@ -343,18 +347,41 @@ describe('RecordControl — system audio notice', () => {
     expect(systemAudioOpenSettings).toHaveBeenCalledOnce()
   })
 
+  it('shows the notice on macOS in recording state when system audio is denied', async () => {
+    mockEnumerateDevices([])
+    setPlatform('MacIntel')
+    systemAudioStatus.mockResolvedValueOnce('denied')
+
+    render(<RecordControl state="recording" elapsedMs={0} onStart={() => {}} onStop={() => {}} />)
+
+    expect(await screen.findByRole('alert')).toBeInTheDocument()
+    expect(screen.getByText(/system audio capture is not enabled/i)).toBeInTheDocument()
+  })
+
   it.each([
+    ['granted' as const],
     ['unknown' as const],
     ['not-determined' as const],
-    ['granted' as const],
-  ])('does not show the notice when system audio is %s', async (status) => {
+  ])('does not show the notice on macOS when system audio is %s', async (status) => {
     mockEnumerateDevices([])
-    Object.defineProperty(navigator, 'platform', { value: 'MacIntel', configurable: true })
+    setPlatform('MacIntel')
     systemAudioStatus.mockResolvedValueOnce(status)
 
     render(<RecordControl state="idle" elapsedMs={0} onStart={() => {}} onStop={() => {}} />)
 
     await waitFor(() => expect(systemAudioStatus).toHaveBeenCalledOnce())
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByRole('button', { name: /open system settings/i })).toBeNull()
+  })
+
+  it('does not show the notice when system audio is denied but platform is not macOS', async () => {
+    mockEnumerateDevices([])
+    setPlatform('Linux x86_64')
+    systemAudioStatus.mockResolvedValueOnce('denied')
+
+    render(<RecordControl state="idle" elapsedMs={0} onStart={() => {}} onStop={() => {}} />)
+
+    await waitFor(() => expect(systemAudioStatus).not.toHaveBeenCalled())
     expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.queryByRole('button', { name: /open system settings/i })).toBeNull()
   })

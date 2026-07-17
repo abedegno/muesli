@@ -228,6 +228,30 @@ export function RecordControl({
 
   const disabled = state !== 'idle'
 
+  function SystemAudioNotice() {
+    return (
+      <div
+        role="alert"
+        className="rounded-[var(--radius)] border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
+      >
+        <p className="font-medium text-amber-600">System audio capture is not enabled.</p>
+        <p className="mt-1 text-muted-foreground">
+          You can still record microphone-only. Open System Settings to grant access if you want both sides of the call.
+        </p>
+        <Button
+          variant="secondary"
+          size="sm"
+          className="mt-2"
+          onClick={() => {
+            void muesli.systemAudioOpenSettings?.()
+          }}
+        >
+          Open System Settings
+        </Button>
+      </div>
+    )
+  }
+
   const controls = (
     <div className="flex flex-col gap-2">
       {/* Device picker */}
@@ -284,27 +308,7 @@ export function RecordControl({
     }
     return (
       <div className="flex flex-col gap-3">
-        {showSystemAudioNotice ? (
-          <div
-            role="alert"
-            className="rounded-[var(--radius)] border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
-          >
-            <p className="font-medium text-amber-600">System audio capture is not enabled.</p>
-            <p className="mt-1 text-muted-foreground">
-              You can still record microphone-only. Open System Settings to grant access if you want both sides of the call.
-            </p>
-            <Button
-              variant="secondary"
-              size="sm"
-              className="mt-2"
-              onClick={() => {
-                void muesli.systemAudioOpenSettings?.()
-              }}
-            >
-              Open System Settings
-            </Button>
-          </div>
-        ) : null}
+        {showSystemAudioNotice ? <SystemAudioNotice /> : null}
         {controls}
         <Button variant="primary" onClick={onStart}>
           <Mic size={18} /> Record
@@ -315,27 +319,7 @@ export function RecordControl({
   if (state === 'recording') {
     return (
       <div className="flex flex-col gap-3">
-        {showSystemAudioNotice ? (
-          <div
-            role="alert"
-            className="rounded-[var(--radius)] border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
-          >
-            <p className="font-medium text-amber-600">System audio capture is not enabled.</p>
-            <p className="mt-1 text-muted-foreground">
-              You can still record microphone-only. Open System Settings to grant access if you want both sides of the call.
-            </p>
-            <Button
-              variant="secondary"
-              size="sm"
-              className="mt-2"
-              onClick={() => {
-                void muesli.systemAudioOpenSettings?.()
-              }}
-            >
-              Open System Settings
-            </Button>
-          </div>
-        ) : null}
+        {showSystemAudioNotice ? <SystemAudioNotice /> : null}
         {controls}
         <div className="flex items-center gap-3" role="status" aria-live="polite">
           <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-destructive" aria-hidden />
