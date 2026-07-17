@@ -28,6 +28,10 @@ import (
 // downloadTTL bounds how long the signed audio URL handed to a plugin is valid.
 const downloadTTL = 30 * time.Minute
 
+// ErrPluginNotConfigured marks a missing required default plugin as a terminal
+// operator configuration issue rather than an infrastructure failure.
+var ErrPluginNotConfigured = errors.New("no default plugin configured")
+
 // Processor executes one job at a time. It is safe for concurrent use across
 // goroutines because all state lives in the store/storage it wraps.
 type Processor struct {
@@ -87,7 +91,11 @@ func (p *Processor) Process(ctx context.Context, job model.Job) {
 	}
 
 	if err != nil {
-		slog.ErrorContext(ctx, "job failed", "job_id", job.ID, "job_type", job.Type, "note_id", job.NoteID, "retryable", retryable, "error", err)
+		if errors.Is(err, ErrPluginNotConfigured) {
+			slog.WarnContext(ctx, "job skipped: required plugin not configured", "job_id", job.ID, "job_type", job.Type, "note_id", job.NoteID, "retryable", retryable, "error", err)
+		} else {
+			slog.ErrorContext(ctx, "job failed", "job_id", job.ID, "job_type", job.Type, "note_id", job.NoteID, "retryable", retryable, "error", err)
+		}
 		// Settle the job row FIRST so terminal-vs-retry is reflected in the queue
 		// before any readiness check reads it.
 		if ferr := p.store.FailJob(ctx, job.ID, err.Error(), retryable); ferr != nil {
@@ -209,7 +217,7 @@ func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, err
 
 	plug, err := p.store.DefaultPlugin(ctx, p.crypto, model.PluginTranscriber)
 	if errors.Is(err, store.ErrNotFound) {
-		return false, errors.New("no default transcriber plugin configured")
+		return false, fmt.Errorf("no default transcriber plugin configured: %w", ErrPluginNotConfigured)
 	}
 	if err != nil {
 		return true, err
@@ -363,7 +371,7 @@ func (p *Processor) runSummarize(ctx context.Context, job model.Job) (bool, erro
 
 	plug, err := p.store.DefaultPlugin(ctx, p.crypto, model.PluginAgent)
 	if errors.Is(err, store.ErrNotFound) {
-		return false, errors.New("no default agent plugin configured")
+		return false, fmt.Errorf("no default agent plugin configured: %w", ErrPluginNotConfigured)
 	}
 	if err != nil {
 		return true, err
