@@ -53,7 +53,7 @@ func pipelineFixtureWithLanguage(t *testing.T, retention, transcribeLanguage str
 }
 
 func pipelineFixtureWithLanguageAndTranscriber(t *testing.T, retention, transcribeLanguage string, tr *plugintest.Stub) (*worker.Processor, *store.Store, string, *plugintest.Stub, *plugintest.Stub) {
-	return pipelineFixtureWithDefaults(t, retention, transcribeLanguage, tr, true, true)
+	return pipelineFixtureWithDefaults(t, retention, transcribeLanguage, tr, false, true, true)
 }
 
 func pipelineFixtureWithStorage(t *testing.T, retention string, tr *plugintest.Stub) (*worker.Processor, *store.Store, string, *plugintest.Stub, *plugintest.Stub, storage.Provider) {
@@ -92,7 +92,7 @@ func pipelineFixtureWithStorage(t *testing.T, retention string, tr *plugintest.S
 	return proc, st, n.ID, tr, ag, prov
 }
 
-func pipelineFixtureWithDefaults(t *testing.T, retention, transcribeLanguage string, tr *plugintest.Stub, setTranscriberDefault, setAgentDefault bool) (*worker.Processor, *store.Store, string, *plugintest.Stub, *plugintest.Stub) {
+func pipelineFixtureWithDefaults(t *testing.T, retention, transcribeLanguage string, tr *plugintest.Stub, embedded, setTranscriberDefault, setAgentDefault bool) (*worker.Processor, *store.Store, string, *plugintest.Stub, *plugintest.Stub) {
 	t.Helper()
 	ctx := context.Background()
 	st := store.New(testutil.NewPool(t))
@@ -125,7 +125,7 @@ func pipelineFixtureWithDefaults(t *testing.T, retention, transcribeLanguage str
 	_ = grant // upload via handler not needed; PresignDownload only signs a URL
 	_ = st.SetNoteAudio(ctx, u.ID, n.ID, key)
 
-	cfg := config.Config{AudioRetention: retention, TranscribeLanguage: transcribeLanguage}
+	cfg := config.Config{AudioRetention: retention, TranscribeLanguage: transcribeLanguage, Embedded: embedded}
 	proc := worker.NewProcessor(st, cr, prov, cfg, nil)
 
 	jobID, _ := st.EnqueueJob(ctx, n.ID, model.JobTranscribe, json.RawMessage(`{"audio_key":"`+key+`"}`))
@@ -428,6 +428,28 @@ func TestPipelineDiarizationHeldBeforeSummaryFanout(t *testing.T) {
 	}
 }
 
+func TestPipelineEmbeddedAutoCompletesDiarizationReview(t *testing.T) {
+	proc, st, noteID, _, _ := pipelineFixtureWithDefaults(t, "keep", "", plugintest.NewDiarizationTranscriber(), true, true, true)
+	drain(t, proc, st)
+	ctx := context.Background()
+
+	n, err := st.GetNoteByID(ctx, noteID)
+	if err != nil {
+		t.Fatalf("GetNoteByID: %v", err)
+	}
+	if n.Status != model.NoteReady {
+		t.Fatalf("note status = %q, want ready", n.Status)
+	}
+
+	tr, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("GetTranscript: %v", err)
+	}
+	if tr.ReviewState != model.ReviewStateCompleted {
+		t.Fatalf("review_state = %q, want %q", tr.ReviewState, model.ReviewStateCompleted)
+	}
+}
+
 func TestPipelineDiarizationReviewReleaseAllowsSummaryFanout(t *testing.T) {
 	proc, st, noteID, _, _ := pipelineFixtureWith(t, "keep", plugintest.NewDiarizationTranscriber())
 	drain(t, proc, st)
@@ -609,7 +631,7 @@ func TestPipeline_PartialSummarizeFailure(t *testing.T) {
 }
 
 func TestRunSummarize_NoDefaultAgentIsNonRetryable(t *testing.T) {
-	proc, st, noteID, _, _ := pipelineFixtureWithDefaults(t, "keep", "", plugintest.NewTranscriber(), true, false)
+	proc, st, noteID, _, _ := pipelineFixtureWithDefaults(t, "keep", "", plugintest.NewTranscriber(), false, true, false)
 	ctx := context.Background()
 
 	transcribeJob, ok, err := st.ClaimJob(ctx, 30*time.Second)
@@ -812,7 +834,7 @@ func TestPipelineTranscribeFailureLeavesProvisionalTranscriptIntact(t *testing.T
 }
 
 func TestRunTranscribe_NoDefaultTranscriberIsNonRetryable(t *testing.T) {
-	proc, st, noteID, _, _ := pipelineFixtureWithDefaults(t, "keep", "", plugintest.NewTranscriber(), false, true)
+	proc, st, noteID, _, _ := pipelineFixtureWithDefaults(t, "keep", "", plugintest.NewTranscriber(), false, false, true)
 	ctx := context.Background()
 
 	job, ok, err := st.ClaimJob(ctx, 30*time.Second)

@@ -292,6 +292,16 @@ func (s *Store) UpdateReviewState(ctx context.Context, ownerID, noteID, newState
 	return err
 }
 
+// SetReviewState updates a transcript's review_state without ownership or
+// transition checks. It is reserved for trusted in-process pipeline code.
+func (s *Store) SetReviewState(ctx context.Context, noteID, state string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE transcripts SET review_state = $1
+		 WHERE note_id = $2`,
+		state, noteID)
+	return err
+}
+
 // isLegalTransition reports whether transitioning from `from` to `to` is
 // permitted by the diarization review lifecycle.
 func isLegalTransition(from, to string) bool {
