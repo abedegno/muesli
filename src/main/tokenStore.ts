@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { ServerConfig } from '../shared/types'
 
@@ -18,6 +18,22 @@ interface PersistedShape {
 
 const FILE = 'muesli-credentials.json'
 
+function writeFileAtomic(path: string, data: string): void {
+  const tempPath = `${path}.tmp-${process.pid}`
+  try {
+    writeFileSync(tempPath, data, { mode: 0o600 })
+    renameSync(tempPath, path)
+    chmodSync(path, 0o600)
+  } catch (error) {
+    try {
+      unlinkSync(tempPath)
+    } catch {
+      // Best-effort cleanup only.
+    }
+    throw error
+  }
+}
+
 // TokenStore persists the server URL + app token. The token is encrypted with
 // the OS keychain via safeStorage when available; otherwise stored as a
 // base64 plaintext with `encrypted:false` (e.g. headless Linux without a keyring).
@@ -33,10 +49,14 @@ export class TokenStore {
 
   load(): ServerConfig | null {
     if (!existsSync(this.path)) return null
-    const data = JSON.parse(readFileSync(this.path, 'utf8')) as PersistedShape
-    const buf = Buffer.from(data.token, 'base64')
-    const token = data.encrypted ? this.safe.decryptString(buf) : buf.toString('utf8')
-    return { serverUrl: data.serverUrl, token }
+    try {
+      const data = JSON.parse(readFileSync(this.path, 'utf8')) as PersistedShape
+      const buf = Buffer.from(data.token, 'base64')
+      const token = data.encrypted ? this.safe.decryptString(buf) : buf.toString('utf8')
+      return { serverUrl: data.serverUrl, token }
+    } catch {
+      return null
+    }
   }
 
   save(config: ServerConfig): void {
@@ -49,7 +69,7 @@ export class TokenStore {
       encrypted: canEncrypt,
       token: tokenB64,
     }
-    writeFileSync(this.path, JSON.stringify(shape), { mode: 0o600 })
+    writeFileAtomic(this.path, JSON.stringify(shape))
   }
 
   clear(): void {
