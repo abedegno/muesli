@@ -305,7 +305,7 @@ export function TranscriptView({
     const playing = playingIndex != null && row.idx === playingIndex
     const highlighted = highlightSearchText(row.seg.text, effectiveQuery, search.start, searchCurrentIndex ?? null)
     const interactiveClass = cn(
-      'flex w-full gap-3 rounded-[var(--radius)] text-sm text-left',
+      'flex w-full gap-3 rounded-[var(--radius)] text-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
       onSeek && 'cursor-pointer',
       cited && 'bg-primary/10 ring-2 ring-primary',
       playing && 'bg-emerald-500/10 ring-1 ring-emerald-500/40',
