@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/abedegno/muesli/internal/config"
 )
@@ -74,6 +75,140 @@ func TestDetectOllama(t *testing.T) {
 			t.Fatal("slow handler was not entered")
 		}
 	})
+}
+
+func TestDetectOllamaWithRetry_SucceedsAfterTransientFailures(t *testing.T) {
+	var hits int
+	oldSleep := ollamaRetrySleep
+	ollamaRetrySleep = func(context.Context, time.Duration) error { return nil }
+	t.Cleanup(func() { ollamaRetrySleep = oldSleep })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		if hits <= 2 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	if got := DetectOllamaWithRetry(context.Background(), srv.URL, 5, time.Millisecond); !got {
+		t.Fatal("DetectOllamaWithRetry() = false, want true")
+	}
+	if hits != 3 {
+		t.Fatalf("request count = %d, want 3", hits)
+	}
+}
+
+func TestDetectOllamaWithRetry_AllAttemptsFail(t *testing.T) {
+	var hits int
+	oldSleep := ollamaRetrySleep
+	ollamaRetrySleep = func(context.Context, time.Duration) error { return nil }
+	t.Cleanup(func() { ollamaRetrySleep = oldSleep })
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	const attempts = 4
+	if got := DetectOllamaWithRetry(context.Background(), srv.URL, attempts, time.Millisecond); got {
+		t.Fatal("DetectOllamaWithRetry() = true, want false")
+	}
+	if hits != attempts {
+		t.Fatalf("request count = %d, want %d", hits, attempts)
+	}
+}
+
+func TestDetectOllamaWithRetry_StopsOnContextCancel(t *testing.T) {
+	t.Run("cancel before first attempt", func(t *testing.T) {
+		var hits int
+		oldSleep := ollamaRetrySleep
+		ollamaRetrySleep = func(context.Context, time.Duration) error {
+			t.Fatal("sleep should not be reached when ctx is already canceled")
+			return nil
+		}
+		t.Cleanup(func() { ollamaRetrySleep = oldSleep })
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits++
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}))
+		defer srv.Close()
+
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		if got := DetectOllamaWithRetry(ctx, srv.URL, 5, time.Millisecond); got {
+			t.Fatal("DetectOllamaWithRetry() = true, want false")
+		}
+		if hits != 0 {
+			t.Fatalf("request count = %d, want 0", hits)
+		}
+	})
+
+	t.Run("cancel after first attempt", func(t *testing.T) {
+		var hits int
+		var sleepCalls int
+		oldSleep := ollamaRetrySleep
+		t.Cleanup(func() { ollamaRetrySleep = oldSleep })
+
+		ctx, cancel := context.WithCancel(context.Background())
+		ollamaRetrySleep = func(ctx context.Context, d time.Duration) error {
+			sleepCalls++
+			cancel()
+			<-ctx.Done()
+			return ctx.Err()
+		}
+
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits++
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}))
+		defer srv.Close()
+
+		if got := DetectOllamaWithRetry(ctx, srv.URL, 5, time.Millisecond); got {
+			t.Fatal("DetectOllamaWithRetry() = true, want false")
+		}
+		if hits != 1 {
+			t.Fatalf("request count = %d, want 1", hits)
+		}
+		if sleepCalls != 1 {
+			t.Fatalf("sleep count = %d, want 1", sleepCalls)
+		}
+	})
+}
+
+func TestDetectOllamaWithRetry_AttemptsFloor(t *testing.T) {
+	oldSleep := ollamaRetrySleep
+	ollamaRetrySleep = func(context.Context, time.Duration) error { return nil }
+	t.Cleanup(func() { ollamaRetrySleep = oldSleep })
+
+	for _, attempts := range []int{0, -3} {
+		attempts := attempts
+		t.Run("attempts_"+func() string {
+			if attempts < 0 {
+				return "neg"
+			}
+			return "zero"
+		}(), func(t *testing.T) {
+			var hits int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				hits++
+				w.WriteHeader(http.StatusServiceUnavailable)
+			}))
+			defer srv.Close()
+
+			if got := DetectOllamaWithRetry(context.Background(), srv.URL, attempts, time.Millisecond); got {
+				t.Fatal("DetectOllamaWithRetry() = true, want false")
+			}
+			if hits != 1 {
+				t.Fatalf("request count = %d, want 1", hits)
+			}
+		})
+	}
 }
 
 func TestPullEmbeddingModel(t *testing.T) {
