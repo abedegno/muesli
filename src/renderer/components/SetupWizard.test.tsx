@@ -16,6 +16,7 @@ function makeBridge(overrides: Partial<SetupWizardBridge> = {}): SetupWizardBrid
     micRequest: vi.fn().mockResolvedValue('granted'),
     micOpenSettings: vi.fn().mockResolvedValue(undefined),
     getReadyz: vi.fn().mockResolvedValue(null),
+    getManualServer: vi.fn().mockResolvedValue(false),
     ...overrides,
   } as SetupWizardBridge
 }
@@ -88,6 +89,26 @@ describe('SetupWizard', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: /continue/i })).toBeEnabled())
     await userEvent.click(await screen.findByRole('button', { name: /continue/i }))
     expect(await screen.findByText(/ai summaries & semantic search are ready/i)).toBeInTheDocument()
+  })
+
+  it('shows hosted-mode AI copy without the Ollama install link', async () => {
+    const bridge = makeBridge({
+      micStatus: vi.fn().mockResolvedValue('granted'),
+      getManualServer: vi.fn().mockResolvedValue(true),
+      getReadyz: vi.fn().mockResolvedValue({ ollamaDetected: false }),
+    })
+
+    render(<SetupWizard onDone={() => {}} bridge={bridge} />)
+
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }))
+    expect(await screen.findByText(/microphone access granted/i)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: /continue/i })).toBeEnabled())
+    await userEvent.click(await screen.findByRole('button', { name: /continue/i }))
+    expect(
+      await screen.findByText(/this server is managed remotely\. ask your administrator to configure the default ai agent/i),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/install ollama/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /visit ollama\.com/i })).not.toBeInTheDocument()
   })
 
   it('re-checks ollama detection when Re-check is clicked on the ai step', async () => {

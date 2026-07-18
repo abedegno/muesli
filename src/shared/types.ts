@@ -174,6 +174,7 @@ export interface Decision {
 export interface ServerConfig {
   serverUrl: string
   token: string
+  manualServer?: boolean
 }
 
 export interface GoogleOAuthStatus {
