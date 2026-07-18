@@ -13,6 +13,10 @@ import (
 	"strings"
 )
 
+// MaxFetchedAudioBytes caps a single audio_url download so attacker-controlled
+// or malformed responses cannot exhaust process memory before ffmpeg runs.
+const MaxFetchedAudioBytes = 1 << 30 // 1 GiB
+
 // DecodePCM fetches an audio URL and decodes it to 16 kHz mono float32 PCM via
 // the external ffmpeg binary.
 func DecodePCM(ctx context.Context, audioURL string) ([]float32, error) {
@@ -91,9 +95,13 @@ func DecodePCMChannels(ctx context.Context, audioURL string, channels int) ([][]
 }
 
 func fetchAudioBytes(ctx context.Context, audioURL string) ([]byte, error) {
+	return fetchAudioBytesWithLimit(ctx, audioURL, MaxFetchedAudioBytes)
+}
+
+func fetchAudioBytesWithLimit(ctx context.Context, audioURL string, limit int64) ([]byte, error) {
 	switch {
 	case strings.HasPrefix(audioURL, "data:"):
-		return decodeDataURL(audioURL)
+		return decodeDataURLWithLimit(audioURL, limit)
 	case strings.HasPrefix(audioURL, "http://"), strings.HasPrefix(audioURL, "https://"):
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, audioURL, nil)
 		if err != nil {
@@ -107,13 +115,24 @@ func fetchAudioBytes(ctx context.Context, audioURL string) ([]byte, error) {
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			return nil, fmt.Errorf("download audio: %s", resp.Status)
 		}
-		return io.ReadAll(resp.Body)
+		data, err := io.ReadAll(io.LimitReader(resp.Body, limit+1))
+		if err != nil {
+			return nil, err
+		}
+		if int64(len(data)) > limit {
+			return nil, fmt.Errorf("audio response exceeds %d byte limit", limit)
+		}
+		return data, nil
 	default:
 		return nil, fmt.Errorf("unsupported audio URL scheme: %q", audioURL)
 	}
 }
 
 func decodeDataURL(audioURL string) ([]byte, error) {
+	return decodeDataURLWithLimit(audioURL, MaxFetchedAudioBytes)
+}
+
+func decodeDataURLWithLimit(audioURL string, limit int64) ([]byte, error) {
 	payload := strings.TrimPrefix(audioURL, "data:")
 	parts := strings.SplitN(payload, ",", 2)
 	if len(parts) != 2 {
@@ -121,11 +140,20 @@ func decodeDataURL(audioURL string) ([]byte, error) {
 	}
 	meta, data := parts[0], parts[1]
 	if strings.Contains(meta, ";base64") {
-		decoded, err := base64.StdEncoding.DecodeString(data)
+		if int64(len(data)) > int64(base64.StdEncoding.EncodedLen(int(limit))) {
+			return nil, fmt.Errorf("audio response exceeds %d byte limit", limit)
+		}
+		decoded, err := io.ReadAll(io.LimitReader(base64.NewDecoder(base64.StdEncoding, strings.NewReader(data)), limit+1))
 		if err != nil {
 			return nil, fmt.Errorf("decode base64 data URL: %w", err)
 		}
+		if int64(len(decoded)) > limit {
+			return nil, fmt.Errorf("audio response exceeds %d byte limit", limit)
+		}
 		return decoded, nil
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("audio response exceeds %d byte limit", limit)
 	}
 	return []byte(data), nil
 }
