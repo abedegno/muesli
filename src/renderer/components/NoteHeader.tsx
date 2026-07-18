@@ -77,6 +77,7 @@ export function NoteHeader({
 }) {
   const [value, setValue] = useState(title)
   const [isDirty, setIsDirty] = useState(false)
+  const [titleSaveState, setTitleSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
   const [menuOpen, setMenuOpen] = useState(false)
   const [serverExportOpen, setServerExportOpen] = useState(false)
   const [retranscribeOpen, setRetranscribeOpen] = useState(false)
@@ -87,6 +88,8 @@ export function NoteHeader({
   const serverExportRef = useRef<HTMLDivElement>(null)
   const toggleRef = useRef<HTMLButtonElement>(null)
   const titleInputRef = useRef<HTMLInputElement>(null)
+  const titleRef = useRef(title)
+  const suppressNextTitleSaveRef = useRef(false)
   const { announce } = useAnnouncer()
 
   // The visible menu item buttons, in DOM order, for roving focus.
@@ -95,11 +98,16 @@ export function NoteHeader({
       menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [],
     )
 
+  useEffect(() => {
+    titleRef.current = title
+  }, [title])
+
   // Keep the input in sync with external title updates unless the user has a
   // local draft in progress. Note changes always reset the draft.
   useEffect(() => {
-    setValue(title)
+    setValue(titleRef.current)
     setIsDirty(false)
+    setTitleSaveState('idle')
   }, [noteId])
 
   useEffect(() => {
@@ -202,32 +210,62 @@ export function NoteHeader({
     }
   }
 
-  const handleTitleBlur = () => {
+  const handleTitleBlur = async () => {
+    if (suppressNextTitleSaveRef.current) {
+      suppressNextTitleSaveRef.current = false
+      return
+    }
     if (value !== title) {
-      muesli.updateTitle(noteId, value).then(() => {
+      setTitleSaveState('saving')
+      try {
+        await muesli.updateTitle(noteId, value)
+        setTitleSaveState('saved')
         setIsDirty(false)
         onTitleSaved(value)
         announce('Title saved')
-      })
+      } catch {
+        setTitleSaveState('error')
+        announce('Could not save title')
+      }
     } else {
       setIsDirty(false)
+      setTitleSaveState('idle')
     }
   }
 
   return (
     <header className="flex items-center justify-between gap-4 border-b border-border px-6 py-4">
-      <input
-        ref={titleInputRef}
-        aria-label="Note title"
-        value={value}
-        onChange={(e) => {
-          setValue(e.target.value)
-          setIsDirty(true)
-        }}
-        onBlur={handleTitleBlur}
-        className="min-w-0 flex-1 bg-transparent font-serif text-2xl font-semibold focus:outline-none"
-        placeholder="Untitled meeting"
-      />
+      <div className="min-w-0 flex-1">
+        <input
+          ref={titleInputRef}
+          aria-label="Note title"
+          value={value}
+          onChange={(e) => {
+            setValue(e.target.value)
+            setIsDirty(true)
+          }}
+          onBlur={handleTitleBlur}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
+              e.preventDefault()
+              e.currentTarget.blur()
+            } else if (e.key === 'Escape') {
+              suppressNextTitleSaveRef.current = true
+              setValue(title)
+              setIsDirty(false)
+              setTitleSaveState('idle')
+              e.currentTarget.blur()
+            }
+          }}
+          className="min-w-0 w-full bg-transparent font-serif text-2xl font-semibold focus:outline-none"
+          placeholder="Untitled meeting"
+        />
+        {titleSaveState === 'error' && (
+          <p className="mt-1 text-xs text-destructive" role="alert">
+            Could not save title - press Enter to retry
+          </p>
+        )}
+      </div>
       <RecordControl
         state={recordState}
         elapsedMs={elapsedMs}
