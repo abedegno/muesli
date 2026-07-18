@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
+import { ToastProvider } from '@/components/ui/Toast'
 
 const getConfig = vi.fn()
 const disconnect = vi.fn()
@@ -48,12 +49,17 @@ beforeEach(() => {
 })
 
 function renderScreen(serverUrl = 'http://localhost:8080') {
+  const onDisconnected = vi.fn()
+  const onResetToBuiltIn = vi.fn()
   getConfig.mockResolvedValue({ serverUrl })
-  return render(
-    <MemoryRouter>
-      <SettingsScreen onDisconnected={vi.fn()} onResetToBuiltIn={vi.fn()} />
-    </MemoryRouter>,
+  render(
+    <ToastProvider>
+      <MemoryRouter>
+        <SettingsScreen onDisconnected={onDisconnected} onResetToBuiltIn={onResetToBuiltIn} />
+      </MemoryRouter>
+    </ToastProvider>,
   )
+  return { onDisconnected, onResetToBuiltIn }
 }
 
 describe('SettingsScreen', () => {
@@ -123,6 +129,22 @@ describe('SettingsScreen', () => {
     await user.selectOptions(cadence, 'weekly')
 
     await waitFor(() => expect(updateDigestConfig).toHaveBeenCalledWith('weekly'))
+  })
+
+  it('reverts the digest cadence and shows an error when updating fails', async () => {
+    const user = userEvent.setup()
+    getDigestConfig.mockResolvedValue({ owner_id: 'owner-1', cadence: 'daily' })
+    updateDigestConfig.mockRejectedValue(new Error('digest failed'))
+
+    renderScreen()
+
+    const cadence = await screen.findByRole('combobox', { name: 'Cadence' })
+    expect(cadence).toHaveValue('daily')
+
+    await user.selectOptions(cadence, 'weekly')
+
+    await waitFor(() => expect(cadence).toHaveValue('daily'))
+    expect(await screen.findByRole('alert')).toHaveTextContent('digest failed')
   })
 
   it('marks the active theme button with aria-pressed and updates on selection', async () => {
@@ -212,46 +234,105 @@ describe('SettingsScreen', () => {
     expect(localStorage.getItem('muesli.calendar.autoRecordDetectedMeetings')).toBe('1')
   })
 
-  it('calls the built-in reset action', async () => {
+  it('opens the built-in reset dialog and confirms the reset', async () => {
     const user = userEvent.setup()
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
 
-    renderScreen()
+    const { onResetToBuiltIn } = renderScreen()
 
     await user.click(await screen.findByRole('button', { name: "Use this device's built-in server" }))
-    expect(resetToBuiltIn).toHaveBeenCalledTimes(1)
-    expect(window.confirm).toHaveBeenCalledWith(
-      "Switch to this device's built-in server? Your connection to the current server will be forgotten.",
-    )
+    const dialog = await screen.findByRole('dialog', { name: "Switch to this device's built-in server?" })
+    expect(dialog).toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: 'Switch to built-in server' }))
+    await waitFor(() => expect(resetToBuiltIn).toHaveBeenCalledTimes(1))
+    expect(onResetToBuiltIn).toHaveBeenCalledTimes(1)
   })
 
-  it('does not reset to the built-in server when the confirmation is declined', async () => {
+  it('does not reset to the built-in server when the dialog is cancelled', async () => {
     const user = userEvent.setup()
-    vi.spyOn(window, 'confirm').mockReturnValue(false)
 
     renderScreen()
 
     await user.click(await screen.findByRole('button', { name: "Use this device's built-in server" }))
+    const dialog = await screen.findByRole('dialog', { name: "Switch to this device's built-in server?" })
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     expect(resetToBuiltIn).not.toHaveBeenCalled()
   })
 
-  it('disconnects after confirmation', async () => {
+  it('opens the disconnect dialog and confirms the disconnect', async () => {
     const user = userEvent.setup()
-    vi.spyOn(window, 'confirm').mockReturnValue(true)
 
-    renderScreen()
+    const { onDisconnected } = renderScreen()
 
     await user.click(await screen.findByRole('button', { name: 'Disconnect' }))
-    expect(disconnect).toHaveBeenCalledTimes(1)
+    const dialog = await screen.findByRole('dialog', { name: 'Disconnect from this server?' })
+    expect(dialog).toBeInTheDocument()
+
+    await user.click(within(dialog).getByRole('button', { name: 'Disconnect' }))
+    await waitFor(() => expect(disconnect).toHaveBeenCalledTimes(1))
+    expect(onDisconnected).toHaveBeenCalledTimes(1)
   })
 
-  it('does not disconnect when the confirmation is declined', async () => {
+  it('does not disconnect when the dialog is cancelled', async () => {
     const user = userEvent.setup()
-    vi.spyOn(window, 'confirm').mockReturnValue(false)
 
     renderScreen()
 
     await user.click(await screen.findByRole('button', { name: 'Disconnect' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Disconnect from this server?' })
+    await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     expect(disconnect).not.toHaveBeenCalled()
+  })
+
+  it('shows an error when disconnecting fails', async () => {
+    const user = userEvent.setup()
+    disconnect.mockRejectedValue(new Error('disconnect failed'))
+
+    const { onDisconnected } = renderScreen()
+
+    await user.click(await screen.findByRole('button', { name: 'Disconnect' }))
+    const dialog = await screen.findByRole('dialog', { name: 'Disconnect from this server?' })
+    await user.click(within(dialog).getByRole('button', { name: 'Disconnect' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('disconnect failed')
+    expect(onDisconnected).not.toHaveBeenCalled()
+  })
+
+  it('shows an error when resetting to the built-in server fails', async () => {
+    const user = userEvent.setup()
+    resetToBuiltIn.mockRejectedValue(new Error('reset failed'))
+
+    renderScreen()
+
+    await user.click(await screen.findByRole('button', { name: "Use this device's built-in server" }))
+    const dialog = await screen.findByRole('dialog', { name: "Switch to this device's built-in server?" })
+    await user.click(within(dialog).getByRole('button', { name: 'Switch to built-in server' }))
+
+    await waitFor(() => expect(resetToBuiltIn).toHaveBeenCalledTimes(1))
+    expect(await screen.findByRole('alert')).toHaveTextContent('reset failed')
+  })
+
+  it('shows an error when Google Calendar connect fails', async () => {
+    const user = userEvent.setup()
+    getGoogleCalendarOAuthStatus.mockResolvedValue({ configured: true })
+    openGoogleCalendarOAuthStart.mockRejectedValue(new Error('google connect failed'))
+
+    renderScreen()
+
+    await user.click(await screen.findByRole('button', { name: 'Connect Google Calendar' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('google connect failed')
+  })
+
+  it('shows an error when Microsoft Calendar connect fails', async () => {
+    const user = userEvent.setup()
+    getMicrosoftCalendarOAuthStatus.mockResolvedValue({ configured: true })
+    openMicrosoftCalendarOAuthStart.mockRejectedValue(new Error('microsoft connect failed'))
+
+    renderScreen()
+
+    await user.click(await screen.findByRole('button', { name: 'Connect Microsoft Calendar' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('microsoft connect failed')
   })
 })
