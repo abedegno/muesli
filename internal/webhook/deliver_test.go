@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -187,25 +188,40 @@ func newTestWorker(st webhookStore) *DeliveryWorker {
 // --------------------------------------------------------------------------
 
 func TestSignPayload(t *testing.T) {
-	const want = "sha256=9d16f6d63cf01c65ee5bc82fd3b8dc3f0ee9398963696447b4e31b8fe78ca50a"
+	const want = "sha256=d69efe34a57a350e17404ffb5758546e651e10491be3538fac69ee5bb6069f06"
 	const secret = "topsecret"
+	const timestamp int64 = 1234567890
 	body := []byte(`{"event":"test"}`)
 
-	got := signPayload(secret, body)
+	got := signPayload(secret, timestamp, body)
 	if got != want {
 		t.Fatalf("signPayload() = %q, want %q", got, want)
 	}
-	if again := signPayload(secret, body); again != got {
+	if again := signPayload(secret, timestamp, body); again != got {
 		t.Fatalf("signPayload() is not deterministic: first %q, second %q", got, again)
 	}
-	if changed := signPayload("different", body); changed == got {
+	if changed := signPayload("different", timestamp, body); changed == got {
 		t.Fatalf("signPayload() did not change when secret changed: %q", changed)
 	}
-	if changed := signPayload(secret, []byte(`{"event":"other"}`)); changed == got {
+	if changed := signPayload(secret, timestamp, []byte(`{"event":"other"}`)); changed == got {
 		t.Fatalf("signPayload() did not change when body changed: %q", changed)
 	}
-	if empty := signPayload("", body); empty == "" {
+	if changed := signPayload(secret, timestamp+1, body); changed == got {
+		t.Fatalf("signPayload() did not change when timestamp changed: %q", changed)
+	}
+	if empty := signPayload("", timestamp, body); empty == "" {
 		t.Fatal("signPayload() with empty secret returned an empty string")
+	}
+}
+
+func TestSignPayloadBindsTimestamp(t *testing.T) {
+	const secret = "topsecret"
+	body := []byte(`{"event":"test"}`)
+
+	got1 := signPayload(secret, 1000, body)
+	got2 := signPayload(secret, 2000, body)
+	if got1 == got2 {
+		t.Fatalf("signPayload() = %q for two timestamps, want distinct values", got1)
 	}
 }
 
@@ -266,6 +282,7 @@ func TestDeliverySuccess(t *testing.T) {
 func TestDeliverySignsPayload(t *testing.T) {
 	var hits atomic.Int32
 	var gotBody []byte
+	var gotTS string
 	var gotSig string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
@@ -274,6 +291,7 @@ func TestDeliverySignsPayload(t *testing.T) {
 			t.Fatalf("read request body: %v", err)
 		}
 		gotBody = append([]byte(nil), body...)
+		gotTS = r.Header.Get("X-Muesli-Timestamp")
 		gotSig = r.Header.Get("X-Muesli-Signature")
 		w.WriteHeader(http.StatusOK)
 	}))
@@ -314,7 +332,14 @@ func TestDeliverySignsPayload(t *testing.T) {
 	if hits.Load() != 1 {
 		t.Fatalf("server hit count = %d, want 1", hits.Load())
 	}
-	if want := signPayload(secret, gotBody); gotSig != want {
+	if gotTS == "" {
+		t.Fatal("X-Muesli-Timestamp header = empty string, want non-empty")
+	}
+	parsedTS, err := strconv.ParseInt(gotTS, 10, 64)
+	if err != nil {
+		t.Fatalf("parse X-Muesli-Timestamp %q: %v", gotTS, err)
+	}
+	if want := signPayload(secret, parsedTS, gotBody); gotSig != want {
 		t.Fatalf("signature header = %q, want %q", gotSig, want)
 	}
 }
