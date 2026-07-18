@@ -7,6 +7,7 @@ import type { ExportOptions } from './export'
 
 export const IPC = {
   getConfig: 'muesli:getConfig',
+  getManualServer: 'muesli:getManualServer',
   getOnboarded: 'muesli:getOnboarded',
   setOnboarded: 'muesli:setOnboarded',
   getReadyz: 'muesli:getReadyz',
@@ -232,6 +233,7 @@ export interface SendMessageResponse {
 export interface MuesliBridge {
   platform: NodeJS.Platform
   getConfig(): Promise<ServerConfig | null>
+  getManualServer(): Promise<boolean>
   getOnboarded(): Promise<boolean>
   setOnboarded(b: boolean): Promise<void>
   getReadyz(): Promise<{ ollamaDetected: boolean } | null>

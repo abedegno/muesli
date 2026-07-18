@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeServer } from '../../test/fakeServer'
 import { createHandlers } from './ipcHandlers'
+import { type SecretStore } from './secretStore'
 import { TokenStore, type SafeStorageLike } from './tokenStore'
 
 const fakeSafe: SafeStorageLike = {
@@ -92,6 +93,33 @@ describe('ipc handlers', () => {
     }
   })
 
+  it('getConfig and getManualServer reflect manual server mode', async () => {
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost:1234', token: 'app-token' })
+    const secretStore: Pick<SecretStore, 'loadCreds' | 'saveCreds' | 'clearCreds' | 'getManualServer' | 'setManualServer' | 'getOnboarded' | 'setOnboarded'> = {
+      loadCreds: () => null,
+      saveCreds: () => {},
+      clearCreds: () => {},
+      getManualServer: () => true,
+      setManualServer: () => {},
+      getOnboarded: () => false,
+      setOnboarded: () => {},
+    }
+    const h = createHandlers({
+      tokenStore,
+      fetch: server.fetch,
+      onProgress: () => {},
+      secretStore,
+    })
+
+    await expect(h.getManualServer()).resolves.toBe(true)
+    await expect(h.getConfig()).resolves.toEqual({
+      serverUrl: 'http://localhost:1234',
+      token: 'app-token',
+      manualServer: true,
+    })
+  })
+
   it('getReadyz forwards the bearer token and parses ollama detection', async () => {
     const seen: { auth?: string }[] = []
     const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
@@ -117,6 +145,42 @@ describe('ipc handlers', () => {
 
     await expect(h.getReadyz()).resolves.toEqual({ ollamaDetected: true })
     expect(seen).toEqual([{ auth: 'Bearer app-token' }])
+  })
+
+  it('getReadyz uses the connected manual server url when manual mode is enabled', async () => {
+    const seen: { url: string; auth?: string }[] = []
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push({
+        url: String(url),
+        auth: new Headers(init?.headers).get('Authorization') ?? undefined,
+      })
+      return new Response(JSON.stringify({ embedded: { ollamaDetected: true } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://remote.example:9000', token: 'app-token' })
+    const secretStore: Pick<SecretStore, 'loadCreds' | 'saveCreds' | 'clearCreds' | 'getManualServer' | 'setManualServer' | 'getOnboarded' | 'setOnboarded'> = {
+      loadCreds: () => null,
+      saveCreds: () => {},
+      clearCreds: () => {},
+      getManualServer: () => true,
+      setManualServer: () => {},
+      getOnboarded: () => false,
+      setOnboarded: () => {},
+    }
+    const h = createHandlers({
+      tokenStore,
+      fetch: fetchMock,
+      onProgress: () => {},
+      embedded: true,
+      embeddedBaseUrl: 'http://127.0.0.1:9000',
+      secretStore,
+    })
+
+    await expect(h.getReadyz()).resolves.toEqual({ ollamaDetected: true })
+    expect(seen).toEqual([{ url: 'http://remote.example:9000/readyz', auth: 'Bearer app-token' }])
   })
 
   it('getReadyz returns null when the fetch payload is invalid', async () => {

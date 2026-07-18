@@ -30,6 +30,7 @@ interface HandlerDeps {
 
 interface Handlers {
   getConfig(): Promise<ServerConfig | null>
+  getManualServer(): Promise<boolean>
   getOnboarded(): Promise<boolean>
   setOnboarded(onboarded: boolean): Promise<void>
   getReadyz(): Promise<{ ollamaDetected: boolean } | null>
@@ -203,7 +204,13 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       } catch (err) {
         deps.log?.('ensureLocalSession failed', err)
       }
-      return tokenStore.load()
+      const cfg = tokenStore.load()
+      if (!cfg) return null
+      return { ...cfg, manualServer: secretStore.getManualServer() }
+    },
+
+    async getManualServer() {
+      return secretStore.getManualServer()
     },
 
     async getOnboarded() {
@@ -215,10 +222,11 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     },
 
     async getReadyz() {
-      const baseUrl = deps.embeddedBaseUrl?.trim()
+      const manualServer = secretStore.getManualServer()
+      const cfg = tokenStore.load()
+      const baseUrl = manualServer ? cfg?.serverUrl?.trim() : deps.embeddedBaseUrl?.trim()
       if (!baseUrl || !fetchImpl) return null
       try {
-        const cfg = tokenStore.load()
         const headers = new Headers()
         if (cfg?.token) headers.set('Authorization', `Bearer ${cfg.token}`)
         const res = await fetchImpl(new URL('/readyz', baseUrl), { headers })

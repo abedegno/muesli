@@ -6,6 +6,7 @@ import type { UploadProgress } from '../main/uploadMachine'
 const bridge: MuesliBridge = {
   platform: process.platform,
   getConfig: () => ipcRenderer.invoke(IPC.getConfig),
+  getManualServer: () => ipcRenderer.invoke(IPC.getManualServer),
   getOnboarded: () => ipcRenderer.invoke(IPC.getOnboarded),
   setOnboarded: (b) => ipcRenderer.invoke(IPC.setOnboarded, b),
   getReadyz: () => ipcRenderer.invoke(IPC.getReadyz),

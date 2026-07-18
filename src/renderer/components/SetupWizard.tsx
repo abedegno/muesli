@@ -20,7 +20,7 @@ export function nextStep(step: SetupWizardStep): SetupWizardStep {
   }
 }
 
-export type SetupWizardBridge = Pick<MuesliBridge, 'platform' | 'micStatus' | 'micRequest' | 'micOpenSettings' | 'getReadyz'>
+export type SetupWizardBridge = Pick<MuesliBridge, 'platform' | 'micStatus' | 'micRequest' | 'micOpenSettings' | 'getReadyz' | 'getManualServer'>
 
 function ollamaInstallHint(platform: NodeJS.Platform): { label: string; command: string | null } {
   switch (platform) {
@@ -45,6 +45,7 @@ export function SetupWizard({
   const [step, setStep] = useState<SetupWizardStep>('welcome')
   const [micStatus, setMicStatus] = useState<MicStatus | null>(null)
   const [readyz, setReadyz] = useState<{ ollamaDetected: boolean } | null>(null)
+  const [manualServer, setManualServer] = useState(false)
   const doneRef = useRef(false)
 
   useEffect(() => {
@@ -68,6 +69,12 @@ export function SetupWizard({
     let active = true
     if (step === 'ai') {
       void (async () => {
+        try {
+          const hosted = await bridge.getManualServer()
+          if (active) setManualServer(hosted)
+        } catch {
+          if (active) setManualServer(false)
+        }
         try {
           const status = await bridge.getReadyz()
           if (active) setReadyz(status)
@@ -182,9 +189,11 @@ export function SetupWizard({
               <p className="text-sm leading-6 text-muted-foreground">
                 {readyz?.ollamaDetected
                   ? 'AI summaries & semantic search are ready.'
-                  : 'Optional: install Ollama to enable AI summaries & semantic search.'}
+                  : manualServer
+                    ? 'This server is managed remotely. Ask your administrator to configure the default AI agent for summaries and semantic search.'
+                    : 'Optional: install Ollama to enable AI summaries & semantic search.'}
               </p>
-              {!readyz?.ollamaDetected ? (
+              {!readyz?.ollamaDetected && !manualServer ? (
                 <div className="space-y-3">
                   <p className="text-sm text-muted-foreground">{ollamaInstallHint(bridge.platform).label}</p>
                   {ollamaInstallHint(bridge.platform).command ? (
@@ -202,6 +211,12 @@ export function SetupWizard({
                       Visit ollama.com
                     </a>
                   </p>
+                  <Button type="button" variant="ghost" onClick={() => void refreshReadyz()}>
+                    Re-check
+                  </Button>
+                </div>
+              ) : !readyz?.ollamaDetected && manualServer ? (
+                <div className="space-y-3">
                   <Button type="button" variant="ghost" onClick={() => void refreshReadyz()}>
                     Re-check
                   </Button>
