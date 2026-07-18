@@ -22,8 +22,8 @@ const chatTopK = 5
 
 // errNoDefaultAgentPlugin mirrors internal/worker/pipeline.go's runSummarize:
 // no plugin is registered as the enabled default for kind "agent". Mapped to
-// a 500 by the HTTP handlers (an operator configuration problem, not a bad
-// request), same as the summarize pipeline's handling.
+// a 422 by the HTTP handlers so the client can distinguish it from generic
+// server failures.
 var errNoDefaultAgentPlugin = errors.New("no default agent plugin configured")
 
 // errChatSendInFlight is returned by sendChatMessage when a send for the
@@ -110,7 +110,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	case errors.Is(err, errNoDefaultAgentPlugin):
 		log.Printf("handleSendMessage: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
+		writeError(w, http.StatusUnprocessableEntity, "no default agent configured")
 		return
 	case err != nil:
 		log.Printf("handleSendMessage: %v", err)
