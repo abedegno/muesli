@@ -20,6 +20,14 @@ type Agent interface {
 	Generate(ctx context.Context, req GenerateRequest) (GenerateResponse, error)
 }
 
+// StatusReporter is an optional interface a Transcriber or Agent may
+// implement to report richer /status detail (e.g. model-download
+// progress). Engines that don't implement it get the default
+// {"status":"ready"} response, preserving current behavior.
+type StatusReporter interface {
+	Status() (status, model string, percent int)
+}
+
 // Config is the runtime config the caller supplies to the pluginkit server.
 type Config struct {
 	Name         string
@@ -54,7 +62,22 @@ func ServeAgent(ctx context.Context, cfg Config, eng Agent) error {
 func TranscriberHandler(cfg Config, eng Transcriber) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", handleHealth)
-	mux.HandleFunc("/status", handleStatus)
+	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		if sr, ok := any(eng).(StatusReporter); ok {
+			status, model, percent := sr.Status()
+			writeJSON(w, http.StatusOK, struct {
+				Status  string `json:"status"`
+				Model   string `json:"model"`
+				Percent int    `json:"percent"`
+			}{
+				Status:  status,
+				Model:   model,
+				Percent: percent,
+			})
+			return
+		}
+		handleStatus(w, r)
+	})
 	mux.Handle("/info", requireBearer(cfg.Token)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, Info{
 			Name:         cfg.Name,
@@ -158,7 +181,22 @@ func TranscriberHandler(cfg Config, eng Transcriber) http.Handler {
 func AgentHandler(cfg Config, eng Agent) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/health", handleHealth)
-	mux.HandleFunc("/status", handleStatus)
+	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		if sr, ok := any(eng).(StatusReporter); ok {
+			status, model, percent := sr.Status()
+			writeJSON(w, http.StatusOK, struct {
+				Status  string `json:"status"`
+				Model   string `json:"model"`
+				Percent int    `json:"percent"`
+			}{
+				Status:  status,
+				Model:   model,
+				Percent: percent,
+			})
+			return
+		}
+		handleStatus(w, r)
+	})
 	mux.Handle("/info", requireBearer(cfg.Token)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusOK, Info{
 			Name:         cfg.Name,

@@ -88,6 +88,49 @@ func TestTranscribeEnsuresModelOnce(t *testing.T) {
 	}
 }
 
+func TestEnsureModelRetriesAfterFailure(t *testing.T) {
+	t.Parallel()
+
+	var hits int32
+	modelSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch atomic.AddInt32(&hits, 1) {
+		case 1:
+			http.Error(w, "temporary failure", http.StatusInternalServerError)
+		default:
+			w.Header().Set("Content-Type", "application/octet-stream")
+			_, _ = w.Write([]byte("retryable-model"))
+		}
+	}))
+	defer modelSrv.Close()
+
+	dir := t.TempDir()
+	eng := New(Config{
+		ModelDir: dir,
+		ModelURL: modelSrv.URL + "/model.bin",
+		Model:    "retryable-model",
+		Language: "en",
+	})
+
+	if err := eng.ensureModel(context.Background()); err == nil {
+		t.Fatal("first ensureModel succeeded, want error")
+	}
+	status, model, percent := eng.Status()
+	if status != "error" || model != "retryable-model" || percent != 0 {
+		t.Fatalf("status after failure = %q %q %d", status, model, percent)
+	}
+
+	if err := eng.ensureModel(context.Background()); err != nil {
+		t.Fatalf("second ensureModel: %v", err)
+	}
+	status, model, percent = eng.Status()
+	if status != "ready" || model != "retryable-model" || percent != 100 {
+		t.Fatalf("status after success = %q %q %d", status, model, percent)
+	}
+	if got := atomic.LoadInt32(&hits); got != 2 {
+		t.Fatalf("model hits = %d, want 2", got)
+	}
+}
+
 func TestEffectiveConfigMergesRequestConfig(t *testing.T) {
 	t.Parallel()
 

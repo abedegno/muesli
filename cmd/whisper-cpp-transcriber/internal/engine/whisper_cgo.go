@@ -27,6 +27,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 
 	whisper "github.com/ggerganov/whisper.cpp/bindings/go/pkg/whisper"
 
@@ -53,12 +54,23 @@ type Config struct {
 	Language string
 }
 
+type modelState int
+
+const (
+	modelUnloaded modelState = iota
+	modelLoading
+	modelReady
+	modelError
+)
+
 // Engine runs transcription through the real whisper.cpp cgo bindings.
 type Engine struct {
 	cfg Config
 
-	modelOnce sync.Once
-	modelErr  error
+	mu        sync.Mutex
+	state     modelState
+	loadErr   error
+	loadedAt  time.Time
 	model     whisper.Model
 	modelPath string
 
@@ -66,7 +78,6 @@ type Engine struct {
 	// whisper_full() is not safe to call concurrently against the same
 	// loaded model, so we guard it with a plain mutex rather than trying to
 	// keep one whisper.Context per in-flight request.
-	mu sync.Mutex
 }
 
 func New(cfg Config) *Engine {
@@ -142,28 +153,55 @@ func (e *Engine) Transcribe(ctx context.Context, pcm []float32, opts pluginkit.T
 }
 
 func (e *Engine) ensureModel(ctx context.Context) error {
-	e.modelOnce.Do(func() {
-		if e.cfg.ModelDir == "" {
-			e.modelErr = errors.New("whisper_cgo: model-dir is required")
-			return
-		}
-		// Prefer a pre-bundled model file (the packaged app ships one at
-		// ModelDir/<Model>.bin, no MODEL_URL); fall back to downloading from
-		// model-url for dev/hosted. See pluginkit.ResolveModel.
-		path, err := pluginkit.ResolveModel(ctx, e.cfg.ModelDir, e.cfg.Model, e.cfg.ModelURL, nil)
-		if err != nil {
-			e.modelErr = fmt.Errorf("whisper_cgo: ensure model: %w", err)
-			return
-		}
-		m, err := whisper.New(path)
-		if err != nil {
-			e.modelErr = fmt.Errorf("whisper_cgo: load model %s: %w", path, err)
-			return
-		}
-		e.modelPath = path
-		e.model = m
-	})
-	return e.modelErr
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.state == modelReady {
+		return nil
+	}
+	e.state = modelLoading
+	if e.cfg.ModelDir == "" {
+		e.state = modelError
+		e.loadErr = errors.New("whisper_cgo: model-dir is required")
+		return e.loadErr
+	}
+	// Prefer a pre-bundled model file (the packaged app ships one at
+	// ModelDir/<Model>.bin, no MODEL_URL); fall back to downloading from
+	// model-url for dev/hosted. See pluginkit.ResolveModel.
+	path, err := pluginkit.ResolveModel(ctx, e.cfg.ModelDir, e.cfg.Model, e.cfg.ModelURL, nil)
+	if err != nil {
+		e.state = modelError
+		e.loadErr = fmt.Errorf("whisper_cgo: ensure model: %w", err)
+		return e.loadErr
+	}
+	m, err := whisper.New(path)
+	if err != nil {
+		e.state = modelError
+		e.loadErr = fmt.Errorf("whisper_cgo: load model %s: %w", path, err)
+		return e.loadErr
+	}
+	e.modelPath = path
+	e.model = m
+	e.state = modelReady
+	e.loadErr = nil
+	e.loadedAt = time.Now()
+	return nil
+}
+
+func (e *Engine) Status() (status, model string, percent int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	switch e.state {
+	case modelReady:
+		return "ready", e.cfg.Model, 100
+	case modelLoading:
+		return "downloading", e.cfg.Model, 0
+	case modelError:
+		return "error", e.cfg.Model, 0
+	default:
+		return "unknown", e.cfg.Model, 0
+	}
 }
 
 func (e *Engine) effectiveConfig(raw json.RawMessage) pluginConfig {

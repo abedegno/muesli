@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/pluginkit"
@@ -28,10 +29,21 @@ type Config struct {
 	Language string
 }
 
+type modelState int
+
+const (
+	modelUnloaded modelState = iota
+	modelLoading
+	modelReady
+	modelError
+)
+
 type Engine struct {
-	cfg       Config
-	modelOnce sync.Once
-	modelErr  error
+	cfg      Config
+	mu       sync.Mutex
+	state    modelState
+	loadErr  error
+	loadedAt time.Time
 }
 
 func New(cfg Config) *Engine {
@@ -71,13 +83,45 @@ func (e *Engine) Transcribe(ctx context.Context, pcm []float32, opts pluginkit.T
 }
 
 func (e *Engine) ensureModel(ctx context.Context) error {
-	e.modelOnce.Do(func() {
-		if e.cfg.ModelDir == "" || e.cfg.ModelURL == "" {
-			return
-		}
-		_, e.modelErr = pluginkit.EnsureModel(ctx, e.cfg.ModelDir, e.cfg.ModelURL, nil)
-	})
-	return e.modelErr
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	if e.state == modelReady {
+		return nil
+	}
+	e.state = modelLoading
+	if e.cfg.ModelDir == "" || e.cfg.ModelURL == "" {
+		e.state = modelReady
+		e.loadErr = nil
+		e.loadedAt = time.Now()
+		return nil
+	}
+	_, err := pluginkit.EnsureModel(ctx, e.cfg.ModelDir, e.cfg.ModelURL, nil)
+	if err != nil {
+		e.state = modelError
+		e.loadErr = err
+		return err
+	}
+	e.state = modelReady
+	e.loadErr = nil
+	e.loadedAt = time.Now()
+	return nil
+}
+
+func (e *Engine) Status() (status, model string, percent int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	switch e.state {
+	case modelReady:
+		return "ready", e.cfg.Model, 100
+	case modelLoading:
+		return "downloading", e.cfg.Model, 0
+	case modelError:
+		return "error", e.cfg.Model, 0
+	default:
+		return "unknown", e.cfg.Model, 0
+	}
 }
 
 func (e *Engine) effectiveConfig(raw json.RawMessage) pluginConfig {

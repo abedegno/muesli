@@ -31,6 +31,14 @@ func (r *recordingTranscriber) Transcribe(_ context.Context, pcm []float32, req 
 	}, nil
 }
 
+type statusTranscriber struct {
+	*recordingTranscriber
+}
+
+func (statusTranscriber) Status() (string, string, int) {
+	return "downloading", "status-model", 37
+}
+
 type recordingAgent struct {
 	gotReq GenerateRequest
 }
@@ -45,10 +53,34 @@ func (r *recordingAgent) Generate(_ context.Context, req GenerateRequest) (Gener
 	}, nil
 }
 
+type statusAgent struct {
+	*recordingAgent
+}
+
+func (statusAgent) Status() (string, string, int) {
+	return "ready", "status-agent", 100
+}
+
 func TestTranscriberHandler(t *testing.T) {
 	eng := &recordingTranscriber{}
 	srv := httptest.NewServer(TranscriberHandler(Config{Name: "plug", Version: "1.0", Token: "secret"}, eng))
 	defer srv.Close()
+
+	statusResp, err := http.Get(srv.URL + "/status")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	defer statusResp.Body.Close()
+	if statusResp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d", statusResp.StatusCode)
+	}
+	var statusBody map[string]any
+	if err := json.NewDecoder(statusResp.Body).Decode(&statusBody); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if got := statusBody["status"]; got != "ready" {
+		t.Fatalf("fallback status = %v, want ready", got)
+	}
 
 	infoReq, _ := http.NewRequest(http.MethodGet, srv.URL+"/info", nil)
 	infoReq.Header.Set("Authorization", "Bearer secret")
@@ -209,6 +241,32 @@ func TestTranscriberHandler(t *testing.T) {
 	}
 }
 
+func TestTranscriberHandlerStatusReporter(t *testing.T) {
+	eng := &statusTranscriber{recordingTranscriber: &recordingTranscriber{}}
+	srv := httptest.NewServer(TranscriberHandler(Config{Name: "plug", Version: "1.0", Token: "secret"}, eng))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/status")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d", resp.StatusCode)
+	}
+	var out struct {
+		Status  string `json:"status"`
+		Model   string `json:"model"`
+		Percent int    `json:"percent"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if out.Status != "downloading" || out.Model != "status-model" || out.Percent != 37 {
+		t.Fatalf("status response = %+v", out)
+	}
+}
+
 func TestAgentHandler(t *testing.T) {
 	eng := &recordingAgent{}
 	srv := httptest.NewServer(AgentHandler(Config{Name: "plug", Version: "1.0", Token: "secret"}, eng))
@@ -253,6 +311,15 @@ func TestAgentHandler(t *testing.T) {
 		t.Fatalf("agent info status = %d", infoResp.StatusCode)
 	}
 
+	statusResp, err := http.Get(srv.URL + "/status")
+	if err != nil {
+		t.Fatalf("agent status: %v", err)
+	}
+	statusResp.Body.Close()
+	if statusResp.StatusCode != http.StatusOK {
+		t.Fatalf("agent status code = %d", statusResp.StatusCode)
+	}
+
 	missingAuth, _ := http.NewRequest(http.MethodPost, srv.URL+"/generate", bytes.NewReader([]byte(`{}`)))
 	missingAuth.Header.Set("Content-Type", "application/json")
 	unauthResp, err := http.DefaultClient.Do(missingAuth)
@@ -262,5 +329,31 @@ func TestAgentHandler(t *testing.T) {
 	unauthResp.Body.Close()
 	if unauthResp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("missing auth status = %d", unauthResp.StatusCode)
+	}
+}
+
+func TestAgentHandlerStatusReporter(t *testing.T) {
+	eng := &statusAgent{recordingAgent: &recordingAgent{}}
+	srv := httptest.NewServer(AgentHandler(Config{Name: "plug", Version: "1.0", Token: "secret"}, eng))
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/status")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status code = %d", resp.StatusCode)
+	}
+	var out struct {
+		Status  string `json:"status"`
+		Model   string `json:"model"`
+		Percent int    `json:"percent"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if out.Status != "ready" || out.Model != "status-agent" || out.Percent != 100 {
+		t.Fatalf("status response = %+v", out)
 	}
 }
