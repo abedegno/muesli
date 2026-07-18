@@ -2,6 +2,7 @@ package audiohash_test
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
@@ -10,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/abedegno/muesli/internal/audiohash"
 )
@@ -26,7 +28,7 @@ func TestHashRaw(t *testing.T) {
 }
 
 func TestHashNormalized_Fallback(t *testing.T) {
-	got, err := audiohash.HashNormalized("/nonexistent/does-not-exist.mp3")
+	got, err := audiohash.HashNormalized(context.Background(), "/nonexistent/does-not-exist.mp3")
 	if err != nil {
 		t.Fatalf("hash normalized: %v", err)
 	}
@@ -46,7 +48,7 @@ func TestHashNormalized_WithFFmpeg(t *testing.T) {
 		t.Fatalf("write wav: %v", err)
 	}
 
-	got, err := audiohash.HashNormalized(audioPath)
+	got, err := audiohash.HashNormalized(context.Background(), audioPath)
 	if err != nil {
 		t.Fatalf("hash normalized: %v", err)
 	}
@@ -67,7 +69,7 @@ func TestHashNormalizedUsesConfiguredBinary(t *testing.T) {
 	}
 	t.Setenv("MUESLI_FFMPEG_BIN", stubPath)
 
-	got, err := audiohash.HashNormalized("ignored-input")
+	got, err := audiohash.HashNormalized(context.Background(), "ignored-input")
 	if err != nil {
 		t.Fatalf("hash normalized: %v", err)
 	}
@@ -75,6 +77,33 @@ func TestHashNormalizedUsesConfiguredBinary(t *testing.T) {
 	want := hex.EncodeToString(wantSum[:])
 	if got != want {
 		t.Fatalf("hash normalized = %q, want %q", got, want)
+	}
+}
+
+func TestHashNormalizedRespectsContextTimeout(t *testing.T) {
+	dir := t.TempDir()
+	stubPath := filepath.Join(dir, "ffmpeg-stub")
+	if err := os.WriteFile(stubPath, []byte("#!/bin/sh\nexec sleep 5\n"), 0o755); err != nil {
+		t.Fatalf("write stub: %v", err)
+	}
+	if err := os.Chmod(stubPath, 0o755); err != nil {
+		t.Fatalf("chmod stub: %v", err)
+	}
+	t.Setenv("MUESLI_FFMPEG_BIN", stubPath)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	got, err := audiohash.HashNormalized(ctx, "ignored-input")
+	if err != nil {
+		t.Fatalf("hash normalized: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("hash normalized = %q, want empty string", got)
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("hash normalized took %s, want prompt cancellation", elapsed)
 	}
 }
 
