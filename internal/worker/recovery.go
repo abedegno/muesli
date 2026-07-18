@@ -10,14 +10,15 @@ const staleSweepInterval = time.Minute
 
 // jobRecoverer is the store interface needed for stale-job recovery.
 type jobRecoverer interface {
-	ResetRunningJobs(ctx context.Context) (int64, error)
 	ResetExpiredRunningJobs(ctx context.Context) (int64, error)
 }
 
-// recoverStartupJobs resets ALL running jobs to pending at startup.
-// At startup, ANY running job is orphaned — its process is gone.
+// recoverStartupJobs reclaims startup-orphaned running jobs once their lease
+// has expired, using the same gate as the periodic stale sweep.
+// This avoids stealing in-flight work from a still-live sibling process while
+// still recovering genuinely crashed workers after defaultJobLease elapses.
 func recoverStartupJobs(ctx context.Context, store jobRecoverer) {
-	n, err := store.ResetRunningJobs(ctx)
+	n, err := store.ResetExpiredRunningJobs(ctx)
 	if err != nil {
 		log.Printf("worker: startup recovery failed: %v", err)
 		return
