@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/abedegno/muesli/internal/pluginkit"
 )
@@ -128,6 +129,77 @@ func TestEnsureModelRetriesAfterFailure(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&hits); got != 2 {
 		t.Fatalf("model hits = %d, want 2", got)
+	}
+}
+
+func TestStatusReturnsWhileModelLoads(t *testing.T) {
+	t.Parallel()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	modelSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-started:
+		default:
+			close(started)
+		}
+		<-release
+		w.Header().Set("Content-Type", "application/octet-stream")
+		_, _ = w.Write([]byte("slow-model"))
+	}))
+	defer modelSrv.Close()
+
+	dir := t.TempDir()
+	eng := New(Config{
+		ModelDir: dir,
+		ModelURL: modelSrv.URL + "/model.bin",
+		Model:    "slow-model",
+		Language: "en",
+	})
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- eng.ensureModel(context.Background())
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("model request did not start")
+	}
+
+	statusCh := make(chan struct {
+		status  string
+		model   string
+		percent int
+	}, 1)
+	go func() {
+		status, model, percent := eng.Status()
+		statusCh <- struct {
+			status  string
+			model   string
+			percent int
+		}{status: status, model: model, percent: percent}
+	}()
+
+	select {
+	case got := <-statusCh:
+		if got.status != "downloading" || got.model != "slow-model" || got.percent != 0 {
+			t.Fatalf("status while loading = %+v", got)
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("Status blocked while model was loading")
+	}
+
+	close(release)
+
+	select {
+	case err := <-errCh:
+		if err != nil {
+			t.Fatalf("ensureModel: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("ensureModel did not finish")
 	}
 }
 

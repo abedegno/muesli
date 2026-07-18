@@ -44,6 +44,7 @@ type Engine struct {
 	state    modelState
 	loadErr  error
 	loadedAt time.Time
+	loadDone chan struct{}
 }
 
 func New(cfg Config) *Engine {
@@ -84,27 +85,55 @@ func (e *Engine) Transcribe(ctx context.Context, pcm []float32, opts pluginkit.T
 
 func (e *Engine) ensureModel(ctx context.Context) error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-
+	for e.state == modelLoading {
+		done := e.loadDone
+		e.mu.Unlock()
+		if done == nil {
+			return nil
+		}
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		e.mu.Lock()
+	}
 	if e.state == modelReady {
+		e.mu.Unlock()
 		return nil
 	}
+	done := make(chan struct{})
 	e.state = modelLoading
+	e.loadDone = done
+	e.mu.Unlock()
+
+	var err error
 	if e.cfg.ModelDir == "" || e.cfg.ModelURL == "" {
+		e.mu.Lock()
 		e.state = modelReady
 		e.loadErr = nil
 		e.loadedAt = time.Now()
+		close(done)
+		e.loadDone = nil
+		e.mu.Unlock()
 		return nil
 	}
-	_, err := pluginkit.EnsureModel(ctx, e.cfg.ModelDir, e.cfg.ModelURL, nil)
+	_, err = pluginkit.EnsureModel(ctx, e.cfg.ModelDir, e.cfg.ModelURL, nil)
+	e.mu.Lock()
 	if err != nil {
 		e.state = modelError
 		e.loadErr = err
+		close(done)
+		e.loadDone = nil
+		e.mu.Unlock()
 		return err
 	}
 	e.state = modelReady
 	e.loadErr = nil
 	e.loadedAt = time.Now()
+	close(done)
+	e.loadDone = nil
+	e.mu.Unlock()
 	return nil
 }
 

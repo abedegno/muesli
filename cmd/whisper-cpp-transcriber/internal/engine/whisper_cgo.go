@@ -71,6 +71,7 @@ type Engine struct {
 	state     modelState
 	loadErr   error
 	loadedAt  time.Time
+	loadDone  chan struct{}
 	model     whisper.Model
 	modelPath string
 
@@ -154,37 +155,68 @@ func (e *Engine) Transcribe(ctx context.Context, pcm []float32, opts pluginkit.T
 
 func (e *Engine) ensureModel(ctx context.Context) error {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-
+	for e.state == modelLoading {
+		done := e.loadDone
+		e.mu.Unlock()
+		if done == nil {
+			return nil
+		}
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		e.mu.Lock()
+	}
 	if e.state == modelReady {
+		e.mu.Unlock()
 		return nil
 	}
+	done := make(chan struct{})
 	e.state = modelLoading
+	e.loadDone = done
+	e.mu.Unlock()
+
+	var (
+		path string
+		m    whisper.Model
+		err  error
+	)
 	if e.cfg.ModelDir == "" {
-		e.state = modelError
-		e.loadErr = errors.New("whisper_cgo: model-dir is required")
-		return e.loadErr
+		err = errors.New("whisper_cgo: model-dir is required")
+	} else {
+		// Prefer a pre-bundled model file (the packaged app ships one at
+		// ModelDir/<Model>.bin, no MODEL_URL); fall back to downloading from
+		// model-url for dev/hosted. See pluginkit.ResolveModel.
+		path, err = pluginkit.ResolveModel(ctx, e.cfg.ModelDir, e.cfg.Model, e.cfg.ModelURL, nil)
+		if err == nil {
+			m, err = whisper.New(path)
+		}
 	}
-	// Prefer a pre-bundled model file (the packaged app ships one at
-	// ModelDir/<Model>.bin, no MODEL_URL); fall back to downloading from
-	// model-url for dev/hosted. See pluginkit.ResolveModel.
-	path, err := pluginkit.ResolveModel(ctx, e.cfg.ModelDir, e.cfg.Model, e.cfg.ModelURL, nil)
 	if err != nil {
+		e.mu.Lock()
 		e.state = modelError
-		e.loadErr = fmt.Errorf("whisper_cgo: ensure model: %w", err)
+		if e.cfg.ModelDir == "" {
+			e.loadErr = err
+		} else if path == "" {
+			e.loadErr = fmt.Errorf("whisper_cgo: ensure model: %w", err)
+		} else {
+			e.loadErr = fmt.Errorf("whisper_cgo: load model %s: %w", path, err)
+		}
+		close(done)
+		e.loadDone = nil
+		e.mu.Unlock()
 		return e.loadErr
 	}
-	m, err := whisper.New(path)
-	if err != nil {
-		e.state = modelError
-		e.loadErr = fmt.Errorf("whisper_cgo: load model %s: %w", path, err)
-		return e.loadErr
-	}
+	e.mu.Lock()
 	e.modelPath = path
 	e.model = m
 	e.state = modelReady
 	e.loadErr = nil
 	e.loadedAt = time.Now()
+	close(done)
+	e.loadDone = nil
+	e.mu.Unlock()
 	return nil
 }
 
