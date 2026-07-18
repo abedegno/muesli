@@ -27,6 +27,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 
 	whisper "github.com/ggerganov/whisper.cpp/bindings/go/pkg/whisper"
 
@@ -53,12 +54,24 @@ type Config struct {
 	Language string
 }
 
+type modelState int
+
+const (
+	modelUnloaded modelState = iota
+	modelLoading
+	modelReady
+	modelError
+)
+
 // Engine runs transcription through the real whisper.cpp cgo bindings.
 type Engine struct {
 	cfg Config
 
-	modelOnce sync.Once
-	modelErr  error
+	mu        sync.Mutex
+	state     modelState
+	loadErr   error
+	loadedAt  time.Time
+	loadDone  chan struct{}
 	model     whisper.Model
 	modelPath string
 
@@ -66,7 +79,6 @@ type Engine struct {
 	// whisper_full() is not safe to call concurrently against the same
 	// loaded model, so we guard it with a plain mutex rather than trying to
 	// keep one whisper.Context per in-flight request.
-	mu sync.Mutex
 }
 
 func New(cfg Config) *Engine {
@@ -142,28 +154,86 @@ func (e *Engine) Transcribe(ctx context.Context, pcm []float32, opts pluginkit.T
 }
 
 func (e *Engine) ensureModel(ctx context.Context) error {
-	e.modelOnce.Do(func() {
-		if e.cfg.ModelDir == "" {
-			e.modelErr = errors.New("whisper_cgo: model-dir is required")
-			return
+	e.mu.Lock()
+	for e.state == modelLoading {
+		done := e.loadDone
+		e.mu.Unlock()
+		if done == nil {
+			return nil
 		}
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		e.mu.Lock()
+	}
+	if e.state == modelReady {
+		e.mu.Unlock()
+		return nil
+	}
+	done := make(chan struct{})
+	e.state = modelLoading
+	e.loadDone = done
+	e.mu.Unlock()
+
+	var (
+		path string
+		m    whisper.Model
+		err  error
+	)
+	if e.cfg.ModelDir == "" {
+		err = errors.New("whisper_cgo: model-dir is required")
+	} else {
 		// Prefer a pre-bundled model file (the packaged app ships one at
 		// ModelDir/<Model>.bin, no MODEL_URL); fall back to downloading from
 		// model-url for dev/hosted. See pluginkit.ResolveModel.
-		path, err := pluginkit.ResolveModel(ctx, e.cfg.ModelDir, e.cfg.Model, e.cfg.ModelURL, nil)
-		if err != nil {
-			e.modelErr = fmt.Errorf("whisper_cgo: ensure model: %w", err)
-			return
+		path, err = pluginkit.ResolveModel(ctx, e.cfg.ModelDir, e.cfg.Model, e.cfg.ModelURL, nil)
+		if err == nil {
+			m, err = whisper.New(path)
 		}
-		m, err := whisper.New(path)
-		if err != nil {
-			e.modelErr = fmt.Errorf("whisper_cgo: load model %s: %w", path, err)
-			return
+	}
+	if err != nil {
+		e.mu.Lock()
+		e.state = modelError
+		if e.cfg.ModelDir == "" {
+			e.loadErr = err
+		} else if path == "" {
+			e.loadErr = fmt.Errorf("whisper_cgo: ensure model: %w", err)
+		} else {
+			e.loadErr = fmt.Errorf("whisper_cgo: load model %s: %w", path, err)
 		}
-		e.modelPath = path
-		e.model = m
-	})
-	return e.modelErr
+		close(done)
+		e.loadDone = nil
+		e.mu.Unlock()
+		return e.loadErr
+	}
+	e.mu.Lock()
+	e.modelPath = path
+	e.model = m
+	e.state = modelReady
+	e.loadErr = nil
+	e.loadedAt = time.Now()
+	close(done)
+	e.loadDone = nil
+	e.mu.Unlock()
+	return nil
+}
+
+func (e *Engine) Status() (status, model string, percent int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	switch e.state {
+	case modelReady:
+		return "ready", e.cfg.Model, 100
+	case modelLoading:
+		return "downloading", e.cfg.Model, 0
+	case modelError:
+		return "error", e.cfg.Model, 0
+	default:
+		return "unknown", e.cfg.Model, 0
+	}
 }
 
 func (e *Engine) effectiveConfig(raw json.RawMessage) pluginConfig {
