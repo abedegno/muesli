@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/abedegno/muesli/internal/model"
@@ -128,7 +129,9 @@ func (w *DeliveryWorker) dispatch(ctx context.Context, d model.WebhookDelivery) 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "muesli-webhooks/1")
 	if wh.Secret != "" {
-		req.Header.Set("X-Muesli-Signature", signPayload(wh.Secret, d.Payload))
+		ts := time.Now().Unix()
+		req.Header.Set("X-Muesli-Timestamp", strconv.FormatInt(ts, 10))
+		req.Header.Set("X-Muesli-Signature", signPayload(wh.Secret, ts, d.Payload))
 	}
 
 	resp, err := w.client.Do(req)
@@ -185,10 +188,14 @@ func (w *DeliveryWorker) giveUp(ctx context.Context, id uuid.UUID, d model.Webho
 }
 
 // signPayload returns the outbound webhook signature for the exact bytes posted.
-// The scheme is HMAC-SHA256 keyed by the per-webhook secret, hex-encoded and
-// prefixed with "sha256=" so downstream consumers can verify the payload.
-func signPayload(secret string, body []byte) string {
+// The scheme is Stripe/GitHub-style timestamped HMAC-SHA256 over "{timestamp}.{body}",
+// keyed by the per-webhook secret and prefixed with "sha256=" so downstream
+// consumers can verify the payload. Receivers should reject requests whose
+// X-Muesli-Timestamp is more than ~5 minutes old; Muesli cannot enforce that
+// replay window on the receiver side.
+func signPayload(secret string, timestamp int64, body []byte) string {
 	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = fmt.Fprintf(mac, "%d.", timestamp)
 	_, _ = mac.Write(body)
 	return "sha256=" + hex.EncodeToString(mac.Sum(nil))
 }
