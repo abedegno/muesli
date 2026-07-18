@@ -4,7 +4,7 @@
 // properties like ApiError.status — see ipcHandlers.ts withApiError). This
 // module recovers that status so the UI can tell a 409 "already sending"
 // race apart from any other (400/404/500) failure.
-export type ChatErrorKind = 'inflight' | 'generic'
+export type ChatErrorKind = 'inflight' | 'no-agent' | 'generic'
 
 export interface ChatError {
   kind: ChatErrorKind
@@ -18,6 +18,12 @@ export function parseChatError(err: unknown): ChatError {
   const m = STATUS_PREFIX.exec(raw)
   if (m && m[1] === '409') {
     return { kind: 'inflight', message: 'A message is already sending, please wait…' }
+  }
+  if (m && m[1] === '422') {
+    return {
+      kind: 'no-agent',
+      message: 'Chat needs an agent plugin configured. Install Ollama, or ask your administrator to configure one.',
+    }
   }
   // 400/404/500 (missing/misconfigured plugin, plugin-call failure, etc.) all
   // surface as a generic, retryable error — never crash the thread view.

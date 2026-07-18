@@ -74,7 +74,10 @@ export function ChatScreen() {
         {thread.error && (
           <p
             role="alert"
-            className={cn('mb-1 text-xs', thread.error.kind === 'inflight' ? 'text-muted-foreground' : 'text-destructive')}
+            className={cn(
+              'mb-1 text-xs',
+              thread.error.kind === 'inflight' || thread.error.kind === 'no-agent' ? 'text-muted-foreground' : 'text-destructive',
+            )}
           >
             {thread.error.message}
           </p>

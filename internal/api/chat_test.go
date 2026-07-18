@@ -374,11 +374,11 @@ func TestChatSendGuardReleasedAfterSuccess(t *testing.T) {
 
 // TestChatSendGuardReleasedAfterFailure asserts the guard slot is freed even
 // when the handler exits via a non-happy-path error (no default agent
-// plugin configured -> 500), so an immediately following call reaches that
+// plugin configured -> 422), so an immediately following call reaches that
 // same failure path again rather than the guard's 409.
 func TestChatSendGuardReleasedAfterFailure(t *testing.T) {
 	t.Parallel()
-	// No default agent plugin registered at all -> every send 500s.
+	// No default agent plugin registered at all -> every send returns 422.
 	srv, _ := newChatTestServer(t, &fakeChatGenerator{resp: fixedReply()})
 	hdr := setupGuardTestUser(t, srv, "chat-guard-failure@example.com")
 
@@ -388,14 +388,45 @@ func TestChatSendGuardReleasedAfterFailure(t *testing.T) {
 
 	rec := doGuardJSON(t, srv, http.MethodPost, "/api/conversations/"+conv.ID+"/messages",
 		map[string]any{"content": "first"}, hdr)
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("first send status=%d, want 500 (no default plugin); body=%s", rec.Code, rec.Body)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("first send status=%d, want 422 (no default plugin); body=%s", rec.Code, rec.Body)
 	}
 
 	rec = doGuardJSON(t, srv, http.MethodPost, "/api/conversations/"+conv.ID+"/messages",
 		map[string]any{"content": "second"}, hdr)
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("second send status=%d, want 500 again (guard should have released, not 409); body=%s", rec.Code, rec.Body)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("second send status=%d, want 422 again (guard should have released, not 409); body=%s", rec.Code, rec.Body)
+	}
+}
+
+// TestChatSendNoDefaultAgentPlugin verifies that sending to an existing
+// conversation with no default agent plugin configured returns a 422 and an
+// actionable error body, rather than a generic 500.
+func TestChatSendNoDefaultAgentPlugin(t *testing.T) {
+	t.Parallel()
+	srv, _ := newChatTestServer(t, &fakeChatGenerator{resp: fixedReply()})
+	hdr := setupGuardTestUser(t, srv, "chat-no-agent@example.com")
+
+	convRec := doGuardJSON(t, srv, http.MethodPost, "/api/conversations", map[string]any{"title": "General"}, hdr)
+	if convRec.Code != http.StatusCreated {
+		t.Fatalf("create conversation=%d body=%s", convRec.Code, convRec.Body)
+	}
+	var conv struct{ ID string }
+	_ = json.Unmarshal(convRec.Body.Bytes(), &conv)
+
+	rec := doGuardJSON(t, srv, http.MethodPost, "/api/conversations/"+conv.ID+"/messages",
+		map[string]any{"content": "hello"}, hdr)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("send message=%d, want 422; body=%s", rec.Code, rec.Body)
+	}
+	var out struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("parse body: %v; body=%s", err, rec.Body)
+	}
+	if out.Error != "no default agent configured" {
+		t.Fatalf("error=%q, want no default agent configured", out.Error)
 	}
 }
 
@@ -436,6 +467,30 @@ func TestChatCreateAndSend(t *testing.T) {
 	}
 	if len(msgs) != 2 {
 		t.Fatalf("persisted messages len=%d, want 2 (user+assistant)", len(msgs))
+	}
+}
+
+// TestChatCreateAndSendNoDefaultAgentPlugin verifies the create-and-send
+// branch returns a 422 and actionable body when no default agent plugin is
+// configured.
+func TestChatCreateAndSendNoDefaultAgentPlugin(t *testing.T) {
+	t.Parallel()
+	srv, _ := newChatTestServer(t, &fakeChatGenerator{resp: fixedReply()})
+	hdr := setupGuardTestUser(t, srv, "chat-create-no-agent@example.com")
+
+	rec := doGuardJSON(t, srv, http.MethodPost, "/api/conversations",
+		map[string]any{"title": "General", "content": "hello there"}, hdr)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("create-and-send=%d, want 422; body=%s", rec.Code, rec.Body)
+	}
+	var out struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("parse body: %v; body=%s", err, rec.Body)
+	}
+	if out.Error != "no default agent configured" {
+		t.Fatalf("error=%q, want no default agent configured", out.Error)
 	}
 }
 

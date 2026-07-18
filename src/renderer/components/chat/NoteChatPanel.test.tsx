@@ -118,4 +118,23 @@ describe('NoteChatPanel', () => {
     expect(screen.queryByText(/already sending/i)).not.toBeInTheDocument()
     expect(input).not.toBeDisabled()
   })
+
+  it('renders no-agent errors as muted actionable copy instead of a destructive generic error', async () => {
+    listConversationsMock.mockResolvedValue([conversation])
+    listMessagesMock.mockResolvedValue([])
+    sendMessageMock.mockRejectedValueOnce(new Error('[422] no default agent configured'))
+
+    render(<NoteChatPanel noteId="note-1" onClose={() => {}} />)
+    const input = await screen.findByRole('textbox', { name: /message/i })
+
+    await userEvent.type(input, 'Second question')
+    await userEvent.click(screen.getByRole('button', { name: /^send$/i }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/Chat needs an agent plugin configured/i)
+    expect(alert).not.toHaveTextContent('Something went wrong')
+    expect(alert.className).toContain('text-muted-foreground')
+    expect(alert.className).not.toContain('text-destructive')
+    expect(input).not.toBeDisabled()
+  })
 })
