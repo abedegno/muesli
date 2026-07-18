@@ -1,6 +1,7 @@
 package pluginkit
 
 import (
+	"crypto/subtle"
 	"net/http"
 	"strings"
 )
@@ -22,7 +23,7 @@ func requireBearer(token string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			got, ok := bearerToken(r)
-			if !ok || got != token {
+			if !ok || subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
 				http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 				return
 			}
