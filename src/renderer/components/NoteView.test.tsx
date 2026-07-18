@@ -619,11 +619,55 @@ describe('NoteView — full template list + regenerate (TPL01)', () => {
     expect(retroOption).toHaveTextContent('Not generated')
   })
 
-  it('selecting a not-yet-generated template shows the "No summary yet." empty state', async () => {
-    render(<NoteView full={fullWithTemplateIds} templates={[tplA, tplB, tplC]} onSaveBody={async () => {}} />)
+  it('selecting a not-yet-generated template changes the toolbar button to Generate and keeps it wired to the selected template', async () => {
+    const onRegenerate = vi.fn()
+    render(<NoteView full={fullWithTemplateIds} templates={[tplA, tplB, tplC]} onRegenerateTemplate={onRegenerate} onSaveBody={async () => {}} />)
+
     await userEvent.click(screen.getByRole('button', { name: /switch template/i }))
     await userEvent.click(screen.getByRole('option', { name: /Retro/ }))
-    expect(screen.getByText('No summary yet.')).toBeInTheDocument()
+
+    const generateToolbar = screen.getByRole('button', { name: /generate summary/i })
+    expect(generateToolbar).toBeInTheDocument()
+    await userEvent.click(generateToolbar)
+    expect(onRegenerate).toHaveBeenCalledWith('tpl-c')
+  })
+
+  it('keeps the toolbar button as Regenerate for a template that already has a summary', () => {
+    render(<NoteView full={fullWithTemplateIds} templates={[tplA, tplB, tplC]} onRegenerateTemplate={vi.fn()} onSaveBody={async () => {}} />)
+    expect(screen.getByRole('button', { name: /regenerate summary/i })).toBeInTheDocument()
+  })
+
+  it('renders an actionable inline Generate CTA for the selected template when only a sibling has a summary', async () => {
+    const onRegenerate = vi.fn()
+    render(<NoteView full={fullWithTemplateIds} templates={[tplA, tplB, tplC]} onRegenerateTemplate={onRegenerate} onSaveBody={async () => {}} />)
+
+    await userEvent.click(screen.getByRole('button', { name: /switch template/i }))
+    await userEvent.click(screen.getByRole('option', { name: /Retro/ }))
+
+    expect(screen.queryByText('No summary yet.')).not.toBeInTheDocument()
+    const generateCta = screen.getByRole('button', { name: /^Generate$/ })
+    await userEvent.click(generateCta)
+    expect(onRegenerate).toHaveBeenCalledWith('tpl-c')
+  })
+
+  it('disables and spins the inline CTA while the selected template is regenerating', async () => {
+    render(
+      <NoteView
+        full={fullWithTemplateIds}
+        templates={[tplA, tplB, tplC]}
+        onRegenerateTemplate={vi.fn()}
+        regeneratingTemplateId="tpl-c"
+        onSaveBody={async () => {}}
+      />,
+    )
+
+    await userEvent.click(screen.getByRole('button', { name: /switch template/i }))
+    await userEvent.click(screen.getByRole('option', { name: /Retro/ }))
+
+    const generateCta = screen.getByRole('button', { name: /^Generate$/ })
+    expect(generateCta).toBeDisabled()
+    expect(generateCta).toHaveAttribute('aria-busy', 'true')
+    expect(generateCta.querySelector('svg')).toHaveClass('animate-spin')
   })
 
   it('shows the no-agent empty state and opens transcript when no template has ever summarized', async () => {
@@ -664,14 +708,14 @@ describe('NoteView — full template list + regenerate (TPL01)', () => {
 
   it('renders a Regenerate control for the currently-selected template', () => {
     render(<NoteView full={fullWithTemplateIds} templates={[tplA, tplB, tplC]} onRegenerateTemplate={vi.fn()} onSaveBody={async () => {}} />)
-    expect(screen.getByRole('button', { name: /regenerate/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /regenerate summary/i })).toBeInTheDocument()
   })
 
   it('clicking Regenerate invokes onRegenerateTemplate with the selected templateId', async () => {
     const onRegenerate = vi.fn()
     render(<NoteView full={fullWithTemplateIds} templates={[tplA, tplB, tplC]} onRegenerateTemplate={onRegenerate} onSaveBody={async () => {}} />)
     // Default selection is the richest panel (General meeting / tpl-b).
-    await userEvent.click(screen.getByRole('button', { name: /regenerate/i }))
+    await userEvent.click(screen.getByRole('button', { name: /regenerate summary/i }))
     expect(onRegenerate).toHaveBeenCalledWith('tpl-b')
   })
 
@@ -679,19 +723,19 @@ describe('NoteView — full template list + regenerate (TPL01)', () => {
     const { rerender } = render(
       <NoteView full={fullWithTemplateIds} templates={[tplA, tplB, tplC]} onRegenerateTemplate={vi.fn()} regeneratingTemplateId="tpl-b" onSaveBody={async () => {}} />,
     )
-    const btn = screen.getByRole('button', { name: /regenerate/i })
+    const btn = screen.getByRole('button', { name: /regenerate summary/i })
     expect(btn).toBeDisabled()
     expect(btn).toHaveAttribute('aria-busy', 'true')
 
     rerender(
       <NoteView full={fullWithTemplateIds} templates={[tplA, tplB, tplC]} onRegenerateTemplate={vi.fn()} regeneratingTemplateId={null} onSaveBody={async () => {}} />,
     )
-    expect(screen.getByRole('button', { name: /regenerate/i })).not.toBeDisabled()
+    expect(screen.getByRole('button', { name: /regenerate summary/i })).not.toBeDisabled()
   })
 
   it('does not render Regenerate when no onRegenerateTemplate handler is given (back-compat)', () => {
     render(<NoteView full={full} onSaveBody={async () => {}} />)
-    expect(screen.queryByRole('button', { name: /regenerate/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /regenerate summary/i })).not.toBeInTheDocument()
   })
 })
 
