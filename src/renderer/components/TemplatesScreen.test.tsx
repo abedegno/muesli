@@ -31,6 +31,16 @@ const custom: Template = {
   auto_run: true,
 }
 
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
 vi.mock('@/api', () => ({
   muesli: {
     listTemplates: () => listTemplates(),
@@ -72,6 +82,45 @@ function renderScreen() {
 }
 
 describe('TemplatesScreen', () => {
+  it('shows skeletons while templates are still loading', async () => {
+    const load = deferred<Template[]>()
+    listTemplates.mockReturnValueOnce(load.promise)
+
+    const { container } = renderScreen()
+
+    await waitFor(() => expect(container.querySelectorAll('.animate-pulse').length).toBeGreaterThan(0))
+    expect(screen.queryByText('No custom templates yet.')).toBeNull()
+
+    load.resolve([builtIn, custom])
+    await screen.findByText('My Standup')
+  })
+
+  it('shows the empty state when the server returns no templates', async () => {
+    listTemplates.mockResolvedValueOnce([])
+
+    renderScreen()
+
+    expect(await screen.findByText('No custom templates yet.')).toBeInTheDocument()
+  })
+
+  it('shows an error block and retries loading templates', async () => {
+    listTemplates.mockRejectedValueOnce(new Error('Self-hosted server unavailable'))
+    listTemplates.mockResolvedValueOnce([builtIn, custom])
+
+    renderScreen()
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Could not load templates.')
+    expect(alert).toHaveTextContent('Self-hosted server unavailable')
+
+    const retry = screen.getByRole('button', { name: 'Try again' })
+    const user = userEvent.setup()
+    await user.click(retry)
+    expect(listTemplates).toHaveBeenCalledTimes(2)
+
+    expect(await screen.findByText('My Standup')).toBeInTheDocument()
+  })
+
   it('shows a Built-in badge and no delete for built-in templates', async () => {
     renderScreen()
     const name = await screen.findByText('General')
@@ -127,6 +176,7 @@ describe('TemplatesScreen', () => {
     })
 
     renderScreen()
+    await screen.findByRole('button', { name: 'Import template' })
 
     await user.upload(
       screen.getByLabelText('Import template file'),
@@ -148,6 +198,7 @@ describe('TemplatesScreen', () => {
     })
 
     renderScreen()
+    await screen.findByRole('button', { name: 'Import template' })
 
     await user.upload(
       screen.getByLabelText('Import template file'),
