@@ -81,6 +81,11 @@ async function loadSupervisor() {
 }
 
 describe('serverSupervisor', () => {
+  it('uses a health timeout that covers the embedded startup budget', async () => {
+    const { DEFAULT_HEALTH_TIMEOUT_MS } = await loadSupervisor()
+    expect(DEFAULT_HEALTH_TIMEOUT_MS).toBe(120_000)
+  })
+
   beforeEach(() => {
     vi.useFakeTimers()
     vi.stubGlobal('fetch', vi.fn())

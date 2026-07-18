@@ -14,7 +14,7 @@ import { NoteStreamRelay } from './noteStreamRelay'
 import { SecretStore } from './secretStore'
 import { makeSystemAudioPermission } from './systemAudioPermission'
 import { makeSystemAudioHelper } from './systemAudioHelper'
-import { makeServerLogPath, startServerSupervisor } from './serverSupervisor'
+import { DEFAULT_HEALTH_TIMEOUT_MS, makeServerLogPath, startServerSupervisor } from './serverSupervisor'
 import { TokenStore } from './tokenStore'
 
 let mainWindow: BrowserWindow | null = null
@@ -113,6 +113,7 @@ app.whenReady().then(async () => {
     const supervisor = await startServerSupervisor({
       onSecondInstance: focusMainWindow,
       logPath: makeServerLogPath(app.getPath('userData')),
+      healthTimeoutMs: DEFAULT_HEALTH_TIMEOUT_MS,
       waitForHealthy: false,
     })
     if (!supervisor) return
