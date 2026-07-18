@@ -31,8 +31,8 @@ func seedNoteForRecoveryTest(t *testing.T, st *store.Store) string {
 	return n.ID
 }
 
-// TestStartupRecovery_AllRunning: a running job with a FUTURE lease must be
-// reset to pending by ResetRunningJobs (startup recovery is unconditional).
+// TestStartupRecovery_AllRunning: a running job with a FUTURE lease must not
+// be touched by startup recovery.
 func TestStartupRecovery_AllRunning(t *testing.T) {
 	t.Parallel()
 	pool := testutil.NewPool(t)
@@ -59,28 +59,38 @@ func TestStartupRecovery_AllRunning(t *testing.T) {
 		t.Fatalf("expected running, got %s", j.Status)
 	}
 
-	// Reset all running jobs (startup recovery — unconditional, no lease check).
-	n, err := st.ResetRunningJobs(ctx)
-	if err != nil {
-		t.Fatalf("ResetRunningJobs: %v", err)
-	}
-	if n != 1 {
-		t.Fatalf("expected 1 job reset, got %d", n)
+	var beforeLease time.Time
+	if err := st.Pool().QueryRow(ctx, `SELECT lease_expires_at FROM jobs WHERE id=$1`, jobID).Scan(&beforeLease); err != nil {
+		t.Fatalf("query lease before recovery: %v", err)
 	}
 
-	// Job must now be pending.
+	// Startup recovery must leave a still-live job untouched.
+	worker.RecoverStartupJobsForTest(ctx, st)
+
+	var afterLease time.Time
+	if err := st.Pool().QueryRow(ctx, `SELECT lease_expires_at FROM jobs WHERE id=$1`, jobID).Scan(&afterLease); err != nil {
+		t.Fatalf("query lease after recovery: %v", err)
+	}
+	if !afterLease.Equal(beforeLease) {
+		t.Fatalf("expected lease unchanged, before=%s after=%s", beforeLease, afterLease)
+	}
+
+	// No rows should have been reset.
+	n, err := st.ResetExpiredRunningJobs(ctx)
+	if err != nil {
+		t.Fatalf("ResetExpiredRunningJobs: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("expected 0 jobs reset, got %d", n)
+	}
+
+	// Job remains running.
 	j, err = st.GetJob(ctx, jobID)
 	if err != nil {
 		t.Fatalf("get job after reset: %v", err)
 	}
-	if j.Status != model.JobPending {
-		t.Fatalf("expected pending after reset, got %s", j.Status)
-	}
-
-	// It must be reclaimable immediately.
-	reclaimed, ok2, err := st.ClaimJob(ctx, 30*time.Second)
-	if err != nil || !ok2 || reclaimed.ID != jobID {
-		t.Fatalf("expected reclaimable: ok=%v id=%s err=%v", ok2, reclaimed.ID, err)
+	if j.Status != model.JobRunning {
+		t.Fatalf("expected still running after startup recovery, got %s", j.Status)
 	}
 }
 
@@ -218,16 +228,15 @@ func TestPeriodicSweep_FutureLease_NotRecovered(t *testing.T) {
 	}
 }
 
-// TestStartupRecovery_EndToEnd: insert a running job with a future lease,
-// call recoverStartupJobs, then verify the job is reclaimable.
-func TestStartupRecovery_EndToEnd(t *testing.T) {
+// TestStartupRecovery_DoesNotReclaimFutureLeaseJob: a still-live sibling's job
+// must remain running and keep its original lease after startup recovery.
+func TestStartupRecovery_DoesNotReclaimFutureLeaseJob(t *testing.T) {
 	t.Parallel()
 	pool := testutil.NewPool(t)
 	st := store.New(pool)
 	ctx := context.Background()
 	noteID := seedNoteForRecoveryTest(t, st)
 
-	// Simulate orphaned job: enqueue and claim with a future lease.
 	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
@@ -237,13 +246,55 @@ func TestStartupRecovery_EndToEnd(t *testing.T) {
 		t.Fatalf("claim: ok=%v err=%v", ok, err)
 	}
 
-	// Confirm ClaimJob won't reclaim a future-lease running job.
-	_, ok2, err := st.ClaimJob(ctx, 30*time.Second)
-	if err != nil {
-		t.Fatalf("second claim err: %v", err)
+	var beforeLease time.Time
+	if err := st.Pool().QueryRow(ctx, `SELECT lease_expires_at FROM jobs WHERE id=$1`, jobID).Scan(&beforeLease); err != nil {
+		t.Fatalf("query lease before recovery: %v", err)
 	}
-	if ok2 {
-		t.Fatal("expected ClaimJob to skip future-lease running job (test setup error)")
+
+	worker.RecoverStartupJobsForTest(ctx, st)
+
+	j, err := st.GetJob(ctx, jobID)
+	if err != nil {
+		t.Fatalf("get job after recovery: %v", err)
+	}
+	if j.Status != model.JobRunning {
+		t.Fatalf("expected still running after startup recovery, got %s", j.Status)
+	}
+
+	var afterLease time.Time
+	if err := st.Pool().QueryRow(ctx, `SELECT lease_expires_at FROM jobs WHERE id=$1`, jobID).Scan(&afterLease); err != nil {
+		t.Fatalf("query lease after recovery: %v", err)
+	}
+	if !afterLease.Equal(beforeLease) {
+		t.Fatalf("expected lease unchanged, before=%s after=%s", beforeLease, afterLease)
+	}
+}
+
+// TestStartupRecovery_EndToEnd: insert a running job with an expired lease,
+// call recoverStartupJobs, then verify the job is reclaimable.
+func TestStartupRecovery_EndToEnd(t *testing.T) {
+	t.Parallel()
+	pool := testutil.NewPool(t)
+	st := store.New(pool)
+	ctx := context.Background()
+	noteID := seedNoteForRecoveryTest(t, st)
+
+	// Simulate orphaned job: enqueue and claim with an expired lease.
+	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	_, ok, err := st.ClaimJob(ctx, -time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("claim: ok=%v err=%v", ok, err)
+	}
+
+	j, err := st.GetJob(ctx, jobID)
+	if err != nil {
+		t.Fatalf("get job before recovery: %v", err)
+	}
+	if j.Status != model.JobRunning {
+		t.Fatalf("expected running before startup recovery, got %s", j.Status)
 	}
 
 	// Run startup recovery via the exported test helper.
