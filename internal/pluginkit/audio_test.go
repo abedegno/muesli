@@ -1,10 +1,13 @@
 package pluginkit
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/binary"
 	"math"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"os/exec"
@@ -63,6 +66,28 @@ func TestDecodePCMSupportsDataURL(t *testing.T) {
 	u, err := url.Parse(tinyWAVDataURL(1))
 	if err != nil || u.Scheme != "data" {
 		t.Fatalf("bad fixture url: %v %v", u, err)
+	}
+}
+
+func TestFetchAudioBytesRejectsOversizedResponse(t *testing.T) {
+	const limit = 1024
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(bytes.Repeat([]byte("a"), limit+1))
+	}))
+	t.Cleanup(srv.Close)
+
+	if _, err := fetchAudioBytesWithLimit(context.Background(), srv.URL, limit); err == nil {
+		t.Fatal("expected oversized response to fail")
+	}
+}
+
+func TestDecodeDataURLRejectsOversizedBase64Payload(t *testing.T) {
+	const limit = 1024
+	raw := bytes.Repeat([]byte("a"), limit+1)
+	audioURL := "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(raw)
+
+	if _, err := decodeDataURLWithLimit(audioURL, limit); err == nil {
+		t.Fatal("expected oversized data URL to fail")
 	}
 }
 

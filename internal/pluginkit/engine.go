@@ -69,6 +69,7 @@ func TranscriberHandler(cfg Config, eng Transcriber) http.Handler {
 			methodNotAllowed(w, http.MethodPost)
 			return
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, MaxFetchedAudioBytes)
 		var req TranscribeRequest
 		if err := decodeJSON(r, &req); err != nil {
 			badRequest(w, err)
@@ -108,6 +109,7 @@ func TranscriberHandler(cfg Config, eng Transcriber) http.Handler {
 			methodNotAllowed(w, http.MethodPost)
 			return
 		}
+		r.Body = http.MaxBytesReader(w, r.Body, MaxFetchedAudioBytes)
 		// Minimal JSON-compatible shim. The OpenAI multipart form upload is not
 		// implemented here; the conformance and fakeplugin paths only need a JSON
 		// body that carries the same audio URL through to /transcribe.
