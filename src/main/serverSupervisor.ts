@@ -32,7 +32,18 @@ interface ParsedAddr {
 
 const DEFAULT_ADDR = '127.0.0.1:8080'
 const DEFAULT_HEALTH_POLL_INTERVAL_MS = 250
-const DEFAULT_HEALTH_TIMEOUT_MS = 30_000
+// Practical startup ceiling, not an absolute worst-case: `pgStartTimeout = 60s`
+// per attempt in `internal/embedded/postgres.go`, retried up to 3 times
+// (`for attempts := 0; attempts < 3`), can reach 180s in a pathological full
+// retry exhaustion; orphan-postgres reap can add up to 10s
+// (`reapOrphanPostgres` in `internal/embedded/postgres.go`); Ollama detection
+// can add 5s when absent (`DefaultOllamaDetectAttempts = 5` x
+// `DefaultOllamaDetectInterval = 1s` in `internal/embedded/ollama.go`); and the
+// 41 synchronous DB migration pairs in `internal/db/migrations` are typically
+// fast but additive. 120s keeps the Electron check bounded while covering the
+// realistic common case with headroom; a full 3x60s Postgres exhaustion should
+// surface as a genuine startup failure instead of waiting longer.
+export const DEFAULT_HEALTH_TIMEOUT_MS = 120_000
 const DEFAULT_KILL_TIMEOUT_MS = 5_000
 const DEFAULT_LOG_FILENAME = 'server.log'
 const electronApp = app as unknown as {
