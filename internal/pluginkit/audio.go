@@ -17,10 +17,14 @@ import (
 // or malformed responses cannot exhaust process memory before ffmpeg runs.
 const MaxFetchedAudioBytes = 1 << 30 // 1 GiB
 
+// fetchAudioBytesFn is a test hook so callers can count fetches without
+// changing the package's public API.
+var fetchAudioBytesFn = fetchAudioBytes
+
 // DecodePCM fetches an audio URL and decodes it to 16 kHz mono float32 PCM via
 // the external ffmpeg binary.
 func DecodePCM(ctx context.Context, audioURL string) ([]float32, error) {
-	raw, err := fetchAudioBytes(ctx, audioURL)
+	raw, err := fetchAudioBytesFn(ctx, audioURL)
 	if err != nil {
 		return nil, err
 	}
@@ -53,11 +57,42 @@ func DecodePCM(ctx context.Context, audioURL string) ([]float32, error) {
 }
 
 func DecodePCMChannels(ctx context.Context, audioURL string, channels int) ([][]float32, error) {
-	raw, err := fetchAudioBytes(ctx, audioURL)
+	raw, err := fetchAudioBytesFn(ctx, audioURL)
 	if err != nil {
 		return nil, err
 	}
+	return decodePCMChannelsFromBytes(ctx, raw, channels)
+}
 
+func decodePCMFromBytes(ctx context.Context, raw []byte) ([]float32, error) {
+	cmd := exec.CommandContext(ctx, ffmpegBin(),
+		"-hide_banner",
+		"-loglevel", "error",
+		"-i", "pipe:0",
+		"-f", "f32le",
+		"-ac", "1",
+		"-ar", "16000",
+		"pipe:1",
+	)
+	cmd.Stdin = bytes.NewReader(raw)
+
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+
+	if err := cmd.Run(); err != nil {
+		msg := strings.TrimSpace(stderr.String())
+		if msg != "" {
+			return nil, fmt.Errorf("ffmpeg decode failed: %w: %s", err, msg)
+		}
+		return nil, fmt.Errorf("ffmpeg decode failed: %w", err)
+	}
+
+	return decodeFFmpegF32LE(stdout.Bytes())
+}
+
+func decodePCMChannelsFromBytes(ctx context.Context, raw []byte, channels int) ([][]float32, error) {
 	cmd := exec.CommandContext(ctx, ffmpegBin(),
 		"-hide_banner",
 		"-loglevel", "error",

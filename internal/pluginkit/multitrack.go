@@ -4,7 +4,9 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"os/exec"
 	"regexp"
@@ -104,18 +106,22 @@ var nChannelsRe = regexp.MustCompile(`(\d+) channels`)
 // probeChannelCount reports the number of audio channels in the source. ffprobe
 // is NOT bundled in the desktop app (only ffmpeg is), so we probe with ffmpeg:
 // `-i pipe:0` with no output exits non-zero but still writes the stream info to
-// stderr, from which we read the channel layout. Returns 1 on any failure so the
-// caller falls back to a single-pass mono decode.
-func probeChannelCount(ctx context.Context, audioURL string) (int, error) {
-	raw, err := fetchAudioBytes(ctx, audioURL)
-	if err != nil {
-		return 1, err
-	}
+// stderr, from which we read the channel layout. If ffmpeg never starts, the
+// startup error is returned so the caller can log it before falling back.
+func probeChannelCount(ctx context.Context, raw []byte) (int, error) {
 	cmd := exec.CommandContext(ctx, ffmpegBin(), "-hide_banner", "-i", "pipe:0")
 	cmd.Stdin = bytes.NewReader(raw)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	_ = cmd.Run() // expected non-zero: no output file specified
+	runErr := cmd.Run() // expected non-zero: no output file specified
+	var execErr *exec.Error
+	if errors.As(runErr, &execErr) {
+		return 1, fmt.Errorf("probe channel count: %w", execErr)
+	}
+	var exitErr *exec.ExitError
+	if runErr != nil && !errors.As(runErr, &exitErr) {
+		return 1, fmt.Errorf("probe channel count: %w", runErr)
+	}
 	return channelsFromFFmpegStderr(stderr.String()), nil
 }
 
@@ -150,15 +156,26 @@ func channelsFromFFmpegStderr(stderr string) int {
 }
 
 func runMultitrack(ctx context.Context, audioURL string, eng Transcriber, req TranscribeRequest) (TranscribeResult, error) {
-	n, err := probeChannelCount(ctx, audioURL)
-	if err != nil || n <= 1 {
-		pcm, derr := DecodePCM(ctx, audioURL)
+	raw, err := fetchAudioBytesFn(ctx, audioURL)
+	if err != nil {
+		return TranscribeResult{}, err
+	}
+
+	n, probeErr := probeChannelCount(ctx, raw)
+	if probeErr != nil {
+		slog.WarnContext(ctx, "probe errored; falling back to mono decode", "error", probeErr)
+	} else if n <= 1 {
+		slog.DebugContext(ctx, "probe legitimately detected mono; falling back to mono decode", "channels", n)
+	}
+
+	if probeErr != nil || n <= 1 {
+		pcm, derr := decodePCMFromBytes(ctx, raw)
 		if derr != nil {
 			return TranscribeResult{}, derr
 		}
 		return eng.Transcribe(ctx, pcm, req)
 	}
-	channels, derr := DecodePCMChannels(ctx, audioURL, n)
+	channels, derr := decodePCMChannelsFromBytes(ctx, raw, n)
 	if derr != nil {
 		return TranscribeResult{}, derr
 	}

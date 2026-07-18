@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/binary"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"testing"
 
 	"github.com/abedegno/muesli/internal/model"
@@ -142,6 +144,79 @@ func TestRunMultitrackDecodesTwoChannels(t *testing.T) {
 	if res.Segments[0].Speaker != "You" || res.Segments[1].Speaker != "Them" {
 		t.Fatalf("segments = %+v", res.Segments)
 	}
+}
+
+func TestProbeChannelCountPropagatesExecError(t *testing.T) {
+	t.Setenv("MUESLI_FFMPEG_BIN", filepath.Join(t.TempDir(), "no-such-binary"))
+
+	if _, err := probeChannelCount(context.Background(), []byte("ignored")); err == nil {
+		t.Fatal("expected probeChannelCount to return an error")
+	}
+}
+
+func TestProbeChannelCountNormalNonZeroExitIsNotAnError(t *testing.T) {
+	ffmpeg := writeFFmpegStub(t, `#!/bin/sh
+printf '%s\n' '  Stream #0:0: Audio: opus, 48000 Hz, stereo, fltp (default)' >&2
+exit 1
+`)
+	t.Setenv("MUESLI_FFMPEG_BIN", ffmpeg)
+
+	got, err := probeChannelCount(context.Background(), []byte("ignored"))
+	if err != nil {
+		t.Fatalf("probeChannelCount returned error: %v", err)
+	}
+	if got != 2 {
+		t.Fatalf("probeChannelCount = %d, want 2", got)
+	}
+}
+
+func TestRunMultitrackFetchesAudioOnce(t *testing.T) {
+	ffmpeg := writeFFmpegStub(t, `#!/bin/sh
+case "$*" in
+  *"-f f32le"*)
+    printf '\0\0\0\0'
+    exit 0
+    ;;
+  *)
+    printf '%s\n' '  Stream #0:0: Audio: pcm_s16le, 16000 Hz, mono, s16' >&2
+    exit 1
+    ;;
+esac
+`)
+	t.Setenv("MUESLI_FFMPEG_BIN", ffmpeg)
+
+	origFetch := fetchAudioBytesFn
+	defer func() { fetchAudioBytesFn = origFetch }()
+	fetches := 0
+	fetchAudioBytesFn = func(ctx context.Context, audioURL string) ([]byte, error) {
+		fetches++
+		return fetchAudioBytes(ctx, audioURL)
+	}
+
+	eng := fakeMultitrackTranscriber(func(_ context.Context, _ []float32, _ TranscribeRequest) (TranscribeResult, error) {
+		return TranscribeResult{Segments: []model.Segment{{StartMS: 0, EndMS: 1, Text: "seg"}}}, nil
+	})
+	res, err := runMultitrack(context.Background(), stereoWAVDataURL(), eng, TranscribeRequest{Config: []byte(`{}`)})
+	if err != nil {
+		t.Fatalf("run multitrack: %v", err)
+	}
+	if fetches != 1 {
+		t.Fatalf("fetch count = %d, want 1", fetches)
+	}
+	if len(res.Segments) != 1 {
+		t.Fatalf("len(segments) = %d, want 1", len(res.Segments))
+	}
+}
+
+func writeFFmpegStub(t *testing.T, script string) string {
+	t.Helper()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "ffmpeg-stub.sh")
+	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
+		t.Fatalf("write ffmpeg stub: %v", err)
+	}
+	return path
 }
 
 type fakeMultitrackTranscriber func(context.Context, []float32, TranscribeRequest) (TranscribeResult, error)
