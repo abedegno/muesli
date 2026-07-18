@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { muesli } from '@/api'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
 import { Dialog } from '@/components/ui/Dialog'
+import { Skeleton } from '@/components/ui/Skeleton'
 import { useToast } from '@/components/ui/Toast'
 import {
   exportTemplateJSON,
@@ -52,21 +53,30 @@ async function readTemplateFileText(file: File): Promise<string> {
 }
 
 export function TemplatesScreen() {
-  const [templates, setTemplates] = useState<Template[]>([])
+  const [templates, setTemplates] = useState<Template[] | null>(null)
+  const [templatesError, setTemplatesError] = useState<string | null>(null)
   const [editing, setEditing] = useState<{ template?: Template } | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<Template | null>(null)
   const [previewing, setPreviewing] = useState<Template | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { notify } = useToast()
 
-  const reload = () => muesli.listTemplates().then(setTemplates)
-
-  useEffect(() => {
-    reload()
+  const reload = useCallback(async () => {
+    try {
+      const list = await muesli.listTemplates()
+      setTemplates(list)
+      setTemplatesError(null)
+    } catch (err) {
+      setTemplatesError(err instanceof Error ? err.message : 'Could not load templates')
+    }
   }, [])
 
-  const builtIns = templates.filter((t) => t.built_in)
-  const mine = templates.filter((t) => !t.built_in)
+  useEffect(() => {
+    void reload()
+  }, [reload])
+
+  const builtIns = (templates ?? []).filter((t) => t.built_in)
+  const mine = (templates ?? []).filter((t) => !t.built_in)
   const duplicate = async (t: Template) => {
     const name = uniqueDuplicateName(t.name, mine.map((m) => m.name))
     try {
@@ -76,6 +86,49 @@ export function TemplatesScreen() {
     } catch (err) {
       notify(err instanceof Error ? err.message : 'Could not duplicate template', 'error')
     }
+  }
+
+  if (templates === null && !templatesError) {
+    return (
+      <div className="mx-auto max-w-2xl p-6">
+        <div className="mb-6 h-9 w-36">
+          <Skeleton className="h-full w-full" />
+        </div>
+
+        <section className="mb-8">
+          <div className="mb-3 flex items-center justify-between">
+            <div className="h-5 w-32">
+              <Skeleton className="h-full w-full" />
+            </div>
+            <div className="flex items-center gap-2">
+              <Skeleton className="h-9 w-32" />
+              <Skeleton className="h-9 w-28" />
+            </div>
+          </div>
+          <div className="flex flex-col gap-2">
+            {Array.from({ length: 2 }).map((_, i) => (
+              <Skeleton key={i} className="h-16 w-full" />
+            ))}
+          </div>
+        </section>
+      </div>
+    )
+  }
+
+  if (templatesError) {
+    return (
+      <div className="mx-auto max-w-2xl p-6">
+        <div role="alert" className="rounded-[var(--radius)] border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
+          <p className="font-medium">Could not load templates.</p>
+          <p className="mt-1 break-words">{templatesError}</p>
+          <div className="mt-4">
+            <Button variant="secondary" size="sm" onClick={() => void reload()}>
+              Try again
+            </Button>
+          </div>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -96,9 +149,9 @@ export function TemplatesScreen() {
               className="hidden"
               onChange={async (e) => {
                 const file = e.target.files?.[0]
-              e.target.value = ''
-              if (!file) return
-              try {
+                e.target.value = ''
+                if (!file) return
+                try {
                   const text = await readTemplateFileText(file)
                   const data = parseTemplateImport(text)
                   await muesli.createTemplate(data.name, data.phase, data.sections, data.auto_run)
