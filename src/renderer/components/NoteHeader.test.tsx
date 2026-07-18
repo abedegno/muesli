@@ -2,12 +2,16 @@
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { muesli } from '@/api'
 
 vi.mock('@/api', () => ({ muesli: { updateTitle: vi.fn(), getCalendarEvents: vi.fn(async () => []) } }))
 
 import { NoteHeader } from './NoteHeader'
 
-afterEach(cleanup)
+afterEach(() => {
+  cleanup()
+  vi.clearAllMocks()
+})
 
 function renderHeader(
   onDeleteNote = vi.fn(),
@@ -58,6 +62,48 @@ describe('NoteHeader', () => {
     rerender(<NoteHeader {...props} title="Renamed remotely" />)
 
     expect(input.value).toBe('Draft title')
+  })
+
+  it('shows an inline error when updateTitle rejects and keeps the typed value', async () => {
+    const user = userEvent.setup()
+    vi.mocked(muesli.updateTitle).mockRejectedValueOnce(new Error('save failed'))
+    const { props } = renderHeader()
+    const input = screen.getByLabelText('Note title') as HTMLInputElement
+
+    await user.clear(input)
+    await user.type(input, 'Draft title')
+    fireEvent.blur(input)
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(/could not save title/i))
+    expect(props.onTitleSaved).not.toHaveBeenCalled()
+    expect(input).toHaveValue('Draft title')
+  })
+
+  it('pressing Enter in the title input commits the edit by blurring the field', async () => {
+    const user = userEvent.setup()
+    vi.mocked(muesli.updateTitle).mockResolvedValueOnce(undefined)
+    renderHeader()
+    const input = screen.getByLabelText('Note title') as HTMLInputElement
+
+    await user.clear(input)
+    await user.type(input, 'Draft title')
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    await waitFor(() => expect(muesli.updateTitle).toHaveBeenCalledWith('n1', 'Draft title'))
+    expect(muesli.updateTitle).toHaveBeenCalledTimes(1)
+  })
+
+  it('pressing Escape reverts the input value and does not call updateTitle', async () => {
+    const user = userEvent.setup()
+    renderHeader()
+    const input = screen.getByLabelText('Note title') as HTMLInputElement
+
+    await user.clear(input)
+    await user.type(input, 'Draft title')
+    fireEvent.keyDown(input, { key: 'Escape' })
+
+    expect(input).toHaveValue('Sprint planning')
+    expect(muesli.updateTitle).not.toHaveBeenCalled()
   })
 
   it('renders the overflow actions button', () => {
