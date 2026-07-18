@@ -94,16 +94,29 @@ func TestHashNormalizedRespectsContextTimeout(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	start := time.Now()
-	got, err := audiohash.HashNormalized(ctx, "ignored-input")
-	if err != nil {
-		t.Fatalf("hash normalized: %v", err)
+	type result struct {
+		got string
+		err error
 	}
-	if got != "" {
-		t.Fatalf("hash normalized = %q, want empty string", got)
-	}
-	if elapsed := time.Since(start); elapsed > time.Second {
-		t.Fatalf("hash normalized took %s, want prompt cancellation", elapsed)
+	resultCh := make(chan result, 1)
+	go func() {
+		got, err := audiohash.HashNormalized(ctx, "ignored-input")
+		resultCh <- result{got: got, err: err}
+	}()
+
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+
+	select {
+	case res := <-resultCh:
+		if res.err != nil {
+			t.Fatalf("hash normalized: %v", res.err)
+		}
+		if res.got != "" {
+			t.Fatalf("hash normalized = %q, want empty string", res.got)
+		}
+	case <-timer.C:
+		t.Fatal("hash normalized did not return promptly after context timeout")
 	}
 }
 
