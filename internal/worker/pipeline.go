@@ -28,6 +28,10 @@ import (
 // downloadTTL bounds how long the signed audio URL handed to a plugin is valid.
 const downloadTTL = 30 * time.Minute
 
+// hashNormalizedTimeout bounds the ffmpeg normalization step so a stalled child
+// process cannot hold the worker indefinitely.
+const hashNormalizedTimeout = 2 * time.Minute
+
 // ErrPluginNotConfigured marks a missing required default plugin as a terminal
 // operator configuration issue rather than an infrastructure failure.
 var ErrPluginNotConfigured = errors.New("no default plugin configured")
@@ -207,7 +211,7 @@ func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, err
 		return false, errors.New("note has no audio object key")
 	}
 
-	if rawHash, normalizedHash, err := p.hashNoteAudio(audioKey); err != nil {
+	if rawHash, normalizedHash, err := p.hashNoteAudio(ctx, audioKey); err != nil {
 		slog.WarnContext(ctx, "failed to hash note audio", "job_id", job.ID, "job_type", job.Type, "note_id", job.NoteID, "audio_key", audioKey, "error", err)
 	} else if rawHash != "" {
 		if err := p.store.SetNoteHashes(ctx, job.NoteID, rawHash, normalizedHash); err != nil {
@@ -313,7 +317,7 @@ func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, err
 	return false, nil
 }
 
-func (p *Processor) hashNoteAudio(audioKey string) (string, string, error) {
+func (p *Processor) hashNoteAudio(ctx context.Context, audioKey string) (string, string, error) {
 	rc, err := p.storage.Open(audioKey)
 	if err != nil {
 		return "", "", err
@@ -337,7 +341,10 @@ func (p *Processor) hashNoteAudio(audioKey string) (string, string, error) {
 		return "", "", err
 	}
 
-	normalizedHash, _ := audiohash.HashNormalized(tmp.Name())
+	hashCtx, cancel := context.WithTimeout(ctx, hashNormalizedTimeout)
+	defer cancel()
+
+	normalizedHash, _ := audiohash.HashNormalized(hashCtx, tmp.Name())
 	return rawHash, normalizedHash, nil
 }
 
