@@ -251,7 +251,6 @@ export function NoteView({
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0)
   const [transcriptAudioUrl, setTranscriptAudioUrl] = useState<string | null>(null)
   const [audioCurrentTime, setAudioCurrentTime] = useState(0)
-  const [manualServer, setManualServer] = useState(false)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const noteViewRef = useRef<HTMLDivElement | null>(null)
   // 0-based transcript segment index to scroll to + highlight when a citation chip is clicked.
@@ -261,21 +260,6 @@ export function NoteView({
   // rename re-labels the transcript immediately without a refetch.
   const [speakerOverrides, setSpeakerOverrides] = useState<Record<string, string>>({})
   useEffect(() => { setSpeakerOverrides({}) }, [full.note.id])
-  useEffect(() => {
-    let cancelled = false
-    const getManualServer = muesli?.getManualServer
-    if (typeof getManualServer !== 'function') return
-    void getManualServer()
-      .then((value) => {
-        if (!cancelled) setManualServer(value)
-      })
-      .catch(() => {
-        if (!cancelled) setManualServer(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
   useEffect(() => {
     setTab(hasAnySummary(full.summaries) ? 'enhanced' : 'transcript')
     // Re-derive only on note change, not on every summaries update -- a summary
@@ -414,6 +398,10 @@ export function NoteView({
 
   const currentEntry = entries.find((e) => e.templateId === selectedTemplateId)
   const active = currentEntry?.summary
+  const currentEntryHasSummary = !!currentEntry?.summary
+  const summaryActionLabel = currentEntryHasSummary ? 'Regenerate' : 'Generate'
+  const summaryActionAriaLabel = currentEntryHasSummary ? 'Regenerate summary' : 'Generate summary'
+  const SummaryActionIcon = currentEntryHasSummary ? RefreshCw : Sparkles
   const isRegeneratingCurrent = !!currentEntry && regeneratingTemplateId === currentEntry.templateId
   const findQueryTrimmed = findQuery.trim()
   const summaryMatchCount = useMemo(
@@ -619,13 +607,13 @@ export function NoteView({
             {tab === 'enhanced' && onRegenerateTemplate && currentEntry && (
               <button
                 type="button"
-                aria-label="Regenerate summary"
+                aria-label={summaryActionAriaLabel}
                 aria-busy={isRegeneratingCurrent}
                 disabled={isRegeneratingCurrent}
                 onClick={() => onRegenerateTemplate(currentEntry.templateId)}
                 className="inline-flex items-center gap-1 rounded-[var(--radius)] px-3 py-1 text-sm font-medium text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <RefreshCw size={16} className={cn(isRegeneratingCurrent && 'animate-spin')} /> Regenerate
+                <SummaryActionIcon size={16} className={cn(isRegeneratingCurrent && 'animate-spin')} /> {summaryActionLabel}
               </button>
             )}
             <button
@@ -690,21 +678,33 @@ export function NoteView({
             ) : isTerminal(full.note.status) && transcriptSegments.length > 0 && noTemplateHasEverSummarized(entries) ? (
               <div className="mx-auto flex max-w-sm flex-col items-center gap-2 rounded-[var(--radius)] border border-border bg-card px-6 py-10 text-center">
                 <p className="text-sm font-medium text-foreground">No AI summary yet</p>
-                {manualServer ? (
-                  <p className="text-sm text-muted-foreground">
-                    No default AI agent is configured on this server. Ask your administrator to configure one.
-                  </p>
-                ) : (
-                  <p className="text-sm text-muted-foreground">
-                    Muesli summarizes with Ollama.{' '}
-                    <a className="underline underline-offset-2 hover:no-underline" href="https://ollama.com/download" target="_blank" rel="noreferrer">
-                      Install Ollama
-                    </a>
-                  </p>
-                )}
+                <p className="text-sm text-muted-foreground">
+                  Muesli summarizes with Ollama.{' '}
+                  <a className="underline underline-offset-2 hover:no-underline" href="https://ollama.com/download" target="_blank" rel="noreferrer">
+                    Install Ollama
+                  </a>
+                </p>
                 <p className="text-sm text-muted-foreground">Your transcript is on the Transcript tab.</p>
                 <Button type="button" variant="secondary" size="sm" className="mt-2" onClick={() => setTab('transcript')}>
                   View transcript
+                </Button>
+              </div>
+            ) : templates && templates.length > 0 && currentEntry && onRegenerateTemplate ? (
+              <div className="mx-auto flex max-w-sm flex-col items-center gap-2 rounded-[var(--radius)] border border-border bg-card px-6 py-10 text-center">
+                <p className="text-sm font-medium text-foreground">No summary yet</p>
+                <p className="text-sm text-muted-foreground">
+                  Generate a summary with the currently selected template.
+                </p>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="mt-2"
+                  aria-busy={isRegeneratingCurrent}
+                  disabled={isRegeneratingCurrent}
+                  onClick={() => onRegenerateTemplate(currentEntry.templateId)}
+                >
+                  <SummaryActionIcon size={16} className={cn(isRegeneratingCurrent && 'animate-spin')} /> {summaryActionLabel}
                 </Button>
               </div>
             ) : (
