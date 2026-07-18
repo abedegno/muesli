@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { muesli } from '@/api'
 import { Button } from '@/components/ui/Button'
+import { Dialog } from '@/components/ui/Dialog'
 import { loadCalendarPrefs, saveCalendarPrefs } from '@/lib/calendarPrefs'
+import { useToast } from '@/components/ui/Toast'
 import type { DigestConfig } from '../../shared/types'
 
 type Theme = 'system' | 'light' | 'dark'
@@ -23,7 +25,10 @@ export function SettingsScreen({
     () => loadCalendarPrefs().autoRecordDetectedMeetings,
   )
   const [digestCadence, setDigestCadence] = useState<DigestConfig['cadence']>('off')
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false)
+  const [confirmResetToBuiltIn, setConfirmResetToBuiltIn] = useState(false)
   const navigate = useNavigate()
+  const { notify } = useToast()
 
   useEffect(() => {
     muesli.getConfig().then((cfg) => setServerUrl(cfg?.serverUrl ?? ''))
@@ -140,28 +145,30 @@ export function SettingsScreen({
             {googleOAuthConfigured ? (
               <Button
                 variant="secondary"
-                onClick={async () => {
-                  try {
-                    await muesli.openGoogleCalendarOAuthStart()
-                  } catch (err) {
-                    console.error('failed to open Google Calendar OAuth start URL', err)
-                  }
-                }}
-              >
+              onClick={async () => {
+                try {
+                  await muesli.openGoogleCalendarOAuthStart()
+                } catch (err) {
+                  console.error('failed to open Google Calendar OAuth start URL', err)
+                  notify(err instanceof Error ? err.message : 'Could not open Google Calendar OAuth start URL', 'error')
+                }
+              }}
+            >
                 Connect Google Calendar
               </Button>
             ) : null}
             {microsoftOAuthConfigured ? (
               <Button
                 variant="secondary"
-                onClick={async () => {
-                  try {
-                    await muesli.openMicrosoftCalendarOAuthStart()
-                  } catch (err) {
-                    console.error('failed to open Microsoft Calendar OAuth start URL', err)
-                  }
-                }}
-              >
+              onClick={async () => {
+                try {
+                  await muesli.openMicrosoftCalendarOAuthStart()
+                } catch (err) {
+                  console.error('failed to open Microsoft Calendar OAuth start URL', err)
+                  notify(err instanceof Error ? err.message : 'Could not open Microsoft Calendar OAuth start URL', 'error')
+                }
+              }}
+            >
                 Connect Microsoft Calendar
               </Button>
             ) : null}
@@ -183,6 +190,7 @@ export function SettingsScreen({
                 await muesli.updateDigestConfig(next)
               } catch (err) {
                 console.error('failed to update digest cadence', err)
+                notify(err instanceof Error ? err.message : 'Could not update digest cadence', 'error')
                 setDigestCadence(prev)
               }
             }}
@@ -201,33 +209,80 @@ export function SettingsScreen({
       </section>
       <Button
         variant="destructive"
-        onClick={async () => {
-          if (!window.confirm('Disconnect from this server? You will need to sign in again to reconnect.')) return
-          await muesli.disconnect()
-          onDisconnected()
-        }}
+        onClick={() => setConfirmDisconnect(true)}
       >
         Disconnect
       </Button>
       <div className="mt-3">
         <Button
           variant="secondary"
-          onClick={async () => {
-            if (
-              !window.confirm(
-                "Switch to this device's built-in server? Your connection to the current server will be forgotten.",
-              )
-            )
-              return
-            await muesli.resetToBuiltIn()
-            const cfg = await muesli.getConfig()
-            setServerUrl(cfg?.serverUrl ?? '')
-            await onResetToBuiltIn()
-          }}
+          onClick={() => setConfirmResetToBuiltIn(true)}
         >
           Use this device&apos;s built-in server
         </Button>
       </div>
+      {confirmDisconnect ? (
+        <Dialog open onOpenChange={(o) => !o && setConfirmDisconnect(false)} title="Disconnect from this server?">
+          <p className="text-sm text-muted-foreground">
+            Disconnect from this server? You will need to sign in again to reconnect.
+          </p>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setConfirmDisconnect(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={async () => {
+                try {
+                  await muesli.disconnect()
+                  setConfirmDisconnect(false)
+                  onDisconnected()
+                } catch (err) {
+                  setConfirmDisconnect(false)
+                  notify(err instanceof Error ? err.message : 'Could not disconnect from server', 'error')
+                }
+              }}
+            >
+              Disconnect
+            </Button>
+          </div>
+        </Dialog>
+      ) : null}
+      {confirmResetToBuiltIn ? (
+        <Dialog
+          open
+          onOpenChange={(o) => !o && setConfirmResetToBuiltIn(false)}
+          title="Switch to this device's built-in server?"
+        >
+          <p className="text-sm text-muted-foreground">
+            Switch to this device&apos;s built-in server? Your connection to the current server will be forgotten.
+          </p>
+          <div className="mt-4 flex justify-end gap-2">
+            <Button variant="secondary" size="sm" onClick={() => setConfirmResetToBuiltIn(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={async () => {
+                try {
+                  await muesli.resetToBuiltIn()
+                  const cfg = await muesli.getConfig()
+                  setServerUrl(cfg?.serverUrl ?? '')
+                  setConfirmResetToBuiltIn(false)
+                  await onResetToBuiltIn()
+                } catch (err) {
+                  setConfirmResetToBuiltIn(false)
+                  notify(err instanceof Error ? err.message : 'Could not switch to built-in server', 'error')
+                }
+              }}
+            >
+              Switch to built-in server
+            </Button>
+          </div>
+        </Dialog>
+      ) : null}
     </div>
   )
 }
