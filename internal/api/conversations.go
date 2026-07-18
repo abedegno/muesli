@@ -72,7 +72,7 @@ func (s *Server) handleCreateConversation(w http.ResponseWriter, r *http.Request
 		return
 	case errors.Is(err, errNoDefaultAgentPlugin):
 		log.Printf("handleCreateConversation: send: %v", err)
-		writeError(w, http.StatusInternalServerError, "internal error")
+		writeError(w, http.StatusUnprocessableEntity, "no default agent configured")
 		return
 	case err != nil:
 		log.Printf("handleCreateConversation: send: %v", err)
