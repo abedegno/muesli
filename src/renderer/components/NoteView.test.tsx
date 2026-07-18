@@ -17,6 +17,7 @@ const {
   listConversationsMock,
   listMessagesMock,
   getNoteAudioUrlMock,
+  getManualServerMock,
 } = vi.hoisted(() => {
   const muesliMock = {
     listSpeakerAliases: vi.fn().mockResolvedValue([]),
@@ -24,6 +25,7 @@ const {
     listConversations: vi.fn().mockResolvedValue([]),
     listMessages: vi.fn().mockResolvedValue([]),
     getNoteAudioUrl: vi.fn().mockResolvedValue({ url: 'http://example.test/audio', expires_at: new Date().toISOString() }),
+    getManualServer: vi.fn().mockResolvedValue(false),
   }
   return {
     muesliMock,
@@ -32,6 +34,7 @@ const {
     listConversationsMock: muesliMock.listConversations,
     listMessagesMock: muesliMock.listMessages,
     getNoteAudioUrlMock: muesliMock.getNoteAudioUrl,
+    getManualServerMock: muesliMock.getManualServer,
   }
 })
 
@@ -49,7 +52,9 @@ beforeEach(() => {
   listConversationsMock.mockReset().mockResolvedValue([])
   listMessagesMock.mockReset().mockResolvedValue([])
   getNoteAudioUrlMock.mockReset().mockResolvedValue({ url: 'http://example.test/audio', expires_at: new Date().toISOString() })
+  getManualServerMock.mockReset().mockResolvedValue(false)
   muesliMock.getNoteAudioUrl = getNoteAudioUrlMock
+  muesliMock.getManualServer = getManualServerMock
   writeClipboardTextMock.mockReset().mockResolvedValue(undefined)
 })
 
@@ -631,6 +636,17 @@ describe('NoteView — full template list + regenerate (TPL01)', () => {
 
     await userEvent.click(screen.getByRole('button', { name: 'View transcript' }))
     expect(screen.getByRole('radio', { name: 'Transcript' })).toHaveAttribute('data-state', 'on')
+  })
+
+  it('shows hosted-mode operator copy without the Ollama link', async () => {
+    getManualServerMock.mockResolvedValueOnce(true)
+
+    render(<NoteView full={fullNoSummaries} onSaveBody={async () => {}} />)
+
+    await userEvent.click(screen.getByRole('radio', { name: 'Enhanced' }))
+    expect(await screen.findByText(/no default ai agent is configured on this server/i)).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'Install Ollama' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/muesli summarizes with ollama/i)).not.toBeInTheDocument()
   })
 
   it('keeps the plain empty state when processing is still in progress', () => {
