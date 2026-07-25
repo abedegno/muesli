@@ -251,7 +251,7 @@ export function AppLayout() {
   }
 
   return (
-    <div className="app-layout flex h-full [container-type:inline-size]">
+    <div className="app-layout flex h-full min-h-0 [container-type:inline-size]">
       <Sidebar
         collapsed={collapsed} width={width} onToggleCollapsed={toggleCollapsed} onResize={setWidth}
         query={query} onQuery={setQuery}
