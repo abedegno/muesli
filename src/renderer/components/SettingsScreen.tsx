@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useEffect, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
 import { muesli } from '@/api'
 import { Button } from '@/components/ui/Button'
 import { Dialog } from '@/components/ui/Dialog'
@@ -14,6 +14,84 @@ type HealthState =
   | { status: 'connected'; version?: string }
   | { status: 'sign-in-required' }
   | { status: 'unreachable' }
+
+const AI_SECTION_ID = 'ai-transcription'
+
+function AiTranscriptionSection() {
+  const [ollamaDetected, setOllamaDetected] = useState<boolean | null>(null)
+  const sectionRef = useRef<HTMLElement | null>(null)
+  const location = useLocation()
+
+  useEffect(() => {
+    if (location.hash !== `#${AI_SECTION_ID}`) return
+    if (typeof sectionRef.current?.scrollIntoView === 'function') {
+      sectionRef.current.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    }
+    sectionRef.current?.focus()
+  }, [location.hash])
+
+  useEffect(() => {
+    let cancelled = false
+    let intervalId: number | null = null
+
+    const refresh = async () => {
+      try {
+        const status = await muesli.getReadyz()
+        if (!cancelled) setOllamaDetected(status?.ollamaDetected ?? null)
+      } catch {
+        if (!cancelled) setOllamaDetected(null)
+      }
+    }
+
+    void refresh()
+    intervalId = window.setInterval(() => {
+      void refresh()
+    }, 1000)
+
+    return () => {
+      cancelled = true
+      if (intervalId !== null) window.clearInterval(intervalId)
+    }
+  }, [])
+
+  const detected = ollamaDetected === true
+  const detectedLabel = ollamaDetected === null ? 'Detection unavailable' : detected ? 'Detected' : 'Not detected'
+
+  return (
+    <section
+      id={AI_SECTION_ID}
+      ref={sectionRef}
+      tabIndex={-1}
+      className="mb-6 scroll-mt-6"
+      aria-labelledby="ai-transcription-heading"
+    >
+      <h2 id="ai-transcription-heading" className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">
+        AI / Transcription
+      </h2>
+      <p className="text-sm">
+        Ollama status: <span className="font-medium text-foreground">{detectedLabel}</span>
+      </p>
+      <p className="mt-1 text-sm text-muted-foreground">
+        {detected
+          ? 'Summaries and search are available.'
+          : 'Without Ollama, summaries and search stay unavailable.'}
+      </p>
+      <div className="mt-3 flex flex-wrap items-center gap-2">
+        <a
+          className="inline-flex h-10 items-center justify-center rounded-[var(--radius)] bg-muted px-4 text-sm font-medium text-foreground hover:bg-muted/80"
+          href="https://ollama.com/download"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Download Ollama
+        </a>
+        <span className="text-xs text-muted-foreground">
+          Detection updates live while this screen is open.
+        </span>
+      </div>
+    </section>
+  )
+}
 
 export function SettingsScreen({
   onDisconnected,
@@ -109,6 +187,7 @@ export function SettingsScreen({
         <p className="text-sm">{serverUrl || 'Not connected'}</p>
         <ServerHealthBadge serverUrl={serverUrl} />
       </section>
+      <AiTranscriptionSection />
       <section className="mb-6">
         <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">Appearance</h2>
         <div className="flex gap-2">

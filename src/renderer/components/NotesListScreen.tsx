@@ -195,19 +195,15 @@ function OnboardingHint() {
     >
       <li>
         <span className="font-medium text-foreground">1. Click &ldquo;New meeting&rdquo;</span>
-        {' — '}open the desktop client, hit <em>New meeting</em>, and recording starts immediately.
+        {' — '}start a new meeting here to begin recording your microphone and system audio.
       </li>
       <li>
-        <span className="font-medium text-foreground">2. Record your meeting</span>
-        {' — '}the desktop client captures your mic and system audio and uploads it when you stop.
+        <span className="font-medium text-foreground">2. Let the app process it</span>
+        {' — '}the recording goes to your connected server, which transcribes it and creates the summary.
       </li>
       <li>
-        <span className="font-medium text-foreground">3. Get your transcript &amp; AI summary</span>
-        {' — '}the server automatically transcribes the audio and produces an AI-generated summary.
-      </li>
-      <li>
-        <span className="font-medium text-foreground">4. Your note appears here</span>
-        {' — '}once processing is complete, the finished note lands in this list, ready to read and search.
+        <span className="font-medium text-foreground">3. Review the finished note</span>
+        {' — '}when processing finishes, the note appears in this list, ready to open, search, and refine.
       </li>
     </ol>
   )

@@ -410,9 +410,14 @@ describe('USE04 first-run onboarding hint', () => {
     const hint = document.querySelector('[data-testid="onboarding-hint"]')
     expect(hint).toBeInTheDocument()
     expect(hint!.textContent).toMatch(/new meeting/i)
-    expect(hint!.textContent).toMatch(/transcript/i)
-    expect(hint!.textContent).toMatch(/summary/i)
-    expect(hint!.textContent).toMatch(/lands in this list/i)
+    expect(hint!.textContent).toMatch(/recording your microphone and system audio/i)
+    expect(hint!.textContent).toMatch(/your connected server/i)
+    expect(hint!.textContent).toMatch(/processing finishes/i)
+    expect(hint!.textContent).toMatch(/appears in this list/i)
+    expect(hint!.textContent).not.toMatch(/open the desktop client/i)
+    expect(hint!.textContent).not.toMatch(/the desktop client/i)
+    expect(hint!.textContent).not.toMatch(/uploads/i)
+    expect(hint!.textContent).not.toMatch(/\bthe server\b/i)
   })
 
   it('does NOT show the onboarding hint in a filtered (folder) empty state', () => {
