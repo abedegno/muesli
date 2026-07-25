@@ -62,21 +62,49 @@ function isPromiseLike<T>(value: unknown): value is PromiseLike<T> {
 
 const rawBridge = window.muesli ?? ({} as MuesliBridge)
 
-export const muesli: MuesliBridge = new Proxy(rawBridge, {
-  get(target, prop, receiver) {
-    const value = Reflect.get(target, prop, receiver)
-    if (typeof value !== 'function') return value
-    return (...args: unknown[]) => {
-      try {
-        const result = value.apply(target, args)
-        return isPromiseLike(result)
-          ? Promise.resolve(result).catch((err: unknown) => {
-              throw normalizeBridgeError(err)
-            })
-          : result
-      } catch (err) {
-        throw normalizeBridgeError(err)
-      }
+type AnyFn = (...args: unknown[]) => unknown
+
+// Wrap one bridge call so both sync throws and promise rejections come back as
+// a normalised `BridgeError` (see normalizeBridgeError).
+function wrapCall(fn: AnyFn, thisArg: object): AnyFn {
+  return (...args: unknown[]) => {
+    try {
+      const result = fn.apply(thisArg, args)
+      return isPromiseLike(result)
+        ? Promise.resolve(result).catch((err: unknown) => {
+            throw normalizeBridgeError(err)
+          })
+        : result
+    } catch (err) {
+      throw normalizeBridgeError(err)
     }
-  },
-}) as MuesliBridge
+  }
+}
+
+// Build a PLAIN object of wrapped members — deliberately NOT a `Proxy` over the
+// bridge.
+//
+// `contextBridge.exposeInMainWorld` installs every member as a read-only,
+// non-configurable data property. A proxy `get` trap that returns anything
+// other than the target's own value for such a property violates a JavaScript
+// proxy invariant, so the engine throws on the FIRST member access:
+//
+//   TypeError: 'get' on proxy: property 'onEmbeddedStartupStatus' is a read-only
+//   and non-configurable data property on the proxy target but the proxy did not
+//   return its actual value
+//
+// In the packaged app that fires while mounting the startup gate, before React
+// renders anything — a blank window (shipped in desktop v0.1.10). Plain-object
+// copies carry no such invariant. Copying eagerly is safe: the bridge is
+// established once at preload and never gains members afterwards.
+function buildBridge(raw: MuesliBridge): MuesliBridge {
+  const source = raw as unknown as Record<string, unknown>
+  const wrapped: Record<string, unknown> = {}
+  for (const key of Object.keys(source)) {
+    const value = source[key]
+    wrapped[key] = typeof value === 'function' ? wrapCall(value as AnyFn, raw) : value
+  }
+  return wrapped as unknown as MuesliBridge
+}
+
+export const muesli: MuesliBridge = buildBridge(rawBridge)
