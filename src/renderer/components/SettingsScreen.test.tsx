@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { ToastProvider } from '@/components/ui/Toast'
@@ -193,6 +193,23 @@ describe('SettingsScreen', () => {
     await waitFor(() => expect(updateDigestConfig).toHaveBeenCalledWith('weekly'))
   })
 
+  it('keeps the cadence control a real, keyboard-operable combobox associated with its Cadence label', async () => {
+    const user = userEvent.setup()
+    getDigestConfig.mockResolvedValue({ owner_id: 'owner-1', cadence: 'off' })
+
+    renderScreen()
+
+    const cadence = await screen.findByRole('combobox', { name: 'Cadence' })
+    expect(screen.getByLabelText('Cadence')).toBe(cadence)
+    expect(cadence.tagName).toBe('SELECT')
+
+    cadence.focus()
+    expect(cadence).toHaveFocus()
+
+    await user.selectOptions(cadence, 'daily')
+    await waitFor(() => expect(updateDigestConfig).toHaveBeenCalledWith('daily'))
+  })
+
   it('reverts the digest cadence and shows an error when updating fails', async () => {
     const user = userEvent.setup()
     getDigestConfig.mockResolvedValue({ owner_id: 'owner-1', cadence: 'daily' })
@@ -303,6 +320,21 @@ describe('SettingsScreen', () => {
 
     expect(toggle).toBeChecked()
     expect(localStorage.getItem('muesli.calendar.autoRecordDetectedMeetings')).toBe('1')
+  })
+
+  it('keeps the auto-record control a real, keyboard-operable checkbox with an accessible name', async () => {
+    renderScreen('')
+
+    const toggle = await screen.findByRole('checkbox', { name: /auto-record/i })
+    expect(toggle.tagName).toBe('INPUT')
+    expect(toggle).toHaveAttribute('type', 'checkbox')
+    expect(toggle).not.toBeChecked()
+
+    toggle.focus()
+    expect(toggle).toHaveFocus()
+
+    fireEvent.click(toggle)
+    expect(toggle).toBeChecked()
   })
 
   it('opens the built-in reset dialog and confirms the reset', async () => {
