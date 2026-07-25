@@ -243,7 +243,7 @@ export function Sidebar({
 
   if (collapsed) {
     return (
-      <aside className="flex h-full w-12 shrink-0 flex-col items-center gap-2 border-r border-border bg-app-chrome py-3">
+      <aside className="flex h-full w-12 shrink-0 flex-col items-center gap-2 overflow-hidden border-r border-border bg-app-chrome py-3">
         <button aria-label="Expand sidebar" title="Expand sidebar (⌘\)" onClick={onToggleCollapsed}
           className="rounded-[var(--radius)] p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground">
           <PanelLeft size={18} />
@@ -265,7 +265,7 @@ export function Sidebar({
   }
 
   return (
-    <aside ref={asideRef} style={{ width }} className="relative flex h-full shrink-0 flex-col gap-3 border-r border-border bg-app-chrome p-3">
+    <aside ref={asideRef} style={{ width }} className="relative flex h-full min-h-0 shrink-0 flex-col gap-3 overflow-hidden border-r border-border bg-app-chrome p-3">
       <div className="flex items-center justify-between px-1 py-1">
         <span className="flex items-center gap-2 text-sm font-semibold">🥣 Muesli</span>
         <button aria-label="Collapse sidebar" title="Collapse sidebar (⌘\)" onClick={onToggleCollapsed}
@@ -285,188 +285,190 @@ export function Sidebar({
         <input aria-label="Search notes" value={query} onChange={(e) => onQuery(e.target.value)} placeholder="Search…"
           className="h-9 w-full rounded-[var(--radius)] border border-input bg-background pl-8 pr-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
       </label>
-      {query.trim() && (
-        <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
-          <label className="flex items-center gap-1">
-            From
-            <input
-              type="date"
-              aria-label="Search from date"
-              value={dateFrom}
-              onChange={(e) => onDateFrom(e.target.value)}
-              className="h-7 rounded-[var(--radius)] border border-input bg-background px-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-          </label>
-          <label className="flex items-center gap-1">
-            To
-            <input
-              type="date"
-              aria-label="Search to date"
-              value={dateTo}
-              onChange={(e) => onDateTo(e.target.value)}
-              className="h-7 rounded-[var(--radius)] border border-input bg-background px-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            />
-          </label>
-        </div>
-      )}
-      {query.trim() && (
-        <button onClick={() => onSaveSearchAsList(query.trim())}
-          className="flex items-center gap-1 px-1 text-xs text-primary hover:underline">
-          <Filter size={12} /> Save as smart list
-        </button>
-      )}
-
-      <nav className="flex-1 overflow-y-auto">
-        <NavLink to="/" end onClick={() => onSelectView({ type: 'all' })}
-          className={cn(rowBase, activeView.type === 'all' ? active : idle)}>
-          <span className="flex items-center gap-2"><FileText size={14} /> All notes</span>
-        </NavLink>
-
-        {folders.length > 0 ? (
-          <>
-            <div
-              className={cn(section, 'flex items-center justify-between rounded-[var(--radius)]', dragOverFolder === '' && 'ring-1 ring-primary')}
-              onDragOver={(e) => { if (isFolderDrag(e)) { e.preventDefault(); setDragOverFolder('') } }}
-              onDragLeave={() => setDragOverFolder((cur) => (cur === '' ? null : cur))}
-              onDrop={(e) => {
-                setDragOverFolder(null)
-                const folderId = e.dataTransfer.getData('text/folder-id')
-                if (folderId) onReparentFolder(folderId, null)
-              }}>
-              <span><FolderIcon size={12} className="mr-1 inline" /> Folders</span>
-              <button aria-label="New folder" onClick={onNewFolder} className="hover:text-primary"><Plus size={12} /></button>
-            </div>
-            <ul className="flex flex-col">{renderFolders(null, 0)}</ul>
-          </>
-        ) : (
-          <button onClick={onNewFolder} className={cn(section, 'flex w-full items-center gap-1 hover:text-primary')}>
-            <Plus size={12} /> New folder
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {query.trim() && (
+          <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
+            <label className="flex items-center gap-1">
+              From
+              <input
+                type="date"
+                aria-label="Search from date"
+                value={dateFrom}
+                onChange={(e) => onDateFrom(e.target.value)}
+                className="h-7 rounded-[var(--radius)] border border-input bg-background px-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </label>
+            <label className="flex items-center gap-1">
+              To
+              <input
+                type="date"
+                aria-label="Search to date"
+                value={dateTo}
+                onChange={(e) => onDateTo(e.target.value)}
+                className="h-7 rounded-[var(--radius)] border border-input bg-background px-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              />
+            </label>
+          </div>
+        )}
+        {query.trim() && (
+          <button onClick={() => onSaveSearchAsList(query.trim())}
+            className="flex items-center gap-1 px-1 text-xs text-primary hover:underline">
+            <Filter size={12} /> Save as smart list
           </button>
         )}
 
-        {lists.length > 0 ? (
-          <>
-            <div className={cn(section, 'flex items-center justify-between')}>
-              <span><Filter size={12} className="mr-1 inline" /> Smart lists</span>
-              <button aria-label="New smart list" onClick={onNewList} className="hover:text-primary"><Plus size={12} /></button>
-            </div>
-            <ul className="flex flex-col">
-              {lists.map((l) => {
-                const desc = describeRule(l.rule)
-                return (
-                  <li key={l.id}
-                    onMouseEnter={() => setHoveredListId(l.id)}
-                    onMouseLeave={() => setHoveredListId((cur) => (cur === l.id ? null : cur))}
-                    onFocus={() => setFocusedListId(l.id)}
-                    onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setFocusedListId(null) }}>
+        <nav className="flex-1 overflow-y-auto">
+          <NavLink to="/" end onClick={() => onSelectView({ type: 'all' })}
+            className={cn(rowBase, activeView.type === 'all' ? active : idle)}>
+            <span className="flex items-center gap-2"><FileText size={14} /> All notes</span>
+          </NavLink>
+
+          {folders.length > 0 ? (
+            <>
+              <div
+                className={cn(section, 'flex items-center justify-between rounded-[var(--radius)]', dragOverFolder === '' && 'ring-1 ring-primary')}
+                onDragOver={(e) => { if (isFolderDrag(e)) { e.preventDefault(); setDragOverFolder('') } }}
+                onDragLeave={() => setDragOverFolder((cur) => (cur === '' ? null : cur))}
+                onDrop={(e) => {
+                  setDragOverFolder(null)
+                  const folderId = e.dataTransfer.getData('text/folder-id')
+                  if (folderId) onReparentFolder(folderId, null)
+                }}>
+                <span><FolderIcon size={12} className="mr-1 inline" /> Folders</span>
+                <button aria-label="New folder" onClick={onNewFolder} className="hover:text-primary"><Plus size={12} /></button>
+              </div>
+              <ul className="flex flex-col">{renderFolders(null, 0)}</ul>
+            </>
+          ) : (
+            <button onClick={onNewFolder} className={cn(section, 'flex w-full items-center gap-1 hover:text-primary')}>
+              <Plus size={12} /> New folder
+            </button>
+          )}
+
+          {lists.length > 0 ? (
+            <>
+              <div className={cn(section, 'flex items-center justify-between')}>
+                <span><Filter size={12} className="mr-1 inline" /> Smart lists</span>
+                <button aria-label="New smart list" onClick={onNewList} className="hover:text-primary"><Plus size={12} /></button>
+              </div>
+              <ul className="flex flex-col">
+                {lists.map((l) => {
+                  const desc = describeRule(l.rule)
+                  return (
+                    <li key={l.id}
+                      onMouseEnter={() => setHoveredListId(l.id)}
+                      onMouseLeave={() => setHoveredListId((cur) => (cur === l.id ? null : cur))}
+                      onFocus={() => setFocusedListId(l.id)}
+                      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setFocusedListId(null) }}>
+                      <ContextMenu>
+                      <ContextMenuTrigger asChild>
+                      <div className={cn(rowBase, 'items-start', activeView.type === 'list' && activeView.id === l.id ? active : idle)}>
+                        <button
+                          onClick={() => selectView({ type: 'list', id: l.id })}
+                          onDoubleClick={() => onEditList(l)}
+                          className="flex min-w-0 flex-1 items-start text-left">
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate">{l.name}</span>
+                            {desc && <span className="block truncate text-xs text-muted-foreground">{desc}</span>}
+                          </span>
+                          <span className="ml-2 shrink-0 text-xs text-muted-foreground">{listCount(l)}</span>
+                        </button>
+                        {showListMore(l.id) && (
+                          <DropdownMenu onOpenChange={(open) => setOpenListDropdownId(open ? l.id : null)}>
+                            <DropdownMenuTrigger asChild>
+                              <button
+                                aria-label={`More actions for ${l.name}`}
+                                onClick={(e) => e.stopPropagation()}
+                                className="ml-1 shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground">
+                                <MoreHorizontal size={14} />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent align="end">
+                              <DropdownMenuItem onSelect={() => onEditList(l)}>Edit rule…</DropdownMenuItem>
+                              <DropdownMenuItem destructive onSelect={() => onDeleteList(l.id)}>Move to Trash</DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        )}
+                      </div>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent>
+                        <ContextMenuItem onSelect={() => onEditList(l)}>Edit rule…</ContextMenuItem>
+                        <ContextMenuItem destructive onSelect={() => onDeleteList(l.id)}>Move to Trash</ContextMenuItem>
+                      </ContextMenuContent>
+                      </ContextMenu>
+                    </li>
+                  )
+                })}
+              </ul>
+            </>
+          ) : (
+            <button onClick={onNewList} className={cn(section, 'flex w-full items-center gap-1 hover:text-primary')}>
+              <Plus size={12} /> New smart list
+            </button>
+          )}
+
+          {tags.length > 0 && (
+            <>
+              <div className={section}><TagIcon size={12} className="mr-1 inline" /> Tags</div>
+              <ul className="flex flex-col">
+                {tags.map((t) => (
+                  <li key={t.name}>
                     <ContextMenu>
                     <ContextMenuTrigger asChild>
-                    <div className={cn(rowBase, 'items-start', activeView.type === 'list' && activeView.id === l.id ? active : idle)}>
-                      <button
-                        onClick={() => selectView({ type: 'list', id: l.id })}
-                        onDoubleClick={() => onEditList(l)}
-                        className="flex min-w-0 flex-1 items-start text-left">
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate">{l.name}</span>
-                          {desc && <span className="block truncate text-xs text-muted-foreground">{desc}</span>}
-                        </span>
-                        <span className="ml-2 shrink-0 text-xs text-muted-foreground">{listCount(l)}</span>
-                      </button>
-                      {showListMore(l.id) && (
-                        <DropdownMenu onOpenChange={(open) => setOpenListDropdownId(open ? l.id : null)}>
-                          <DropdownMenuTrigger asChild>
-                            <button
-                              aria-label={`More actions for ${l.name}`}
-                              onClick={(e) => e.stopPropagation()}
-                              className="ml-1 shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground">
-                              <MoreHorizontal size={14} />
-                            </button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end">
-                            <DropdownMenuItem onSelect={() => onEditList(l)}>Edit rule…</DropdownMenuItem>
-                            <DropdownMenuItem destructive onSelect={() => onDeleteList(l.id)}>Move to Trash</DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      )}
-                    </div>
+                    <button onClick={() => selectView(activeView.type === 'tag' && activeView.tag === t.name ? { type: 'all' } : { type: 'tag', tag: t.name })}
+                      className={cn(rowBase, activeView.type === 'tag' && activeView.tag === t.name ? active : idle)}>
+                      <span className="truncate">#{t.name}</span>
+                      <span className="ml-2 shrink-0 text-xs text-muted-foreground">{t.count}</span>
+                    </button>
                     </ContextMenuTrigger>
                     <ContextMenuContent>
-                      <ContextMenuItem onSelect={() => onEditList(l)}>Edit rule…</ContextMenuItem>
-                      <ContextMenuItem destructive onSelect={() => onDeleteList(l.id)}>Move to Trash</ContextMenuItem>
+                      <ContextMenuItem onSelect={() => onRenameTag({ id: t.id, name: t.name })}>Rename…</ContextMenuItem>
+                      <ContextMenuItem onSelect={() => onSaveTagAsList(t.name)}>Save as smart list</ContextMenuItem>
                     </ContextMenuContent>
                     </ContextMenu>
                   </li>
-                )
-              })}
-            </ul>
-          </>
-        ) : (
-          <button onClick={onNewList} className={cn(section, 'flex w-full items-center gap-1 hover:text-primary')}>
-            <Plus size={12} /> New smart list
-          </button>
-        )}
+                ))}
+              </ul>
+            </>
+          )}
 
-        {tags.length > 0 && (
-          <>
-            <div className={section}><TagIcon size={12} className="mr-1 inline" /> Tags</div>
-            <ul className="flex flex-col">
-              {tags.map((t) => (
-                <li key={t.name}>
-                  <ContextMenu>
-                  <ContextMenuTrigger asChild>
-                  <button onClick={() => selectView(activeView.type === 'tag' && activeView.tag === t.name ? { type: 'all' } : { type: 'tag', tag: t.name })}
-                    className={cn(rowBase, activeView.type === 'tag' && activeView.tag === t.name ? active : idle)}>
-                    <span className="truncate">#{t.name}</span>
-                    <span className="ml-2 shrink-0 text-xs text-muted-foreground">{t.count}</span>
-                  </button>
-                  </ContextMenuTrigger>
-                  <ContextMenuContent>
-                    <ContextMenuItem onSelect={() => onRenameTag({ id: t.id, name: t.name })}>Rename…</ContextMenuItem>
-                    <ContextMenuItem onSelect={() => onSaveTagAsList(t.name)}>Save as smart list</ContextMenuItem>
-                  </ContextMenuContent>
-                  </ContextMenu>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
+          {suggestions.length > 0 && (
+            <>
+              <div className={section}><Sparkles size={12} className="mr-1 inline" /> Suggested</div>
+              <ul className="flex flex-col">
+                {suggestions.map((s) => (
+                  <li key={s.stem} className={cn(rowBase, 'text-muted-foreground')}>
+                    <span className="truncate">{s.stem} <span className="text-xs">({s.count})</span></span>
+                    <button aria-label={`Save ${s.stem} as a list`} onClick={() => onSaveSuggestion(s.stem)} className="ml-2 shrink-0 text-xs text-primary hover:underline">save</button>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </nav>
 
-        {suggestions.length > 0 && (
-          <>
-            <div className={section}><Sparkles size={12} className="mr-1 inline" /> Suggested</div>
-            <ul className="flex flex-col">
-              {suggestions.map((s) => (
-                <li key={s.stem} className={cn(rowBase, 'text-muted-foreground')}>
-                  <span className="truncate">{s.stem} <span className="text-xs">({s.count})</span></span>
-                  <button aria-label={`Save ${s.stem} as a list`} onClick={() => onSaveSuggestion(s.stem)} className="ml-2 shrink-0 text-xs text-primary hover:underline">save</button>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
-      </nav>
-
-      <NavLink to="/chat" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
-        <MessageSquare size={16} /> Chat
-      </NavLink>
-      <NavLink to="/coming-up" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
-        <Calendar size={16} /> Coming up
-      </NavLink>
-      <NavLink to="/action-items" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
-        <CheckSquare2 size={16} /> Action items
-      </NavLink>
-      <NavLink to="/people" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
-        <Users size={16} /> People
-      </NavLink>
-      <NavLink to="/insights" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
-        <BarChart3 size={16} /> Insights
-      </NavLink>
-      <NavLink to="/trash" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
-        <Trash2 size={16} /> Trash
-      </NavLink>
-      <NavLink to="/settings" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
-        <Settings size={16} /> Settings
-      </NavLink>
+        <NavLink to="/chat" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
+          <MessageSquare size={16} /> Chat
+        </NavLink>
+        <NavLink to="/coming-up" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
+          <Calendar size={16} /> Coming up
+        </NavLink>
+        <NavLink to="/action-items" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
+          <CheckSquare2 size={16} /> Action items
+        </NavLink>
+        <NavLink to="/people" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
+          <Users size={16} /> People
+        </NavLink>
+        <NavLink to="/insights" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
+          <BarChart3 size={16} /> Insights
+        </NavLink>
+        <NavLink to="/trash" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
+          <Trash2 size={16} /> Trash
+        </NavLink>
+        <NavLink to="/settings" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
+          <Settings size={16} /> Settings
+        </NavLink>
+      </div>
       <ExportOptionsDialog
         open={exportFolderTarget !== null}
         title={exportFolderTarget ? `Export folder: ${exportFolderTarget.name}` : 'Export folder'}

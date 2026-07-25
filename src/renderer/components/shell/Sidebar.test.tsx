@@ -52,6 +52,27 @@ describe('Sidebar', () => {
     renderSidebar()
     expect(screen.getByText('Smart lists')).toBeInTheDocument()
   })
+  it('keeps Trash and Settings inside the sidebar scroll container on short heights', () => {
+    const { container } = render(
+      <div style={{ height: '240px' }}>
+        <MemoryRouter>
+          <Sidebar query="" onQuery={() => {}} tags={[{ id: 't1', name: '1on1', count: 1 }]}
+            lists={lists} listCount={() => 1} suggestions={[{ stem: 'standup', count: 3 }]}
+            folders={[]} folderCount={() => 0} onNewFolder={() => {}} onEditFolder={() => {}} onDropNote={() => {}}
+            activeView={{ type: 'all' }} onSelectView={() => {}} onNewList={() => {}} onEditList={() => {}} onSaveSuggestion={() => {}} />
+        </MemoryRouter>
+      </div>,
+    )
+
+    const settings = screen.getByRole('link', { name: /settings/i })
+    const trash = screen.getByRole('link', { name: /trash/i })
+    const scrollContainer = settings.parentElement
+
+    expect(container.firstElementChild).toHaveStyle({ height: '240px' })
+    expect(scrollContainer).toBe(trash.parentElement)
+    expect(scrollContainer).toHaveClass('overflow-y-auto')
+    expect(scrollContainer?.querySelector('nav')).toBeInTheDocument()
+  })
   it('renders a global Chat nav link (CHT05)', () => {
     renderSidebar()
     expect(screen.getByRole('link', { name: /chat/i })).toHaveAttribute('href', '/chat')

@@ -103,4 +103,21 @@ describe('EmbeddedStartupGate', () => {
     expect(screen.getByText('App body')).toBeInTheDocument()
     expect(screen.queryByText(/install ollama to enable summaries & search/i)).not.toBeInTheDocument()
   })
+
+  it('keeps the banner and shell inside one viewport-sized flex column', async () => {
+    const { container } = render(
+      <EmbeddedStartupGate>
+        <div>App body</div>
+      </EmbeddedStartupGate>,
+    )
+
+    await act(async () => emit({ status: 'ready', degraded: true }))
+
+    const root = container.firstElementChild as HTMLElement
+    expect(root).toHaveClass('flex', 'h-screen', 'min-h-screen', 'overflow-hidden')
+    expect(root.children).toHaveLength(2)
+    expect((root.children[0] as HTMLElement)).toHaveTextContent(/install ollama to enable summaries & search/i)
+    expect((root.children[1] as HTMLElement)).toHaveClass('min-h-0', 'flex-1')
+    expect(screen.getByText('App body')).toBeInTheDocument()
+  })
 })
