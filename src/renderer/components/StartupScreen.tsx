@@ -72,7 +72,7 @@ function StartupPanel({
   const progressWidth = percentLabel ? `${Math.max(0, Math.min(100, Math.round(percent ?? 0)))}%` : '20%'
 
   return (
-    <div className="flex min-h-screen flex-col bg-app-chrome text-foreground">
+    <div className="flex h-full min-h-0 flex-col bg-app-chrome text-foreground">
       <main className="flex flex-1 items-center justify-center px-6 py-10">
         <section className="w-full max-w-xl rounded-[var(--radius)] border border-border bg-card px-8 py-7 shadow-md">
           <p className="text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">Starting Muesli</p>
@@ -92,7 +92,7 @@ function StartupPanel({
 
 function StartupErrorScreen({ message, logPath }: { message: string; logPath: string }) {
   return (
-    <div className="flex min-h-screen flex-col bg-app-chrome text-foreground">
+    <div className="flex h-full min-h-0 flex-col bg-app-chrome text-foreground">
       <main className="flex flex-1 items-center justify-center px-6 py-10">
         <section className="w-full max-w-2xl rounded-[var(--radius)] border border-destructive/30 bg-card px-8 py-7 shadow-md">
           <p className="text-xs font-semibold uppercase tracking-[0.25em] text-muted-foreground">Startup failed</p>
@@ -134,13 +134,19 @@ export function EmbeddedStartupGate({ children }: { children: ReactNode }) {
   const percent = status?.status === 'progress' ? status.percent : null
 
   return (
-    <>
-      {degraded && !bannerDismissed ? <StartupBanner onDismiss={() => setBannerDismissed(true)} /> : null}
-      {status?.status === 'ready' ? (
-        <>{children}</>
-      ) : (
-        <StartupPanel title={title} detail={detail} percent={percent} />
-      )}
-    </>
+    <div className="flex h-screen min-h-screen flex-col overflow-hidden">
+      {degraded && !bannerDismissed ? (
+        <div className="shrink-0">
+          <StartupBanner onDismiss={() => setBannerDismissed(true)} />
+        </div>
+      ) : null}
+      <div className="min-h-0 flex-1">
+        {status?.status === 'ready' ? (
+          <>{children}</>
+        ) : (
+          <StartupPanel title={title} detail={detail} percent={percent} />
+        )}
+      </div>
+    </div>
   )
 }
