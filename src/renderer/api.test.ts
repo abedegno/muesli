@@ -1,36 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-
-// Electron's `contextBridge.exposeInMainWorld` installs the bridge as a
-// READ-ONLY, NON-CONFIGURABLE data property, and every function on it is
-// likewise non-configurable. That matters: a `Proxy` whose `get` trap returns
-// anything other than the target's own value for such a property violates a
-// JavaScript proxy invariant and throws
-//
-//   TypeError: 'get' on proxy: property 'x' is a read-only and non-configurable
-//   data property on the proxy target but the proxy did not return its actual value
-//
-// A plain object literal (what most tests stub `window.muesli` with) has
-// configurable properties, so it does NOT reproduce this — which is exactly how
-// a renderer-crashing regression shipped in desktop v0.1.10 with green tests.
-// This helper reproduces the real shape.
-function installContextBridgeLike(props: Record<string, unknown>): void {
-  const bridge = {}
-  for (const [key, value] of Object.entries(props)) {
-    Object.defineProperty(bridge, key, {
-      value,
-      writable: false,
-      configurable: false,
-      enumerable: true,
-    })
-  }
-  Object.defineProperty(window, 'muesli', {
-    value: bridge,
-    writable: false,
-    configurable: true, // configurable so tests can reinstall between cases
-    enumerable: true,
-  })
-}
+import { installContextBridgeLike } from './test-utils/bridge'
 
 async function loadApi() {
   vi.resetModules()
