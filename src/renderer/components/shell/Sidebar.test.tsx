@@ -383,6 +383,23 @@ describe('Sidebar', () => {
     expect(onToggleCollapsed).toHaveBeenCalled()
   })
 
+  it('expanded: exposes exactly one search affordance (the live-filtering input, no duplicate /search nav link)', () => {
+    renderSidebar()
+    // The inline "Search notes" input remains — it drives the real muesli.search
+    // call in AppLayout and additionally offers date-range + save-as-smart-list.
+    expect(screen.getByLabelText('Search notes')).toBeInTheDocument()
+    // The separate NavLink to the dedicated /search route must not also be present
+    // in the expanded sidebar — that was the second, overlapping search affordance.
+    expect(screen.queryByRole('link', { name: /^search$/i })).not.toBeInTheDocument()
+    // Only one element anywhere in the expanded sidebar exposes a "search" accessible name.
+    const searchAffordances = [
+      ...screen.queryAllByRole('link', { name: /search/i }),
+      ...screen.queryAllByRole('button', { name: /search/i }),
+      ...screen.queryAllByRole('textbox', { name: /search/i }),
+    ]
+    expect(searchAffordances).toHaveLength(1)
+  })
+
   it('collapsed: renders only the rail (expand + new meeting), no nav/search/handle', () => {
     renderSidebar({ collapsed: true })
     expect(screen.getByRole('button', { name: /expand sidebar/i })).toBeInTheDocument()

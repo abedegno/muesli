@@ -274,12 +274,6 @@ export function Sidebar({
         </button>
       </div>
       <Button onClick={() => navigate('/new')} className="w-full"><Plus size={18} /> New meeting</Button>
-      <NavLink
-        to="/search"
-        className={({ isActive }) => cn(rowBase, 'justify-start gap-2', isActive ? active : idle)}
-      >
-        <Search size={14} /> Search
-      </NavLink>
       <label className="relative block">
         <Search size={16} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
         <input aria-label="Search notes" value={query} onChange={(e) => onQuery(e.target.value)} placeholder="Search…"
