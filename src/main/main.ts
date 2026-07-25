@@ -3,7 +3,7 @@ import { appendFileSync, mkdirSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, session, shell } from 'electron'
-import { IPC, type ConnectRequest, type CreateConversationRequest, type DiarizationReviewUpdate, type ExportRequestOptions, type SearchOptions, type SendMessageRequest, type UpdateActionItemRequest, type UpdatePersonRequest, type UploadAudioRequest } from '../shared/ipc'
+import { IPC, type AuthInvalidatedNotice, type ConnectRequest, type CreateConversationRequest, type DiarizationReviewUpdate, type ExportRequestOptions, type SearchOptions, type SendMessageRequest, type UpdateActionItemRequest, type UpdatePersonRequest, type UploadAudioRequest } from '../shared/ipc'
 import type { CreateShareRequest, DigestConfig, EmbeddedStartupStatus, RetranscribeNoteRequest, RuleGroup, TemplatePhase, TemplateSection } from '../shared/types'
 import { createHandlers } from './ipcHandlers'
 import { makeMicPermission } from './micPermission'
@@ -151,6 +151,9 @@ app.whenReady().then(async () => {
       embedded: true,
       embeddedBaseUrl: supervisor.baseUrl,
       secretStore,
+      onAuthInvalidated: (notice: AuthInvalidatedNotice) => {
+        mainWindow?.webContents.send(IPC.authInvalidated, notice)
+      },
       makeClient: (baseUrl: string) => new MuesliClient({ baseUrl, fetch: fetchImpl }),
       generatePassword: () => randomBytes(32).toString('base64url'),
       log: (msg: string, err?: unknown) => {

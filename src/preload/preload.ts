@@ -5,6 +5,11 @@ import type { UploadProgress } from '../main/uploadMachine'
 
 const bridge: MuesliBridge = {
   platform: process.platform,
+  onAuthInvalidated: (listener) => {
+    const wrapped = (_e: unknown, notice: Parameters<typeof listener>[0]) => listener(notice)
+    ipcRenderer.on(IPC.authInvalidated, wrapped)
+    return () => ipcRenderer.removeListener(IPC.authInvalidated, wrapped)
+  },
   getConfig: () => ipcRenderer.invoke(IPC.getConfig),
   getManualServer: () => ipcRenderer.invoke(IPC.getManualServer),
   getOnboarded: () => ipcRenderer.invoke(IPC.getOnboarded),
