@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { muesli } from '@/api'
 import { Button } from '@/components/ui/Button'
+import { Checkbox } from '@/components/ui/Checkbox'
 import { Dialog } from '@/components/ui/Dialog'
+import { Select } from '@/components/ui/Select'
 import { loadCalendarPrefs, saveCalendarPrefs } from '@/lib/calendarPrefs'
 import { useToast } from '@/components/ui/Toast'
 import type { DigestConfig } from '../../shared/types'
@@ -212,9 +214,9 @@ export function SettingsScreen({
       </section>
       <section className="mb-6">
         <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">Calendar</h2>
-        <label className="flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
+        <label htmlFor="auto-record-detected-meetings" className="flex items-center gap-2 text-sm">
+          <Checkbox
+            id="auto-record-detected-meetings"
             checked={autoRecordDetectedMeetings}
             onChange={(e) => {
               const next = e.target.checked
@@ -261,10 +263,10 @@ export function SettingsScreen({
       </section>
       <section className="mb-6">
         <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">Digest</h2>
-        <label className="flex items-center gap-2 text-sm">
+        <label htmlFor="digest-cadence" className="flex items-center gap-2 text-sm">
           <span className="min-w-24">Cadence</span>
-          <select
-            className="rounded border px-2 py-1"
+          <Select
+            id="digest-cadence"
             value={digestCadence}
             onChange={async (e) => {
               const next = e.target.value as DigestConfig['cadence']
@@ -282,7 +284,7 @@ export function SettingsScreen({
             <option value="off">off</option>
             <option value="daily">daily</option>
             <option value="weekly">weekly</option>
-          </select>
+          </Select>
         </label>
       </section>
       <section className="mb-6">
