@@ -142,6 +142,22 @@ jobs:
             spctl -a -t exec -vv "$APP" || echo "note: spctl app assessment non-zero (informational only)"
           fi
 
+      # Launch the BUILT app and prove the renderer actually mounts. Unit tests
+      # stub `window.muesli` with a plain object, so they cannot catch a
+      # contextBridge-only failure — v0.1.10 shipped a blank window with a fully
+      # green suite. This gate runs before the artifact is uploaded or attached
+      # to a release, so a dead-on-arrival build fails the job instead.
+      - name: Smoke test packaged app (renderer must mount)
+        run: |
+          APP="$(find dist-desktop -maxdepth 3 -name '*.app' -type d | head -1)"
+          echo "smoking $APP"
+          # WebSocket is global on Node >=22 but flag-gated on Node 20.
+          if node -e 'process.exit(typeof WebSocket === "undefined" ? 1 : 0)'; then
+            node scripts/smoke-desktop.mjs "$APP"
+          else
+            node --experimental-websocket scripts/smoke-desktop.mjs "$APP"
+          fi
+
       - name: Upload dmg artifact
         uses: actions/upload-artifact@v4
         with:
