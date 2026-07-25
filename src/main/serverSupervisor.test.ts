@@ -121,26 +121,95 @@ describe('serverSupervisor', () => {
       .mockResolvedValueOnce(new Response('not ready', { status: 503 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
 
-    const { startServerSupervisor } = await loadSupervisor()
-    const supervisorPromise = startServerSupervisor({
-      env: {
-        MUESLI_SERVER_BIN: '/tmp/muesli',
-        MUESLI_ADDR: '127.0.0.1:4567',
-      },
-      fetchImpl: fetchMock,
-      healthPollIntervalMs: 10,
-      healthTimeoutMs: 100,
-      killTimeoutMs: 1_000,
-    })
-    const supervisor = await supervisorPromise
+    const originalAppData = process.env.MUESLI_APPDATA
+    process.env.MUESLI_APPDATA = '/tmp/process-appdata'
+    try {
+      const { startServerSupervisor } = await loadSupervisor()
+      const supervisorPromise = startServerSupervisor({
+        env: {
+          MUESLI_SERVER_BIN: '/tmp/muesli',
+          MUESLI_ADDR: '127.0.0.1:4567',
+        },
+        fetchImpl: fetchMock,
+        healthPollIntervalMs: 10,
+        healthTimeoutMs: 100,
+        killTimeoutMs: 1_000,
+      })
+      const supervisor = await supervisorPromise
 
-    expect(supervisor?.baseUrl).toBe('http://127.0.0.1:4567')
-    expect(supervisor?.logPath).toBe('/tmp/userData/logs/server.log')
-    expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:4567/healthz')
-    expect(spawnMock).toHaveBeenCalledWith('/tmp/muesli', ['--embedded'], expect.objectContaining({
-      env: expect.objectContaining({ MUESLI_ADDR: '127.0.0.1:4567' }),
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }))
+      expect(supervisor?.baseUrl).toBe('http://127.0.0.1:4567')
+      expect(supervisor?.logPath).toBe('/tmp/userData/logs/server.log')
+      expect(fetchMock).toHaveBeenCalledWith('http://127.0.0.1:4567/healthz')
+      expect(spawnMock).toHaveBeenCalledWith('/tmp/muesli', ['--embedded'], expect.objectContaining({
+        env: expect.objectContaining({
+          MUESLI_ADDR: '127.0.0.1:4567',
+          MUESLI_APPDATA: '/tmp/userData/embedded-server',
+        }),
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }))
+    } finally {
+      if (originalAppData === undefined) {
+        delete process.env.MUESLI_APPDATA
+      } else {
+        process.env.MUESLI_APPDATA = originalAppData
+      }
+    }
+  })
+
+  it('keeps caller-provided MUESLI_APPDATA and other env overrides intact', async () => {
+    vi.useRealTimers()
+    appMock.requestSingleInstanceLock.mockReturnValue(true)
+    const child = createFakeChild()
+    spawnMock.mockReturnValue(child)
+
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
+    fetchMock.mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
+
+    const originalServerBin = process.env.MUESLI_SERVER_BIN
+    const originalAddr = process.env.MUESLI_ADDR
+    const originalAppData = process.env.MUESLI_APPDATA
+    process.env.MUESLI_SERVER_BIN = '/tmp/process-bin'
+    process.env.MUESLI_ADDR = '127.0.0.1:9999'
+    process.env.MUESLI_APPDATA = '/tmp/process-appdata'
+    try {
+      const { startServerSupervisor } = await loadSupervisor()
+      const supervisor = await startServerSupervisor({
+        env: {
+          MUESLI_SERVER_BIN: '/tmp/muesli',
+          MUESLI_ADDR: '127.0.0.1:4567',
+          MUESLI_APPDATA: '/tmp/caller-appdata',
+        },
+        fetchImpl: fetchMock,
+        healthPollIntervalMs: 10,
+        healthTimeoutMs: 100,
+        killTimeoutMs: 1_000,
+      })
+
+      expect(supervisor?.baseUrl).toBe('http://127.0.0.1:4567')
+      expect(spawnMock).toHaveBeenCalledWith('/tmp/muesli', ['--embedded'], expect.objectContaining({
+        env: expect.objectContaining({
+          MUESLI_SERVER_BIN: '/tmp/muesli',
+          MUESLI_ADDR: '127.0.0.1:4567',
+          MUESLI_APPDATA: '/tmp/caller-appdata',
+        }),
+      }))
+    } finally {
+      if (originalServerBin === undefined) {
+        delete process.env.MUESLI_SERVER_BIN
+      } else {
+        process.env.MUESLI_SERVER_BIN = originalServerBin
+      }
+      if (originalAddr === undefined) {
+        delete process.env.MUESLI_ADDR
+      } else {
+        process.env.MUESLI_ADDR = originalAddr
+      }
+      if (originalAppData === undefined) {
+        delete process.env.MUESLI_APPDATA
+      } else {
+        process.env.MUESLI_APPDATA = originalAppData
+      }
+    }
   })
 
   it('calls onUnexpectedExit when the child exits on its own after becoming healthy', async () => {
@@ -235,6 +304,7 @@ describe('serverSupervisor', () => {
         MUESLI_WHISPER_MODEL: 'ggml-tiny.en',
         MUESLI_FFMPEG_BIN: '/R/bin/ffmpeg',
         MUESLI_ADDR: '127.0.0.1:4572',
+        MUESLI_APPDATA: '/tmp/userData/embedded-server',
       }),
       stdio: ['ignore', 'pipe', 'pipe'],
     }))
