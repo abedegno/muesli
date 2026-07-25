@@ -96,7 +96,8 @@ function wrapCall(fn: AnyFn, thisArg: object): AnyFn {
 // In the packaged app that fires while mounting the startup gate, before React
 // renders anything — a blank window (shipped in desktop v0.1.10). Plain-object
 // copies carry no such invariant. Copying eagerly is safe: the bridge is
-// established once at preload and never gains members afterwards.
+// established once at preload and never gains members afterwards, which is the
+// same shape the packaged-app smoke test exercises.
 function buildBridge(raw: MuesliBridge): MuesliBridge {
   const source = raw as unknown as Record<string, unknown>
   const wrapped: Record<string, unknown> = {}

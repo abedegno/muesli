@@ -17,6 +17,8 @@ on:
       - 'electron-builder.yml'
       - 'build/entitlements.mac.*'
       - 'scripts/assemble-desktop-resources.sh'
+      - 'src/**'
+      - 'package.json'
       - '.github/workflows/desktop-release.yml'
   push:
     tags:
