@@ -307,15 +307,15 @@ export function createHandlers(deps: HandlerDeps): Handlers {
         const body = (await res.json()) as Record<string, unknown> | null
         if (!body || body.status !== 'ok') return { reachable: false, authenticated: false }
         const version = typeof body.version === 'string' ? body.version : undefined
+        let authenticated = true
         try {
           await authedClient().getDigestConfig()
-          return { reachable: true, authenticated: true, version }
         } catch (err) {
           if (err instanceof AuthInvalidatedError) {
-            return { reachable: true, authenticated: false, version }
+            authenticated = false
           }
-          return { reachable: true, authenticated: false, version }
         }
+        return { reachable: true, authenticated, version }
       } catch {
         return { reachable: false, authenticated: false }
       }

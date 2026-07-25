@@ -275,6 +275,34 @@ describe('ipc handlers', () => {
     })
   })
 
+  it('keeps auth marked as unknown when the authed health probe fails for a non-401 reason', async () => {
+    const fetchMock = async (url: string | URL): Promise<Response> => {
+      const path = new URL(String(url)).pathname
+      if (path === '/healthz') {
+        return new Response(JSON.stringify({ status: 'ok', version: '1.2.3' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      if (path === '/api/digest/config') {
+        return new Response(JSON.stringify({ message: 'boom' }), {
+          status: 500,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      throw new Error(`unexpected path: ${path}`)
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost:1234', token: 'app-token' })
+    const h = createHandlers({
+      tokenStore,
+      fetch: fetchMock,
+      onProgress: () => {},
+    })
+
+    await expect(h.getServerHealth()).resolves.toEqual({ reachable: true, authenticated: true, version: '1.2.3' })
+  })
+
   it('does not clear the token or emit reconnect for non-401 failures', async () => {
     const cases = [
       {
