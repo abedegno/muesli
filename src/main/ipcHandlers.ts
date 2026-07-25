@@ -5,6 +5,7 @@ import { fullNoteToMarkdown } from '../renderer/lib/noteMarkdown'
 import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, DigestConfig, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from '../shared/types'
 import type { ConnectRequest, CreateConversationRequest, CreateConversationResponse, DiarizationReviewUpdate, ExportRequestOptions, ListNoteActionItemsResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdateActionItemRequest, UpdatePersonRequest, UploadAudioRequest } from '../shared/ipc'
 import { INSECURE_CONNECTION_CODE, isInsecureRemote } from '../shared/url'
+import type { AuthInvalidatedNotice } from '../shared/ipc'
 import type { UploadProgress } from './uploadMachine'
 import { ApiError, MuesliClient, type FetchLike, type NoteExportData } from './muesliClient'
 import type { SecretStore } from './secretStore'
@@ -16,6 +17,7 @@ interface HandlerDeps {
   tokenStore: TokenStore
   fetch?: FetchLike
   onProgress: (p: UploadProgress) => void
+  onAuthInvalidated?: (notice: AuthInvalidatedNotice) => void
   openExternal?: (url: string) => Promise<void>
   embedded?: boolean
   embeddedBaseUrl?: string
@@ -34,7 +36,7 @@ interface Handlers {
   getOnboarded(): Promise<boolean>
   setOnboarded(onboarded: boolean): Promise<void>
   getReadyz(): Promise<{ ollamaDetected: boolean } | null>
-  getServerHealth(): Promise<{ reachable: boolean; version?: string }>
+  getServerHealth(): Promise<{ reachable: boolean; authenticated: boolean; version?: string }>
   connect(req: ConnectRequest): Promise<{ serverUrl: string }>
   disconnect(): Promise<void>
   resetToBuiltIn(): Promise<void>
@@ -129,6 +131,31 @@ interface Handlers {
   updateDigestConfig(cadence: DigestConfig['cadence']): Promise<DigestConfig>
 }
 
+const AUTH_INVALIDATED_MESSAGE = 'Your saved sign-in is no longer valid for this server. Sign in again to reconnect.'
+
+class AuthInvalidatedError extends Error {
+  readonly code = 'AUTH_INVALIDATED' as const
+
+  constructor() {
+    super(`[AUTH_INVALIDATED] ${AUTH_INVALIDATED_MESSAGE}`)
+    this.name = 'AuthInvalidatedError'
+  }
+}
+
+function makeStatusError(status: number, message: string): Error & { status: number } {
+  const err = new Error(`[${status}] ${message}`) as Error & { status: number }
+  err.status = status
+  return err
+}
+
+function getErrorStatus(err: unknown): number | null {
+  if (err instanceof ApiError) return err.status
+  if (err instanceof Error && typeof (err as { status?: unknown }).status === 'number') {
+    return (err as { status?: unknown }).status as number
+  }
+  return null
+}
+
 // Electron's ipcMain.handle rejection path only round-trips an Error's
 // `message` (custom properties like ApiError.status are dropped), so we
 // encode the HTTP status into the message as a `[NNN] ` prefix the renderer
@@ -138,9 +165,24 @@ async function withApiError<T>(fn: () => Promise<T>): Promise<T> {
   try {
     return await fn()
   } catch (err) {
-    if (err instanceof ApiError) throw new Error(`[${err.status}] ${err.message}`)
+    if (err instanceof ApiError) throw makeStatusError(err.status, err.message)
     throw err
   }
+}
+
+function handleAuthedError(
+  err: unknown,
+  deps: Pick<HandlerDeps, 'tokenStore' | 'onAuthInvalidated'>,
+): never {
+  if (err instanceof ApiError) {
+    if (err.status === 401) {
+      deps.tokenStore.clear()
+      deps.onAuthInvalidated?.({ message: AUTH_INVALIDATED_MESSAGE })
+      throw new AuthInvalidatedError()
+    }
+    throw makeStatusError(err.status, err.message)
+  }
+  throw err
 }
 
 // insecureAllowedByEnv lets a developer bypass the HTTPS guardrail globally via
@@ -194,7 +236,23 @@ export function createHandlers(deps: HandlerDeps): Handlers {
   function authedClient(): MuesliClient {
     const cfg = tokenStore.load()
     if (!cfg) throw new Error('not connected: no saved server/token')
-    return new MuesliClient({ baseUrl: cfg.serverUrl, token: cfg.token, fetch: fetchImpl })
+    const client = new MuesliClient({ baseUrl: cfg.serverUrl, token: cfg.token, fetch: fetchImpl })
+    return new Proxy(client, {
+      get(target, prop, receiver) {
+        const value = Reflect.get(target, prop, receiver)
+        if (typeof value !== 'function') return value
+        return (...args: unknown[]) => {
+          try {
+            const out = value.apply(target, args)
+            return out && typeof (out as Promise<unknown>).then === 'function'
+              ? (out as Promise<unknown>).catch((err) => handleAuthedError(err, deps))
+              : out
+          } catch (err) {
+            return handleAuthedError(err, deps)
+          }
+        }
+      },
+    }) as MuesliClient
   }
 
   return {
@@ -241,17 +299,25 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       const fetchFn = fetchImpl ?? globalThis.fetch?.bind(globalThis)
       const cfg = tokenStore.load()
       const serverUrl = cfg?.serverUrl?.trim()
-      if (!serverUrl || !fetchFn) return { reachable: false }
+      if (!serverUrl || !fetchFn) return { reachable: false, authenticated: false }
       try {
         const url = new URL('healthz', `${serverUrl.replace(/\/+$/, '')}/`)
         const res = await fetchFn(url)
-        if (!res.ok) return { reachable: false }
+        if (!res.ok) return { reachable: false, authenticated: false }
         const body = (await res.json()) as Record<string, unknown> | null
-        if (!body || body.status !== 'ok') return { reachable: false }
+        if (!body || body.status !== 'ok') return { reachable: false, authenticated: false }
         const version = typeof body.version === 'string' ? body.version : undefined
-        return { reachable: true, version }
+        let authenticated = true
+        try {
+          await authedClient().getDigestConfig()
+        } catch (err) {
+          if (err instanceof AuthInvalidatedError) {
+            authenticated = false
+          }
+        }
+        return { reachable: true, authenticated, version }
       } catch {
-        return { reachable: false }
+        return { reachable: false, authenticated: false }
       }
     },
 
@@ -451,8 +517,12 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       try {
         return await authedClient().getNoteAudioUrl(noteId)
       } catch (err) {
-        if (err instanceof ApiError && err.status === 404) return null
-        if (err instanceof ApiError) throw new Error(`[${err.status}] ${err.message}`)
+        const status = getErrorStatus(err)
+        if (status === 404) return null
+        if (status != null) {
+          const message = err instanceof Error ? err.message.replace(/^\[\d+\]\s*/, '') : 'request failed'
+          throw makeStatusError(status, message)
+        }
         throw err
       }
     },

@@ -26,6 +26,7 @@ const NoteScreen = lazy(() => import('./components/NoteScreen').then((m) => ({ d
 function AppContent() {
   const [connected, setConnected] = useState<boolean | null>(null)
   const [onboarded, setOnboarded] = useState<boolean | null>(null)
+  const [connectMessage, setConnectMessage] = useState<string | null>(null)
   async function refreshConnection() {
     try {
       const onboardedPromise = muesli.getOnboarded
@@ -34,6 +35,7 @@ function AppContent() {
       const [cfg, nextOnboarded] = await Promise.all([muesli.getConfig?.(), onboardedPromise])
       setConnected(!!cfg)
       setOnboarded(nextOnboarded ?? false)
+      if (cfg) setConnectMessage(null)
     } catch {
       setConnected(false)
       setOnboarded(false)
@@ -44,6 +46,14 @@ function AppContent() {
     void refreshConnection()
   }, [])
 
+  useEffect(() => {
+    const unsubscribe = muesli.onAuthInvalidated?.((notice) => {
+      setConnectMessage(notice.message)
+      setConnected(false)
+    })
+    return unsubscribe
+  }, [])
+
   return (
     <AnnouncerProvider>
       <AriaAnnouncer />
@@ -51,7 +61,13 @@ function AppContent() {
         <div className="p-8 text-muted-foreground">Loading…</div>
       )}
       {connected === false && (
-        <ConnectScreen onConnected={() => setConnected(true)} />
+        <ConnectScreen
+          onConnected={() => {
+            setConnectMessage(null)
+            setConnected(true)
+          }}
+          message={connectMessage}
+        />
       )}
       {connected === true && onboarded === false && (
         <SetupWizard
@@ -72,8 +88,12 @@ function AppContent() {
                 path="/settings"
                 element={
                   <SettingsScreen
-                    onDisconnected={() => setConnected(false)}
+                    onDisconnected={() => {
+                      setConnectMessage(null)
+                      setConnected(false)
+                    }}
                     onResetToBuiltIn={async () => {
+                      setConnectMessage(null)
                       await refreshConnection()
                     }}
                   />

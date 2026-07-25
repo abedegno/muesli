@@ -7,6 +7,7 @@ import type { ExportOptions } from './export'
 
 export const IPC = {
   getConfig: 'muesli:getConfig',
+  authInvalidated: 'muesli:authInvalidated',
   getManualServer: 'muesli:getManualServer',
   getOnboarded: 'muesli:getOnboarded',
   setOnboarded: 'muesli:setOnboarded',
@@ -124,6 +125,10 @@ export const IPC = {
   updateDigestConfig: 'muesli:updateDigestConfig',
 } as const
 
+export interface AuthInvalidatedNotice {
+  message: string
+}
+
 export interface ConnectRequest {
   serverUrl: string
   email: string
@@ -232,12 +237,13 @@ export interface SendMessageResponse {
 
 export interface MuesliBridge {
   platform: NodeJS.Platform
+  onAuthInvalidated?(listener: (notice: AuthInvalidatedNotice) => void): () => void
   getConfig(): Promise<ServerConfig | null>
   getManualServer(): Promise<boolean>
   getOnboarded(): Promise<boolean>
   setOnboarded(b: boolean): Promise<void>
   getReadyz(): Promise<{ ollamaDetected: boolean } | null>
-  getServerHealth(): Promise<{ reachable: boolean; version?: string }>
+  getServerHealth(): Promise<{ reachable: boolean; authenticated: boolean; version?: string }>
   connect(req: ConnectRequest): Promise<{ serverUrl: string }>
   disconnect(): Promise<void>
   resetToBuiltIn(): Promise<void>
