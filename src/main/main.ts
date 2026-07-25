@@ -110,9 +110,11 @@ app.whenReady().then(async () => {
       cb(perm === 'media' || perm === 'microphone' || perm === 'audioCapture')
     })
 
+    const userDataDir = app.getPath('userData')
     const supervisor = await startServerSupervisor({
       onSecondInstance: focusMainWindow,
-      logPath: makeServerLogPath(app.getPath('userData')),
+      userDataPath: userDataDir,
+      logPath: makeServerLogPath(userDataDir),
       healthTimeoutMs: DEFAULT_HEALTH_TIMEOUT_MS,
       waitForHealthy: false,
     })
@@ -128,7 +130,6 @@ app.whenReady().then(async () => {
       onStatus: pushStartupStatus,
     })
 
-    const userDataDir = app.getPath('userData')
     const tokenStore = new TokenStore(userDataDir, safeStorage)
     const secretStore = new SecretStore(userDataDir, safeStorage)
     const fetchImpl = globalThis.fetch?.bind(globalThis)

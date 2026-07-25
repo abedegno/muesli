@@ -15,6 +15,7 @@ export interface ServerSupervisor {
 export interface ServerSupervisorOptions {
   env?: NodeJS.ProcessEnv
   fetchImpl?: typeof fetch
+  userDataPath?: string
   logPath?: string
   healthPollIntervalMs?: number
   healthTimeoutMs?: number
@@ -270,10 +271,11 @@ export async function startServerSupervisor(opts: ServerSupervisorOptions = {}):
   }
 
   const env = { ...process.env, ...opts.env }
+  const userDataPath = opts.userDataPath ?? electronApp.getPath('userData')
   const binaryPath = resolveServerBinaryPath(env)
   const addr = parseLoopbackAddr(env.MUESLI_ADDR ?? DEFAULT_ADDR)
   const baseUrl = `http://${addr.host}:${addr.port}`
-  const logPath = opts.logPath ?? makeServerLogPath(electronApp.getPath('userData'))
+  const logPath = opts.logPath ?? makeServerLogPath(userDataPath)
   await mkdir(dirname(logPath), { recursive: true })
   let logStream: WriteStream | null = null
   try {
@@ -291,6 +293,9 @@ export async function startServerSupervisor(opts: ServerSupervisorOptions = {}):
         resourcesPath: process.resourcesPath,
       }),
       ...env,
+      ...(opts.env && Object.prototype.hasOwnProperty.call(opts.env, 'MUESLI_APPDATA')
+        ? {}
+        : { MUESLI_APPDATA: join(userDataPath, 'embedded-server') }),
       MUESLI_ADDR: `${addr.host}:${addr.port}`,
     },
     stdio: ['ignore', 'pipe', 'pipe'],
