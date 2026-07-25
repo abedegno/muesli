@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { muesli } from './api'
 import { EmbeddedStartupGate } from './components/StartupScreen'
 import { SetupWizard } from './components/SetupWizard'
@@ -123,8 +123,9 @@ function AppContent() {
 }
 
 export function App() {
+  const navigate = useNavigate()
   return (
-    <EmbeddedStartupGate>
+    <EmbeddedStartupGate onOpenAiSettings={() => navigate('/settings#ai-transcription')}>
       <AppContent />
     </EmbeddedStartupGate>
   )

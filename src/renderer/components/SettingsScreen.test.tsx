@@ -1,11 +1,12 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { ToastProvider } from '@/components/ui/Toast'
 
 const getConfig = vi.fn()
+const getReadyz = vi.fn()
 const disconnect = vi.fn()
 const resetToBuiltIn = vi.fn()
 const getGoogleCalendarOAuthStatus = vi.fn()
@@ -19,6 +20,7 @@ const getServerHealth = vi.fn()
 vi.mock('@/api', () => ({
   muesli: {
     getConfig: () => getConfig(),
+    getReadyz: () => getReadyz(),
     disconnect: () => disconnect(),
     resetToBuiltIn: () => resetToBuiltIn(),
     getGoogleCalendarOAuthStatus: () => getGoogleCalendarOAuthStatus(),
@@ -38,10 +40,12 @@ afterEach(() => {
   vi.clearAllMocks()
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
+  vi.useRealTimers()
   localStorage.clear()
 })
 
   beforeEach(() => {
+    getReadyz.mockResolvedValue(null)
     getGoogleCalendarOAuthStatus.mockResolvedValue({ configured: false })
     getMicrosoftCalendarOAuthStatus.mockResolvedValue({ configured: false })
     getDigestConfig.mockResolvedValue({ owner_id: 'owner-1', cadence: 'off' })
@@ -96,6 +100,63 @@ describe('SettingsScreen', () => {
     renderScreen()
 
     expect(await screen.findByRole('button', { name: 'Connect Microsoft Calendar' })).toBeInTheDocument()
+  })
+
+  it('shows the AI / Transcription section with Ollama not detected and a download affordance', async () => {
+    getReadyz.mockResolvedValue({ ollamaDetected: false })
+
+    renderScreen()
+
+    expect(
+      await screen.findByText((_, element) => element?.tagName === 'P' && /ollama status: not detected/i.test(element.textContent ?? '')),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/without ollama, summaries and search stay unavailable/i)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /download ollama/i })).toHaveAttribute('href', 'https://ollama.com/download')
+  })
+
+  it('shows the AI / Transcription section with Ollama detected', async () => {
+    getReadyz.mockResolvedValue({ ollamaDetected: true })
+
+    renderScreen()
+
+    expect(
+      await screen.findByText((_, element) => element?.tagName === 'P' && /ollama status: detected/i.test(element.textContent ?? '')),
+    ).toBeInTheDocument()
+    expect(screen.getByText(/summaries and search are available/i)).toBeInTheDocument()
+  })
+
+  it('keeps polling for Ollama detection changes without a restart', async () => {
+    vi.useFakeTimers()
+    getReadyz.mockResolvedValueOnce({ ollamaDetected: false }).mockResolvedValueOnce({ ollamaDetected: true })
+
+    renderScreen()
+
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(
+      screen.getByText((_, element) => element?.tagName === 'P' && /ollama status: not detected/i.test(element.textContent ?? '')),
+    ).toBeInTheDocument()
+
+    await act(async () => {
+      vi.advanceTimersByTime(1000)
+      await Promise.resolve()
+    })
+
+    expect(
+      screen.getByText((_, element) => element?.tagName === 'P' && /ollama status: detected/i.test(element.textContent ?? '')),
+    ).toBeInTheDocument()
+  })
+
+  it('renders the AI / Transcription section when getReadyz returns null', async () => {
+    getReadyz.mockResolvedValue(null)
+
+    renderScreen()
+
+    expect(
+      await screen.findByText((_, element) => element?.tagName === 'P' && /ollama status: detection unavailable/i.test(element.textContent ?? '')),
+    ).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /download ollama/i })).toBeInTheDocument()
   })
 
   it('opens the Google Calendar connect URL when the button is clicked', async () => {

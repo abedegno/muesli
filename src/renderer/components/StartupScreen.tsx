@@ -26,13 +26,27 @@ function describeProgress(status: Extract<EmbeddedStartupStatus, { status: 'prog
   }
 }
 
-function StartupBanner({ onDismiss }: { onDismiss: () => void }) {
+function StartupBanner({
+  onDismiss,
+  onOpenAiSettings,
+}: {
+  onDismiss: () => void
+  onOpenAiSettings: () => void
+}) {
   return (
     <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
       <div className="mx-auto flex max-w-5xl items-start gap-3">
         <div className="min-w-0 flex-1">
           <p className="font-medium">Install Ollama to enable summaries & search.</p>
           <p className="mt-1 text-amber-900/80 dark:text-amber-100/75">
+            <button
+              type="button"
+              onClick={onOpenAiSettings}
+              className="underline underline-offset-2 hover:no-underline"
+            >
+              Open AI settings
+            </button>
+            {' '}
             <a className="underline underline-offset-2 hover:no-underline" href="https://ollama.com/download" target="_blank" rel="noreferrer">
               Download Ollama
             </a>
@@ -108,7 +122,13 @@ function StartupErrorScreen({ message, logPath }: { message: string; logPath: st
   )
 }
 
-export function EmbeddedStartupGate({ children }: { children: ReactNode }) {
+export function EmbeddedStartupGate({
+  children,
+  onOpenAiSettings = () => {},
+}: {
+  children: ReactNode
+  onOpenAiSettings?: () => void
+}) {
   const [status, setStatus] = useState<EmbeddedStartupStatus | null>(null)
   const [bannerDismissed, setBannerDismissed] = useState(false)
   const hasStartupBridge = typeof muesli.onEmbeddedStartupStatus === 'function'
@@ -137,7 +157,10 @@ export function EmbeddedStartupGate({ children }: { children: ReactNode }) {
     <div className="flex h-screen min-h-screen flex-col overflow-hidden">
       {degraded && !bannerDismissed ? (
         <div className="shrink-0">
-          <StartupBanner onDismiss={() => setBannerDismissed(true)} />
+          <StartupBanner
+            onDismiss={() => setBannerDismissed(true)}
+            onOpenAiSettings={onOpenAiSettings}
+          />
         </div>
       ) : null}
       <div className="min-h-0 flex-1">
