@@ -41,12 +41,13 @@ afterEach(() => {
   localStorage.clear()
 })
 
-beforeEach(() => {
-  getGoogleCalendarOAuthStatus.mockResolvedValue({ configured: false })
-  getMicrosoftCalendarOAuthStatus.mockResolvedValue({ configured: false })
-  getDigestConfig.mockResolvedValue({ owner_id: 'owner-1', cadence: 'off' })
-  updateDigestConfig.mockResolvedValue({ owner_id: 'owner-1', cadence: 'off' })
-})
+  beforeEach(() => {
+    getGoogleCalendarOAuthStatus.mockResolvedValue({ configured: false })
+    getMicrosoftCalendarOAuthStatus.mockResolvedValue({ configured: false })
+    getDigestConfig.mockResolvedValue({ owner_id: 'owner-1', cadence: 'off' })
+    updateDigestConfig.mockResolvedValue({ owner_id: 'owner-1', cadence: 'off' })
+    getServerHealth.mockResolvedValue({ reachable: true, authenticated: true })
+  })
 
 function renderScreen(serverUrl = 'http://localhost:8080') {
   const onDisconnected = vi.fn()
@@ -163,7 +164,7 @@ describe('SettingsScreen', () => {
   })
 
   it('shows Connected for an ok health response', async () => {
-    getServerHealth.mockResolvedValue({ reachable: true })
+    getServerHealth.mockResolvedValue({ reachable: true, authenticated: true })
 
     renderScreen()
 
@@ -173,7 +174,7 @@ describe('SettingsScreen', () => {
   })
 
   it('shows a version when health includes one', async () => {
-    getServerHealth.mockResolvedValue({ reachable: true, version: '1.2.3' })
+    getServerHealth.mockResolvedValue({ reachable: true, authenticated: true, version: '1.2.3' })
 
     renderScreen('http://localhost:8080/')
 
@@ -197,6 +198,15 @@ describe('SettingsScreen', () => {
     expect(await screen.findByText('Unreachable')).toBeInTheDocument()
   })
 
+  it('shows Sign in required when the server is reachable but auth is rejected', async () => {
+    getServerHealth.mockResolvedValue({ reachable: true, authenticated: false })
+
+    renderScreen()
+
+    expect(await screen.findByText('Sign in required')).toBeInTheDocument()
+    expect(screen.queryByText('Connected')).toBeNull()
+  })
+
   it('skips health fetch and badge when no server URL is configured', async () => {
     renderScreen('')
 
@@ -207,7 +217,7 @@ describe('SettingsScreen', () => {
   })
 
   it('checks health again when the server URL changes', async () => {
-    getServerHealth.mockResolvedValue({ reachable: true })
+    getServerHealth.mockResolvedValue({ reachable: true, authenticated: true })
 
     const { rerender } = render(<ServerHealthBadge serverUrl="http://localhost:8080" />)
 

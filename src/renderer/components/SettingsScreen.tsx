@@ -8,7 +8,12 @@ import { useToast } from '@/components/ui/Toast'
 import type { DigestConfig } from '../../shared/types'
 
 type Theme = 'system' | 'light' | 'dark'
-type HealthState = { status: 'idle' } | { status: 'checking' } | { status: 'connected'; version?: string } | { status: 'unreachable' }
+type HealthState =
+  | { status: 'idle' }
+  | { status: 'checking' }
+  | { status: 'connected'; version?: string }
+  | { status: 'sign-in-required' }
+  | { status: 'unreachable' }
 
 export function SettingsScreen({
   onDisconnected,
@@ -303,7 +308,15 @@ export function ServerHealthBadge({ serverUrl }: { serverUrl: string }) {
       try {
         const result = await muesli.getServerHealth()
         if (cancelled) return
-        setHealth(result.reachable ? { status: 'connected', version: result.version } : { status: 'unreachable' })
+        if (!result.reachable) {
+          setHealth({ status: 'unreachable' })
+          return
+        }
+        if (!result.authenticated) {
+          setHealth({ status: 'sign-in-required' })
+          return
+        }
+        setHealth({ status: 'connected', version: result.version })
       } catch {
         if (!cancelled) setHealth({ status: 'unreachable' })
       }
@@ -325,6 +338,8 @@ export function ServerHealthBadge({ serverUrl }: { serverUrl: string }) {
       className={`mt-2 inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${
         health.status === 'unreachable'
           ? 'bg-destructive/10 text-destructive'
+          : health.status === 'sign-in-required'
+            ? 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200'
           : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
       }`}
     >
@@ -332,6 +347,8 @@ export function ServerHealthBadge({ serverUrl }: { serverUrl: string }) {
         ? health.version
           ? `Connected · v${health.version}`
           : 'Connected'
+        : health.status === 'sign-in-required'
+          ? 'Sign in required'
         : health.status === 'unreachable'
           ? 'Unreachable'
           : 'Checking'}

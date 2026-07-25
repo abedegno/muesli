@@ -216,11 +216,20 @@ describe('ipc handlers', () => {
 
   it('getServerHealth returns reachable with version for an ok healthz response', async () => {
     const fetchMock = async (url: string | URL): Promise<Response> => {
-      expect(new URL(String(url)).pathname).toBe('/healthz')
-      return new Response(JSON.stringify({ status: 'ok', version: '1.2.3' }), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      })
+      const path = new URL(String(url)).pathname
+      if (path === '/healthz') {
+        return new Response(JSON.stringify({ status: 'ok', version: '1.2.3' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      if (path === '/api/digest/config') {
+        return new Response(JSON.stringify({ owner_id: 'owner-1', cadence: 'off' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      throw new Error(`unexpected path: ${path}`)
     }
     const tokenStore = new TokenStore(dir, fakeSafe)
     tokenStore.save({ serverUrl: 'http://localhost:1234', token: 'app-token' })
@@ -230,7 +239,76 @@ describe('ipc handlers', () => {
       onProgress: () => {},
     })
 
-    await expect(h.getServerHealth()).resolves.toEqual({ reachable: true, version: '1.2.3' })
+    await expect(h.getServerHealth()).resolves.toEqual({ reachable: true, authenticated: true, version: '1.2.3' })
+  })
+
+  it('clears the token and emits reconnect when an authed call gets a 401', async () => {
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost:1234', token: 'app-token' })
+    const clearSpy = vi.spyOn(tokenStore, 'clear')
+    const authInvalidated = vi.fn()
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      const path = new URL(String(url)).pathname
+      if (path === '/api/notes') {
+        expect(new Headers(init?.headers).get('Authorization')).toBe('Bearer app-token')
+        return new Response(JSON.stringify({ message: 'unauthorized' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      throw new Error(`unexpected path: ${path}`)
+    }
+    const h = createHandlers({
+      tokenStore,
+      fetch: fetchMock,
+      onProgress: () => {},
+      onAuthInvalidated: authInvalidated,
+    })
+
+    await expect(h.createNote('My meeting')).rejects.toMatchObject({
+      name: 'AuthInvalidatedError',
+      code: 'AUTH_INVALIDATED',
+    })
+    expect(clearSpy).toHaveBeenCalledTimes(1)
+    expect(authInvalidated).toHaveBeenCalledWith({
+      message: 'Your saved sign-in is no longer valid for this server. Sign in again to reconnect.',
+    })
+  })
+
+  it('does not clear the token or emit reconnect for non-401 failures', async () => {
+    const cases = [
+      {
+        name: '500',
+        fetch: async () =>
+          new Response(JSON.stringify({ message: 'boom' }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+          }),
+      },
+      {
+        name: 'timeout',
+        fetch: async () => {
+          throw new Error('timeout')
+        },
+      },
+    ] as const
+
+    for (const testCase of cases) {
+      const tokenStore = new TokenStore(dir, fakeSafe)
+      tokenStore.save({ serverUrl: 'http://localhost:1234', token: 'app-token' })
+      const clearSpy = vi.spyOn(tokenStore, 'clear')
+      const authInvalidated = vi.fn()
+      const h = createHandlers({
+        tokenStore,
+        fetch: testCase.fetch as typeof server.fetch,
+        onProgress: () => {},
+        onAuthInvalidated: authInvalidated,
+      })
+
+      await expect(h.createNote('My meeting')).rejects.toThrow()
+      expect(clearSpy, testCase.name).not.toHaveBeenCalled()
+      expect(authInvalidated, testCase.name).not.toHaveBeenCalled()
+    }
   })
 
   it('getServerHealth returns unreachable when the fetch rejects', async () => {
@@ -242,7 +320,7 @@ describe('ipc handlers', () => {
       onProgress: () => {},
     })
 
-    await expect(h.getServerHealth()).resolves.toEqual({ reachable: false })
+    await expect(h.getServerHealth()).resolves.toEqual({ reachable: false, authenticated: false })
   })
 
   it('getServerHealth returns unreachable when no server is configured', async () => {
@@ -256,7 +334,7 @@ describe('ipc handlers', () => {
       onProgress: () => {},
     })
 
-    await expect(h.getServerHealth()).resolves.toEqual({ reachable: false })
+    await expect(h.getServerHealth()).resolves.toEqual({ reachable: false, authenticated: false })
     expect(called).toBe(false)
   })
 
