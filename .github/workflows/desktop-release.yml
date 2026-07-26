@@ -257,9 +257,9 @@ jobs:
           fi
           echo "smoking $APPIMAGE"
           if node -e 'process.exit(typeof WebSocket === "undefined" ? 1 : 0)'; then
-            xvfb-run -a node scripts/smoke-desktop.mjs "$APPIMAGE" --port 9460
+            xvfb-run -a node scripts/smoke-desktop.mjs "$APPIMAGE" --port 9460 --no-sandbox
           else
-            xvfb-run -a node --experimental-websocket scripts/smoke-desktop.mjs "$APPIMAGE" --port 9460
+            xvfb-run -a node --experimental-websocket scripts/smoke-desktop.mjs "$APPIMAGE" --port 9460 --no-sandbox
           fi
 
       - name: Upload AppImage artifact
