@@ -11,6 +11,21 @@ Muesli is pre-1.0 and under active development; tagged desktop releases
 
 ## [Unreleased]
 
+## [0.1.12] - 2026-07-26
+
+No user-facing changes. This release carries only test and release-pipeline
+hardening, and behaves identically to `0.1.11`.
+
+### Changed
+
+- **Testing and release gates.** Added tests for the preload bridge boundary,
+  main-process wiring, and the note stream relay; a shared context-bridge test
+  helper matching Electron's read-only, non-configurable exposure; coverage
+  reporting for client and server; dependency-gated test skips that now fail
+  under CI instead of passing silently; the packaged-app smoke test on pull
+  requests that touch `src/**`; and smoke tests that mount the shipped dmg and
+  drive a short user journey before a release is published.
+
 ## [0.1.11] - 2026-07-25
 
 ### Fixed
