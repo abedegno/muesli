@@ -26,6 +26,16 @@ const args = process.argv.slice(2)
 const appArg = args.find((a) => !a.startsWith('--'))
 const portArg = args.indexOf('--port')
 const PORT = portArg !== -1 ? Number(args[portArg + 1]) : 9444
+const launchArgs = []
+for (let i = 0; i < args.length; i += 1) {
+  const arg = args[i]
+  if (arg === appArg) continue
+  if (arg === '--port') {
+    i += 1
+    continue
+  }
+  launchArgs.push(arg)
+}
 const TARGET_TIMEOUT_MS = 90_000 // app boot + first paint
 const MOUNT_TIMEOUT_MS = 60_000 // renderer mount after the target appears
 
@@ -117,11 +127,15 @@ console.log(`[smoke] clean user-data-dir: ${userDataDir}`)
 const serverAddr = `127.0.0.1:${PORT + 1000}`
 console.log(`[smoke] embedded server addr: ${serverAddr}`)
 
-const child = spawn(binary, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${userDataDir}`], {
-  stdio: ['ignore', 'pipe', 'pipe'],
-  detached: true,
-  env: { ...process.env, MUESLI_ADDR: serverAddr },
-})
+const child = spawn(
+  binary,
+  [`--remote-debugging-port=${PORT}`, `--user-data-dir=${userDataDir}`, ...launchArgs],
+  {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    detached: true,
+    env: { ...process.env, MUESLI_ADDR: serverAddr },
+  }
+)
 const appOut = []
 child.stdout.on('data', (d) => appOut.push(String(d)))
 child.stderr.on('data', (d) => appOut.push(String(d)))
