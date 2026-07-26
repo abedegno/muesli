@@ -6,13 +6,12 @@ import (
 	"testing"
 
 	"github.com/abedegno/muesli/internal/db"
+	"github.com/abedegno/muesli/internal/testsupport"
 )
 
 func TestConnectAndMigrate(t *testing.T) {
 	url := os.Getenv("TEST_DATABASE_URL")
-	if url == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `make test-db`")
-	}
+	testsupport.RequireDependency(t, "TEST_DATABASE_URL", url != "", "TEST_DATABASE_URL not set; run `make test-db`")
 	ctx := context.Background()
 
 	if err := db.Migrate(url); err != nil {

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/abedegno/muesli/internal/model"
+	"github.com/abedegno/muesli/internal/testsupport"
 )
 
 type recordingTranscriber struct {
@@ -110,9 +111,10 @@ func TestTranscriberHandler(t *testing.T) {
 	}
 
 	t.Run("transcribe", func(t *testing.T) {
-		if _, err := exec.LookPath("ffmpeg"); err != nil {
-			t.Skip("ffmpeg not available on PATH")
-		}
+		testsupport.RequireDependency(t, "ffmpeg", func() bool {
+			_, err := exec.LookPath("ffmpeg")
+			return err == nil
+		}(), "ffmpeg not available on PATH")
 		body := map[string]any{"audio_url": tinyWAVDataURL(160), "config": map[string]any{}}
 		reqBody, _ := json.Marshal(body)
 		req, _ := http.NewRequest(http.MethodPost, srv.URL+"/transcribe", bytes.NewReader(reqBody))
@@ -162,9 +164,10 @@ func TestTranscriberHandler(t *testing.T) {
 	})
 
 	t.Run("multitrack", func(t *testing.T) {
-		if _, err := exec.LookPath("ffmpeg"); err != nil {
-			t.Skip("ffmpeg not available on PATH")
-		}
+		testsupport.RequireDependency(t, "ffmpeg", func() bool {
+			_, err := exec.LookPath("ffmpeg")
+			return err == nil
+		}(), "ffmpeg not available on PATH")
 		eng.gotPCM = nil
 		body := map[string]any{"audio_url": stereoWAVDataURL(), "config": map[string]any{"multitrack": true}}
 		reqBody, _ := json.Marshal(body)

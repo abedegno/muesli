@@ -12,6 +12,8 @@ import (
 	"os"
 	"os/exec"
 	"testing"
+
+	"github.com/abedegno/muesli/internal/testsupport"
 )
 
 func tinyWAVDataURL(samples int) string {
@@ -45,9 +47,10 @@ func tinyWAVDataURL(samples int) string {
 }
 
 func TestDecodePCM(t *testing.T) {
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		t.Skip("ffmpeg not available on PATH")
-	}
+	testsupport.RequireDependency(t, "ffmpeg", func() bool {
+		_, err := exec.LookPath("ffmpeg")
+		return err == nil
+	}(), "ffmpeg not available on PATH")
 	pcm, err := DecodePCM(context.Background(), tinyWAVDataURL(160))
 	if err != nil {
 		t.Fatalf("decode pcm: %v", err)

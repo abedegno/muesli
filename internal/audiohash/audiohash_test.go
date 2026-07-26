@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/abedegno/muesli/internal/audiohash"
+	"github.com/abedegno/muesli/internal/testsupport"
 )
 
 func TestHashRaw(t *testing.T) {
@@ -38,9 +39,10 @@ func TestHashNormalized_Fallback(t *testing.T) {
 }
 
 func TestHashNormalized_WithFFmpeg(t *testing.T) {
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		t.Skip("ffmpeg not available")
-	}
+	testsupport.RequireDependency(t, "ffmpeg", func() bool {
+		_, err := exec.LookPath("ffmpeg")
+		return err == nil
+	}(), "ffmpeg not available")
 
 	dir := t.TempDir()
 	audioPath := filepath.Join(dir, "silence.wav")
