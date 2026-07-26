@@ -144,6 +144,30 @@ jobs:
             spctl -a -t exec -vv "$APP" || echo "note: spctl app assessment non-zero (informational only)"
           fi
 
+      - name: Smoke test packaged dmg (mounted app must mount)
+        run: |
+          DMG="$(find dist-desktop -maxdepth 1 -name '*.dmg' | head -1)"
+          MOUNT_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/muesli-dmg.XXXXXX")"
+          cleanup() {
+            hdiutil detach "$MOUNT_DIR" >/dev/null 2>&1 || true
+            rmdir "$MOUNT_DIR" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          echo "mounting $DMG at $MOUNT_DIR"
+          hdiutil attach -nobrowse -readonly -mountpoint "$MOUNT_DIR" "$DMG" >/dev/null
+          APP="$(find "$MOUNT_DIR" -maxdepth 2 -name '*.app' -type d | head -1)"
+          if [ -z "$APP" ]; then
+            echo "no .app bundle found inside mounted dmg at $MOUNT_DIR" >&2
+            exit 1
+          fi
+          echo "smoking mounted app $APP"
+          if node -e 'process.exit(typeof WebSocket === "undefined" ? 1 : 0)'; then
+            node scripts/smoke-desktop.mjs "$APP" --port 9455
+          else
+            node --experimental-websocket scripts/smoke-desktop.mjs "$APP" --port 9455
+          fi
+
       # Launch the BUILT app and prove the renderer actually mounts. Unit tests
       # stub `window.muesli` with a plain object, so they cannot catch a
       # contextBridge-only failure — v0.1.10 shipped a blank window with a fully
@@ -216,6 +240,27 @@ jobs:
         run: |
           npx electron-vite build
           npx electron-builder --linux AppImage --publish never
+
+      - name: Smoke test AppImage (renderer must mount)
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+        run: |
+          APPIMAGE="$(find dist-desktop -maxdepth 1 -name '*.AppImage' | head -1)"
+          if [ -z "$APPIMAGE" ]; then
+            echo "no AppImage found in dist-desktop" >&2
+            exit 1
+          fi
+          chmod +x "$APPIMAGE"
+          if ! command -v xvfb-run >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y xvfb
+          fi
+          echo "smoking $APPIMAGE"
+          if node -e 'process.exit(typeof WebSocket === "undefined" ? 1 : 0)'; then
+            xvfb-run -a node scripts/smoke-desktop.mjs "$APPIMAGE" --port 9460 --no-sandbox
+          else
+            xvfb-run -a node --experimental-websocket scripts/smoke-desktop.mjs "$APPIMAGE" --port 9460 --no-sandbox
+          fi
 
       - name: Upload AppImage artifact
         uses: actions/upload-artifact@v4
