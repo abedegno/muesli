@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/abedegno/muesli/internal/model"
+	"github.com/abedegno/muesli/internal/testsupport"
 )
 
 func stereoWAVDataURL() string {
@@ -125,9 +126,10 @@ func TestOrchestrateSkipsSilentChannel(t *testing.T) {
 }
 
 func TestRunMultitrackDecodesTwoChannels(t *testing.T) {
-	if _, err := exec.LookPath("ffmpeg"); err != nil {
-		t.Skip("ffmpeg not available on PATH")
-	}
+	testsupport.RequireDependency(t, "ffmpeg", func() bool {
+		_, err := exec.LookPath("ffmpeg")
+		return err == nil
+	}(), "ffmpeg not available on PATH")
 	// One segment per channel so the two non-silent channels yield exactly two
 	// segments (You + Them). recordingTranscriber returns two segments per call,
 	// which would (correctly) produce four here.

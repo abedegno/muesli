@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/abedegno/muesli/internal/db"
+	"github.com/abedegno/muesli/internal/testsupport"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -24,13 +25,12 @@ var (
 // NewPool connects to TEST_DATABASE_URL, creates a unique Postgres schema for
 // this test, migrates it, and returns a ready pool. The schema (and all its
 // tables) is dropped via t.Cleanup, giving each call fully isolated state.
-// Skips the test if TEST_DATABASE_URL is not set.
+// Locally this skips if TEST_DATABASE_URL is not set; in CI it fails loudly so
+// a missing server-job dependency does not silently pass.
 func NewPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	baseURL := os.Getenv("TEST_DATABASE_URL")
-	if baseURL == "" {
-		t.Skip("TEST_DATABASE_URL not set; run `make test-db`")
-	}
+	testsupport.RequireDependency(t, "TEST_DATABASE_URL", baseURL != "", "TEST_DATABASE_URL not set; run `make test-db`")
 
 	ctx := context.Background()
 

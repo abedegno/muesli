@@ -14,18 +14,19 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/abedegno/muesli/internal/testsupport"
 )
 
 func TestWhisperCppTranscriberConformance(t *testing.T) {
 	if os.Getenv("MUESLI_PLUGINKIT_CONFORMANCE") != "1" {
 		t.Skip("pluginkit conformance disabled")
 	}
-	if _, err := exec.LookPath("python3"); err != nil {
-		t.Skip("python3 not available")
-	}
-	if err := exec.Command("python3", "-c", "import muesli_plugin_conformance").Run(); err != nil {
-		t.Skip("muesli_plugin_conformance not importable")
-	}
+	testsupport.RequireDependency(t, "python3", func() bool {
+		_, err := exec.LookPath("python3")
+		return err == nil
+	}(), "python3 not available")
+	testsupport.RequireDependency(t, "muesli_plugin_conformance", exec.Command("python3", "-c", "import muesli_plugin_conformance").Run() == nil, "muesli_plugin_conformance not importable")
 
 	var modelHits atomic.Int32
 	modelSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
