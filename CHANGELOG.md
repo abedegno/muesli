@@ -5,10 +5,44 @@ All notable changes to Muesli are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-Muesli is pre-1.0 and under active development; until a tagged release exists,
-"Unreleased" tracks what's on `main`.
+Muesli is pre-1.0 and under active development; tagged desktop releases
+(`desktop-vX.Y.Z`) are cut from accumulated `Unreleased` changes, and
+`[Unreleased]` tracks what's merged to `main` since the last tag.
 
 ## [Unreleased]
+
+## [0.1.11] - 2026-07-25
+
+### Fixed
+
+- **Blank window on launch.** `desktop-v0.1.10` could ship a blank window
+  because the renderer context bridge was proxied incorrectly; `308acac`
+  removes that proxying so `desktop-v0.1.11` launches into the app shell
+  again.
+
+## [0.1.10] - 2026-07-25
+
+### Added
+
+- **Desktop onboarding and AI settings.** The desktop app gained onboarding
+  and AI settings surfaces (`c67cc1b`).
+
+### Changed
+
+- **Embedded server appdata is unified.** The desktop app now uses a unified
+  embedded-server appdata location (`e1839fc`).
+- **Settings and sidebar affordances were tightened up.** Settings now uses a
+  dark-styled cadence select and checkbox, and the sidebar exposes one search
+  affordance (`01bb1a6`).
+
+### Fixed
+
+- **Startup banner overflow.** The startup banner no longer overflows the
+  window (`69036e6`).
+- **Invalid auth tokens recover cleanly.** The desktop client now recovers
+  from invalid auth tokens instead of getting stuck (`6959222`).
+
+## [0.1.9] - 2026-07-18
 
 ### Added
 
@@ -297,4 +331,7 @@ Muesli is pre-1.0 and under active development; until a tagged release exists,
 - Empty transcript was sent to the agent as JSON `null` (causing a 422); the worker
   now always sends `[]` and the agent tolerates empty/null input.
 
-[Unreleased]: https://github.com/abedegno/muesli/commits/main
+[Unreleased]: https://github.com/abedegno/muesli/compare/desktop-v0.1.11...main
+[0.1.11]: https://github.com/abedegno/muesli/compare/desktop-v0.1.10...desktop-v0.1.11
+[0.1.10]: https://github.com/abedegno/muesli/compare/desktop-v0.1.9...desktop-v0.1.10
+[0.1.9]: https://github.com/abedegno/muesli/compare/desktop-v0.1.8...desktop-v0.1.9
