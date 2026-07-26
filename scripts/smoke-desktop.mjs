@@ -273,20 +273,27 @@ try {
     fail(failMessage, { exceptions, consoleErrors, state })
   }
 
-  async function clickText(text) {
-    failOnExceptions(`journey failed before clicking ${text}`)
-    const { result } = await send('Runtime.evaluate', {
-      expression: `(() => {
-        const target = Array.from(document.querySelectorAll('a,button')).find(
-          (el) => (el.textContent ?? '').replace(/\\s+/g, ' ').trim() === ${JSON.stringify(text)}
-        )
-        if (!target) return false
-        target.click()
-        return true
-      })()`,
-      returnByValue: true,
-    })
-    return result?.value === true
+  async function clickText(text, failMessage) {
+    const deadline = Date.now() + JOURNEY_STEP_TIMEOUT_MS
+    let clicked = false
+    while (Date.now() < deadline) {
+      failOnExceptions(failMessage)
+      const { result } = await send('Runtime.evaluate', {
+        expression: `(() => {
+          const target = Array.from(document.querySelectorAll('a,button')).find(
+            (el) => (el.textContent ?? '').replace(/\\s+/g, ' ').trim() === ${JSON.stringify(text)}
+          )
+          if (!target) return false
+          target.click()
+          return true
+        })()`,
+        returnByValue: true,
+      })
+      clicked = result?.value === true
+      if (clicked) return true
+      await sleep(500)
+    }
+    fail(failMessage, { exceptions, consoleErrors, clicked })
   }
 
   if (journey) {
@@ -300,9 +307,7 @@ try {
     }
     failOnExceptions('journey failed after startup gate')
 
-    const settingsClicked = await clickText('Settings')
-    if (!settingsClicked)
-      fail('journey failed: could not find the Settings nav entry', { exceptions, consoleErrors })
+    await clickText('Settings', 'journey failed: could not find the Settings nav entry')
 
     await waitForJourneyState(
       Date.now() + JOURNEY_STEP_TIMEOUT_MS,
@@ -311,9 +316,7 @@ try {
     )
     failOnExceptions('journey failed after opening Settings')
 
-    const allNotesClicked = await clickText('All notes')
-    if (!allNotesClicked)
-      fail('journey failed: could not find the All notes nav entry', { exceptions, consoleErrors })
+    await clickText('All notes', 'journey failed: could not find the All notes nav entry')
 
     await waitForJourneyState(
       Date.now() + JOURNEY_STEP_TIMEOUT_MS,
