@@ -44,7 +44,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y ffmpeg
-      - run: go test ./... -p 4 -parallel 2
+      - name: Run go tests with coverage
+        run: go test ./... -p 4 -parallel 2 -coverprofile=coverage.out
+      - name: Report go coverage
+        run: |
+          summary=$(go tool cover -func=coverage.out | tail -1)
+          echo "$summary"
+          if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            echo "$summary" >> "$GITHUB_STEP_SUMMARY"
+          fi
 
   embedded-integration:
     name: embedded-integration
@@ -90,7 +98,8 @@ jobs:
       - name: Format check (Prettier)
         run: npm run format:check
       - run: npm run typecheck
-      - run: npm run test
+      - name: Test coverage
+        run: npm run test:coverage
 
   pluginkit-conformance:
     name: pluginkit-conformance
