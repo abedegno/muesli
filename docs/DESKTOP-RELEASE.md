@@ -51,6 +51,9 @@ The macOS release job expects these repository secrets:
 ## Release Cut
 
 1. Bump `version` in [../package.json](../package.json).
+   Also move the current `## [Unreleased]` content in
+   [../CHANGELOG.md](../CHANGELOG.md) into a new dated section for that
+   version so the accumulated release notes do not get stranded.
 2. Create and push the release tag:
    `git tag desktop-vX.Y.Z && git push origin desktop-vX.Y.Z`
 3. CI runs the macOS release job on `macos-14`.
