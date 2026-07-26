@@ -242,6 +242,8 @@ jobs:
           npx electron-builder --linux AppImage --publish never
 
       - name: Smoke test AppImage (renderer must mount)
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
         run: |
           APPIMAGE="$(find dist-desktop -maxdepth 1 -name '*.AppImage' | head -1)"
           if [ -z "$APPIMAGE" ]; then
