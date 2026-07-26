@@ -18,7 +18,7 @@
 // it with --experimental-websocket; Node >=22 has WebSocket unflagged.
 
 import { spawn } from 'node:child_process'
-import { mkdtempSync, existsSync, readdirSync } from 'node:fs'
+import { mkdtempSync, existsSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -145,6 +145,12 @@ function getJourneyStateExpression() {
 }
 
 const userDataDir = mkdtempSync(join(tmpdir(), 'muesli-smoke-'))
+if (journey) {
+  writeFileSync(
+    join(userDataDir, 'local-session.json'),
+    JSON.stringify({ encrypted: false, manualServer: false, onboarded: true })
+  )
+}
 const binary = resolveBinary(appArg)
 console.log(`[smoke] launching ${binary}`)
 console.log(`[smoke] clean user-data-dir: ${userDataDir}`)
