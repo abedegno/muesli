@@ -11,8 +11,8 @@
 // class of bug: it drives the actual .app over the Chrome DevTools Protocol and
 // asserts the UI rendered.
 //
-// Usage:  node scripts/smoke-desktop.mjs <path-to-.app-or-binary> [--port 9444]
-// Exit:   0 = renderer mounted cleanly, 1 = blank/failed (with diagnostics)
+// Usage:  node scripts/smoke-desktop.mjs <path-to-.app-or-binary> [--port 9444] [--journey]
+// Exit:   0 = renderer mounted cleanly / journey passed, 1 = blank/failed (with diagnostics)
 //
 // Deliberately dependency-free (uses global fetch + WebSocket). On Node 20 run
 // it with --experimental-websocket; Node >=22 has WebSocket unflagged.
@@ -23,24 +23,36 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 const args = process.argv.slice(2)
-const appArg = args.find((a) => !a.startsWith('--'))
-const portArg = args.indexOf('--port')
-const PORT = portArg !== -1 ? Number(args[portArg + 1]) : 9444
+let appArg = null
+let journey = false
+let PORT = 9444
 const launchArgs = []
 for (let i = 0; i < args.length; i += 1) {
   const arg = args[i]
-  if (arg === appArg) continue
+  if (arg === '--journey') {
+    journey = true
+    continue
+  }
   if (arg === '--port') {
+    PORT = Number(args[i + 1])
     i += 1
     continue
   }
+  if (!arg.startsWith('--') && appArg === null) {
+    appArg = arg
+    continue
+  }
+  if (arg === appArg) continue
   launchArgs.push(arg)
 }
 const TARGET_TIMEOUT_MS = 90_000 // app boot + first paint
 const MOUNT_TIMEOUT_MS = 60_000 // renderer mount after the target appears
+const JOURNEY_STEP_TIMEOUT_MS = 25_000
 
 if (!appArg) {
-  console.error('usage: node scripts/smoke-desktop.mjs <path-to-.app-or-binary> [--port N]')
+  console.error(
+    'usage: node scripts/smoke-desktop.mjs <path-to-.app-or-binary> [--port N] [--journey]'
+  )
   process.exit(2)
 }
 
@@ -115,6 +127,23 @@ function cdp(ws) {
   return { send, exceptions, consoleErrors }
 }
 
+function getJourneyStateExpression() {
+  return `(() => {
+    const text = document.body?.innerText ?? ''
+    const hasStartupPanel = text.includes('Starting Muesli') || text.includes('Starting...')
+    const hasDegradedBanner = text.includes('Install Ollama to enable summaries & search.')
+    const headings = Array.from(document.querySelectorAll('h2')).map((el) => (el.textContent ?? '').trim())
+    const hasSettingsHeading = headings.includes('Server') || headings.includes('Appearance')
+    const hasNoNotesYet = text.includes('No notes yet')
+    return {
+      hasStartupPanel,
+      hasDegradedBanner,
+      hasSettingsHeading,
+      hasNoNotesYet,
+    }
+  })()`
+}
+
 const userDataDir = mkdtempSync(join(tmpdir(), 'muesli-smoke-'))
 const binary = resolveBinary(appArg)
 console.log(`[smoke] launching ${binary}`)
@@ -185,6 +214,12 @@ try {
   const { send, exceptions, consoleErrors } = cdp(ws)
   await send('Runtime.enable')
 
+  const failOnExceptions = (reason) => {
+    if (exceptions.length) {
+      fail(reason, { exceptions, consoleErrors })
+    }
+  }
+
   // Poll until the React root has children. A blank window is exactly
   // "root exists but never gets any".
   const deadline = Date.now() + MOUNT_TIMEOUT_MS
@@ -211,6 +246,72 @@ try {
       exceptions,
       consoleErrors,
     })
+  }
+
+  const evaluateState = async () => {
+    const { result } = await send('Runtime.evaluate', {
+      expression: getJourneyStateExpression(),
+      returnByValue: true,
+    })
+    return result?.value ?? {}
+  }
+
+  async function waitForJourneyState(deadline, predicate, failMessage) {
+    let state = null
+    while (Date.now() < deadline) {
+      failOnExceptions(failMessage)
+      state = await evaluateState()
+      if (predicate(state)) return state
+      await sleep(500)
+    }
+    fail(failMessage, { exceptions, consoleErrors, state })
+  }
+
+  async function clickText(text) {
+    failOnExceptions(`journey failed before clicking ${text}`)
+    const { result } = await send('Runtime.evaluate', {
+      expression: `(() => {
+        const target = Array.from(document.querySelectorAll('a,button')).find(
+          (el) => (el.textContent ?? '').replace(/\\s+/g, ' ').trim() === ${JSON.stringify(text)}
+        )
+        if (!target) return false
+        target.click()
+        return true
+      })()`,
+      returnByValue: true,
+    })
+    return result?.value === true
+  }
+
+  if (journey) {
+    await waitForJourneyState(
+      Date.now() + JOURNEY_STEP_TIMEOUT_MS,
+      (state) => state && !state.hasStartupPanel && !state.hasDegradedBanner,
+      'journey failed: app never left startup or stayed degraded'
+    )
+    failOnExceptions('journey failed after startup gate')
+
+    const settingsClicked = await clickText('Settings')
+    if (!settingsClicked)
+      fail('journey failed: could not find the Settings nav entry', { exceptions, consoleErrors })
+
+    await waitForJourneyState(
+      Date.now() + JOURNEY_STEP_TIMEOUT_MS,
+      (state) => !!state?.hasSettingsHeading,
+      'journey failed: Settings screen never rendered a Server or Appearance heading'
+    )
+    failOnExceptions('journey failed after opening Settings')
+
+    const allNotesClicked = await clickText('All notes')
+    if (!allNotesClicked)
+      fail('journey failed: could not find the All notes nav entry', { exceptions, consoleErrors })
+
+    await waitForJourneyState(
+      Date.now() + JOURNEY_STEP_TIMEOUT_MS,
+      (state) => !!state?.hasNoNotesYet,
+      'journey failed: notes list never rendered the "No notes yet" empty state'
+    )
+    failOnExceptions('journey failed after returning to All notes')
   }
 
   const { result: title } = await send('Runtime.evaluate', {
