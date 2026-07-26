@@ -1,5 +1,5 @@
 import { resolve } from 'node:path'
-import { defineConfig } from 'vitest/config'
+import { coverageConfigDefaults, defineConfig } from 'vitest/config'
 
 export default defineConfig({
   resolve: {
@@ -12,5 +12,15 @@ export default defineConfig({
     environment: 'node',
     setupFiles: ['./vitest.setup.ts'],
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'test/**/*.test.ts'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'json-summary'],
+      exclude: [
+        ...coverageConfigDefaults.exclude,
+        'out/**',
+        'internal/adminui/dist/**',
+        'web/admin/dist/**',
+      ],
+    },
   },
 })
