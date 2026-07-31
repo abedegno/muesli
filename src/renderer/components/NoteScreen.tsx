@@ -1281,7 +1281,7 @@ export function NoteScreen() {
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="secondary" size="sm" onClick={() => setConfirmDelete(false)}>Cancel</Button>
             <Button variant="destructive" size="sm" onClick={async () => {
-              try { await muesli.deleteNote(id); refresh(); navigate('/') }
+              try { await muesli.deleteNote(id); refresh(); navigate('/notes') }
               catch (err) { notify(err instanceof Error ? err.message : 'Could not delete note', 'error'); setConfirmDelete(false) }
             }}>Move to Trash</Button>
           </div>

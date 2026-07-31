@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { Plus, Search, FileText, MessageSquare, Settings, Tag as TagIcon, Filter, Sparkles, Folder as FolderIcon, ChevronRight, ChevronDown, Trash2, PanelLeft, PanelLeftClose, MoreHorizontal, Calendar, Users, CheckSquare2, BarChart3 } from 'lucide-react'
+import { Plus, Search, FileText, MessageSquare, Settings, Tag as TagIcon, Filter, Sparkles, Folder as FolderIcon, ChevronRight, ChevronDown, Trash2, PanelLeft, PanelLeftClose, MoreHorizontal, Home, Users, CheckSquare2, BarChart3 } from 'lucide-react'
 import { muesli } from '@/api'
 import { cn } from '@/lib/cn'
 import { descendantIds } from '@/lib/folders'
@@ -96,7 +96,7 @@ export function Sidebar({
   const childrenOf = (pid: string | null) => folders.filter((f) => (f.parent_id ?? null) === pid)
   // Selecting a view always returns to the main list pane (so it shows even when a
   // note detail is open), then applies the filter.
-  const selectView = (v: ActiveView) => { navigate('/'); onSelectView(v) }
+  const selectView = (v: ActiveView) => { navigate('/notes'); onSelectView(v) }
   const rowBase = 'flex w-full items-center justify-between rounded-[var(--radius)] px-2 py-1.5 text-sm'
   const active = 'bg-primary/10 font-medium text-primary'
   const idle = 'text-foreground hover:bg-muted'
@@ -313,7 +313,12 @@ export function Sidebar({
 
         <nav className="flex-1 overflow-y-auto">
           <NavLink to="/" end onClick={() => onSelectView({ type: 'all' })}
-            className={cn(rowBase, activeView.type === 'all' ? active : idle)}>
+            className={({ isActive }) => cn(rowBase, isActive ? active : idle)}>
+            <span className="flex items-center gap-2"><Home size={14} /> Home</span>
+          </NavLink>
+
+          <NavLink to="/notes" end onClick={() => onSelectView({ type: 'all' })}
+            className={({ isActive }) => cn(rowBase, isActive ? active : idle)}>
             <span className="flex items-center gap-2"><FileText size={14} /> All notes</span>
           </NavLink>
 
@@ -443,9 +448,6 @@ export function Sidebar({
 
         <NavLink to="/chat" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
           <MessageSquare size={16} /> Chat
-        </NavLink>
-        <NavLink to="/coming-up" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
-          <Calendar size={16} /> Coming up
         </NavLink>
         <NavLink to="/action-items" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
           <CheckSquare2 size={16} /> Action items

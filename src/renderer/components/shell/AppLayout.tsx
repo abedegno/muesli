@@ -375,7 +375,7 @@ export function AppLayout() {
         lists={lists}
         tags={tags}
         onSelectNote={(id) => navigate(`/notes/${id}`)}
-        onSelectView={(v) => { selectView(v); navigate('/') }}
+        onSelectView={(v) => { selectView(v); navigate('/notes') }}
         actions={[
           { label: 'New meeting', run: () => navigate('/new') },
           { label: 'Manage templates', run: () => navigate('/templates') },

@@ -38,7 +38,11 @@ vi.mock('./components/SettingsScreen', () => ({
 }))
 
 vi.mock('./components/NotesListScreen', () => ({
-  NotesListScreen: () => <div>main app</div>,
+  NotesListScreen: () => <div>all notes app</div>,
+}))
+
+vi.mock('./components/HomeScreen', () => ({
+  HomeScreen: () => <div>home app</div>,
 }))
 
 import { App } from './App'
@@ -51,7 +55,7 @@ afterEach(() => {
 })
 
 function emitStartup(status: import('../shared/types').EmbeddedStartupStatus) {
-  startupListeners[0]?.(status)
+  startupListeners[startupListeners.length - 1]?.(status)
 }
 
 describe('App', () => {
@@ -68,7 +72,7 @@ describe('App', () => {
     await act(async () => {
       emitStartup({ status: 'ready', degraded: false })
     })
-    expect(await screen.findByText('main app')).toBeInTheDocument()
+    expect(await screen.findByText('home app')).toBeInTheDocument()
     await waitFor(() => expect(authListeners).toHaveLength(1))
     const listener = authListeners[0]
     expect(listener).toBeTypeOf('function')
@@ -95,10 +99,55 @@ describe('App', () => {
     await act(async () => {
       emitStartup({ status: 'ready', degraded: true })
     })
-    expect(await screen.findByText('main app')).toBeInTheDocument()
+    expect(await screen.findByText('home app')).toBeInTheDocument()
 
     await user.click(await screen.findByRole('button', { name: /open ai settings/i }))
 
     expect(await screen.findByTestId('settings-route')).toHaveTextContent('/settings#ai-transcription')
+  })
+
+  it('renders Home at / and All notes at /notes', async () => {
+    getConfig.mockResolvedValue({ serverUrl: 'http://localhost:8080', token: 'app-token' })
+    getOnboarded.mockResolvedValue(true)
+
+    const { unmount } = render(
+      <MemoryRouter initialEntries={['/']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    await act(async () => {
+      emitStartup({ status: 'ready', degraded: false })
+    })
+    expect(await screen.findByText('home app')).toBeInTheDocument()
+    expect(screen.queryByText('all notes app')).not.toBeInTheDocument()
+    unmount()
+
+    render(
+      <MemoryRouter initialEntries={['/notes']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    await act(async () => {
+      emitStartup({ status: 'ready', degraded: false })
+    })
+    expect(await screen.findByText('all notes app')).toBeInTheDocument()
+  })
+
+  it('redirects the legacy /coming-up route to Home', async () => {
+    getConfig.mockResolvedValue({ serverUrl: 'http://localhost:8080', token: 'app-token' })
+    getOnboarded.mockResolvedValue(true)
+
+    render(
+      <MemoryRouter initialEntries={['/coming-up']}>
+        <App />
+      </MemoryRouter>,
+    )
+
+    await act(async () => {
+      emitStartup({ status: 'ready', degraded: false })
+    })
+    expect(await screen.findByText('home app')).toBeInTheDocument()
   })
 })
