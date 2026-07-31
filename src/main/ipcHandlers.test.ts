@@ -96,7 +96,7 @@ describe('ipc handlers', () => {
   it('getConfig and getManualServer reflect manual server mode', async () => {
     const tokenStore = new TokenStore(dir, fakeSafe)
     tokenStore.save({ serverUrl: 'http://localhost:1234', token: 'app-token' })
-    const secretStore: Pick<SecretStore, 'loadCreds' | 'saveCreds' | 'clearCreds' | 'getManualServer' | 'setManualServer' | 'getOnboarded' | 'setOnboarded'> = {
+    const secretStore: Pick<SecretStore, 'loadCreds' | 'saveCreds' | 'clearCreds' | 'getManualServer' | 'setManualServer' | 'getOnboarded' | 'setOnboarded' | 'getKeepRunningInBackground' | 'setKeepRunningInBackground'> = {
       loadCreds: () => null,
       saveCreds: () => {},
       clearCreds: () => {},
@@ -104,6 +104,8 @@ describe('ipc handlers', () => {
       setManualServer: () => {},
       getOnboarded: () => false,
       setOnboarded: () => {},
+      getKeepRunningInBackground: () => false,
+      setKeepRunningInBackground: () => {},
     }
     const h = createHandlers({
       tokenStore,
@@ -118,6 +120,34 @@ describe('ipc handlers', () => {
       token: 'app-token',
       manualServer: true,
     })
+  })
+
+  it('getKeepRunningInBackground and setKeepRunningInBackground delegate to secret storage', async () => {
+    let keepRunningInBackground = false
+    const secretStore: Pick<SecretStore, 'loadCreds' | 'saveCreds' | 'clearCreds' | 'getManualServer' | 'setManualServer' | 'getOnboarded' | 'setOnboarded' | 'getKeepRunningInBackground' | 'setKeepRunningInBackground'> = {
+      loadCreds: () => null,
+      saveCreds: () => {},
+      clearCreds: () => {},
+      getManualServer: () => false,
+      setManualServer: () => {},
+      getOnboarded: () => false,
+      setOnboarded: () => {},
+      getKeepRunningInBackground: () => keepRunningInBackground,
+      setKeepRunningInBackground: (next: boolean) => {
+        keepRunningInBackground = next
+      },
+    }
+
+    const h = createHandlers({
+      tokenStore: new TokenStore(dir, fakeSafe),
+      fetch: server.fetch,
+      onProgress: () => {},
+      secretStore,
+    })
+
+    await expect(h.getKeepRunningInBackground()).resolves.toBe(false)
+    await h.setKeepRunningInBackground(true)
+    await expect(h.getKeepRunningInBackground()).resolves.toBe(true)
   })
 
   it('getReadyz forwards the bearer token and parses ollama detection', async () => {
@@ -161,7 +191,7 @@ describe('ipc handlers', () => {
     }
     const tokenStore = new TokenStore(dir, fakeSafe)
     tokenStore.save({ serverUrl: 'http://remote.example:9000', token: 'app-token' })
-    const secretStore: Pick<SecretStore, 'loadCreds' | 'saveCreds' | 'clearCreds' | 'getManualServer' | 'setManualServer' | 'getOnboarded' | 'setOnboarded'> = {
+    const secretStore: Pick<SecretStore, 'loadCreds' | 'saveCreds' | 'clearCreds' | 'getManualServer' | 'setManualServer' | 'getOnboarded' | 'setOnboarded' | 'getKeepRunningInBackground' | 'setKeepRunningInBackground'> = {
       loadCreds: () => null,
       saveCreds: () => {},
       clearCreds: () => {},
@@ -169,6 +199,8 @@ describe('ipc handlers', () => {
       setManualServer: () => {},
       getOnboarded: () => false,
       setOnboarded: () => {},
+      getKeepRunningInBackground: () => false,
+      setKeepRunningInBackground: () => {},
     }
     const h = createHandlers({
       tokenStore,

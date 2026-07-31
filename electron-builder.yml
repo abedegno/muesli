@@ -13,6 +13,7 @@ directories:
   buildResources: build
 files:
   - out/**
+  - build/tray-iconTemplate*.png
 extraResources:
   - from: build/resources
     to: .

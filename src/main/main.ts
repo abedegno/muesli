@@ -2,8 +2,8 @@ import { randomBytes } from 'node:crypto'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, safeStorage, session, shell } from 'electron'
-import { IPC, type AuthInvalidatedNotice, type ConnectRequest, type CreateConversationRequest, type DiarizationReviewUpdate, type ExportRequestOptions, type MeetingDetectionEventPayload, type SearchOptions, type SendMessageRequest, type UpdateActionItemRequest, type UpdatePersonRequest, type UploadAudioRequest } from '../shared/ipc'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, safeStorage, session, shell, Tray } from 'electron'
+import { IPC, type AuthInvalidatedNotice, type ConnectRequest, type CreateConversationRequest, type DiarizationReviewUpdate, type ExportRequestOptions, type MeetingDetectionEventPayload, type SearchOptions, type SendMessageRequest, type TrayNavigationTarget, type UpdateActionItemRequest, type UpdatePersonRequest, type UploadAudioRequest } from '../shared/ipc'
 import type { CalendarEvent, CreateShareRequest, DigestConfig, EmbeddedStartupStatus, RetranscribeNoteRequest, RuleGroup, TemplatePhase, TemplateSection } from '../shared/types'
 import { createHandlers } from './ipcHandlers'
 import { makeMicPermission } from './micPermission'
@@ -22,6 +22,65 @@ import { MeetingDetectionManager } from './meetingDetectionLoop'
 let mainWindow: BrowserWindow | null = null
 let fatalShutdownRequested = false
 let meetingDetectionManager: MeetingDetectionManager | null = null
+let keepRunningInBackground = false
+let tray: Tray | null = null
+let isQuitting = false
+
+function loadTrayIcon() {
+  const iconPath = join(app.getAppPath(), 'build', 'tray-iconTemplate.png')
+  const image = nativeImage.createFromPath(iconPath)
+  if (process.platform === 'darwin' && !image.isEmpty()) {
+    image.setTemplateImage(true)
+  }
+  return image
+}
+
+function buildTrayMenu() {
+  return Menu.buildFromTemplate([
+    { label: 'Open Muesli', click: () => focusMainWindow() },
+    {
+      label: 'New meeting',
+      click: () => openTrayView('/new'),
+    },
+    {
+      label: 'Settings',
+      click: () => openTrayView('/settings'),
+    },
+    { type: 'separator' },
+    {
+      label: 'Quit Muesli',
+      click: () => app.quit(),
+    },
+  ])
+}
+
+function syncTrayState() {
+  if (!keepRunningInBackground) {
+    tray?.destroy()
+    tray = null
+    return
+  }
+
+  if (!tray) {
+    tray = new Tray(loadTrayIcon())
+    tray.setToolTip('Muesli')
+  }
+  tray.setContextMenu(buildTrayMenu())
+}
+
+function sendTrayNavigation(target: TrayNavigationTarget) {
+  mainWindow?.webContents.send(IPC.trayNavigate, target)
+}
+
+function openTrayView(target: TrayNavigationTarget) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    focusMainWindow()
+    sendTrayNavigation(target)
+    return
+  }
+
+  createWindow({ route: target })
+}
 
 function writeFatalMainProcessLog(kind: 'uncaughtException' | 'unhandledRejection', err: unknown) {
   const logPath = makeServerLogPath(app.getPath('userData'))
@@ -65,8 +124,8 @@ process.on('unhandledRejection', (reason) => {
   requestFatalMainProcessQuit('unhandledRejection', reason)
 })
 
-function createWindow(options: { show?: boolean } = {}) {
-  const { show = true } = options
+function createWindow(options: { show?: boolean; route?: TrayNavigationTarget } = {}) {
+  const { show = true, route } = options
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 760,
@@ -81,9 +140,9 @@ function createWindow(options: { show?: boolean } = {}) {
   })
 
   if (process.env.ELECTRON_RENDERER_URL) {
-    void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
+    void mainWindow.loadURL(route ? `${process.env.ELECTRON_RENDERER_URL}#${route}` : process.env.ELECTRON_RENDERER_URL)
   } else {
-    void mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+    void mainWindow.loadFile(join(__dirname, '../renderer/index.html'), route ? { hash: route } : undefined)
   }
 
   if (!show) {
@@ -135,6 +194,9 @@ app.whenReady().then(async () => {
     const userDataDir = app.getPath('userData')
     const calendarPrefsStore = new CalendarPrefsStore(userDataDir)
     let calendarPrefs = calendarPrefsStore.load()
+    const secretStore = new SecretStore(userDataDir, safeStorage)
+    keepRunningInBackground = secretStore.getKeepRunningInBackground()
+    syncTrayState()
     const supervisor = await startServerSupervisor({
       onSecondInstance: focusMainWindow,
       userDataPath: userDataDir,
@@ -155,7 +217,6 @@ app.whenReady().then(async () => {
     })
 
     const tokenStore = new TokenStore(userDataDir, safeStorage)
-    const secretStore = new SecretStore(userDataDir, safeStorage)
     const fetchImpl = globalThis.fetch?.bind(globalThis)
     const micPermission = makeMicPermission()
     const systemAudioPermission = makeSystemAudioPermission()
@@ -232,6 +293,12 @@ app.whenReady().then(async () => {
     ipcMain.handle(IPC.getManualServer, () => handlers.getManualServer())
     ipcMain.handle(IPC.getOnboarded, () => handlers.getOnboarded())
     ipcMain.handle(IPC.setOnboarded, (_e, onboarded: boolean) => handlers.setOnboarded(onboarded))
+    ipcMain.handle(IPC.getKeepRunningInBackground, () => handlers.getKeepRunningInBackground())
+    ipcMain.handle(IPC.setKeepRunningInBackground, (_e, next: boolean) => {
+      keepRunningInBackground = next
+      handlers.setKeepRunningInBackground(next)
+      syncTrayState()
+    })
     ipcMain.handle(IPC.getReadyz, () => handlers.getReadyz())
     ipcMain.handle(IPC.getServerHealth, () => handlers.getServerHealth())
     ipcMain.handle(IPC.connect, (_e, req: ConnectRequest) => handlers.connect(req))
@@ -436,6 +503,9 @@ app.whenReady().then(async () => {
 })
 
 app.on('before-quit', () => {
+  isQuitting = true
+  tray?.destroy()
+  tray = null
   meetingDetectionManager?.stop()
 })
 
@@ -444,5 +514,12 @@ app.on('activate', () => {
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  if (process.platform !== 'darwin') {
+    app.quit()
+    return
+  }
+
+  if (!keepRunningInBackground || isQuitting) {
+    app.quit()
+  }
 })
