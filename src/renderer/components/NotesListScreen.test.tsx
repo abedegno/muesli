@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { describe, it, expect, afterEach, vi } from 'vitest'
+import { beforeEach, describe, it, expect, afterEach, vi } from 'vitest'
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Routes, Route, Outlet, useParams, useSearchParams } from 'react-router-dom'
@@ -12,9 +12,11 @@ const addNoteFolder = vi.fn()
 const resummarize = vi.fn()
 const reorderNoteInFolder = vi.fn()
 const notify = vi.fn()
+const getManualServer = vi.fn()
 
 vi.mock('@/api', () => ({
   muesli: {
+    getManualServer: () => getManualServer(),
     deleteNote: (id: string) => deleteNote(id),
     addNoteFolder: (noteId: string, folderId: string) => addNoteFolder(noteId, folderId),
     resummarize: (id: string) => resummarize(id),
@@ -33,6 +35,10 @@ import { NotesListScreen } from './NotesListScreen'
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
+})
+
+beforeEach(() => {
+  getManualServer.mockResolvedValue(false)
 })
 
 function OutletStub({ notes, heading = 'All notes', view = { type: 'all' } as ActiveView, loaded = true, folders = [], refresh = () => {}, semanticNotes = [], semanticMatches = {}, searchQuery = '' }: {
@@ -411,13 +417,47 @@ describe('USE04 first-run onboarding hint', () => {
     expect(hint).toBeInTheDocument()
     expect(hint!.textContent).toMatch(/new meeting/i)
     expect(hint!.textContent).toMatch(/recording your microphone and system audio/i)
-    expect(hint!.textContent).toMatch(/your connected server/i)
+    expect(hint!.textContent).toMatch(/processing happens locally on this device/i)
+    expect(hint!.textContent).not.toMatch(/your connected server/i)
     expect(hint!.textContent).toMatch(/processing finishes/i)
     expect(hint!.textContent).toMatch(/appears in this list/i)
     expect(hint!.textContent).not.toMatch(/open the desktop client/i)
     expect(hint!.textContent).not.toMatch(/the desktop client/i)
     expect(hint!.textContent).not.toMatch(/uploads/i)
     expect(hint!.textContent).not.toMatch(/\bthe server\b/i)
+  })
+
+  it('uses local-processing copy in embedded mode and keeps the remote wording on a manual server', async () => {
+    getManualServer.mockResolvedValueOnce(true)
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route element={<OutletStub notes={[]} view={{ type: 'all' }} />}>
+            <Route path="/" element={<NotesListScreen />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    const hint = await screen.findByTestId('onboarding-hint')
+    await waitFor(() => expect(hint.textContent).toMatch(/the recording goes to your connected server/i))
+
+    cleanup()
+    getManualServer.mockResolvedValue(false)
+
+    render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route element={<OutletStub notes={[]} view={{ type: 'all' }} />}>
+            <Route path="/" element={<NotesListScreen />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    expect(await screen.findByTestId('onboarding-hint')).toHaveTextContent(/processing happens locally on this device/i)
+    expect(screen.getByTestId('onboarding-hint')).not.toHaveTextContent(/goes to your connected server/i)
   })
 
   it('does NOT show the onboarding hint in a filtered (folder) empty state', () => {

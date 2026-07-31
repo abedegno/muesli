@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
 import { muesli } from './api'
 import { EmbeddedStartupGate } from './components/StartupScreen'
 import { SetupWizard } from './components/SetupWizard'
@@ -124,8 +124,12 @@ function AppContent() {
 
 export function App() {
   const navigate = useNavigate()
+  const location = useLocation()
   return (
-    <EmbeddedStartupGate onOpenAiSettings={() => navigate('/settings#ai-transcription')}>
+    <EmbeddedStartupGate
+      hideDegradedBanner={location.pathname === '/settings'}
+      onOpenAiSettings={() => navigate('/settings#ai-transcription')}
+    >
       <AppContent />
     </EmbeddedStartupGate>
   )
