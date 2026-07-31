@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => {
     restore: vi.fn(),
     show: vi.fn(),
     focus: vi.fn(),
+    on: vi.fn(),
+    once: vi.fn(),
     webContents: {
       send: vi.fn(),
     },
@@ -23,6 +25,10 @@ const mocks = vi.hoisted(() => {
       getAllWindows: vi.fn(() => []),
     },
   )
+  const notification = {
+    on: vi.fn(),
+    show: vi.fn(),
+  }
 
   const app = {
     isPackaged: false,
@@ -58,6 +64,14 @@ const mocks = vi.hoisted(() => {
   }))
   const startEmbeddedStartupMonitor = vi.fn()
   const createHandlers = vi.fn(() => new Proxy({}, { get: () => vi.fn() }))
+  const meetingDetectionManagerCtor = vi.fn().mockImplementation(() => ({
+    start: vi.fn(),
+    stop: vi.fn(),
+    windowClosed: vi.fn(),
+    rendererReadyForWindow: vi.fn(async () => {}),
+    acceptPrompt: vi.fn(),
+    dismissPrompt: vi.fn(),
+  }))
 
   return {
     app,
@@ -67,6 +81,8 @@ const mocks = vi.hoisted(() => {
     ipcHandle,
     makeServerLogPath,
     permissionHandler,
+    notification,
+    meetingDetectionManagerCtor,
     secretStoreCtor,
     startEmbeddedStartupMonitor,
     startServerSupervisor,
@@ -77,6 +93,7 @@ const mocks = vi.hoisted(() => {
 vi.mock('electron', () => ({
   app: mocks.app,
   BrowserWindow: mocks.browserWindowCtor,
+  Notification: vi.fn().mockImplementation(() => mocks.notification),
   clipboard: {
     writeText: vi.fn(),
   },
@@ -115,6 +132,10 @@ vi.mock('./serverSupervisor', () => ({
   startServerSupervisor: mocks.startServerSupervisor,
 }))
 
+vi.mock('./meetingDetectionLoop', () => ({
+  MeetingDetectionManager: mocks.meetingDetectionManagerCtor,
+}))
+
 vi.mock('./embeddedStartupMonitor', () => ({
   startEmbeddedStartupMonitor: mocks.startEmbeddedStartupMonitor,
 }))
@@ -133,6 +154,7 @@ async function flushBoot() {
 
 describe('main bootstrap wiring', () => {
   beforeEach(() => {
+    vi.resetModules()
     vi.clearAllMocks()
     mocks.app.getPath.mockImplementation((name: string) => `/tmp/${name}`)
   })
@@ -184,6 +206,11 @@ describe('main bootstrap wiring', () => {
       'muesli:exportNote',
       'muesli:micStatus',
       'muesli:search',
+      'muesli:getCalendarPrefs',
+      'muesli:setCalendarPrefs',
+      'muesli:meetingDetectionRendererReady',
+      'muesli:meetingDetectionPromptAccept',
+      'muesli:meetingDetectionPromptDismiss',
     ]))
     expect(new Set(registeredChannels).size).toBe(registeredChannels.length)
 

@@ -110,6 +110,11 @@ const bridge: MuesliBridge = {
   openGoogleCalendarOAuthStart: () => ipcRenderer.invoke(IPC.openGoogleCalendarOAuthStart),
   getMicrosoftCalendarOAuthStatus: () => ipcRenderer.invoke(IPC.getMicrosoftCalendarOAuthStatus),
   openMicrosoftCalendarOAuthStart: () => ipcRenderer.invoke(IPC.openMicrosoftCalendarOAuthStart),
+  getCalendarPrefs: () => ipcRenderer.invoke(IPC.getCalendarPrefs),
+  setCalendarPrefs: (prefs) => ipcRenderer.invoke(IPC.setCalendarPrefs, prefs),
+  meetingDetectionRendererReady: () => ipcRenderer.invoke(IPC.meetingDetectionRendererReady),
+  meetingDetectionPromptAccept: (occurrenceKey) => ipcRenderer.invoke(IPC.meetingDetectionPromptAccept, occurrenceKey),
+  meetingDetectionPromptDismiss: (occurrenceKey) => ipcRenderer.invoke(IPC.meetingDetectionPromptDismiss, occurrenceKey),
   micStatus: () => ipcRenderer.invoke(IPC.micStatus),
   micRequest: () => ipcRenderer.invoke(IPC.micRequest),
   micOpenSettings: () => ipcRenderer.invoke(IPC.micOpenSettings),
@@ -141,6 +146,21 @@ const bridge: MuesliBridge = {
     const listener = (_e: unknown, status: Parameters<typeof cb>[0]) => cb(status)
     ipcRenderer.on(IPC.embeddedStartupStatus, listener)
     return () => ipcRenderer.removeListener(IPC.embeddedStartupStatus, listener)
+  },
+  onMeetingDetectionPromptShow: (cb) => {
+    const listener = (_e: unknown, payload: Parameters<typeof cb>[0]) => cb(payload)
+    ipcRenderer.on(IPC.meetingDetectionPromptShow, listener)
+    return () => ipcRenderer.removeListener(IPC.meetingDetectionPromptShow, listener)
+  },
+  onMeetingDetectionPromptClear: (cb) => {
+    const listener = (_e: unknown, payload: Parameters<typeof cb>[0]) => cb(payload)
+    ipcRenderer.on(IPC.meetingDetectionPromptClear, listener)
+    return () => ipcRenderer.removeListener(IPC.meetingDetectionPromptClear, listener)
+  },
+  onMeetingDetectionAutoRecord: (cb) => {
+    const listener = (_e: unknown, payload: Parameters<typeof cb>[0]) => cb(payload)
+    ipcRenderer.on(IPC.meetingDetectionAutoRecord, listener)
+    return () => ipcRenderer.removeListener(IPC.meetingDetectionAutoRecord, listener)
   },
 }
 

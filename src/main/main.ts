@@ -2,9 +2,9 @@ import { randomBytes } from 'node:crypto'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
-import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, session, shell } from 'electron'
-import { IPC, type AuthInvalidatedNotice, type ConnectRequest, type CreateConversationRequest, type DiarizationReviewUpdate, type ExportRequestOptions, type SearchOptions, type SendMessageRequest, type UpdateActionItemRequest, type UpdatePersonRequest, type UploadAudioRequest } from '../shared/ipc'
-import type { CreateShareRequest, DigestConfig, EmbeddedStartupStatus, RetranscribeNoteRequest, RuleGroup, TemplatePhase, TemplateSection } from '../shared/types'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Notification, safeStorage, session, shell } from 'electron'
+import { IPC, type AuthInvalidatedNotice, type ConnectRequest, type CreateConversationRequest, type DiarizationReviewUpdate, type ExportRequestOptions, type MeetingDetectionEventPayload, type SearchOptions, type SendMessageRequest, type UpdateActionItemRequest, type UpdatePersonRequest, type UploadAudioRequest } from '../shared/ipc'
+import type { CalendarEvent, CreateShareRequest, DigestConfig, EmbeddedStartupStatus, RetranscribeNoteRequest, RuleGroup, TemplatePhase, TemplateSection } from '../shared/types'
 import { createHandlers } from './ipcHandlers'
 import { makeMicPermission } from './micPermission'
 import { resolveAudiotapBin } from './resourcePaths'
@@ -16,9 +16,12 @@ import { makeSystemAudioPermission } from './systemAudioPermission'
 import { makeSystemAudioHelper } from './systemAudioHelper'
 import { DEFAULT_HEALTH_TIMEOUT_MS, makeServerLogPath, startServerSupervisor } from './serverSupervisor'
 import { TokenStore } from './tokenStore'
+import { CalendarPrefsStore } from './calendarPrefs'
+import { MeetingDetectionManager } from './meetingDetectionLoop'
 
 let mainWindow: BrowserWindow | null = null
 let fatalShutdownRequested = false
+let meetingDetectionManager: MeetingDetectionManager | null = null
 
 function writeFatalMainProcessLog(kind: 'uncaughtException' | 'unhandledRejection', err: unknown) {
   const logPath = makeServerLogPath(app.getPath('userData'))
@@ -62,17 +65,17 @@ process.on('unhandledRejection', (reason) => {
   requestFatalMainProcessQuit('unhandledRejection', reason)
 })
 
-function createWindow() {
+function createWindow(options: { show?: boolean } = {}) {
+  const { show = true } = options
   mainWindow = new BrowserWindow({
     width: 1100,
     height: 760,
     minWidth: 400,
+    show,
     webPreferences: {
       preload: join(__dirname, '../preload/preload.js'),
       contextIsolation: true,
       nodeIntegration: false,
-      // The preload uses only ipcRenderer + contextBridge (no Node fs/path), so the
-      // renderer can stay fully sandboxed. All privileged work lives in main.
       sandbox: true,
     },
   })
@@ -82,6 +85,25 @@ function createWindow() {
   } else {
     void mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
+
+  if (!show) {
+    mainWindow.once('ready-to-show', () => {
+      if (!mainWindow || mainWindow.isDestroyed()) return
+      if (typeof mainWindow.showInactive === 'function') {
+        mainWindow.showInactive()
+      } else {
+        mainWindow.show()
+      }
+    })
+  }
+
+  mainWindow.on('closed', () => {
+    if (mainWindow === null) return
+    mainWindow = null
+    meetingDetectionManager?.windowClosed()
+  })
+
+  return mainWindow
 }
 
 function focusMainWindow() {
@@ -111,6 +133,8 @@ app.whenReady().then(async () => {
     })
 
     const userDataDir = app.getPath('userData')
+    const calendarPrefsStore = new CalendarPrefsStore(userDataDir)
+    let calendarPrefs = calendarPrefsStore.load()
     const supervisor = await startServerSupervisor({
       onSecondInstance: focusMainWindow,
       userDataPath: userDataDir,
@@ -165,6 +189,44 @@ app.whenReady().then(async () => {
       },
       onProgress: (p) => mainWindow?.webContents.send(IPC.uploadProgress, p),
     })
+    meetingDetectionManager = new MeetingDetectionManager({
+      getCalendarEvents: (_from, _to) => handlers.getCalendarEvents(_from, _to),
+      listNotes: () => handlers.listNotes(),
+      getCalendarPrefs: () => calendarPrefs,
+      createAutoRecordNote: async (event: CalendarEvent) => {
+        const note = await handlers.createNote(event.title)
+        await handlers.linkNoteEvent(note.id, event.id)
+        return note.id
+      },
+      ensureWindow: () => {
+        if (BrowserWindow.getAllWindows().length === 0) {
+          return createWindow({ show: false })
+        }
+        return mainWindow
+      },
+      hasWindow: () => BrowserWindow.getAllWindows().length > 0,
+      focusWindow: focusMainWindow,
+      sendPromptShow: (payload: MeetingDetectionEventPayload) => {
+        mainWindow?.webContents.send(IPC.meetingDetectionPromptShow, payload)
+      },
+      sendPromptClear: (payload: { occurrenceKey: string }) => {
+        mainWindow?.webContents.send(IPC.meetingDetectionPromptClear, payload)
+      },
+      sendAutoRecord: (payload: { noteId: string }) => {
+        mainWindow?.webContents.send(IPC.meetingDetectionAutoRecord, payload)
+      },
+      showNotification: (payload: MeetingDetectionEventPayload, onClick: () => void) => {
+        const notification = new Notification({
+          title: 'Meeting detected',
+          body: `Ready to record "${payload.event.title || 'Untitled event'}".`,
+        })
+        notification.on('click', onClick)
+        notification.show()
+      },
+      log: (message, err) => {
+        console.warn(message, err)
+      },
+    })
 
     ipcMain.handle(IPC.getConfig, () => handlers.getConfig())
     ipcMain.handle(IPC.getManualServer, () => handlers.getManualServer())
@@ -196,6 +258,21 @@ app.whenReady().then(async () => {
     ipcMain.handle(IPC.openGoogleCalendarOAuthStart, () => handlers.openGoogleCalendarOAuthStart())
     ipcMain.handle(IPC.getMicrosoftCalendarOAuthStatus, () => handlers.getMicrosoftCalendarOAuthStatus())
     ipcMain.handle(IPC.openMicrosoftCalendarOAuthStart, () => handlers.openMicrosoftCalendarOAuthStart())
+    ipcMain.handle(IPC.getCalendarPrefs, () => calendarPrefs)
+    ipcMain.handle(IPC.setCalendarPrefs, (_e, prefs: { autoRecordDetectedMeetings: boolean }) => {
+      calendarPrefs = { autoRecordDetectedMeetings: prefs.autoRecordDetectedMeetings }
+      calendarPrefsStore.save(calendarPrefs)
+      return calendarPrefs
+    })
+    ipcMain.handle(IPC.meetingDetectionRendererReady, async () => {
+      await meetingDetectionManager?.rendererReadyForWindow()
+    })
+    ipcMain.handle(IPC.meetingDetectionPromptAccept, (_e, occurrenceKey: string) => {
+      meetingDetectionManager?.acceptPrompt(occurrenceKey)
+    })
+    ipcMain.handle(IPC.meetingDetectionPromptDismiss, (_e, occurrenceKey: string) => {
+      meetingDetectionManager?.dismissPrompt(occurrenceKey)
+    })
     ipcMain.handle(IPC.micStatus, () => micPermission.status())
     ipcMain.handle(IPC.micRequest, () => micPermission.request())
     ipcMain.handle(IPC.micOpenSettings, () => micPermission.openSettings())
@@ -346,6 +423,8 @@ app.whenReady().then(async () => {
       return handlers.exportAllNotes(res.filePath)
     })
 
+    meetingDetectionManager.start()
+
   } catch (err) {
     console.error('failed to start embedded supervisor', err)
     mainWindow?.webContents.send(IPC.embeddedStartupStatus, {
@@ -354,6 +433,10 @@ app.whenReady().then(async () => {
       logPath: makeServerLogPath(app.getPath('userData')),
     })
   }
+})
+
+app.on('before-quit', () => {
+  meetingDetectionManager?.stop()
 })
 
 app.on('activate', () => {

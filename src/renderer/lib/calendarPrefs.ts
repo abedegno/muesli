@@ -1,13 +1,6 @@
 // calendarPrefs — persists small calendar-related client prefs to localStorage
 // with safe defaults when storage is unavailable.
-
-export interface CalendarPrefs {
-  autoRecordDetectedMeetings: boolean
-}
-
-const AUTO_RECORD_KEY = 'muesli.calendar.autoRecordDetectedMeetings'
-
-const DEFAULTS: CalendarPrefs = { autoRecordDetectedMeetings: false }
+import { AUTO_RECORD_KEY, DEFAULT_CALENDAR_PREFS, type CalendarPrefs } from '../../shared/calendarPrefs'
 
 /** Read persisted calendar prefs; falls back to defaults on any storage error. */
 export function loadCalendarPrefs(): CalendarPrefs {
@@ -16,7 +9,7 @@ export function loadCalendarPrefs(): CalendarPrefs {
       autoRecordDetectedMeetings: localStorage.getItem(AUTO_RECORD_KEY) === '1',
     }
   } catch {
-    return { ...DEFAULTS }
+    return { ...DEFAULT_CALENDAR_PREFS }
   }
 }
 
@@ -27,4 +20,5 @@ export function saveCalendarPrefs(prefs: CalendarPrefs): void {
   } catch {
     /* storage unavailable — keep in-memory value */
   }
+  void window.muesli?.setCalendarPrefs?.(prefs)
 }
