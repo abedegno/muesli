@@ -14,6 +14,7 @@ export const IPC = {
   getKeepRunningInBackground: 'muesli:getKeepRunningInBackground',
   setKeepRunningInBackground: 'muesli:setKeepRunningInBackground',
   getReadyz: 'muesli:getReadyz',
+  getEmbeddedStartupStatus: 'muesli:getEmbeddedStartupStatus',
   getServerHealth: 'muesli:getServerHealth',
   connect: 'muesli:connect',
   disconnect: 'muesli:disconnect',
@@ -267,6 +268,7 @@ export interface MuesliBridge {
   getKeepRunningInBackground(): Promise<boolean>
   setKeepRunningInBackground(b: boolean): Promise<void>
   getReadyz(): Promise<{ ollamaDetected: boolean } | null>
+  getEmbeddedStartupStatus(): Promise<EmbeddedStartupStatus | null>
   getServerHealth(): Promise<{ reachable: boolean; authenticated: boolean; version?: string }>
   connect(req: ConnectRequest): Promise<{ serverUrl: string }>
   disconnect(): Promise<void>

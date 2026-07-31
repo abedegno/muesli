@@ -25,6 +25,7 @@ let meetingDetectionManager: MeetingDetectionManager | null = null
 let keepRunningInBackground = false
 let tray: Tray | null = null
 let isQuitting = false
+let latestEmbeddedStartupStatus: EmbeddedStartupStatus | null = null
 
 function loadTrayIcon() {
   const iconPath = join(app.getAppPath(), 'build', 'tray-iconTemplate.png')
@@ -70,6 +71,11 @@ function syncTrayState() {
 
 function sendTrayNavigation(target: TrayNavigationTarget) {
   mainWindow?.webContents.send(IPC.trayNavigate, target)
+}
+
+function pushEmbeddedStartupStatus(status: EmbeddedStartupStatus) {
+  latestEmbeddedStartupStatus = status
+  mainWindow?.webContents.send(IPC.embeddedStartupStatus, status)
 }
 
 function openTrayView(target: TrayNavigationTarget) {
@@ -207,13 +213,9 @@ app.whenReady().then(async () => {
     if (!supervisor) return
     process.env.MUESLI_SERVER_URL = supervisor.baseUrl
 
-    const pushStartupStatus = (status: EmbeddedStartupStatus) => {
-      mainWindow?.webContents.send(IPC.embeddedStartupStatus, status)
-    }
-
     startEmbeddedStartupMonitor({
       supervisor,
-      onStatus: pushStartupStatus,
+      onStatus: pushEmbeddedStartupStatus,
     })
 
     const tokenStore = new TokenStore(userDataDir, safeStorage)
@@ -300,6 +302,7 @@ app.whenReady().then(async () => {
       syncTrayState()
     })
     ipcMain.handle(IPC.getReadyz, () => handlers.getReadyz())
+    ipcMain.handle(IPC.getEmbeddedStartupStatus, async () => latestEmbeddedStartupStatus)
     ipcMain.handle(IPC.getServerHealth, () => handlers.getServerHealth())
     ipcMain.handle(IPC.connect, (_e, req: ConnectRequest) => handlers.connect(req))
     ipcMain.handle(IPC.disconnect, () => handlers.disconnect())
@@ -494,7 +497,7 @@ app.whenReady().then(async () => {
 
   } catch (err) {
     console.error('failed to start embedded supervisor', err)
-    mainWindow?.webContents.send(IPC.embeddedStartupStatus, {
+    pushEmbeddedStartupStatus({
       status: 'error',
       message: err instanceof Error ? err.message : String(err),
       logPath: makeServerLogPath(app.getPath('userData')),

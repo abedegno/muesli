@@ -17,6 +17,7 @@ const bridge: MuesliBridge = {
   getKeepRunningInBackground: () => ipcRenderer.invoke(IPC.getKeepRunningInBackground),
   setKeepRunningInBackground: (b) => ipcRenderer.invoke(IPC.setKeepRunningInBackground, b),
   getReadyz: () => ipcRenderer.invoke(IPC.getReadyz),
+  getEmbeddedStartupStatus: () => ipcRenderer.invoke(IPC.getEmbeddedStartupStatus),
   getServerHealth: () => ipcRenderer.invoke(IPC.getServerHealth),
   connect: (req) => ipcRenderer.invoke(IPC.connect, req),
   disconnect: () => ipcRenderer.invoke(IPC.disconnect),
