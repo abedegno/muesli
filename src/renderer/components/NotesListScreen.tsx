@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { useNavigate, useOutletContext } from 'react-router-dom'
 import { Pin } from 'lucide-react'
 import { muesli } from '@/api'
@@ -187,7 +187,7 @@ function MatchRow({ noteId, match, onNavigate }: { noteId: string; match: Search
 }
 
 /** First-run onboarding hint shown only when no notes exist yet (USE04). */
-function OnboardingHint() {
+function OnboardingHint({ isEmbeddedMode }: { isEmbeddedMode: boolean }) {
   return (
     <ol
       className="mx-auto mt-2 max-w-sm space-y-2 text-left text-sm text-muted-foreground"
@@ -199,7 +199,10 @@ function OnboardingHint() {
       </li>
       <li>
         <span className="font-medium text-foreground">2. Let the app process it</span>
-        {' — '}the recording goes to your connected server, which transcribes it and creates the summary.
+        {' — '}
+        {isEmbeddedMode
+          ? 'the recording stays on this device, where processing happens locally on this device and creates the summary.'
+          : 'the recording goes to your connected server, which transcribes it and creates the summary.'}
       </li>
       <li>
         <span className="font-medium text-foreground">3. Review the finished note</span>
@@ -212,7 +215,23 @@ function OnboardingHint() {
 export function NotesListScreen() {
   const { notes, semanticNotes = [], semanticMatches = {}, folders, heading, view, loaded, refresh, searching, searchQuery = '', onReorderNote } = useOutletContext<Ctx>()
   const navigate = useNavigate()
+  const [isEmbeddedMode, setIsEmbeddedMode] = useState(true)
   const showFolderOrdering = view.type === 'folder' && searchQuery.trim() === ''
+
+  useEffect(() => {
+    let cancelled = false
+    void Promise.resolve(muesli.getManualServer?.())
+      .then((manualServer) => {
+        if (!cancelled) setIsEmbeddedMode(!manualServer)
+      })
+      .catch(() => {
+        if (!cancelled) setIsEmbeddedMode(true)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   if (!loaded) {
     return (
@@ -246,7 +265,7 @@ export function NotesListScreen() {
               hint="Start your first meeting and your notes will appear here."
               action={<Button onClick={() => navigate('/new')}>New meeting</Button>}
             />
-            <OnboardingHint />
+            <OnboardingHint isEmbeddedMode={isEmbeddedMode} />
           </>
         )
       ) : (

@@ -33,6 +33,8 @@ function StartupBanner({
   onDismiss: () => void
   onOpenAiSettings: () => void
 }) {
+  const linkStyle = { textDecorationLine: 'underline', textUnderlineOffset: '2px' } as const
+
   return (
     <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
       <div className="mx-auto flex max-w-5xl items-start gap-3">
@@ -42,12 +44,13 @@ function StartupBanner({
             <button
               type="button"
               onClick={onOpenAiSettings}
-              className="underline underline-offset-2 hover:no-underline"
+              className="text-inherit"
+              style={linkStyle}
             >
               Open AI settings
             </button>
             {' '}
-            <a className="underline underline-offset-2 hover:no-underline" href="https://ollama.com/download" target="_blank" rel="noreferrer">
+            <a className="underline underline-offset-2 hover:no-underline" href="https://ollama.com/download" target="_blank" rel="noreferrer" style={linkStyle}>
               Download Ollama
             </a>
             {' – '}
@@ -56,6 +59,7 @@ function StartupBanner({
               href="https://github.com/abedegno/muesli/blob/main/docs/DESKTOP-ONBOARDING.md"
               target="_blank"
               rel="noreferrer"
+              style={linkStyle}
             >
               Learn more
             </a>
@@ -125,9 +129,11 @@ function StartupErrorScreen({ message, logPath }: { message: string; logPath: st
 export function EmbeddedStartupGate({
   children,
   onOpenAiSettings = () => {},
+  hideDegradedBanner = false,
 }: {
   children: ReactNode
   onOpenAiSettings?: () => void
+  hideDegradedBanner?: boolean
 }) {
   const [status, setStatus] = useState<EmbeddedStartupStatus | null>(null)
   const [bannerDismissed, setBannerDismissed] = useState(false)
@@ -155,7 +161,7 @@ export function EmbeddedStartupGate({
 
   return (
     <div className="flex h-screen min-h-screen flex-col overflow-hidden">
-      {degraded && !bannerDismissed ? (
+      {degraded && !bannerDismissed && !hideDegradedBanner ? (
         <div className="shrink-0">
           <StartupBanner
             onDismiss={() => setBannerDismissed(true)}
