@@ -110,6 +110,14 @@ export const IPC = {
   openGoogleCalendarOAuthStart: 'muesli:openGoogleCalendarOAuthStart',
   getMicrosoftCalendarOAuthStatus: 'muesli:getMicrosoftCalendarOAuthStatus',
   openMicrosoftCalendarOAuthStart: 'muesli:openMicrosoftCalendarOAuthStart',
+  getCalendarPrefs: 'muesli:getCalendarPrefs',
+  setCalendarPrefs: 'muesli:setCalendarPrefs',
+  meetingDetectionRendererReady: 'muesli:meetingDetectionRendererReady',
+  meetingDetectionPromptShow: 'muesli:meetingDetectionPromptShow',
+  meetingDetectionPromptClear: 'muesli:meetingDetectionPromptClear',
+  meetingDetectionAutoRecord: 'muesli:meetingDetectionAutoRecord',
+  meetingDetectionPromptAccept: 'muesli:meetingDetectionPromptAccept',
+  meetingDetectionPromptDismiss: 'muesli:meetingDetectionPromptDismiss',
   micStatus: 'muesli:micStatus',
   micRequest: 'muesli:micRequest',
   micOpenSettings: 'muesli:micOpenSettings',
@@ -235,6 +243,15 @@ export interface SendMessageResponse {
   sources: ChatSource[]
 }
 
+export interface MeetingDetectionEventPayload {
+  event: CalendarEvent
+  occurrenceKey: string
+}
+
+export interface MeetingDetectionAutoRecordPayload {
+  noteId: string
+}
+
 export interface MuesliBridge {
   platform: NodeJS.Platform
   onAuthInvalidated?(listener: (notice: AuthInvalidatedNotice) => void): () => void
@@ -287,6 +304,9 @@ export interface MuesliBridge {
   sendNoteStreamAudio(noteId: string, audio: ArrayBuffer): Promise<void>
   onNoteStreamEvent(cb: (event: NoteStreamEvent) => void): () => void
   onEmbeddedStartupStatus?(cb: (status: EmbeddedStartupStatus) => void): () => void
+  onMeetingDetectionPromptShow?(cb: (payload: MeetingDetectionEventPayload) => void): () => void
+  onMeetingDetectionPromptClear?(cb: (payload: { occurrenceKey: string }) => void): () => void
+  onMeetingDetectionAutoRecord?(cb: (payload: MeetingDetectionAutoRecordPayload) => void): () => void
   addTag(noteId: string, name: string): Promise<{ id: string; name: string }>
   removeTag(noteId: string, name: string): Promise<void>
   renameTag(id: string, name: string): Promise<{ id: string; name: string }>
@@ -343,6 +363,11 @@ export interface MuesliBridge {
   openGoogleCalendarOAuthStart(): Promise<void>
   getMicrosoftCalendarOAuthStatus(): Promise<MicrosoftOAuthStatus>
   openMicrosoftCalendarOAuthStart(): Promise<void>
+  getCalendarPrefs?(): Promise<{ autoRecordDetectedMeetings: boolean }>
+  setCalendarPrefs?(prefs: { autoRecordDetectedMeetings: boolean }): Promise<{ autoRecordDetectedMeetings: boolean }>
+  meetingDetectionRendererReady?(): Promise<void>
+  meetingDetectionPromptAccept?(occurrenceKey: string): Promise<void>
+  meetingDetectionPromptDismiss?(occurrenceKey: string): Promise<void>
   micStatus(): Promise<MicStatus>
   micRequest(): Promise<MicStatus>
   micOpenSettings(): Promise<void>

@@ -106,8 +106,6 @@ export function AppLayout() {
   useEffect(() => { refresh() }, [refresh])
 
   const { promptEvent, acceptPrompt, dismissPrompt } = useMeetingDetectionLoop({
-    notes,
-    loaded,
     navigate,
     notify,
     refresh,

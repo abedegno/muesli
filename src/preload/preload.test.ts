@@ -60,6 +60,9 @@ vi.mock('electron', () => ({
 const eventMembers = {
   onAuthInvalidated: IPC.authInvalidated,
   onEmbeddedStartupStatus: IPC.embeddedStartupStatus,
+  onMeetingDetectionPromptShow: IPC.meetingDetectionPromptShow,
+  onMeetingDetectionPromptClear: IPC.meetingDetectionPromptClear,
+  onMeetingDetectionAutoRecord: IPC.meetingDetectionAutoRecord,
   onNoteStreamEvent: IPC.noteStreamEvent,
   onSystemAudioPcm: IPC.systemAudioPcm,
   onUploadProgress: IPC.uploadProgress,

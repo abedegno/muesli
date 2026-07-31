@@ -1,38 +1,53 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, renderHook } from '@testing-library/react'
-import type { CalendarEvent, Note } from '../../shared/types'
+import type { CalendarEvent } from '../../shared/types'
 import { useMeetingDetectionLoop } from './useMeetingDetectionLoop'
 
+const promptListeners = new Set<(payload: { event: CalendarEvent; occurrenceKey: string }) => void>()
+const clearListeners = new Set<(payload: { occurrenceKey: string }) => void>()
+const autoRecordListeners = new Set<(payload: { noteId: string }) => void>()
+
 const mocks = vi.hoisted(() => ({
-  getCalendarEvents: vi.fn(),
   createNote: vi.fn(),
   linkNoteEvent: vi.fn(),
-  detectActiveMeeting: vi.fn(),
-  decideMeetingDetectionAction: vi.fn(),
-  meetingOccurrenceKey: vi.fn(),
-  loadCalendarPrefs: vi.fn(),
+  meetingDetectionPromptAccept: vi.fn(),
+  meetingDetectionPromptDismiss: vi.fn(),
+  meetingDetectionRendererReady: vi.fn(),
 }))
+
+function emitPromptShow(payload: { event: CalendarEvent; occurrenceKey: string }) {
+  for (const listener of promptListeners) listener(payload)
+}
+
+function emitPromptClear(payload: { occurrenceKey: string }) {
+  for (const listener of clearListeners) listener(payload)
+}
+
+function emitAutoRecord(payload: { noteId: string }) {
+  for (const listener of autoRecordListeners) listener(payload)
+}
 
 vi.mock('@/api', () => ({
   muesli: {
-    getCalendarEvents: mocks.getCalendarEvents,
     createNote: mocks.createNote,
     linkNoteEvent: mocks.linkNoteEvent,
+    meetingDetectionPromptAccept: mocks.meetingDetectionPromptAccept,
+    meetingDetectionPromptDismiss: mocks.meetingDetectionPromptDismiss,
+    meetingDetectionRendererReady: mocks.meetingDetectionRendererReady,
+    onMeetingDetectionPromptShow: (listener: (payload: { event: CalendarEvent; occurrenceKey: string }) => void) => {
+      promptListeners.add(listener)
+      return () => promptListeners.delete(listener)
+    },
+    onMeetingDetectionPromptClear: (listener: (payload: { occurrenceKey: string }) => void) => {
+      clearListeners.add(listener)
+      return () => clearListeners.delete(listener)
+    },
+    onMeetingDetectionAutoRecord: (listener: (payload: { noteId: string }) => void) => {
+      autoRecordListeners.add(listener)
+      return () => autoRecordListeners.delete(listener)
+    },
   },
-}))
-
-vi.mock('@/lib/meetingDetect', () => ({
-  detectActiveMeeting: mocks.detectActiveMeeting,
-}))
-
-vi.mock('@/lib/meetingDetectionLoop', () => ({
-  decideMeetingDetectionAction: mocks.decideMeetingDetectionAction,
-  meetingOccurrenceKey: mocks.meetingOccurrenceKey,
-}))
-
-vi.mock('@/lib/calendarPrefs', () => ({
-  loadCalendarPrefs: mocks.loadCalendarPrefs,
 }))
 
 const meetingEvent: CalendarEvent = {
@@ -47,49 +62,59 @@ const meetingEvent: CalendarEvent = {
   source_id: 'calendar-1',
 }
 
-const notes: Note[] = [
-  {
-    id: 'note-1',
-    title: 'Existing note',
-    status: 'ready',
-    created_at: '2026-07-11T13:00:00.000Z',
-    updated_at: '2026-07-11T13:00:00.000Z',
-    partial_transcript: false,
-  },
-]
-
 afterEach(() => {
   cleanup()
   vi.clearAllMocks()
   vi.restoreAllMocks()
-  vi.useRealTimers()
+  promptListeners.clear()
+  clearListeners.clear()
+  autoRecordListeners.clear()
 })
 
 beforeEach(() => {
-  vi.useFakeTimers()
-  mocks.loadCalendarPrefs.mockReturnValue({ autoRecordDetectedMeetings: false })
-  mocks.detectActiveMeeting.mockReturnValue(meetingEvent)
-  mocks.meetingOccurrenceKey.mockReturnValue('event-1::2026-07-11T14:00:00.000Z')
   mocks.createNote.mockResolvedValue({ id: 'note-created' })
   mocks.linkNoteEvent.mockResolvedValue(undefined)
 })
 
 describe('useMeetingDetectionLoop', () => {
-  it('polls on the interval and surfaces a prompt for detected meetings', async () => {
-    mocks.getCalendarEvents.mockResolvedValue([meetingEvent])
-    mocks.decideMeetingDetectionAction.mockReturnValue({
-      action: 'prompt',
-      event: meetingEvent,
-      occurrenceKey: 'event-1::2026-07-11T14:00:00.000Z',
+  it('subscribes to prompt show/clear events and forwards accept + dismiss back to main', async () => {
+    const navigate = vi.fn()
+    const notify = vi.fn()
+    const refresh = vi.fn()
+
+    const { result, unmount } = renderHook(() => useMeetingDetectionLoop({
+      navigate,
+      notify,
+      refresh,
+    }))
+
+    await act(async () => {})
+    expect(mocks.meetingDetectionRendererReady).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      emitPromptShow({ event: meetingEvent, occurrenceKey: 'event-1::2026-07-11T14:00:00.000Z' })
+    })
+    expect(result.current.promptEvent).toEqual(meetingEvent)
+
+    await act(async () => {
+      await result.current.acceptPrompt()
     })
 
+    expect(mocks.meetingDetectionPromptAccept).toHaveBeenCalledWith('event-1::2026-07-11T14:00:00.000Z')
+    expect(mocks.createNote).toHaveBeenCalledWith('Weekly sync')
+    expect(mocks.linkNoteEvent).toHaveBeenCalledWith('note-created', 'event-1')
+    expect(navigate).toHaveBeenCalledWith('/notes/note-created?capture=1&autostart=1', { replace: true })
+    expect(result.current.promptEvent).toBeNull()
+
+    unmount()
+  })
+
+  it('dismisses a prompt and tells main which occurrence was dismissed', async () => {
     const navigate = vi.fn()
     const notify = vi.fn()
     const refresh = vi.fn()
 
     const { result } = renderHook(() => useMeetingDetectionLoop({
-      notes,
-      loaded: true,
       navigate,
       notify,
       refresh,
@@ -97,86 +122,64 @@ describe('useMeetingDetectionLoop', () => {
 
     await act(async () => {})
 
-    expect(mocks.getCalendarEvents).toHaveBeenCalledTimes(1)
-    expect(result.current.promptEvent).toEqual(meetingEvent)
-    expect(mocks.createNote).not.toHaveBeenCalled()
-    expect(navigate).not.toHaveBeenCalled()
+    await act(async () => {
+      emitPromptShow({ event: meetingEvent, occurrenceKey: 'event-1::2026-07-11T14:00:00.000Z' })
+    })
 
     await act(async () => {
-      await vi.advanceTimersByTimeAsync(45_000)
+      result.current.dismissPrompt()
     })
 
-    expect(mocks.getCalendarEvents).toHaveBeenCalledTimes(2)
-    expect(result.current.promptEvent).toEqual(meetingEvent)
+    await act(async () => {
+      emitPromptClear({ occurrenceKey: 'event-1::2026-07-11T14:00:00.000Z' })
+    })
+
+    expect(mocks.meetingDetectionPromptDismiss).toHaveBeenCalledWith('event-1::2026-07-11T14:00:00.000Z')
+    expect(result.current.promptEvent).toBeNull()
   })
 
-  it('does not detect while loaded=false and starts once loaded=true', async () => {
-    mocks.getCalendarEvents.mockResolvedValue([meetingEvent])
-    mocks.decideMeetingDetectionAction.mockReturnValue({
-      action: 'prompt',
-      event: meetingEvent,
-      occurrenceKey: 'event-1::2026-07-11T14:00:00.000Z',
-    })
-
+  it('starts capture directly when main emits an auto-record event', async () => {
     const navigate = vi.fn()
     const notify = vi.fn()
     const refresh = vi.fn()
 
-    const { rerender, result } = renderHook(
-      ({ loaded }) => useMeetingDetectionLoop({ notes, loaded, navigate, notify, refresh }),
-      { initialProps: { loaded: false } },
-    )
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(90_000)
-    })
-
-    expect(mocks.getCalendarEvents).not.toHaveBeenCalled()
-    expect(result.current.promptEvent).toBeNull()
-
-    rerender({ loaded: true })
+    renderHook(() => useMeetingDetectionLoop({
+      navigate,
+      notify,
+      refresh,
+    }))
 
     await act(async () => {})
 
-    expect(mocks.getCalendarEvents).toHaveBeenCalledTimes(1)
-    expect(result.current.promptEvent).toEqual(meetingEvent)
-  })
-
-  it('cleans up the interval and focus listener on unmount', async () => {
-    mocks.getCalendarEvents.mockResolvedValue([meetingEvent])
-    mocks.decideMeetingDetectionAction.mockReturnValue({
-      action: 'prompt',
-      event: meetingEvent,
-      occurrenceKey: 'event-1::2026-07-11T14:00:00.000Z',
+    await act(async () => {
+      emitAutoRecord({ noteId: 'note-created' })
     })
 
+    expect(mocks.createNote).not.toHaveBeenCalled()
+    expect(mocks.linkNoteEvent).not.toHaveBeenCalled()
+    expect(navigate).toHaveBeenCalledWith('/notes/note-created?capture=1&autostart=1', { replace: true })
+  })
+
+  it('removes listeners on unmount', async () => {
     const navigate = vi.fn()
     const notify = vi.fn()
     const refresh = vi.fn()
-    const clearIntervalSpy = vi.spyOn(globalThis, 'clearInterval')
-    const removeEventListenerSpy = vi.spyOn(window, 'removeEventListener')
 
     const { unmount } = renderHook(() => useMeetingDetectionLoop({
-      notes,
-      loaded: true,
       navigate,
       notify,
       refresh,
     }))
 
     await act(async () => {})
-    expect(mocks.getCalendarEvents).toHaveBeenCalledTimes(1)
+    expect(promptListeners.size).toBe(1)
+    expect(clearListeners.size).toBe(1)
+    expect(autoRecordListeners.size).toBe(1)
 
     unmount()
 
-    expect(clearIntervalSpy).toHaveBeenCalled()
-    expect(removeEventListenerSpy).toHaveBeenCalledWith('focus', expect.any(Function))
-
-    await act(async () => {
-      await vi.advanceTimersByTimeAsync(45_000)
-      window.dispatchEvent(new Event('focus'))
-    })
-
-    expect(mocks.getCalendarEvents).toHaveBeenCalledTimes(1)
+    expect(promptListeners.size).toBe(0)
+    expect(clearListeners.size).toBe(0)
+    expect(autoRecordListeners.size).toBe(0)
   })
 })
