@@ -1,22 +1,10 @@
 import { Fragment, useEffect, useState } from 'react'
 import { useNavigate, useOutletContext } from 'react-router-dom'
-import { Pin } from 'lucide-react'
 import { muesli } from '@/api'
 import { Button } from '@/components/ui/Button'
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSeparator,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
-  ContextMenuTrigger,
-} from '@/components/ui/ContextMenu'
-import { useToast } from '@/components/ui/Toast'
 import { cn } from '@/lib/cn'
 import { EmptyState } from './EmptyState'
-import { NoteListItem } from './NoteListItem'
+import { FeedNoteRow, GroupedNoteSections } from './NoteFeed'
 import { Skeleton } from '@/components/ui/Skeleton'
 import { groupNotesByDate } from '@/lib/datetime'
 import type { Folder, Note, SearchMatch } from '../../shared/types'
@@ -24,6 +12,7 @@ import type { ActiveView } from './shell/AppLayout'
 
 interface Ctx {
   notes: Note[]
+  allNotes?: Note[]
   semanticNotes?: Note[]
   semanticMatches?: Record<string, SearchMatch[]>
   searchQuery?: string
@@ -35,90 +24,6 @@ interface Ctx {
   loaded: boolean
   searching: boolean
   onReorderNote: (folderId: string, movedNoteId: string, afterId: string | null) => void
-}
-
-function FeedNoteRow({
-  note,
-  folders,
-  refresh,
-  onOpen,
-}: {
-  note: Note
-  folders: Folder[]
-  refresh: () => void
-  onOpen: () => void
-}) {
-  const { notify } = useToast()
-  const pinned = Boolean(note.pinned)
-
-  const run = async (fn: () => Promise<void>) => {
-    try {
-      await fn()
-      refresh()
-    } catch (err) {
-      notify(err instanceof Error ? err.message : String(err), 'error')
-    }
-  }
-
-  return (
-    <ContextMenu>
-      <ContextMenuTrigger asChild>
-        <div
-          className="group relative w-full text-left"
-          draggable
-          onDragStart={(e) => e.dataTransfer.setData('text/note-id', note.id)}
-        >
-          <button
-            type="button"
-            className="w-full text-left"
-            onClick={onOpen}
-          >
-            <NoteListItem note={note} folders={folders} />
-          </button>
-          <button
-            type="button"
-            aria-label={pinned ? 'Unpin note' : 'Pin note'}
-            onClick={(e) => {
-              e.stopPropagation()
-              void run(() => (pinned ? muesli.unpinNote(note.id) : muesli.pinNote(note.id)))
-            }}
-            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground opacity-0 transition hover:bg-muted hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100"
-          >
-            <Pin size={14} />
-          </button>
-        </div>
-      </ContextMenuTrigger>
-      <ContextMenuContent>
-        <ContextMenuItem destructive onSelect={() => run(() => muesli.deleteNote(note.id))}>
-          Move to Trash
-        </ContextMenuItem>
-        <ContextMenuSeparator />
-        <ContextMenuSub>
-          <ContextMenuSubTrigger>Add to folder</ContextMenuSubTrigger>
-          <ContextMenuSubContent>
-            {folders.length === 0 ? (
-              <ContextMenuItem disabled className="text-muted-foreground">
-                No folders yet
-              </ContextMenuItem>
-            ) : (
-              folders.map((f) => (
-                <ContextMenuItem
-                  key={f.id}
-                  onSelect={() => run(() => muesli.addNoteFolder(note.id, f.id))}
-                >
-                  {f.name}
-                </ContextMenuItem>
-              ))
-            )}
-          </ContextMenuSubContent>
-        </ContextMenuSub>
-        <ContextMenuSeparator />
-        <ContextMenuItem onSelect={() => run(() => muesli.resummarize(note.id))}>
-          Re-run summary
-        </ContextMenuItem>
-      </ContextMenuContent>
-    </ContextMenu>
-  )
 }
 
 function ReorderGap({
@@ -302,25 +207,12 @@ export function NotesListScreen() {
               ))}
             </ul>
           ) : (
-            <>
-              {groups.map((g) => (
-                <section key={g.label}>
-                  <h2 className="px-1 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{g.label}</h2>
-                  <ul className="flex flex-col gap-1">
-                    {g.notes.map((n) => (
-                      <li key={n.id}>
-                        <FeedNoteRow
-                          note={n}
-                          folders={folders}
-                          refresh={refresh}
-                          onOpen={() => navigate(`/notes/${n.id}`)}
-                        />
-                      </li>
-                    ))}
-                  </ul>
-                </section>
-              ))}
-            </>
+          <GroupedNoteSections
+            groups={groups}
+            folders={folders}
+            refresh={refresh}
+            onOpenNote={(note) => navigate(`/notes/${note.id}`)}
+          />
           )}
           {semanticNotes.length > 0 && (
             <div className="mt-6">

@@ -1,6 +1,8 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { render, screen, cleanup, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { MemoryRouter, Route, Routes, useLocation } from 'react-router-dom'
 import { ComingUpScreen } from './ComingUpScreen'
 import type { CalendarEvent } from '../../shared/types'
 
@@ -24,6 +26,22 @@ const ev = (over: Partial<CalendarEvent>): CalendarEvent => ({
   conferencing_url: '', attendees: [], source_id: 'src', ...over,
 })
 
+function SettingsStub() {
+  const location = useLocation()
+  return <div data-testid="settings-route">{`${location.pathname}${location.hash}`}</div>
+}
+
+function renderComingUp() {
+  return render(
+    <MemoryRouter initialEntries={['/coming-up']}>
+      <Routes>
+        <Route path="/coming-up" element={<ComingUpScreen />} />
+        <Route path="/settings" element={<SettingsStub />} />
+      </Routes>
+    </MemoryRouter>,
+  )
+}
+
 describe('ComingUpScreen', () => {
   it('fetches events on mount and renders them grouped with title, time, attendee count, and a conferencing badge', async () => {
     const now = new Date()
@@ -36,22 +54,25 @@ describe('ComingUpScreen', () => {
         conferencing_url: 'https://meet.example/e1',
       }),
     ])
-    render(<ComingUpScreen />)
+    renderComingUp()
     await waitFor(() => expect(getCalendarEventsMock).toHaveBeenCalledTimes(1))
     expect(await screen.findByText('Design review')).toBeTruthy()
     expect(screen.getByText('2')).toBeTruthy()
     expect(screen.getByTitle('Video call')).toBeTruthy()
   })
 
-  it('shows a friendly empty state when there are no events at all', async () => {
+  it('shows a friendly empty state and a calendar settings action when there are no events at all', async () => {
     getCalendarEventsMock.mockResolvedValue([])
-    render(<ComingUpScreen />)
+    const user = userEvent.setup()
+    renderComingUp()
     expect(await screen.findByText('No upcoming events')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: /open calendar settings/i }))
+    expect(screen.getByTestId('settings-route')).toHaveTextContent('/settings#calendar')
   })
 
   it('shows a friendly empty state (not a crash) when getCalendarEvents rejects', async () => {
     getCalendarEventsMock.mockRejectedValue(new Error('no calendar source configured'))
-    render(<ComingUpScreen />)
+    renderComingUp()
     expect(await screen.findByText('No upcoming events')).toBeTruthy()
   })
 
@@ -60,7 +81,7 @@ describe('ComingUpScreen', () => {
     const starts = new Date(now.getTime() + 60 * 60 * 1000).toISOString()
     const ends = new Date(now.getTime() + 90 * 60 * 1000).toISOString()
     getCalendarEventsMock.mockResolvedValue([ev({ id: 'e1', title: 'Only event', starts_at: starts, ends_at: ends })])
-    render(<ComingUpScreen />)
+    renderComingUp()
     await waitFor(() => expect(getCalendarEventsMock).toHaveBeenCalledTimes(1))
     expect(await screen.findByText('Only event')).toBeTruthy()
     const noEvents = await screen.findAllByText('No events')

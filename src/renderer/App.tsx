@@ -9,12 +9,12 @@ import { NotesListScreen } from './components/NotesListScreen'
 import { AnnouncerProvider, AriaAnnouncer } from './components/AriaAnnouncer'
 
 const NewMeetingScreen = lazy(() => import('./components/NewMeetingScreen').then(m => ({ default: m.NewMeetingScreen })))
+const HomeScreen = lazy(() => import('./components/HomeScreen').then(m => ({ default: m.HomeScreen })))
 const SettingsScreen = lazy(() => import('./components/SettingsScreen').then(m => ({ default: m.SettingsScreen })))
 const TemplatesScreen = lazy(() => import('./components/TemplatesScreen').then(m => ({ default: m.TemplatesScreen })))
 const TrashScreen = lazy(() => import('./components/TrashScreen').then(m => ({ default: m.TrashScreen })))
 const TagsPage = lazy(() => import('./components/TagsPage').then(m => ({ default: m.TagsPage })))
 const ChatScreen = lazy(() => import('./components/chat/ChatScreen').then(m => ({ default: m.ChatScreen })))
-const ComingUpScreen = lazy(() => import('./components/ComingUpScreen').then(m => ({ default: m.ComingUpScreen })))
 const PeopleScreen = lazy(() => import('./components/PeopleScreen').then(m => ({ default: m.PeopleScreen })))
 const InsightsScreen = lazy(() => import('./components/InsightsScreen').then(m => ({ default: m.InsightsScreen })))
 const SearchScreen = lazy(() => import('./components/SearchScreen').then(m => ({ default: m.SearchScreen })))
@@ -81,7 +81,8 @@ function AppContent() {
         <Suspense fallback={<div className="p-8 text-muted-foreground">Loading…</div>}>
           <Routes>
             <Route element={<AppLayout />}>
-              <Route path="/" element={<NotesListScreen />} />
+              <Route path="/" element={<HomeScreen />} />
+              <Route path="/notes" element={<NotesListScreen />} />
               <Route path="/notes/:id" element={<NoteScreen />} />
               <Route path="/new" element={<NewMeetingScreen />} />
               <Route
@@ -103,7 +104,7 @@ function AppContent() {
               <Route path="/chat" element={<ChatScreen />} />
               <Route path="/settings/tags" element={<TagsPage />} />
               <Route path="/trash" element={<TrashScreen />} />
-              <Route path="/coming-up" element={<ComingUpScreen />} />
+              <Route path="/coming-up" element={<Navigate to="/" replace />} />
               <Route path="/action-items" element={<ActionItemsScreen />} />
               <Route path="/people/:id" element={<PersonDetailScreen />} />
               <Route path="/companies/:id" element={<CompanyDetailScreen />} />

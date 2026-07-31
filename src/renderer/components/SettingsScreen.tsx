@@ -18,6 +18,7 @@ type HealthState =
   | { status: 'unreachable' }
 
 const AI_SECTION_ID = 'ai-transcription'
+const CALENDAR_SECTION_ID = 'calendar'
 
 function AiTranscriptionSection() {
   const [ollamaDetected, setOllamaDetected] = useState<boolean | null>(null)
@@ -91,6 +92,34 @@ function AiTranscriptionSection() {
           Detection updates live while this screen is open.
         </span>
       </div>
+    </section>
+  )
+}
+
+function CalendarSection() {
+  const sectionRef = useRef<HTMLElement | null>(null)
+  const location = useLocation()
+
+  useEffect(() => {
+    if (location.hash !== `#${CALENDAR_SECTION_ID}`) return
+    if (typeof sectionRef.current?.scrollIntoView === 'function') {
+      sectionRef.current.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    }
+    sectionRef.current?.focus()
+  }, [location.hash])
+
+  return (
+    <section
+      id={CALENDAR_SECTION_ID}
+      ref={sectionRef}
+      tabIndex={-1}
+      className="mb-6 scroll-mt-6"
+      aria-labelledby="calendar-heading"
+    >
+      <h2 id="calendar-heading" className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">Calendar</h2>
+      <p className="text-sm text-muted-foreground">
+        Control how calendar events are connected and when detected meetings are auto-recorded.
+      </p>
     </section>
   )
 }
@@ -212,8 +241,8 @@ export function SettingsScreen({
           Manage templates
         </Button>
       </section>
+      <CalendarSection />
       <section className="mb-6">
-        <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">Calendar</h2>
         <label htmlFor="auto-record-detected-meetings" className="flex items-center gap-2 text-sm">
           <Checkbox
             id="auto-record-detected-meetings"
