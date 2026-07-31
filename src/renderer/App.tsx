@@ -27,6 +27,7 @@ function AppContent() {
   const [connected, setConnected] = useState<boolean | null>(null)
   const [onboarded, setOnboarded] = useState<boolean | null>(null)
   const [connectMessage, setConnectMessage] = useState<string | null>(null)
+  const navigate = useNavigate()
   async function refreshConnection() {
     try {
       const onboardedPromise = muesli.getOnboarded
@@ -53,6 +54,13 @@ function AppContent() {
     })
     return unsubscribe
   }, [])
+
+  useEffect(() => {
+    const unsubscribe = muesli.onTrayNavigate?.((target) => {
+      navigate(target)
+    })
+    return unsubscribe
+  }, [navigate])
 
   return (
     <AnnouncerProvider>

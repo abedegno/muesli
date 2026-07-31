@@ -24,6 +24,7 @@ interface HandlerDeps {
   secretStore?: Pick<
     SecretStore,
     'loadCreds' | 'saveCreds' | 'clearCreds' | 'getManualServer' | 'setManualServer' | 'getOnboarded' | 'setOnboarded'
+    | 'getKeepRunningInBackground' | 'setKeepRunningInBackground'
   >
   makeClient?: (baseUrl: string) => Pick<MuesliClient, 'setupNeeded' | 'setup' | 'login' | 'createToken'>
   generatePassword?: () => string
@@ -35,6 +36,8 @@ interface Handlers {
   getManualServer(): Promise<boolean>
   getOnboarded(): Promise<boolean>
   setOnboarded(onboarded: boolean): Promise<void>
+  getKeepRunningInBackground(): Promise<boolean>
+  setKeepRunningInBackground(keepRunningInBackground: boolean): Promise<void>
   getReadyz(): Promise<{ ollamaDetected: boolean } | null>
   getServerHealth(): Promise<{ reachable: boolean; authenticated: boolean; version?: string }>
   connect(req: ConnectRequest): Promise<{ serverUrl: string }>
@@ -207,9 +210,11 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       setManualServer: () => {},
       getOnboarded: () => false,
       setOnboarded: () => {},
+      getKeepRunningInBackground: () => false,
+      setKeepRunningInBackground: () => {},
     } satisfies Pick<
       SecretStore,
-      'loadCreds' | 'saveCreds' | 'clearCreds' | 'getManualServer' | 'setManualServer' | 'getOnboarded' | 'setOnboarded'
+      'loadCreds' | 'saveCreds' | 'clearCreds' | 'getManualServer' | 'setManualServer' | 'getOnboarded' | 'setOnboarded' | 'getKeepRunningInBackground' | 'setKeepRunningInBackground'
     >)
   const makeClient =
     deps.makeClient ??
@@ -277,6 +282,14 @@ export function createHandlers(deps: HandlerDeps): Handlers {
 
     async setOnboarded(onboarded) {
       secretStore.setOnboarded(onboarded)
+    },
+
+    async getKeepRunningInBackground() {
+      return secretStore.getKeepRunningInBackground()
+    },
+
+    async setKeepRunningInBackground(keepRunningInBackground) {
+      secretStore.setKeepRunningInBackground(keepRunningInBackground)
     },
 
     async getReadyz() {

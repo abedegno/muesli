@@ -14,6 +14,8 @@ const bridge: MuesliBridge = {
   getManualServer: () => ipcRenderer.invoke(IPC.getManualServer),
   getOnboarded: () => ipcRenderer.invoke(IPC.getOnboarded),
   setOnboarded: (b) => ipcRenderer.invoke(IPC.setOnboarded, b),
+  getKeepRunningInBackground: () => ipcRenderer.invoke(IPC.getKeepRunningInBackground),
+  setKeepRunningInBackground: (b) => ipcRenderer.invoke(IPC.setKeepRunningInBackground, b),
   getReadyz: () => ipcRenderer.invoke(IPC.getReadyz),
   getServerHealth: () => ipcRenderer.invoke(IPC.getServerHealth),
   connect: (req) => ipcRenderer.invoke(IPC.connect, req),
@@ -146,6 +148,11 @@ const bridge: MuesliBridge = {
     const listener = (_e: unknown, status: Parameters<typeof cb>[0]) => cb(status)
     ipcRenderer.on(IPC.embeddedStartupStatus, listener)
     return () => ipcRenderer.removeListener(IPC.embeddedStartupStatus, listener)
+  },
+  onTrayNavigate: (cb) => {
+    const listener = (_e: unknown, target: Parameters<typeof cb>[0]) => cb(target)
+    ipcRenderer.on(IPC.trayNavigate, listener)
+    return () => ipcRenderer.removeListener(IPC.trayNavigate, listener)
   },
   onMeetingDetectionPromptShow: (cb) => {
     const listener = (_e: unknown, payload: Parameters<typeof cb>[0]) => cb(payload)

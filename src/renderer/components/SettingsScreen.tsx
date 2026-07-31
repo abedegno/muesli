@@ -135,6 +135,7 @@ export function SettingsScreen({
   const [googleOAuthConfigured, setGoogleOAuthConfigured] = useState<boolean | null>(null)
   const [microsoftOAuthConfigured, setMicrosoftOAuthConfigured] = useState<boolean | null>(null)
   const [theme, setTheme] = useState<Theme>((localStorage.getItem('muesli-theme') as Theme) || 'system')
+  const [keepRunningInBackground, setKeepRunningInBackground] = useState(false)
   const [autoRecordDetectedMeetings, setAutoRecordDetectedMeetings] = useState<boolean>(
     () => loadCalendarPrefs().autoRecordDetectedMeetings,
   )
@@ -203,6 +204,21 @@ export function SettingsScreen({
     }
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+    void muesli.getKeepRunningInBackground()
+      .then((enabled) => {
+        if (!cancelled) setKeepRunningInBackground(enabled)
+      })
+      .catch(() => {
+        if (!cancelled) setKeepRunningInBackground(false)
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   function applyTheme(t: Theme) {
     setTheme(t)
     localStorage.setItem('muesli-theme', t)
@@ -243,6 +259,30 @@ export function SettingsScreen({
       </section>
       <CalendarSection />
       <section className="mb-6">
+        <label htmlFor="keep-running-in-background" className="flex items-center gap-2 text-sm">
+          <Checkbox
+            id="keep-running-in-background"
+            checked={keepRunningInBackground}
+            onChange={async (e) => {
+              const next = e.target.checked
+              const prev = keepRunningInBackground
+              setKeepRunningInBackground(next)
+              try {
+                await muesli.setKeepRunningInBackground(next)
+              } catch (err) {
+                console.error('failed to update keep-running preference', err)
+                notify(err instanceof Error ? err.message : 'Could not update menu bar preference', 'error')
+                setKeepRunningInBackground(prev)
+              }
+            }}
+          />
+          <span>Keep Muesli running in the menu bar when the window is closed</span>
+        </label>
+        <p className="mt-1 text-xs text-muted-foreground">
+          When this is on, Muesli keeps a tray or menu-bar presence after you close the window so you can reopen it quickly.
+        </p>
+      </section>
+      <section className="mb-6">
         <label htmlFor="auto-record-detected-meetings" className="flex items-center gap-2 text-sm">
           <Checkbox
             id="auto-record-detected-meetings"
@@ -255,6 +295,9 @@ export function SettingsScreen({
           />
           <span>Auto-record detected meetings</span>
         </label>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Auto-record only runs while Muesli is still open. If menu bar running is off, it can only work during the current session before the window closes.
+        </p>
         {(googleOAuthConfigured || microsoftOAuthConfigured) ? (
           <div className="mt-3 flex flex-wrap gap-2">
             {googleOAuthConfigured ? (

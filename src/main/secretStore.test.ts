@@ -79,4 +79,20 @@ describe('SecretStore', () => {
     expect(readdirSync(dir).sort()).toEqual(['local-session.json'])
     expect(statSync(join(dir, 'local-session.json')).mode & 0o777).toBe(0o600)
   })
+
+  it('persists the keepRunningInBackground flag across instances and toggles it', () => {
+    const store = new SecretStore(dir, fakeSafe)
+    expect(store.getKeepRunningInBackground()).toBe(false)
+
+    store.setKeepRunningInBackground(true)
+    expect(new SecretStore(dir, fakeSafe).getKeepRunningInBackground()).toBe(true)
+    expect(readdirSync(dir).sort()).toEqual(['local-session.json'])
+    expect(statSync(join(dir, 'local-session.json')).mode & 0o777).toBe(0o600)
+
+    const again = new SecretStore(dir, fakeSafe)
+    again.setKeepRunningInBackground(false)
+    expect(new SecretStore(dir, fakeSafe).getKeepRunningInBackground()).toBe(false)
+    expect(readdirSync(dir).sort()).toEqual(['local-session.json'])
+    expect(statSync(join(dir, 'local-session.json')).mode & 0o777).toBe(0o600)
+  })
 })

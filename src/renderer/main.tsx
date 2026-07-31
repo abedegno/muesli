@@ -15,10 +15,11 @@ import { App } from './App'
 const savedTheme = localStorage.getItem('muesli-theme') || 'system'
 const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
 document.documentElement.classList.toggle('dark', savedTheme === 'dark' || (savedTheme === 'system' && prefersDark))
+const initialEntries = window.location.hash ? [window.location.hash.slice(1)] : ['/']
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <MemoryRouter>
+    <MemoryRouter initialEntries={initialEntries}>
       <ToastProvider>
         <ActivityProvider>
           <App />

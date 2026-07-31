@@ -16,6 +16,7 @@ interface PersistedShape {
   encrypted: boolean
   manualServer: boolean
   onboarded: boolean
+  keepRunningInBackground: boolean
   creds?: string
 }
 
@@ -64,6 +65,7 @@ export class SecretStore {
         encrypted: typeof raw.encrypted === 'boolean' ? raw.encrypted : this.safe.isEncryptionAvailable(),
         manualServer: raw.manualServer === true,
         onboarded: raw.onboarded === true,
+        keepRunningInBackground: raw.keepRunningInBackground === true,
         creds: typeof raw.creds === 'string' ? raw.creds : undefined,
       }
     } catch {
@@ -101,6 +103,7 @@ export class SecretStore {
       encrypted,
       manualServer: current?.manualServer ?? false,
       onboarded: current?.onboarded ?? false,
+      keepRunningInBackground: current?.keepRunningInBackground ?? false,
       creds: stored,
     })
   }
@@ -117,6 +120,7 @@ export class SecretStore {
       encrypted: current.encrypted,
       manualServer: true,
       onboarded: current.onboarded,
+      keepRunningInBackground: current.keepRunningInBackground,
     })
   }
 
@@ -130,6 +134,7 @@ export class SecretStore {
       encrypted: current?.encrypted ?? this.safe.isEncryptionAvailable(),
       manualServer,
       onboarded: current?.onboarded ?? false,
+      keepRunningInBackground: current?.keepRunningInBackground ?? false,
     }
     if (current?.creds) shape.creds = current.creds
     this.writePersisted(shape)
@@ -145,6 +150,23 @@ export class SecretStore {
       encrypted: current?.encrypted ?? this.safe.isEncryptionAvailable(),
       manualServer: current?.manualServer ?? false,
       onboarded,
+      keepRunningInBackground: current?.keepRunningInBackground ?? false,
+    }
+    if (current?.creds) shape.creds = current.creds
+    this.writePersisted(shape)
+  }
+
+  getKeepRunningInBackground(): boolean {
+    return this.readPersisted()?.keepRunningInBackground ?? false
+  }
+
+  setKeepRunningInBackground(keepRunningInBackground: boolean): void {
+    const current = this.readPersisted()
+    const shape: PersistedShape = {
+      encrypted: current?.encrypted ?? this.safe.isEncryptionAvailable(),
+      manualServer: current?.manualServer ?? false,
+      onboarded: current?.onboarded ?? false,
+      keepRunningInBackground,
     }
     if (current?.creds) shape.creds = current.creds
     this.writePersisted(shape)
