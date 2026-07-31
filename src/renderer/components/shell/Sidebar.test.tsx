@@ -41,12 +41,14 @@ describe('Sidebar', () => {
   it('renders CTA, search, All-notes nav, tags, lists, suggestions (no note list)', () => {
     renderSidebar()
     expect(screen.getByRole('button', { name: /new meeting/i })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /all notes/i })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /home/i })).toHaveAttribute('href', '/')
+    expect(screen.getByRole('link', { name: /all notes/i })).toHaveAttribute('href', '/notes')
     expect(screen.getByRole('button', { name: /1on1/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /Ready/i })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: /save .*standup/i })).toBeInTheDocument()
     // The note list no longer lives in the sidebar — it's the main pane now.
     expect(screen.queryByRole('link', { name: 'Standup' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /coming up/i })).not.toBeInTheDocument()
   })
   it('renders the "Smart lists" section header', () => {
     renderSidebar()
