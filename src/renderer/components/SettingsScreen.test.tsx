@@ -13,6 +13,8 @@ const getGoogleCalendarOAuthStatus = vi.fn()
 const openGoogleCalendarOAuthStart = vi.fn()
 const getMicrosoftCalendarOAuthStatus = vi.fn()
 const openMicrosoftCalendarOAuthStart = vi.fn()
+const getKeepRunningInBackground = vi.fn()
+const setKeepRunningInBackground = vi.fn()
 const getDigestConfig = vi.fn()
 const updateDigestConfig = vi.fn()
 const getServerHealth = vi.fn()
@@ -27,6 +29,8 @@ vi.mock('@/api', () => ({
     openGoogleCalendarOAuthStart: () => openGoogleCalendarOAuthStart(),
     getMicrosoftCalendarOAuthStatus: () => getMicrosoftCalendarOAuthStatus(),
     openMicrosoftCalendarOAuthStart: () => openMicrosoftCalendarOAuthStart(),
+    getKeepRunningInBackground: () => getKeepRunningInBackground(),
+    setKeepRunningInBackground: (next: boolean) => setKeepRunningInBackground(next),
     getDigestConfig: () => getDigestConfig(),
     updateDigestConfig: (cadence: string) => updateDigestConfig(cadence),
     getServerHealth: () => getServerHealth(),
@@ -48,6 +52,7 @@ afterEach(() => {
     getReadyz.mockResolvedValue(null)
     getGoogleCalendarOAuthStatus.mockResolvedValue({ configured: false })
     getMicrosoftCalendarOAuthStatus.mockResolvedValue({ configured: false })
+    getKeepRunningInBackground.mockResolvedValue(false)
     getDigestConfig.mockResolvedValue({ owner_id: 'owner-1', cadence: 'off' })
     updateDigestConfig.mockResolvedValue({ owner_id: 'owner-1', cadence: 'off' })
     getServerHealth.mockResolvedValue({ reachable: true, authenticated: true })
@@ -123,6 +128,27 @@ describe('SettingsScreen', () => {
       await screen.findByText((_, element) => element?.tagName === 'P' && /ollama status: detected/i.test(element.textContent ?? '')),
     ).toBeInTheDocument()
     expect(screen.getByText(/summaries and search are available/i)).toBeInTheDocument()
+  })
+
+  it('renders the keep-running setting and auto-record dependency copy', async () => {
+    renderScreen()
+
+    expect(await screen.findByRole('checkbox', { name: /keep muesli running in the menu bar when the window is closed/i })).toBeInTheDocument()
+    expect(screen.getByText(/auto-record only runs while muesli is still open/i)).toBeInTheDocument()
+    expect(screen.getByText(/if menu bar running is off, it can only work during the current session before the window closes/i)).toBeInTheDocument()
+  })
+
+  it('loads and saves the keep-running setting through the bridge', async () => {
+    const user = userEvent.setup()
+    getKeepRunningInBackground.mockResolvedValue(false)
+
+    renderScreen()
+
+    const checkbox = await screen.findByRole('checkbox', { name: /keep muesli running in the menu bar when the window is closed/i })
+    expect(checkbox).not.toBeChecked()
+    await user.click(checkbox)
+
+    await waitFor(() => expect(setKeepRunningInBackground).toHaveBeenCalledWith(true))
   })
 
   it('keeps polling for Ollama detection changes without a restart', async () => {

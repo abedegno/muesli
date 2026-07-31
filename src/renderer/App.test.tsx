@@ -8,6 +8,7 @@ const getConfig = vi.fn()
 const getOnboarded = vi.fn()
 const authListeners: Array<(notice: { message: string }) => void> = []
 const startupListeners: Array<(status: import('../shared/types').EmbeddedStartupStatus) => void> = []
+const trayListeners: Array<(target: '/new' | '/settings') => void> = []
 const connect = vi.fn()
 
 vi.mock('@/api', () => ({
@@ -20,6 +21,10 @@ vi.mock('@/api', () => ({
     },
     onEmbeddedStartupStatus: (listener: (status: import('../shared/types').EmbeddedStartupStatus) => void) => {
       startupListeners.push(listener)
+      return () => {}
+    },
+    onTrayNavigate: (listener: (target: '/new' | '/settings') => void) => {
+      trayListeners.push(listener)
       return () => {}
     },
     connect: (...args: Parameters<typeof connect>) => connect(...args),
@@ -41,6 +46,10 @@ vi.mock('./components/NotesListScreen', () => ({
   NotesListScreen: () => <div>all notes app</div>,
 }))
 
+vi.mock('./components/NewMeetingScreen', () => ({
+  NewMeetingScreen: () => <div data-testid="new-route">new route</div>,
+}))
+
 vi.mock('./components/HomeScreen', () => ({
   HomeScreen: () => <div>home app</div>,
 }))
@@ -52,10 +61,15 @@ afterEach(() => {
   vi.clearAllMocks()
   authListeners.splice(0, authListeners.length)
   startupListeners.splice(0, startupListeners.length)
+  trayListeners.splice(0, trayListeners.length)
 })
 
 function emitStartup(status: import('../shared/types').EmbeddedStartupStatus) {
   startupListeners[startupListeners.length - 1]?.(status)
+}
+
+function emitTray(target: '/new' | '/settings') {
+  trayListeners[trayListeners.length - 1]?.(target)
 }
 
 describe('App', () => {
@@ -104,6 +118,32 @@ describe('App', () => {
     await user.click(await screen.findByRole('button', { name: /open ai settings/i }))
 
     expect(await screen.findByTestId('settings-route')).toHaveTextContent('/settings#ai-transcription')
+  })
+
+  it('routes tray commands into the requested view', async () => {
+    getConfig.mockResolvedValue({ serverUrl: 'http://localhost:8080', token: 'app-token' })
+    getOnboarded.mockResolvedValue(true)
+
+    render(
+      <MemoryRouter>
+        <App />
+      </MemoryRouter>,
+    )
+
+    await act(async () => {
+      emitStartup({ status: 'ready', degraded: false })
+    })
+    expect(await screen.findByText('home app')).toBeInTheDocument()
+
+    await act(async () => {
+      emitTray('/settings')
+    })
+    expect(await screen.findByTestId('settings-route')).toHaveTextContent('/settings')
+
+    await act(async () => {
+      emitTray('/new')
+    })
+    expect(await screen.findByTestId('new-route')).toHaveTextContent('new route')
   })
 
   it('renders Home at / and All notes at /notes', async () => {

@@ -11,6 +11,8 @@ export const IPC = {
   getManualServer: 'muesli:getManualServer',
   getOnboarded: 'muesli:getOnboarded',
   setOnboarded: 'muesli:setOnboarded',
+  getKeepRunningInBackground: 'muesli:getKeepRunningInBackground',
+  setKeepRunningInBackground: 'muesli:setKeepRunningInBackground',
   getReadyz: 'muesli:getReadyz',
   getServerHealth: 'muesli:getServerHealth',
   connect: 'muesli:connect',
@@ -53,6 +55,7 @@ export const IPC = {
   uploadAudio: 'muesli:uploadAudio',
   uploadProgress: 'muesli:uploadProgress',
   embeddedStartupStatus: 'muesli:embeddedStartupStatus',
+  trayNavigate: 'muesli:trayNavigate',
   startNoteStream: 'muesli:startNoteStream',
   stopNoteStream: 'muesli:stopNoteStream',
   sendNoteStreamAudio: 'muesli:sendNoteStreamAudio',
@@ -252,6 +255,8 @@ export interface MeetingDetectionAutoRecordPayload {
   noteId: string
 }
 
+export type TrayNavigationTarget = '/new' | '/settings'
+
 export interface MuesliBridge {
   platform: NodeJS.Platform
   onAuthInvalidated?(listener: (notice: AuthInvalidatedNotice) => void): () => void
@@ -259,6 +264,8 @@ export interface MuesliBridge {
   getManualServer(): Promise<boolean>
   getOnboarded(): Promise<boolean>
   setOnboarded(b: boolean): Promise<void>
+  getKeepRunningInBackground(): Promise<boolean>
+  setKeepRunningInBackground(b: boolean): Promise<void>
   getReadyz(): Promise<{ ollamaDetected: boolean } | null>
   getServerHealth(): Promise<{ reachable: boolean; authenticated: boolean; version?: string }>
   connect(req: ConnectRequest): Promise<{ serverUrl: string }>
@@ -344,6 +351,7 @@ export interface MuesliBridge {
   processNextNote(id: string): Promise<void>
   search(q: string, opts?: SearchOptions): Promise<SearchMatch[]>
   onUploadProgress(cb: (p: UploadProgress) => void): () => void
+  onTrayNavigate?(cb: (target: TrayNavigationTarget) => void): () => void
   getDefaultTranscriberStatus(): Promise<PluginStatus>
   checkAudioDedup(audio: ArrayBuffer): Promise<{ existingNoteId?: string; existingNoteTitle?: string }>
   listSpeakerAliases(noteId: string): Promise<SpeakerAlias[]>
