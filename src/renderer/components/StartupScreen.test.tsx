@@ -104,6 +104,37 @@ describe('EmbeddedStartupGate', () => {
     expect(screen.queryByText(/install ollama to enable summaries & search/i)).not.toBeInTheDocument()
   })
 
+  it('hides the degraded banner while the AI settings section is on screen', async () => {
+    render(
+      <EmbeddedStartupGate hideDegradedBanner>
+        <div>Settings page</div>
+      </EmbeddedStartupGate>,
+    )
+
+    await act(async () => emit({ status: 'ready', degraded: true }))
+
+    expect(screen.getByText('Settings page')).toBeInTheDocument()
+    expect(screen.queryByText(/install ollama to enable summaries & search/i)).not.toBeInTheDocument()
+  })
+
+  it('renders the Open AI settings control with the same underline treatment as the sibling links', async () => {
+    render(
+      <EmbeddedStartupGate>
+        <div>App body</div>
+      </EmbeddedStartupGate>,
+    )
+
+    await act(async () => emit({ status: 'ready', degraded: true }))
+
+    const openAiSettings = screen.getByRole('button', { name: /open ai settings/i })
+    const downloadOllama = screen.getByRole('link', { name: /download ollama/i })
+    const learnMore = screen.getByRole('link', { name: /learn more/i })
+
+    expect(window.getComputedStyle(openAiSettings).textDecorationLine).toBe('underline')
+    expect(window.getComputedStyle(openAiSettings).textDecorationLine).toBe(window.getComputedStyle(downloadOllama).textDecorationLine)
+    expect(window.getComputedStyle(openAiSettings).textDecorationLine).toBe(window.getComputedStyle(learnMore).textDecorationLine)
+  })
+
   it('keeps the banner and shell inside one viewport-sized flex column', async () => {
     const { container } = render(
       <EmbeddedStartupGate>
