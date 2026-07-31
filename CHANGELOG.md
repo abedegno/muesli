@@ -11,6 +11,32 @@ Muesli is pre-1.0 and under active development; tagged desktop releases
 
 ## [Unreleased]
 
+## [0.1.13] - 2026-08-01
+
+### Added
+
+- **Home screen.** The app now opens on a Home view that shows what's coming up
+  alongside your recent notes, instead of a flat list of all notes. The separate
+  "Coming up" destination is folded into it, and its empty state now links
+  straight to calendar settings. (#493)
+- **Opt-in menu-bar running.** A new setting keeps Muesli running in the menu bar
+  when you close the window, with a tray menu for opening the app, starting a
+  meeting, reaching Settings, and quitting. It is off by default and no tray icon
+  appears unless you turn it on. (#495)
+
+### Fixed
+
+- **Auto-record now works with the window closed.** Meeting detection ran only in
+  the app window, so enabling "Auto-record detected meetings" silently stopped
+  working the moment you closed it. Detection now runs in the main process, and
+  opens a window when a meeting needs recording. (#494)
+- **Closing the window quits on macOS** unless you have opted into menu-bar
+  running, rather than leaving the app resident with no visible trace. (#495)
+- **First-run messaging.** Onboarding no longer tells you to open the desktop app
+  you are already in or implies recordings leave your device when the built-in
+  server is handling them; the Ollama banner no longer repeats the AI settings
+  section it links to, and its in-app action now looks like the link it is. (#492)
+
 ## [0.1.12] - 2026-07-26
 
 No user-facing changes. This release carries only test and release-pipeline
