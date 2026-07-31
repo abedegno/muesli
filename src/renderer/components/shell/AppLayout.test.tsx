@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
-import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react'
+import { act, render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import { AppLayout } from './AppLayout'
@@ -14,8 +14,25 @@ const renameTag = vi.fn<(id: string, name: string) => Promise<{ id: string; name
   .mockResolvedValue({ id: 't1', name: 'renamed' })
 const search = vi.fn<(q: string, opts?: { from?: string; to?: string }) => Promise<import('../../../shared/types').SearchMatch[]>>().mockResolvedValue([])
 const getCalendarEvents = vi.fn<() => Promise<import('../../../shared/types').CalendarEvent[]>>().mockResolvedValue([])
-const createNote = vi.fn<(title: string) => Promise<import('../../../shared/types').Note>>()
-const linkNoteEvent = vi.fn<(id: string, eventId: string) => Promise<void>>()
+const promptShowListeners = new Set<(payload: { event: import('../../../shared/types').CalendarEvent; occurrenceKey: string }) => void>()
+const promptClearListeners = new Set<(payload: { occurrenceKey: string }) => void>()
+const autoRecordListeners = new Set<(payload: { noteId: string }) => void>()
+const meetingDetectionRendererReady = vi.fn().mockResolvedValue(undefined)
+const meetingDetectionPromptAccept = vi.fn().mockResolvedValue(undefined)
+const meetingDetectionPromptDismiss = vi.fn().mockResolvedValue(undefined)
+
+function emitPromptShow(payload: { event: import('../../../shared/types').CalendarEvent; occurrenceKey: string }) {
+  for (const listener of promptShowListeners) listener(payload)
+}
+
+function emitPromptClear(payload: { occurrenceKey: string }) {
+  for (const listener of promptClearListeners) listener(payload)
+}
+
+function emitAutoRecord(payload: { noteId: string }) {
+  for (const listener of autoRecordListeners) listener(payload)
+}
+
 vi.mock('@/api', () => ({
   muesli: {
     listNotes: () => listNotes(),
@@ -25,8 +42,21 @@ vi.mock('@/api', () => ({
     renameTag: (id: string, name: string) => renameTag(id, name),
     search: (q: string, opts?: { from?: string; to?: string }) => search(q, opts),
     getCalendarEvents: () => getCalendarEvents(),
-    createNote: (title: string) => createNote(title),
-    linkNoteEvent: (id: string, eventId: string) => linkNoteEvent(id, eventId),
+    meetingDetectionRendererReady: () => meetingDetectionRendererReady(),
+    meetingDetectionPromptAccept: (occurrenceKey: string) => meetingDetectionPromptAccept(occurrenceKey),
+    meetingDetectionPromptDismiss: (occurrenceKey: string) => meetingDetectionPromptDismiss(occurrenceKey),
+    onMeetingDetectionPromptShow: (listener: (payload: { event: import('../../../shared/types').CalendarEvent; occurrenceKey: string }) => void) => {
+      promptShowListeners.add(listener)
+      return () => promptShowListeners.delete(listener)
+    },
+    onMeetingDetectionPromptClear: (listener: (payload: { occurrenceKey: string }) => void) => {
+      promptClearListeners.add(listener)
+      return () => promptClearListeners.delete(listener)
+    },
+    onMeetingDetectionAutoRecord: (listener: (payload: { noteId: string }) => void) => {
+      autoRecordListeners.add(listener)
+      return () => autoRecordListeners.delete(listener)
+    },
   },
 }))
 
@@ -65,8 +95,15 @@ afterEach(() => {
   search.mockResolvedValue([])
   getCalendarEvents.mockReset()
   getCalendarEvents.mockResolvedValue([])
-  createNote.mockReset()
-  linkNoteEvent.mockReset()
+  meetingDetectionRendererReady.mockReset()
+  meetingDetectionRendererReady.mockResolvedValue(undefined)
+  meetingDetectionPromptAccept.mockReset()
+  meetingDetectionPromptAccept.mockResolvedValue(undefined)
+  meetingDetectionPromptDismiss.mockReset()
+  meetingDetectionPromptDismiss.mockResolvedValue(undefined)
+  promptShowListeners.clear()
+  promptClearListeners.clear()
+  autoRecordListeners.clear()
   mockNotify.mockClear()
   localStorage.clear()
 })
@@ -291,43 +328,47 @@ describe('AppLayout meeting detection loop', () => {
 
   beforeEach(() => {
     getCalendarEvents.mockResolvedValue([buildMeeting()])
-    createNote.mockResolvedValue({
-      id: 'note-123',
-      title: 'Weekly sync',
-      status: 'recording',
-      created_at: '',
-      updated_at: '',
-      partial_transcript: false,
-    })
-    linkNoteEvent.mockResolvedValue(undefined)
   })
 
   it('shows a record prompt, dismisses it, and suppresses the same occurrence on refocus', async () => {
     listNotes.mockResolvedValue([{ id: '1', title: 'Existing', status: 'ready', created_at: '', updated_at: '', partial_transcript: false }])
 
     renderLayout()
+    await waitFor(() => expect(meetingDetectionRendererReady).toHaveBeenCalled())
+    const meeting = buildMeeting()
+    const occurrenceKey = `${meeting.id}::${meeting.starts_at}`
+
+    await act(async () => {
+      emitPromptShow({
+        event: meeting,
+        occurrenceKey,
+      })
+    })
 
     expect(await screen.findByText('Record Weekly sync?')).toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
 
-    window.dispatchEvent(new Event('focus'))
-    await waitFor(() => expect(screen.queryByText('Record Weekly sync?')).not.toBeInTheDocument())
+    await act(async () => {
+      emitPromptClear({ occurrenceKey })
+    })
     expect(screen.queryByText('Record Weekly sync?')).not.toBeInTheDocument()
-    expect(createNote).not.toHaveBeenCalled()
-    expect(linkNoteEvent).not.toHaveBeenCalled()
+    expect(meetingDetectionPromptDismiss).toHaveBeenCalledWith(occurrenceKey)
   })
 
   it('auto-records a fresh meeting when the pref is enabled', async () => {
-    localStorage.setItem('muesli.calendar.autoRecordDetectedMeetings', '1')
     listNotes.mockResolvedValue([{ id: '1', title: 'Existing', status: 'ready', created_at: '', updated_at: '', partial_transcript: false }])
 
     renderLayout()
+    await waitFor(() => expect(meetingDetectionRendererReady).toHaveBeenCalled())
 
-    await waitFor(() => expect(createNote).toHaveBeenCalledWith('Weekly sync'))
-    expect(linkNoteEvent).toHaveBeenCalledWith('note-123', 'cal-1')
+    await act(async () => {
+      emitAutoRecord({ noteId: 'note-created' })
+    })
+
     expect(await screen.findByTestId('note-route')).toBeInTheDocument()
+    expect(meetingDetectionPromptAccept).not.toHaveBeenCalled()
   })
 })
 

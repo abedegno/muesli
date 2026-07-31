@@ -2,7 +2,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { loadCalendarPrefs, saveCalendarPrefs } from './calendarPrefs'
 
-beforeEach(() => localStorage.clear())
+const setCalendarPrefs = vi.fn()
+
+beforeEach(() => {
+  localStorage.clear()
+  setCalendarPrefs.mockClear()
+  Object.defineProperty(window, 'muesli', {
+    configurable: true,
+    value: { setCalendarPrefs },
+  })
+})
 
 describe('loadCalendarPrefs', () => {
   it('returns true only when the stored value is "1"', () => {
@@ -36,9 +45,11 @@ describe('saveCalendarPrefs', () => {
   it('writes "1" for true and "0" for false', () => {
     saveCalendarPrefs({ autoRecordDetectedMeetings: true })
     expect(localStorage.getItem('muesli.calendar.autoRecordDetectedMeetings')).toBe('1')
+    expect(setCalendarPrefs).toHaveBeenCalledWith({ autoRecordDetectedMeetings: true })
 
     saveCalendarPrefs({ autoRecordDetectedMeetings: false })
     expect(localStorage.getItem('muesli.calendar.autoRecordDetectedMeetings')).toBe('0')
+    expect(setCalendarPrefs).toHaveBeenCalledWith({ autoRecordDetectedMeetings: false })
   })
 
   it('does not throw when storage write fails', () => {
