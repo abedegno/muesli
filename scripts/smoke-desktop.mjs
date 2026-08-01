@@ -20,7 +20,7 @@
 import { execFileSync, spawn } from 'node:child_process'
 import { mkdtempSync, existsSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, resolve } from 'node:path'
 
 const args = process.argv.slice(2)
 let appArg = null
@@ -345,7 +345,11 @@ try {
     }
 
     try {
-      execFileSync('open', ['-a', appBundlePath], { stdio: 'pipe' })
+      // `open -a` resolves its argument as an application NAME first, so a
+      // relative path to an unregistered bundle fails ("Unable to find
+      // application"). The dmg run passes an absolute /Volumes path and works;
+      // the dist-desktop run passes a relative one and does not. Always resolve.
+      execFileSync('open', ['-a', resolve(appBundlePath)], { stdio: 'pipe' })
     } catch (err) {
       fail(
         `journey failed: could not relaunch the app via activate (${err instanceof Error ? err.message : String(err)})`,

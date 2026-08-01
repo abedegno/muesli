@@ -11,6 +11,20 @@ Muesli is pre-1.0 and under active development; tagged desktop releases
 
 ## [Unreleased]
 
+## [0.1.15] - 2026-08-01
+
+Same application as `0.1.14`, which did not publish a macOS build: a bug in the
+release smoke test itself failed the job after the app had been built and
+notarized. No application code changed.
+
+### Fixed
+
+- **Release smoke test could not reopen the app under its `dist-desktop` path.**
+  The close-and-reopen scenario shelled out to `open -a <path>`, which resolves
+  its argument as an application _name_ first, so a relative path to an
+  unregistered bundle failed while the absolute `/Volumes` path used for the dmg
+  worked. The path is now resolved before launching.
+
 ## [0.1.14] - 2026-08-01
 
 ### Fixed
