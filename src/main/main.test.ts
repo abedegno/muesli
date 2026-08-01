@@ -257,11 +257,21 @@ describe('main bootstrap wiring', () => {
       'muesli:setCalendarPrefs',
       'muesli:getKeepRunningInBackground',
       'muesli:setKeepRunningInBackground',
+      'muesli:getEmbeddedStartupStatus',
       'muesli:meetingDetectionRendererReady',
       'muesli:meetingDetectionPromptAccept',
       'muesli:meetingDetectionPromptDismiss',
     ]))
     expect(new Set(registeredChannels).size).toBe(registeredChannels.length)
+
+    const getEmbeddedStartupStatusHandler = mocks.ipcHandle.mock.calls.find(([channel]) => channel === 'muesli:getEmbeddedStartupStatus')?.[1] as (() => Promise<unknown>) | undefined
+    expect(getEmbeddedStartupStatusHandler).toBeTypeOf('function')
+    await expect(getEmbeddedStartupStatusHandler?.()).resolves.toBeNull()
+
+    const onStatus = mocks.startEmbeddedStartupMonitor.mock.calls[0]?.[0]?.onStatus as ((status: unknown) => void) | undefined
+    expect(onStatus).toBeTypeOf('function')
+    onStatus?.({ status: 'ready', degraded: false })
+    await expect(getEmbeddedStartupStatusHandler?.()).resolves.toEqual({ status: 'ready', degraded: false })
 
     expect(mocks.makeServerLogPath).toHaveBeenCalledWith('/sentinel/userData/user-data')
     expect(mocks.tokenStoreCtor).toHaveBeenCalledWith('/sentinel/userData/user-data', expect.any(Object))

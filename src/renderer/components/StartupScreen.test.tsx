@@ -6,9 +6,13 @@ import { EmbeddedStartupGate } from './StartupScreen'
 import type { EmbeddedStartupStatus } from '../../shared/types'
 
 let listener: ((status: EmbeddedStartupStatus) => void) | null = null
+const getEmbeddedStartupStatus = vi.fn()
+const getReadyz = vi.fn()
 
 vi.mock('@/api', () => ({
   muesli: {
+    getEmbeddedStartupStatus: () => getEmbeddedStartupStatus(),
+    getReadyz: () => getReadyz(),
     onEmbeddedStartupStatus: vi.fn((cb: (status: EmbeddedStartupStatus) => void) => {
       listener = cb
       return () => {
@@ -21,6 +25,8 @@ vi.mock('@/api', () => ({
 afterEach(() => {
   cleanup()
   listener = null
+  getEmbeddedStartupStatus.mockReset()
+  getReadyz.mockReset()
 })
 
 function emit(status: EmbeddedStartupStatus) {
@@ -28,6 +34,34 @@ function emit(status: EmbeddedStartupStatus) {
 }
 
 describe('EmbeddedStartupGate', () => {
+  it('renders ready children immediately when a cached startup status is already available', async () => {
+    getEmbeddedStartupStatus.mockResolvedValue({ status: 'ready', degraded: false })
+
+    render(
+      <EmbeddedStartupGate>
+        <div>App body</div>
+      </EmbeddedStartupGate>,
+    )
+
+    expect(screen.getByText('Starting Muesli')).toBeInTheDocument()
+    expect(await screen.findByText('App body')).toBeInTheDocument()
+  })
+
+  it('keeps showing startup progress when the server is still unreachable and no status is cached', async () => {
+    getEmbeddedStartupStatus.mockResolvedValue(null)
+    getReadyz.mockResolvedValue(null)
+
+    render(
+      <EmbeddedStartupGate>
+        <div>App body</div>
+      </EmbeddedStartupGate>,
+    )
+
+    expect(screen.getByText('Starting Muesli')).toBeInTheDocument()
+    expect(screen.getByText('Working...')).toBeInTheDocument()
+    expect(screen.queryByText('App body')).not.toBeInTheDocument()
+  })
+
   it('renders phase-specific progress copy', async () => {
     render(
       <EmbeddedStartupGate>

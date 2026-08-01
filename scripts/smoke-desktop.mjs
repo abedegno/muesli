@@ -17,7 +17,7 @@
 // Deliberately dependency-free (uses global fetch + WebSocket). On Node 20 run
 // it with --experimental-websocket; Node >=22 has WebSocket unflagged.
 
-import { spawn } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
 import { mkdtempSync, existsSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -131,12 +131,14 @@ function getJourneyStateExpression() {
   return `(() => {
     const text = document.body?.innerText ?? ''
     const hasStartupPanel = text.includes('Starting Muesli') || text.includes('Starting...')
+    const hasStartupError = text.includes('Startup failed') || text.includes('Muesli could not start')
     const hasDegradedBanner = text.includes('Install Ollama to enable summaries & search.')
     const headings = Array.from(document.querySelectorAll('h2')).map((el) => (el.textContent ?? '').trim())
     const hasSettingsHeading = headings.includes('Server') || headings.includes('Appearance')
     const hasNoNotesYet = text.includes('No notes yet')
     return {
       hasStartupPanel,
+      hasStartupError,
       hasDegradedBanner,
       hasSettingsHeading,
       hasNoNotesYet,
@@ -205,20 +207,32 @@ function fail(reason, extra = {}) {
 }
 
 try {
-  const target = await findPageTarget(Date.now() + TARGET_TIMEOUT_MS)
-  if (!target) fail(exitInfo || `no page target on :${PORT} within ${TARGET_TIMEOUT_MS}ms`)
-  console.log(`[smoke] devtools target: ${target.title || '(untitled)'}`)
+  const appBundlePath = appArg.endsWith('.app') ? appArg : null
+  let currentTarget = await findPageTarget(Date.now() + TARGET_TIMEOUT_MS)
+  if (!currentTarget) fail(exitInfo || `no page target on :${PORT} within ${TARGET_TIMEOUT_MS}ms`)
 
-  const ws = new WebSocket(target.webSocketDebuggerUrl)
-  await new Promise((resolve, reject) => {
-    ws.addEventListener('open', resolve, { once: true })
-    ws.addEventListener('error', () => reject(new Error('devtools websocket error')), {
-      once: true,
+  let send = null
+  let exceptions = []
+  let consoleErrors = []
+
+  async function connectToTarget(target) {
+    console.log(`[smoke] devtools target: ${target.title || '(untitled)'}`)
+    const ws = new WebSocket(target.webSocketDebuggerUrl)
+    await new Promise((resolve, reject) => {
+      ws.addEventListener('open', resolve, { once: true })
+      ws.addEventListener('error', () => reject(new Error('devtools websocket error')), {
+        once: true,
+      })
     })
-  })
 
-  const { send, exceptions, consoleErrors } = cdp(ws)
-  await send('Runtime.enable')
+    const session = cdp(ws)
+    send = session.send
+    exceptions = session.exceptions
+    consoleErrors = session.consoleErrors
+    await send('Runtime.enable')
+  }
+
+  await connectToTarget(currentTarget)
 
   const failOnExceptions = (reason) => {
     if (exceptions.length) {
@@ -226,27 +240,28 @@ try {
     }
   }
 
-  // Poll until the React root has children. A blank window is exactly
-  // "root exists but never gets any".
-  const deadline = Date.now() + MOUNT_TIMEOUT_MS
-  let childCount = -1
-  while (Date.now() < deadline) {
-    const { result } = await send('Runtime.evaluate', {
-      expression: `(() => { const r = document.getElementById('root'); return r ? r.children.length : -1 })()`,
-      returnByValue: true,
-    })
-    childCount = result?.value ?? -1
-    if (childCount > 0) break
-    if (exitInfo) fail(exitInfo, { exceptions, consoleErrors })
-    await sleep(500)
+  async function waitForRootMount(failMessage) {
+    const deadline = Date.now() + MOUNT_TIMEOUT_MS
+    let count = -1
+    while (Date.now() < deadline) {
+      const { result } = await send('Runtime.evaluate', {
+        expression: `(() => { const r = document.getElementById('root'); return r ? r.children.length : -1 })()`,
+        returnByValue: true,
+      })
+      count = result?.value ?? -1
+      if (count > 0) return count
+      if (exitInfo) fail(exitInfo, { exceptions, consoleErrors })
+      await sleep(500)
+    }
+
+    fail(failMessage, { exceptions, consoleErrors, childCount: count })
   }
 
-  if (childCount <= 0) {
-    fail(`renderer never mounted — #root child count = ${childCount} (blank UI)`, {
-      exceptions,
-      consoleErrors,
-    })
-  }
+  // Poll until the React root has children. A blank window is exactly
+  // "root exists but never gets any".
+  let childCount = await waitForRootMount(
+    'renderer never mounted — #root child count never became positive (blank UI)'
+  )
   if (exceptions.length) {
     fail(`renderer mounted but threw ${exceptions.length} uncaught exception(s)`, {
       exceptions,
@@ -296,10 +311,72 @@ try {
     fail(failMessage, { exceptions, consoleErrors, clicked })
   }
 
+  async function enableKeepRunningInBackground() {
+    const deadline = Date.now() + JOURNEY_STEP_TIMEOUT_MS
+    while (Date.now() < deadline) {
+      failOnExceptions('journey failed: could not enable keep running in the menu bar')
+      const { result } = await send('Runtime.evaluate', {
+        expression: `(() => {
+          const checkbox = document.getElementById('keep-running-in-background')
+          if (!checkbox) return false
+          if (!checkbox.checked) checkbox.click()
+          return checkbox.checked
+        })()`,
+        returnByValue: true,
+      })
+      if (result?.value === true) return true
+      await sleep(500)
+    }
+    fail('journey failed: could not enable keep running in the menu bar', {
+      exceptions,
+      consoleErrors,
+    })
+  }
+
+  async function reopenAppOnDarwin() {
+    if (!appBundlePath) return false
+
+    const closed = await send('Target.closeTarget', { targetId: currentTarget.id })
+    if (!closed?.success) {
+      fail('journey failed: could not close the current window before reopening', {
+        exceptions,
+        consoleErrors,
+      })
+    }
+
+    try {
+      execFileSync('open', ['-a', appBundlePath], { stdio: 'pipe' })
+    } catch (err) {
+      fail(
+        `journey failed: could not relaunch the app via activate (${err instanceof Error ? err.message : String(err)})`,
+        { exceptions, consoleErrors }
+      )
+    }
+
+    const reopenDeadline = Date.now() + TARGET_TIMEOUT_MS
+    while (Date.now() < reopenDeadline) {
+      const reopenedTarget = await findPageTarget(Date.now() + 2000)
+      if (reopenedTarget && reopenedTarget.id !== currentTarget.id) {
+        currentTarget = reopenedTarget
+        await connectToTarget(currentTarget)
+        childCount = await waitForRootMount(
+          'journey failed: reopened window never mounted a renderer'
+        )
+        return true
+      }
+      await sleep(500)
+    }
+
+    fail('journey failed: reopened window never appeared after closing the current one', {
+      exceptions,
+      consoleErrors,
+    })
+  }
+
   if (journey) {
     const startupState = await waitForJourneyState(
       Date.now() + JOURNEY_STEP_TIMEOUT_MS,
-      (state) => state && !state.hasStartupPanel,
+      (state) => state && !state.hasStartupPanel && !state.hasStartupError,
       'journey failed: app never left startup screen'
     )
     if (startupState?.hasDegradedBanner) {
@@ -316,6 +393,8 @@ try {
     )
     failOnExceptions('journey failed after opening Settings')
 
+    await enableKeepRunningInBackground()
+
     await clickText('All notes', 'journey failed: could not find the All notes nav entry')
 
     await waitForJourneyState(
@@ -324,6 +403,20 @@ try {
       'journey failed: notes list never rendered the "No notes yet" empty state'
     )
     failOnExceptions('journey failed after returning to All notes')
+
+    if (process.platform === 'darwin') {
+      await reopenAppOnDarwin()
+
+      const reopenedStartupState = await waitForJourneyState(
+        Date.now() + JOURNEY_STEP_TIMEOUT_MS,
+        (state) => state && !state.hasStartupPanel && !state.hasStartupError,
+        'journey failed: reopened window never left startup screen'
+      )
+      if (reopenedStartupState?.hasDegradedBanner) {
+        console.log('[smoke] note: reopened app is ready but degraded (no Ollama detected)')
+      }
+      failOnExceptions('journey failed after reopening the window')
+    }
   }
 
   const { result: title } = await send('Runtime.evaluate', {
