@@ -12,6 +12,7 @@ describe('IPC channels', () => {
     expect(IPC.getKeepRunningInBackground).toBe('muesli:getKeepRunningInBackground')
     expect(IPC.setKeepRunningInBackground).toBe('muesli:setKeepRunningInBackground')
     expect(IPC.getReadyz).toBe('muesli:getReadyz')
+    expect(IPC.getEmbeddedStartupStatus).toBe('muesli:getEmbeddedStartupStatus')
     expect(IPC.openMicrosoftCalendarOAuthStart).toBe('muesli:openMicrosoftCalendarOAuthStart')
     expect(IPC.startNoteStream).toBe('muesli:startNoteStream')
     expect(IPC.noteStreamEvent).toBe('muesli:noteStreamEvent')

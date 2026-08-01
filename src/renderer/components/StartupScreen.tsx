@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { muesli } from '@/api'
 import type { EmbeddedStartupStatus } from '../../shared/types'
 
@@ -139,13 +139,66 @@ export function EmbeddedStartupGate({
   const [bannerDismissed, setBannerDismissed] = useState(false)
   const hasStartupBridge = typeof muesli.onEmbeddedStartupStatus === 'function'
 
-  useEffect(() => {
-    if (!hasStartupBridge) return
-    const unsubscribe = muesli.onEmbeddedStartupStatus?.((next) => {
-      setStatus(next)
+  const applyStatus = useCallback((next: EmbeddedStartupStatus) => {
+    setStatus((current) => {
+      if (current?.status === 'ready' || current?.status === 'error') {
+        return current
+      }
+      return next
     })
-    return unsubscribe
-  }, [hasStartupBridge])
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+
+    if (!hasStartupBridge) return
+
+    const initialStatus = muesli.getEmbeddedStartupStatus?.()
+    void initialStatus
+      ?.then((initial) => {
+        if (!cancelled && initial) {
+          applyStatus(initial)
+        }
+      })
+      .catch(() => {})
+
+    const unsubscribe = muesli.onEmbeddedStartupStatus?.((next) => {
+      applyStatus(next)
+    })
+
+    return () => {
+      cancelled = true
+      unsubscribe?.()
+    }
+  }, [applyStatus, hasStartupBridge])
+
+  useEffect(() => {
+    if (!hasStartupBridge || status) return
+
+    let cancelled = false
+    let intervalId: number | null = null
+
+    const probeReadyState = async () => {
+      try {
+        const readyz = await muesli.getReadyz?.()
+        if (cancelled || status || !readyz) return
+        applyStatus({ status: 'ready', degraded: !readyz.ollamaDetected })
+      } catch {
+        // Keep showing startup progress while the embedded server is still
+        // coming up or the health endpoint is temporarily unavailable.
+      }
+    }
+
+    void probeReadyState()
+    intervalId = window.setInterval(() => {
+      void probeReadyState()
+    }, 1000)
+
+    return () => {
+      cancelled = true
+      if (intervalId !== null) window.clearInterval(intervalId)
+    }
+  }, [applyStatus, hasStartupBridge, status])
 
   if (!hasStartupBridge) return <>{children}</>
 
