@@ -11,6 +11,23 @@ Muesli is pre-1.0 and under active development; tagged desktop releases
 
 ## [Unreleased]
 
+## [0.1.14] - 2026-08-01
+
+### Fixed
+
+- **Reopening the window no longer hangs on "Starting…".** After closing the
+  window with menu-bar running enabled, reopening it from the tray (or the Dock)
+  left the app stuck on the startup screen forever, even though the embedded
+  server was running: the startup gate only listened for a status event that had
+  already fired before the new window existed. The main process now remembers the
+  latest startup status and the window asks for it on open. (#499)
+
+### Changed
+
+- The packaged-app smoke test now covers closing and reopening the window, and
+  the Linux AppImage smoke runs under a D-Bus session so it stops failing
+  releases for reasons unrelated to the build. (#498, #499)
+
 ## [0.1.13] - 2026-08-01
 
 ### Added
