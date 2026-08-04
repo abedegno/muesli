@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/abedegno/muesli/internal/model"
+	"github.com/abedegno/muesli/internal/testutil"
 	"golang.org/x/oauth2"
 	gcal "google.golang.org/api/calendar/v3"
 )
@@ -110,8 +111,9 @@ func TestFetchGoogleCalendarErrorNamesCalendar(t *testing.T) {
 	googleAPIEndpoint = server.URL + "/"
 	t.Cleanup(func() { googleAPIEndpoint = oldEndpoint })
 	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, googleTestHTTPClient(server))
+	from := testutil.NewFakeClock(time.Date(2026, 7, 10, 15, 4, 5, 0, time.UTC)).Now()
 
-	_, err := FetchGoogle(ctx, "client", "secret", "refresh", map[string]bool{"failing": true}, time.Now(), time.Now().Add(time.Hour))
+	_, err := FetchGoogle(ctx, "client", "secret", "refresh", map[string]bool{"failing": true}, from, from.Add(time.Hour))
 	if err == nil || !strings.Contains(err.Error(), `list google calendar "failing"`) {
 		t.Fatalf("FetchGoogle() error = %v, want wrapped error naming failing calendar", err)
 	}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/abedegno/muesli/internal/model"
+	"github.com/abedegno/muesli/internal/testutil"
 	"golang.org/x/oauth2"
 )
 
@@ -76,8 +77,9 @@ func TestFetchMicrosoftNon2xx(t *testing.T) {
 	t.Cleanup(server.Close)
 	setMicrosoftTestEndpoints(t, server)
 	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, server.Client())
+	from := testutil.NewFakeClock(time.Date(2026, 7, 10, 15, 4, 5, 0, time.UTC)).Now()
 
-	_, err := FetchMicrosoft(ctx, "client", "secret", "refresh", nil, time.Now(), time.Now().Add(time.Hour))
+	_, err := FetchMicrosoft(ctx, "client", "secret", "refresh", nil, from, from.Add(time.Hour))
 	if err == nil || !strings.Contains(err.Error(), "unexpected status 502 Bad Gateway: graph unavailable") {
 		t.Fatalf("FetchMicrosoft() error = %v, want status and trimmed response body", err)
 	}
