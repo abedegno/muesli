@@ -134,7 +134,7 @@ func writeClientClose(t *testing.T, conn *websocket.Conn, code int, payload []by
 	if payload == nil {
 		payload = websocket.FormatCloseMessage(code, "")
 	}
-	if err := conn.WriteControl(websocket.CloseMessage, payload, time.Now().Add(time.Second)); err != nil {
+	if err := conn.WriteControl(websocket.CloseMessage, payload, time.Time{}); err != nil {
 		t.Fatalf("write close code %d: %v", code, err)
 	}
 }
