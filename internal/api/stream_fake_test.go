@@ -32,6 +32,7 @@ type fakeStreamingPlugin struct {
 	binaryFrames    int
 	frames          [][]byte
 	emittedSegments []fakeStreamingSegment
+	sessionEnded    chan bool
 }
 
 func newFakeStreamingPlugin(t *testing.T, token string, segments []fakeStreamingSegment, dropAfterFrames int) *fakeStreamingPlugin {
@@ -40,6 +41,7 @@ func newFakeStreamingPlugin(t *testing.T, token string, segments []fakeStreaming
 		token:           token,
 		segments:        append([]fakeStreamingSegment(nil), segments...),
 		dropAfterFrames: dropAfterFrames,
+		sessionEnded:    make(chan bool, 1),
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/info", p.handleInfo)
@@ -84,6 +86,10 @@ func (p *fakeStreamingPlugin) EmittedSegments() []fakeStreamingSegment {
 	return out
 }
 
+func (p *fakeStreamingPlugin) SessionEnded() <-chan bool {
+	return p.sessionEnded
+}
+
 func (p *fakeStreamingPlugin) handleInfo(w http.ResponseWriter, r *http.Request) {
 	if !p.checkAuth(r) {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
@@ -110,6 +116,8 @@ func (p *fakeStreamingPlugin) handleStream(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	defer conn.Close()
+	stopped := false
+	defer func() { p.sessionEnded <- stopped }()
 
 	if _, payload, err := conn.ReadMessage(); err != nil {
 		return
@@ -174,6 +182,7 @@ func (p *fakeStreamingPlugin) handleStream(w http.ResponseWriter, r *http.Reques
 			if control.Type != "stop" {
 				continue
 			}
+			stopped = true
 			if nextSegment < len(p.segments) && framesSinceEmit > 0 {
 				if err := p.emitSegment(conn, p.segments[nextSegment]); err != nil {
 					return
