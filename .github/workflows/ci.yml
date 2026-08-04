@@ -157,7 +157,7 @@ jobs:
       matrix:
         include:
           - dir: whisper-transcriber
-            install: pip install -e '.[test]'
+            install: pip install -e '.[test]' && exit 1 # DELIBERATE-SCRATCH-BREAKAGE-i506
           - dir: parakeet-transcriber
             install: pip install -e '.[test]'
           - dir: streaming-transcriber
