@@ -86,6 +86,8 @@ func calDAVMultiStatus(href, properties string) string {
 }
 
 func TestFetchCalDAV(t *testing.T) {
+	queryEnd := time.Date(2026, 7, 11, 0, 0, 0, 0, time.UTC)
+
 	t.Run("successful discovery is used and credentials are sent", func(t *testing.T) {
 		var mu sync.Mutex
 		var reportPaths []string
@@ -117,7 +119,7 @@ func TestFetchCalDAV(t *testing.T) {
 		}))
 		defer server.Close()
 
-		events, err := FetchCalDAV(context.Background(), server.URL+"/base", "user", "pass", time.Time{}, time.Now().Add(time.Hour))
+		events, err := FetchCalDAV(context.Background(), server.URL+"/base", "user", "pass", time.Time{}, queryEnd)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -144,7 +146,7 @@ func TestFetchCalDAV(t *testing.T) {
 		}))
 		defer server.Close()
 
-		events, err := FetchCalDAV(context.Background(), server.URL+"/base", "user", "pass", time.Time{}, time.Now())
+		events, err := FetchCalDAV(context.Background(), server.URL+"/base", "user", "pass", time.Time{}, queryEnd)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -160,7 +162,7 @@ func TestFetchCalDAV(t *testing.T) {
 		defer server.Close()
 		baseURL := server.URL + "/base"
 
-		_, err := FetchCalDAV(context.Background(), baseURL, "user", "pass", time.Time{}, time.Now())
+		_, err := FetchCalDAV(context.Background(), baseURL, "user", "pass", time.Time{}, queryEnd)
 		if err == nil || !strings.Contains(err.Error(), baseURL) || !strings.Contains(err.Error(), "find current user principal") || !strings.Contains(err.Error(), "query caldav calendar") {
 			t.Fatalf("FetchCalDAV() error = %v, want joined discovery and query errors naming %q", err, baseURL)
 		}
