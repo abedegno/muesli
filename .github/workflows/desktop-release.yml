@@ -46,6 +46,9 @@ jobs:
         with:
           go-version: '1.25'
 
+      - name: Go tests (macOS-sensitive packages)
+        run: go test ./internal/embedded/...
+
       - uses: actions/setup-node@v4
         with:
           node-version: '20'

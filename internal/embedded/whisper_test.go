@@ -137,7 +137,10 @@ func TestLocateWhisperCppTranscriberBinaryCandidateSearch(t *testing.T) {
 		t.Fatalf("unset env: %v", err)
 	}
 
-	tmpDir := t.TempDir()
+	tmpDir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("eval symlinks: %v", err)
+	}
 	binDir := filepath.Join(tmpDir, "bin")
 	if err := os.MkdirAll(binDir, 0o755); err != nil {
 		t.Fatalf("mkdir bin: %v", err)
