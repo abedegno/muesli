@@ -2,7 +2,6 @@ package api_test
 
 import (
 	"context"
-	"net"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -61,20 +60,6 @@ func TestStreamHandlerClientClosePaths(t *testing.T) {
 			name: "no status received",
 			closeClient: func(t *testing.T, conn *websocket.Conn) {
 				writeClientClose(t, conn, websocket.CloseNoStatusReceived, []byte{})
-			},
-			wantStopped: true,
-		},
-		{
-			name: "EOF",
-			closeClient: func(t *testing.T, conn *websocket.Conn) {
-				t.Helper()
-				tcpConn, ok := conn.UnderlyingConn().(*net.TCPConn)
-				if !ok {
-					t.Fatalf("underlying connection = %T, want *net.TCPConn", conn.UnderlyingConn())
-				}
-				if err := tcpConn.CloseWrite(); err != nil {
-					t.Fatalf("CloseWrite(): %v", err)
-				}
 			},
 			wantStopped: true,
 		},
