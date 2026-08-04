@@ -18,6 +18,11 @@ import (
 
 const microsoftCalendarReadOnlyScope = "https://graph.microsoft.com/Calendars.Read"
 
+var (
+	graphBaseURL           = "https://graph.microsoft.com/v1.0"
+	microsoftOAuthEndpoint = microsoft.AzureADEndpoint("common")
+)
+
 type graphEvent struct {
 	ID            string              `json:"id"`
 	Subject       string              `json:"subject"`
@@ -113,7 +118,7 @@ func FetchMicrosoft(ctx context.Context, clientID, clientSecret, refreshToken st
 	_ = selected // Microsoft calendarView currently targets the primary calendar only.
 
 	cfg := &oauth2.Config{
-		Endpoint:     microsoft.AzureADEndpoint("common"),
+		Endpoint:     microsoftOAuthEndpoint,
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		Scopes:       []string{"offline_access", microsoftCalendarReadOnlyScope},
@@ -121,7 +126,7 @@ func FetchMicrosoft(ctx context.Context, clientID, clientSecret, refreshToken st
 	ts := cfg.TokenSource(ctx, &oauth2.Token{RefreshToken: refreshToken})
 	client := oauth2.NewClient(ctx, ts)
 
-	nextURL := "https://graph.microsoft.com/v1.0/me/calendarView?" + url.Values{
+	nextURL := graphBaseURL + "/me/calendarView?" + url.Values{
 		"startDateTime": {from.UTC().Format(time.RFC3339)},
 		"endDateTime":   {to.UTC().Format(time.RFC3339)},
 	}.Encode()

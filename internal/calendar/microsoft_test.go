@@ -1,12 +1,105 @@
 package calendar
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/abedegno/muesli/internal/model"
+	"github.com/abedegno/muesli/internal/testutil"
+	"golang.org/x/oauth2"
 )
+
+func TestFetchMicrosoftFollowsPagination(t *testing.T) {
+	from := time.Date(2026, 7, 10, 15, 4, 5, 0, time.FixedZone("east", 2*60*60))
+	to := from.Add(90 * time.Minute)
+	calendarRequests := 0
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"test-token","token_type":"Bearer","expires_in":3600}`))
+		case "/me/calendarView":
+			calendarRequests++
+			if got := r.Header.Get("Prefer"); got != `outlook.timezone="UTC"` {
+				t.Errorf("Prefer header = %q", got)
+			}
+			if got, want := r.URL.Query().Get("startDateTime"), from.UTC().Format(time.RFC3339); got != want {
+				t.Errorf("startDateTime = %q, want %q", got, want)
+			}
+			if got, want := r.URL.Query().Get("endDateTime"), to.UTC().Format(time.RFC3339); got != want {
+				t.Errorf("endDateTime = %q, want %q", got, want)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"value":[{"id":"page-one"}],"@odata.nextLink":"` + serverURL(r) + `/page-two"}`))
+		case "/page-two":
+			calendarRequests++
+			if got := r.Header.Get("Prefer"); got != `outlook.timezone="UTC"` {
+				t.Errorf("Prefer header on second page = %q", got)
+			}
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"value":[{"id":"page-two"}]}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(server.Close)
+	setMicrosoftTestEndpoints(t, server)
+	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, server.Client())
+
+	got, err := FetchMicrosoft(ctx, "client", "secret", "refresh", nil, from, to)
+	if err != nil {
+		t.Fatalf("FetchMicrosoft() error = %v", err)
+	}
+	if calendarRequests != 2 {
+		t.Fatalf("calendar requests = %d, want 2", calendarRequests)
+	}
+	if len(got) != 2 || got[0].ExternalID != "page-one" || got[1].ExternalID != "page-two" {
+		t.Fatalf("FetchMicrosoft() = %#v, want merged events from both pages", got)
+	}
+}
+
+func TestFetchMicrosoftNon2xx(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/token" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"test-token","token_type":"Bearer","expires_in":3600}`))
+			return
+		}
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte("  graph unavailable  \n"))
+	}))
+	t.Cleanup(server.Close)
+	setMicrosoftTestEndpoints(t, server)
+	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, server.Client())
+	from := testutil.NewFakeClock(time.Date(2026, 7, 10, 15, 4, 5, 0, time.UTC)).Now()
+
+	_, err := FetchMicrosoft(ctx, "client", "secret", "refresh", nil, from, from.Add(time.Hour))
+	if err == nil || !strings.Contains(err.Error(), "unexpected status 502 Bad Gateway: graph unavailable") {
+		t.Fatalf("FetchMicrosoft() error = %v, want status and trimmed response body", err)
+	}
+}
+
+func setMicrosoftTestEndpoints(t *testing.T, server *httptest.Server) {
+	t.Helper()
+	oldBaseURL := graphBaseURL
+	oldOAuthEndpoint := microsoftOAuthEndpoint
+	graphBaseURL = server.URL
+	microsoftOAuthEndpoint = oauth2.Endpoint{TokenURL: server.URL + "/token"}
+	t.Cleanup(func() {
+		graphBaseURL = oldBaseURL
+		microsoftOAuthEndpoint = oldOAuthEndpoint
+	})
+}
+
+func serverURL(r *http.Request) string {
+	return "http://" + r.Host
+}
 
 func TestGraphEventToNormalized(t *testing.T) {
 	utc := time.UTC

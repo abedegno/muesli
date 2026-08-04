@@ -3,6 +3,7 @@ package calendar
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -15,6 +16,8 @@ import (
 )
 
 const googleCalendarReadOnlyScope = "https://www.googleapis.com/auth/calendar.readonly"
+
+var googleAPIEndpoint string
 
 func googleEventToNormalized(ev *gcal.Event) NormalizedEvent {
 	if ev == nil {
@@ -62,20 +65,16 @@ func FetchGoogle(ctx context.Context, clientID, clientSecret, refreshToken strin
 	}
 	ts := cfg.TokenSource(ctx, &oauth2.Token{RefreshToken: refreshToken})
 
-	svc, err := gcal.NewService(ctx, option.WithTokenSource(ts))
+	clientOptions := []option.ClientOption{option.WithTokenSource(ts)}
+	if googleAPIEndpoint != "" {
+		clientOptions = append(clientOptions, option.WithEndpoint(googleAPIEndpoint))
+	}
+	svc, err := gcal.NewService(ctx, clientOptions...)
 	if err != nil {
 		return nil, fmt.Errorf("create google calendar service: %w", err)
 	}
 
-	calendarIDs := []string{"primary"}
-	seen := map[string]bool{"primary": true}
-	for calendarID, ok := range selected {
-		if !ok || calendarID == "" || seen[calendarID] {
-			continue
-		}
-		seen[calendarID] = true
-		calendarIDs = append(calendarIDs, calendarID)
-	}
+	calendarIDs := selectedCalendarIDs(selected)
 
 	out := make([]NormalizedEvent, 0)
 	for _, calendarID := range calendarIDs {
@@ -100,6 +99,20 @@ func FetchGoogle(ctx context.Context, clientID, clientSecret, refreshToken strin
 	}
 
 	return out, nil
+}
+
+func selectedCalendarIDs(selected map[string]bool) []string {
+	calendarIDs := []string{"primary"}
+	seen := map[string]bool{"primary": true}
+	for calendarID, ok := range selected {
+		if !ok || calendarID == "" || seen[calendarID] {
+			continue
+		}
+		seen[calendarID] = true
+		calendarIDs = append(calendarIDs, calendarID)
+	}
+	sort.Strings(calendarIDs[1:])
+	return calendarIDs
 }
 
 func googleEventTime(dt *gcal.EventDateTime) time.Time {
