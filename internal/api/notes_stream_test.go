@@ -85,6 +85,11 @@ func TestNoteStreamUnavailableWithoutPlugin(t *testing.T) {
 	if msg["type"] != "unavailable" {
 		t.Fatalf("message = %v", msg)
 	}
+	if _, _, err := conn.ReadMessage(); err == nil {
+		t.Fatal("expected websocket close after unavailable message")
+	} else if closeErr, ok := err.(*websocket.CloseError); !ok || closeErr.Code != websocket.CloseNormalClosure {
+		t.Fatalf("close error = %v, want normal websocket closure", err)
+	}
 
 	got, err := st.GetNoteByID(context.Background(), note.ID)
 	if err != nil {
