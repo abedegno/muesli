@@ -168,6 +168,28 @@ JSON
 `strict:false` = no forced rebase-before-merge. Emergency override (rare): re-run
 the same call with `"enforce_admins": false`, merge, then restore `true`.
 
+#### The `review-gate` check
+
+Branch protection also requires the `review-gate` status check. It answers one
+question: has this PR been independently reviewed, or is it explicitly exempt?
+
+The autonomous Bircher pipeline posts `bircher/cross-review`, but that status has
+only one producer. Requiring it directly would mean that only Bircher's own
+pipeline could ever make a PR mergeable, preventing human contributors from
+landing changes. `review-gate` is required instead because it can recognize both
+an independent review and an explicit exemption.
+
+For a human-authored PR, the check will initially show
+`pending — awaiting bircher/cross-review`. This means the PR still needs a
+maintainer to route it through independent review. If your PR is stuck on this
+check, ask a maintainer to arrange that review; you cannot clear it yourself.
+
+Currently, only `dependabot[bot]` is exempt. Exemptions are an allowlist by
+design, not a denylist: wrongly requiring review is a visible nuisance, while
+wrongly exempting an author could silently let unreviewed code merge. Any
+unrecognized author therefore falls through to requiring review rather than
+bypassing it.
+
 ## Licensing of contributions
 
 Muesli is licensed under the **GNU Affero General Public License v3.0**
