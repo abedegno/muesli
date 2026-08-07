@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, useLocation } from 'react-router-dom'
@@ -10,6 +10,8 @@ const { getCalendarEvents } = vi.hoisted(() => ({ getCalendarEvents: vi.fn() }))
 vi.mock('@/api', () => ({ muesli: { getCalendarEvents } }))
 
 import { UpcomingEventsPanel } from './UpcomingEventsPanel'
+
+const originalTimezone = process.env.TZ
 
 const event = (overrides: Partial<CalendarEvent>): CalendarEvent => ({
   id: 'event-1',
@@ -36,6 +38,15 @@ function renderPanel() {
     </MemoryRouter>,
   )
 }
+
+beforeAll(() => {
+  process.env.TZ = 'UTC'
+})
+
+afterAll(() => {
+  if (originalTimezone === undefined) delete process.env.TZ
+  else process.env.TZ = originalTimezone
+})
 
 beforeEach(() => {
   vi.useFakeTimers({ toFake: ['Date'] })
