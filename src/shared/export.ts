@@ -1,13 +1,16 @@
+/** Renderer-selected switches that main serializes into a note export request. */
 export interface ExportOptions {
   includeTranscript?: boolean
   redactSpeakers?: boolean
 }
 
+/** Immutable HTTP request description produced in main for one note export. */
 export interface NoteExportRequest {
   path: string
   method: 'GET'
 }
 
+/** Builds the encoded GET request that main sends for a renderer-initiated export. */
 export function buildNoteExportRequest(noteId: string, format: string, options?: ExportOptions): NoteExportRequest {
   const params = new URLSearchParams({ format })
   if (options?.includeTranscript !== undefined) params.set('include_transcript', String(options.includeTranscript))
@@ -18,6 +21,10 @@ export function buildNoteExportRequest(noteId: string, format: string, options?:
   }
 }
 
+/**
+ * Extracts the server-suggested download name, preferring RFC 5987 `filename*`.
+ * Returns `null` when the header is absent or contains no usable filename.
+ */
 export function parseContentDispositionFilename(value: string | null): string | null {
   if (!value) return null
 

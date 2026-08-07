@@ -31,3 +31,6 @@ internal/adminui/dist/assets/*
 # desktop packaging build artifacts
 build/resources/
 dist-desktop/
+# Generated coverage reports.
+coverage/
+coverage.out
