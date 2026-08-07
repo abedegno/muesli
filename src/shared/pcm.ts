@@ -1,8 +1,13 @@
+/** Streaming transcript output sample rate, in Hz; main expects 16 kHz audio. */
 export const PCM_TARGET_SAMPLE_RATE = 16_000
+/** Duration of each complete streaming frame, in milliseconds. */
 export const PCM_FRAME_MS = 200
+/** Mono samples per complete frame at {@link PCM_TARGET_SAMPLE_RATE}. */
 export const PCM_FRAME_SAMPLES = Math.round((PCM_TARGET_SAMPLE_RATE * PCM_FRAME_MS) / 1000)
+/** Bytes per complete mono signed-16-bit frame; samples are little-endian. */
 export const PCM_FRAME_BYTES = PCM_FRAME_SAMPLES * 2
 
+/** Renderer-side encoder settings; sample rates are positive finite values in Hz. */
 export interface PcmFrameEncoderOptions {
   inputSampleRate: number
   targetSampleRate?: number
@@ -26,9 +31,12 @@ function encodeFrame(samples: Int16Array): Uint8Array {
 /**
  * Deterministic mono PCM frame encoder for live transcript streaming.
  *
- * The encoder accepts Float32 samples at the source sample rate and emits
- * 16 kHz s16le frames in 200 ms slices. It keeps enough state to bridge input
- * chunks cleanly across arbitrary boundaries.
+ * The renderer feeds mono, non-interleaved Float32 samples in the normalized
+ * `[-1, 1]` range. The encoder emits 16 kHz signed-16-bit little-endian frames
+ * in 200 ms slices for main's note-stream IPC channel. Complete frames contain
+ * 3,200 samples/6,400 bytes; {@link PcmFrameEncoder.flush} may emit one shorter
+ * final frame. Instances retain resampling state across `push` calls and are
+ * live stream processors, not snapshot encoders.
  */
 export class PcmFrameEncoder {
   private readonly inputSampleRate: number
