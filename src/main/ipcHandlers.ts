@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import JSZip from 'jszip'
 import { fullNoteToMarkdown } from '../renderer/lib/noteMarkdown'
-import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, DigestConfig, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from '../shared/types'
+import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, DigestConfig, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, Plugin, PluginHealth, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from '../shared/types'
 import type { ConnectRequest, CreateConversationRequest, CreateConversationResponse, DiarizationReviewUpdate, ExportRequestOptions, ListNoteActionItemsResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdateActionItemRequest, UpdatePersonRequest, UploadAudioRequest } from '../shared/ipc'
 import { INSECURE_CONNECTION_CODE, isInsecureRemote } from '../shared/url'
 import type { AuthInvalidatedNotice } from '../shared/ipc'
@@ -114,6 +114,10 @@ interface Handlers {
   search(q: string, opts?: SearchOptions): Promise<SearchMatch[]>
   exportAllNotes(savePath: string): Promise<{ success: true; path: string } | { success: false; error: string }>
   getDefaultTranscriberStatus(): Promise<PluginStatus>
+  listPlugins(): Promise<Plugin[]>
+  checkPluginHealth(id: string): Promise<PluginHealth>
+  setStreamingTranscriber(req: { url: string; token: string }): Promise<Plugin>
+  clearStreamingTranscriber(): Promise<void>
   checkAudioDedup(audio: ArrayBuffer): Promise<{ existingNoteId?: string; existingNoteTitle?: string }>
   listSpeakerAliases(noteId: string): Promise<SpeakerAlias[]>
   upsertSpeakerAlias(noteId: string, label: string, aliasName: string): Promise<SpeakerAlias>
@@ -673,6 +677,22 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       } catch {
         return { status: 'unknown' as const }
       }
+    },
+
+    async listPlugins() {
+      return authedClient().listPlugins()
+    },
+
+    async checkPluginHealth(id) {
+      return authedClient().checkPluginHealth(id)
+    },
+
+    async setStreamingTranscriber(req) {
+      return authedClient().setStreamingTranscriber(req)
+    },
+
+    async clearStreamingTranscriber() {
+      await authedClient().clearStreamingTranscriber()
     },
 
     async checkAudioDedup(audio: ArrayBuffer) {

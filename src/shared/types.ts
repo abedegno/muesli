@@ -192,6 +192,24 @@ export interface DigestConfig {
   updated_at?: string
 }
 
+export type PluginKind = 'transcriber' | 'streaming-transcriber' | 'agent'
+
+export interface Plugin {
+  id: string
+  kind: PluginKind
+  name: string
+  endpoint_url: string
+  enabled: boolean
+  is_default: boolean
+  config_schema?: Record<string, unknown>
+  config?: Record<string, unknown>
+}
+
+export interface PluginHealth {
+  healthy: boolean
+  error?: string
+}
+
 export type RuleField = 'tag' | 'title' | 'status' | 'created' | 'folder'
 export type RuleOperator = 'is' | 'isNot' | 'contains' | 'equals' | 'withinLastDays'
 export interface RuleCondition { field: RuleField; operator: RuleOperator; value: string | number }
