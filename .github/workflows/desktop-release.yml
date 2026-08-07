@@ -233,7 +233,7 @@ jobs:
           fi
 
       - name: Upload dmg artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: muesli-macos-arm64-dmg
           path: dist-desktop/*.dmg
@@ -340,7 +340,7 @@ jobs:
           fi
 
       - name: Upload AppImage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: muesli-linux-x64-appimage
           path: dist-desktop/*.AppImage
