@@ -52,7 +52,7 @@ jobs:
           server_total=$(go tool cover -func=coverage.out | awk '/^total:/ { gsub(/%/, "", $3); print $3 }')
           server_floor=$(tr -d '[:space:]' < coverage-floors/server.txt)
           client_total=$(node -p "require('./coverage/coverage-summary.json').total.lines.pct")
-          client_floor=$(node -e "import('./vitest.config.ts').then(({default: c}) => process.stdout.write(String(c.test.coverage.thresholds.lines)))")
+          client_floor=$(awk '/^[[:space:]]+lines:/ { gsub(/,/, "", $2); print $2; exit }' vitest.config.ts)
           server_delta=$(awk -v current="$server_total" -v floor="$server_floor" 'BEGIN { printf "%+.1f", current - floor }')
           client_delta=$(awk -v current="$client_total" -v floor="$client_floor" 'BEGIN { printf "%+.2f", current - floor }')
           {
