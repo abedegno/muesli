@@ -1,0 +1,172 @@
+version: 2
+updates:
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - 'type:chore'
+      - 'area:server'
+    groups:
+      non-major:
+        patterns: ['*']
+        update-types: ['minor', 'patch']
+
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - 'type:chore'
+      - 'area:ui'
+    # Keep Electron updates individual: stale Electron versions are a desktop security exposure.
+    groups:
+      non-major:
+        patterns: ['*']
+        exclude-patterns: ['electron']
+        update-types: ['minor', 'patch']
+
+  - package-ecosystem: pip
+    directory: /plugins/conformance
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    labels:
+      - 'type:chore'
+      - 'area:plugins'
+    groups:
+      non-major:
+        patterns: ['*']
+        update-types: ['minor', 'patch']
+
+  - package-ecosystem: pip
+    directory: /plugins/ollama-agent
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    labels:
+      - 'type:chore'
+      - 'area:plugins'
+    groups:
+      non-major:
+        patterns: ['*']
+        update-types: ['minor', 'patch']
+
+  - package-ecosystem: pip
+    directory: /plugins/parakeet-transcriber
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    labels:
+      - 'type:chore'
+      - 'area:plugins'
+    groups:
+      non-major:
+        patterns: ['*']
+        update-types: ['minor', 'patch']
+
+  - package-ecosystem: pip
+    directory: /plugins/streaming-transcriber
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    labels:
+      - 'type:chore'
+      - 'area:plugins'
+    groups:
+      non-major:
+        patterns: ['*']
+        update-types: ['minor', 'patch']
+
+  - package-ecosystem: pip
+    directory: /plugins/whisper-transcriber
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    labels:
+      - 'type:chore'
+      - 'area:plugins'
+    groups:
+      non-major:
+        patterns: ['*']
+        update-types: ['minor', 'patch']
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - 'type:chore'
+      - 'area:infra'
+    groups:
+      non-major:
+        patterns: ['*']
+        update-types: ['minor', 'patch']
+
+  - package-ecosystem: docker
+    directory: /plugins/ollama-agent
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    labels:
+      - 'type:chore'
+      - 'area:plugins'
+    groups:
+      non-major:
+        patterns: ['*']
+        update-types: ['minor', 'patch']
+
+  - package-ecosystem: docker
+    directory: /plugins/parakeet-transcriber
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    labels:
+      - 'type:chore'
+      - 'area:plugins'
+    groups:
+      non-major:
+        patterns: ['*']
+        update-types: ['minor', 'patch']
+
+  - package-ecosystem: docker
+    directory: /plugins/streaming-transcriber
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    labels:
+      - 'type:chore'
+      - 'area:plugins'
+    groups:
+      non-major:
+        patterns: ['*']
+        update-types: ['minor', 'patch']
+
+  - package-ecosystem: docker
+    directory: /plugins/whisper-transcriber
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+    labels:
+      - 'type:chore'
+      - 'area:plugins'
+    groups:
+      non-major:
+        patterns: ['*']
+        update-types: ['minor', 'patch']
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    labels:
+      - 'type:chore'
+      - 'area:infra'
+    groups:
+      non-major:
+        patterns: ['*']
+        update-types: ['minor', 'patch']
