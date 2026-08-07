@@ -32,6 +32,75 @@ describe('ipc handlers', () => {
     })
   }
 
+  function makePluginHandlers(fetch: typeof server.fetch) {
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-token' })
+    return createHandlers({ tokenStore, fetch, onProgress: () => {} })
+  }
+
+  it('lists plugins and checks plugin health through the authenticated client', async () => {
+    const calls: string[] = []
+    const fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname
+      calls.push(`${init?.method ?? 'GET'} ${path}`)
+      if (path.endsWith('/health')) return new Response(JSON.stringify({ healthy: true }), { status: 200 })
+      return new Response(JSON.stringify([{ id: 'p1', kind: 'transcriber' }]), { status: 200 })
+    }) as typeof server.fetch
+    const h = makePluginHandlers(fetch)
+
+    await expect(h.listPlugins()).resolves.toHaveLength(1)
+    await expect(h.checkPluginHealth('p1')).resolves.toEqual({ healthy: true })
+    expect(calls).toEqual(['GET /api/admin/plugins', 'POST /api/admin/plugins/p1/health'])
+  })
+
+  it('creates a streaming transcriber when none exists', async () => {
+    const requests: Array<{ method: string; body?: Record<string, unknown> }> = []
+    const fetch = vi.fn(async (_input: string | URL, init?: RequestInit) => {
+      const method = init?.method ?? 'GET'
+      requests.push({ method, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      if (method === 'GET') return new Response('[]', { status: 200 })
+      return new Response(JSON.stringify({ id: 'stream-1', kind: 'streaming-transcriber', endpoint_url: 'http://stream' }), { status: 201 })
+    }) as typeof server.fetch
+    const result = await makePluginHandlers(fetch).setStreamingTranscriber({ url: 'http://stream', token: 'secret' })
+
+    expect(result.id).toBe('stream-1')
+    expect(requests[1]).toEqual({ method: 'POST', body: { kind: 'streaming-transcriber', name: 'Streaming transcriber', endpoint_url: 'http://stream', token: 'secret', enabled: true, is_default: true } })
+  })
+
+  it('updates the existing streaming transcriber without duplicating it', async () => {
+    const calls: Array<{ path: string; method: string; body?: Record<string, unknown> }> = []
+    const fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const method = init?.method ?? 'GET'
+      const path = new URL(String(input)).pathname
+      calls.push({ path, method, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      if (method === 'GET') return new Response(JSON.stringify([{ id: 'stream-1', kind: 'streaming-transcriber' }]), { status: 200 })
+      return new Response(JSON.stringify({ id: 'stream-1', kind: 'streaming-transcriber', endpoint_url: 'http://new' }), { status: 200 })
+    }) as typeof server.fetch
+    await makePluginHandlers(fetch).setStreamingTranscriber({ url: 'http://new', token: '' })
+
+    expect(calls[1]).toEqual({ path: '/api/admin/plugins/stream-1', method: 'PATCH', body: { endpoint_url: 'http://new', enabled: true, is_default: true } })
+    expect(calls.filter((call) => call.method === 'POST')).toHaveLength(0)
+  })
+
+  it('deletes the existing streaming transcriber when clearing', async () => {
+    const calls: string[] = []
+    const fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const method = init?.method ?? 'GET'
+      calls.push(`${method} ${new URL(String(input)).pathname}`)
+      return method === 'GET'
+        ? new Response(JSON.stringify([{ id: 'stream-1', kind: 'streaming-transcriber' }]), { status: 200 })
+        : new Response(null, { status: 204 })
+    }) as typeof server.fetch
+    await makePluginHandlers(fetch).clearStreamingTranscriber()
+    expect(calls).toEqual(['GET /api/admin/plugins', 'DELETE /api/admin/plugins/stream-1'])
+  })
+
+  it('clearing is a no-op when no streaming transcriber exists', async () => {
+    const fetch = vi.fn(async () => new Response('[]', { status: 200 })) as typeof server.fetch
+    await expect(makePluginHandlers(fetch).clearStreamingTranscriber()).resolves.toBeUndefined()
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
   it('connect (first run) sets up, logs in, mints + persists an app token', async () => {
     const h = makeHandlers()
     const out = await h.connect({

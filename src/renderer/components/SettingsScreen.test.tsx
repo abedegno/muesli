@@ -18,6 +18,10 @@ const setKeepRunningInBackground = vi.fn()
 const getDigestConfig = vi.fn()
 const updateDigestConfig = vi.fn()
 const getServerHealth = vi.fn()
+const listPlugins = vi.fn()
+const checkPluginHealth = vi.fn()
+const setStreamingTranscriber = vi.fn()
+const clearStreamingTranscriber = vi.fn()
 
 vi.mock('@/api', () => ({
   muesli: {
@@ -34,6 +38,10 @@ vi.mock('@/api', () => ({
     getDigestConfig: () => getDigestConfig(),
     updateDigestConfig: (cadence: string) => updateDigestConfig(cadence),
     getServerHealth: () => getServerHealth(),
+    listPlugins: () => listPlugins(),
+    checkPluginHealth: (id: string) => checkPluginHealth(id),
+    setStreamingTranscriber: (req: { url: string; token: string }) => setStreamingTranscriber(req),
+    clearStreamingTranscriber: () => clearStreamingTranscriber(),
   },
 }))
 
@@ -56,6 +64,10 @@ afterEach(() => {
     getDigestConfig.mockResolvedValue({ owner_id: 'owner-1', cadence: 'off' })
     updateDigestConfig.mockResolvedValue({ owner_id: 'owner-1', cadence: 'off' })
     getServerHealth.mockResolvedValue({ reachable: true, authenticated: true })
+    listPlugins.mockResolvedValue([])
+    checkPluginHealth.mockResolvedValue({ healthy: true })
+    setStreamingTranscriber.mockImplementation(async ({ url }: { url: string }) => ({ id: 'stream-1', kind: 'streaming-transcriber', name: 'Streaming transcriber', endpoint_url: url, enabled: true, is_default: true }))
+    clearStreamingTranscriber.mockResolvedValue(undefined)
   })
 
 function renderScreen(serverUrl = 'http://localhost:8080') {
@@ -73,6 +85,83 @@ function renderScreen(serverUrl = 'http://localhost:8080') {
 }
 
 describe('SettingsScreen', () => {
+  const transcriber = { id: 'transcriber-1', kind: 'transcriber', name: 'Whisper', endpoint_url: 'http://whisper', enabled: true, is_default: true }
+  const streaming = { id: 'stream-1', kind: 'streaming-transcriber', name: 'Streaming', endpoint_url: 'http://stream', enabled: true, is_default: true }
+
+  it('shows a healthy current transcriber', async () => {
+    listPlugins.mockResolvedValue([transcriber])
+    renderScreen()
+    expect(await screen.findByText('Connection healthy.')).toBeInTheDocument()
+    expect(screen.getByText('Whisper · http://whisper')).toBeInTheDocument()
+  })
+
+  it('shows when the current transcriber is missing', async () => {
+    renderScreen()
+    expect(await screen.findByText('No transcriber configured.')).toBeInTheDocument()
+  })
+
+  it('distinguishes a misconfigured current transcriber HTTP response', async () => {
+    listPlugins.mockResolvedValue([transcriber])
+    checkPluginHealth.mockResolvedValue({ healthy: false, error: 'plugin returned 500: broken' })
+    renderScreen()
+    expect(await screen.findByText('Plugin is misconfigured (HTTP 500).')).toBeInTheDocument()
+  })
+
+  it('names the endpoint when the current transcriber is unreachable', async () => {
+    listPlugins.mockResolvedValue([transcriber])
+    checkPluginHealth.mockResolvedValue({ healthy: false, error: 'connect: connection refused' })
+    renderScreen()
+    expect(await screen.findByText('Plugin is unreachable at http://whisper.')).toBeInTheDocument()
+  })
+
+  it.each([
+    ['creates', [], 'http://new-stream', 'new-token'],
+    ['updates', [streaming], 'http://updated-stream', ''],
+  ])('%s a streaming transcriber from the form', async (_label, plugins, url, token) => {
+    const user = userEvent.setup()
+    listPlugins.mockResolvedValue(plugins)
+    renderScreen()
+    const urlInput = await screen.findByLabelText('URL')
+    await user.clear(urlInput)
+    await user.type(urlInput, url)
+    if (token) await user.type(screen.getByLabelText('Token'), token)
+    await user.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() => expect(setStreamingTranscriber).toHaveBeenCalledWith({ url, token }))
+    expect(screen.getByLabelText('Token')).toHaveValue('')
+  })
+
+  it('prefills only the streaming URL and clears the saved configuration', async () => {
+    const user = userEvent.setup()
+    listPlugins.mockResolvedValue([streaming])
+    renderScreen()
+    expect(await screen.findByLabelText('URL')).toHaveValue('http://stream')
+    expect(screen.getByLabelText('Token')).toHaveValue('')
+    await user.click(screen.getByRole('button', { name: 'Clear' }))
+    await waitFor(() => expect(clearStreamingTranscriber).toHaveBeenCalled())
+    expect(screen.getByText('No streaming transcriber configured.')).toBeInTheDocument()
+  })
+
+  it.each([
+    [{ healthy: true }, 'Connection healthy.'],
+    [{ healthy: false, error: 'plugin returned 401: unauthorized' }, 'Authentication failed: check the plugin token.'],
+    [{ healthy: false, error: 'plugin returned 502: bad gateway' }, 'Plugin is misconfigured (HTTP 502).'],
+    [{ healthy: false, error: 'dial tcp: connection refused' }, 'Plugin is unreachable at http://stream.'],
+  ])('renders the distinct streaming connection result %#', async (health, copy) => {
+    const user = userEvent.setup()
+    listPlugins.mockResolvedValue([streaming])
+    checkPluginHealth.mockResolvedValue(health)
+    renderScreen()
+    await user.click(await screen.findByRole('button', { name: 'Test connection' }))
+    expect(await screen.findByText(copy)).toBeInTheDocument()
+  })
+
+  it('reports the distinct no-streaming-configured test state', async () => {
+    const user = userEvent.setup()
+    renderScreen()
+    await user.click(await screen.findByRole('button', { name: 'Test connection' }))
+    expect(screen.getByText('No streaming transcriber configured.')).toBeInTheDocument()
+    expect(checkPluginHealth).not.toHaveBeenCalled()
+  })
   it('hides the Google Calendar connect button until the server reports oauth configured', async () => {
     getGoogleCalendarOAuthStatus.mockResolvedValue({ configured: false })
 

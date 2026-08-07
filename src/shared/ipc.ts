@@ -1,4 +1,4 @@
-import type { ActionItem, ActionItemStatus, AudioUrlGrant, CalendarEvent, ChatSource, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, EmbeddedStartupStatus, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from './types'
+import type { ActionItem, ActionItemStatus, AudioUrlGrant, CalendarEvent, ChatSource, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, EmbeddedStartupStatus, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, Plugin, PluginHealth, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from './types'
 import type { UploadProgress } from '../main/uploadMachine'
 import type { MicStatus } from '../main/micPermission'
 import type { SystemAudioFormat } from '../main/systemAudioHelper'
@@ -98,6 +98,10 @@ export const IPC = {
   processNextNote: 'muesli:processNextNote',
   search: 'muesli:search',
   getDefaultTranscriberStatus: 'muesli:getDefaultTranscriberStatus',
+  listPlugins: 'muesli:listPlugins',
+  checkPluginHealth: 'muesli:checkPluginHealth',
+  setStreamingTranscriber: 'muesli:setStreamingTranscriber',
+  clearStreamingTranscriber: 'muesli:clearStreamingTranscriber',
   checkAudioDedup: 'muesli:checkAudioDedup',
   listSpeakerAliases: 'muesli:listSpeakerAliases',
   upsertSpeakerAlias: 'muesli:upsertSpeakerAlias',
@@ -355,6 +359,10 @@ export interface MuesliBridge {
   onUploadProgress(cb: (p: UploadProgress) => void): () => void
   onTrayNavigate?(cb: (target: TrayNavigationTarget) => void): () => void
   getDefaultTranscriberStatus(): Promise<PluginStatus>
+  listPlugins(): Promise<Plugin[]>
+  checkPluginHealth(id: string): Promise<PluginHealth>
+  setStreamingTranscriber(req: { url: string; token: string }): Promise<Plugin>
+  clearStreamingTranscriber(): Promise<void>
   checkAudioDedup(audio: ArrayBuffer): Promise<{ existingNoteId?: string; existingNoteTitle?: string }>
   listSpeakerAliases(noteId: string): Promise<SpeakerAlias[]>
   upsertSpeakerAlias(noteId: string, label: string, aliasName: string): Promise<SpeakerAlias>

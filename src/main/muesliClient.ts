@@ -1,4 +1,4 @@
-import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, FullNote, Folder, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, Share, SmartList, SpeakerAlias, Template, TemplateSection, UploadGrant } from '../shared/types'
+import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, FullNote, Folder, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, Plugin, PluginHealth, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, Share, SmartList, SpeakerAlias, Template, TemplateSection, UploadGrant } from '../shared/types'
 import type { CreateConversationRequest, CreateConversationResponse, ListNoteActionItemsResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdateActionItemRequest, UpdatePersonRequest } from '../shared/ipc'
 import { buildNoteExportRequest, parseContentDispositionFilename, type ExportOptions } from '../shared/export'
 import { buildCalendarEventsPath } from '../shared/calendar'
@@ -458,6 +458,37 @@ export class MuesliClient {
     // --- internals ---
   async getDefaultTranscriberStatus(): Promise<PluginStatus> {
     return this.json<PluginStatus>('GET', '/api/admin/plugins/default-transcriber/status')
+  }
+
+  async listPlugins(): Promise<Plugin[]> {
+    return this.json<Plugin[]>('GET', '/api/admin/plugins')
+  }
+
+  async checkPluginHealth(id: string): Promise<PluginHealth> {
+    return this.json<PluginHealth>('POST', `/api/admin/plugins/${encodeURIComponent(id)}/health`)
+  }
+
+  async setStreamingTranscriber(req: { url: string; token: string }): Promise<Plugin> {
+    const existing = (await this.listPlugins()).find((plugin) => plugin.kind === 'streaming-transcriber')
+    const body = {
+      endpoint_url: req.url,
+      ...(req.token ? { token: req.token } : {}),
+      enabled: true,
+      is_default: true,
+    }
+    if (existing) {
+      return this.json<Plugin>('PATCH', `/api/admin/plugins/${encodeURIComponent(existing.id)}`, body)
+    }
+    return this.json<Plugin>('POST', '/api/admin/plugins', {
+      kind: 'streaming-transcriber',
+      name: 'Streaming transcriber',
+      ...body,
+    })
+  }
+
+  async clearStreamingTranscriber(): Promise<void> {
+    const existing = (await this.listPlugins()).find((plugin) => plugin.kind === 'streaming-transcriber')
+    if (existing) await this.json('DELETE', `/api/admin/plugins/${encodeURIComponent(existing.id)}`)
   }
 
   // --- Chat (CHT01-CHT05) ---

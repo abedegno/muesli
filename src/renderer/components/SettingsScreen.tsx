@@ -4,10 +4,11 @@ import { muesli } from '@/api'
 import { Button } from '@/components/ui/Button'
 import { Checkbox } from '@/components/ui/Checkbox'
 import { Dialog } from '@/components/ui/Dialog'
+import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { loadCalendarPrefs, saveCalendarPrefs } from '@/lib/calendarPrefs'
 import { useToast } from '@/components/ui/Toast'
-import type { DigestConfig } from '../../shared/types'
+import type { DigestConfig, Plugin, PluginHealth } from '../../shared/types'
 
 type Theme = 'system' | 'light' | 'dark'
 type HealthState =
@@ -19,6 +20,103 @@ type HealthState =
 
 const AI_SECTION_ID = 'ai-transcription'
 const CALENDAR_SECTION_ID = 'calendar'
+
+function pluginHealthMessage(health: PluginHealth, endpoint: string): string {
+  if (health.healthy) return 'Connection healthy.'
+  const error = health.error ?? ''
+  const status = error.match(/plugin returned (\d{3})/)?.[1]
+  if (status === '401' || status === '403') return 'Authentication failed: check the plugin token.'
+  if (status) return `Plugin is misconfigured (HTTP ${status}).`
+  return `Plugin is unreachable at ${endpoint}.`
+}
+
+function TranscriptionSection() {
+  const [current, setCurrent] = useState<Plugin | null>(null)
+  const [currentMessage, setCurrentMessage] = useState('Checking current transcriber…')
+  const [streaming, setStreaming] = useState<Plugin | null>(null)
+  const [url, setUrl] = useState('')
+  const [token, setToken] = useState('')
+  const [connectionMessage, setConnectionMessage] = useState('No streaming transcriber configured.')
+  const [saving, setSaving] = useState(false)
+
+  useEffect(() => {
+    let cancelled = false
+    void muesli.listPlugins().then(async (plugins) => {
+      if (cancelled) return
+      const defaultTranscriber = plugins.find((plugin) => plugin.kind === 'transcriber' && plugin.is_default) ?? null
+      const savedStreaming = plugins.find((plugin) => plugin.kind === 'streaming-transcriber') ?? null
+      setCurrent(defaultTranscriber)
+      setStreaming(savedStreaming)
+      setUrl(savedStreaming?.endpoint_url ?? '')
+      setConnectionMessage(savedStreaming ? 'Streaming transcriber configured. Test the connection when ready.' : 'No streaming transcriber configured.')
+      if (!defaultTranscriber) {
+        setCurrentMessage('No transcriber configured.')
+        return
+      }
+      const health = await muesli.checkPluginHealth(defaultTranscriber.id)
+      if (!cancelled) setCurrentMessage(pluginHealthMessage(health, defaultTranscriber.endpoint_url))
+    }).catch(() => {
+      if (!cancelled) setCurrentMessage('Current transcriber is unreachable because the server could not be contacted.')
+    })
+    return () => { cancelled = true }
+  }, [])
+
+  return (
+    <section className="mb-6" aria-labelledby="transcription-heading">
+      <h2 id="transcription-heading" className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">Transcription</h2>
+      <div className="space-y-5">
+        <div>
+          <h3 className="text-sm font-medium">Current transcriber</h3>
+          {current ? <p className="mt-1 text-sm">{current.name} · {current.endpoint_url}</p> : null}
+          <p className="mt-1 text-sm text-muted-foreground" aria-live="polite">{currentMessage}</p>
+        </div>
+        <div>
+          <h3 className="text-sm font-medium">Streaming transcriber (optional)</h3>
+          <p className="mt-1 text-sm text-muted-foreground">Live transcript during recording requires a streaming transcriber to be configured.</p>
+          <div className="mt-3 space-y-2">
+            <label className="block text-sm" htmlFor="streaming-transcriber-url">URL</label>
+            <Input id="streaming-transcriber-url" type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="http://localhost:8090" />
+            <label className="block text-sm" htmlFor="streaming-transcriber-token">Token</label>
+            <Input id="streaming-transcriber-token" type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder={streaming ? 'Leave blank to keep the saved token' : 'Plugin token'} />
+          </div>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button disabled={!url.trim() || saving} onClick={async () => {
+              setSaving(true)
+              try {
+                const saved = await muesli.setStreamingTranscriber({ url: url.trim(), token })
+                setStreaming(saved)
+                setUrl(saved.endpoint_url)
+                setToken('')
+                setConnectionMessage('Streaming transcriber configured. Test the connection when ready.')
+              } catch {
+                setConnectionMessage(`Plugin is unreachable at ${url.trim()}.`)
+              } finally { setSaving(false) }
+            }}>Save</Button>
+            <Button variant="secondary" disabled={!streaming || saving} onClick={async () => {
+              setSaving(true)
+              try {
+                await muesli.clearStreamingTranscriber()
+                setStreaming(null)
+                setUrl('')
+                setToken('')
+                setConnectionMessage('No streaming transcriber configured.')
+              } finally { setSaving(false) }
+            }}>Clear</Button>
+            <Button variant="secondary" disabled={saving} onClick={async () => {
+              if (!streaming) {
+                setConnectionMessage('No streaming transcriber configured.')
+                return
+              }
+              const health = await muesli.checkPluginHealth(streaming.id)
+              setConnectionMessage(pluginHealthMessage(health, streaming.endpoint_url))
+            }}>Test connection</Button>
+          </div>
+          <p className="mt-2 text-sm text-muted-foreground" aria-live="polite">{connectionMessage}</p>
+        </div>
+      </div>
+    </section>
+  )
+}
 
 function AiTranscriptionSection() {
   const [ollamaDetected, setOllamaDetected] = useState<boolean | null>(null)
@@ -235,6 +333,7 @@ export function SettingsScreen({
         <ServerHealthBadge serverUrl={serverUrl} />
       </section>
       <AiTranscriptionSection />
+      <TranscriptionSection />
       <section className="mb-6">
         <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">Appearance</h2>
         <div className="flex gap-2">
