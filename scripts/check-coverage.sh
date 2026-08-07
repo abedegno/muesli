@@ -2,7 +2,7 @@
 set -euo pipefail
 
 coverage_file="${1:-coverage.out}"
-floor_file="${2:-coverage/server-floor.txt}"
+floor_file="${2:-coverage-floors/server.txt}"
 
 if [[ ! -f "$coverage_file" ]]; then
   echo "coverage profile not found: $coverage_file" >&2

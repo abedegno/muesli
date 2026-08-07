@@ -44,13 +44,13 @@ jobs:
       - name: Measure server coverage
         run: go test ./... -p 4 -parallel 2 -coverprofile=coverage.out
       - name: Enforce server coverage floor
-        run: scripts/check-coverage.sh coverage.out coverage/server-floor.txt
+        run: scripts/check-coverage.sh coverage.out coverage-floors/server.txt
       - name: Measure and enforce client coverage
         run: npm run test:coverage
       - name: Build coverage report
         run: |
           server_total=$(go tool cover -func=coverage.out | awk '/^total:/ { gsub(/%/, "", $3); print $3 }')
-          server_floor=$(tr -d '[:space:]' < coverage/server-floor.txt)
+          server_floor=$(tr -d '[:space:]' < coverage-floors/server.txt)
           client_total=$(node -p "require('./coverage/coverage-summary.json').total.lines.pct")
           client_floor=$(node -e "import('./vitest.config.ts').then(({default: c}) => process.stdout.write(String(c.test.coverage.thresholds.lines)))")
           server_delta=$(awk -v current="$server_total" -v floor="$server_floor" 'BEGIN { printf "%+.1f", current - floor }')

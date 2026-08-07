@@ -16,10 +16,10 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'json-summary'],
       thresholds: {
-        branches: 0,
-        functions: 0,
-        lines: 0,
-        statements: 0,
+        branches: 84.19,
+        functions: 77.26,
+        lines: 79.98,
+        statements: 79.98,
       },
       exclude: [
         ...coverageConfigDefaults.exclude,
