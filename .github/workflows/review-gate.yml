@@ -18,7 +18,10 @@ name: Review Gate
 # Design: docs/superpowers/specs/2026-08-07-review-gate-design.md (muesli-internal)
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened]
+    # `unlabeled` matters as much as `labeled`: without it, removing
+    # review-not-required would leave a stale green status, so a PR could be
+    # labelled, merged and unlabelled leaving no trace and no gate.
+    types: [opened, synchronize, reopened, labeled, unlabeled]
   status:
   workflow_dispatch:
     inputs:
@@ -52,6 +55,8 @@ jobs:
           PR_IN: ${{ github.event.inputs.pr }}
           PR_NUM: ${{ github.event.pull_request.number }}
           STATUS_SHA: ${{ github.event.sha }}
+          SENDER: ${{ github.event.sender.login }}
+          ACTION: ${{ github.event.action }}
         run: |
           set -euo pipefail
           case "$EVENT" in
@@ -74,6 +79,27 @@ jobs:
           echo "pr=$pr"                     >> "$GITHUB_OUTPUT"
           echo "sha=${meta%%|*}"            >> "$GITHUB_OUTPUT"
           echo "author=${meta##*|}"         >> "$GITHUB_OUTPUT"
+
+          # review-not-required: read the CURRENT labels rather than trusting the
+          # event payload, so a `synchronize` on an already-labelled PR sees it too.
+          has_label=$(gh api "repos/$REPO/pulls/$pr" \
+            --jq '[.labels[].name] | index("review-not-required") != null')
+          echo "has_label=$has_label" >> "$GITHUB_OUTPUT"
+
+          # Who applied it. On a `labeled` event the sender IS the actor; otherwise
+          # walk the timeline for the most recent `labeled` event for this label.
+          # `unknown` is recorded rather than silently omitted — the description is
+          # the drift-detection mechanism, so a missing actor must be visible.
+          actor=""
+          if [ "$has_label" = "true" ]; then
+            if [ "$EVENT" = "pull_request_target" ] && [ -n "${SENDER:-}" ] && [ "${ACTION:-}" = "labeled" ]; then
+              actor="$SENDER"
+            else
+              actor=$(gh api "repos/$REPO/issues/$pr/timeline" \
+                --jq '[.[] | select(.event=="labeled" and .label.name=="review-not-required")] | last | .actor.login // empty' 2>/dev/null || true)
+            fi
+          fi
+          echo "label_actor=${actor:-unknown}" >> "$GITHUB_OUTPUT"
           echo "skip=false"                 >> "$GITHUB_OUTPUT"
 
       - name: Decide and post the status
@@ -84,6 +110,8 @@ jobs:
           PR: ${{ steps.ctx.outputs.pr }}
           SHA: ${{ steps.ctx.outputs.sha }}
           AUTHOR: ${{ steps.ctx.outputs.author }}
+          HAS_LABEL: ${{ steps.ctx.outputs.has_label }}
+          LABEL_ACTOR: ${{ steps.ctx.outputs.label_actor }}
         run: |
           set -euo pipefail
           # ALLOWLIST, not a denylist. Anything not named here requires a
@@ -92,20 +120,33 @@ jobs:
           #
           # The failure modes are asymmetric: wrongly requiring review is a
           # visible nuisance, wrongly exempting merges unreviewed code silently.
+          #
+          # Order matters: dependabot, then the label, then a real review.
+          #
+          # Both the label path and the review path go GREEN — the DESCRIPTION is
+          # what tells them apart, and it names who applied the label. That is the
+          # drift-detection mechanism, not decoration: the predictable failure of a
+          # default-plus-escape-hatch design is the one-click path quietly becoming
+          # the norm. Recording the reason makes that countable instead of invisible.
           case "$AUTHOR" in
             "dependabot[bot]")
               state=success
               desc="exempt: $AUTHOR (CI is the gate for dependency updates)"
               ;;
             *)
-              reviewed=$(gh api "repos/$REPO/commits/$SHA/status" \
-                --jq '[.statuses[] | select(.context=="bircher/cross-review" and .state=="success")] | length')
-              if [ "${reviewed:-0}" -gt 0 ]; then
+              if [ "$HAS_LABEL" = "true" ]; then
                 state=success
-                desc="cross-vendor review PASS on this head"
+                desc="exempted by label (applied by @${LABEL_ACTOR:-unknown})"
               else
-                state=pending
-                desc="awaiting bircher/cross-review on this head"
+                reviewed=$(gh api "repos/$REPO/commits/$SHA/status" \
+                  --jq '[.statuses[] | select(.context=="bircher/cross-review" and .state=="success")] | length')
+                if [ "${reviewed:-0}" -gt 0 ]; then
+                  state=success
+                  desc="cross-vendor review PASS on this head"
+                else
+                  state=pending
+                  desc="awaiting bircher/cross-review on this head"
+                fi
               fi
               ;;
           esac
