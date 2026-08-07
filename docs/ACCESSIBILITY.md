@@ -109,3 +109,5 @@ Rules relaxed for this Electron desktop context:
 | -------------------------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | `jsx-a11y/anchor-is-valid` | `warn`  | Internal links use React Router — `to` prop not `href`                                                                                  |
 | `jsx-a11y/no-autofocus`    | `off`   | `autoFocus` on the first field of a modal dialog is correct ARIA practice (APG §3.1); in a desktop app there are no pop-under surprises |
+
+<!-- review-gate fail-closed verification, 2026-08-07 -->
