@@ -15,6 +15,12 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json-summary'],
+      thresholds: {
+        branches: 84.19,
+        functions: 77.26,
+        lines: 79.98,
+        statements: 79.98,
+      },
       exclude: [
         ...coverageConfigDefaults.exclude,
         'out/**',
