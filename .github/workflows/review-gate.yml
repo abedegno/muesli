@@ -57,6 +57,7 @@ jobs:
           STATUS_SHA: ${{ github.event.sha }}
           SENDER: ${{ github.event.sender.login }}
           ACTION: ${{ github.event.action }}
+          EVENT_LABEL: ${{ github.event.label.name }}
         run: |
           set -euo pipefail
           case "$EVENT" in
@@ -92,7 +93,16 @@ jobs:
           # the drift-detection mechanism, so a missing actor must be visible.
           actor=""
           if [ "$has_label" = "true" ]; then
-            if [ "$EVENT" = "pull_request_target" ] && [ -n "${SENDER:-}" ] && [ "${ACTION:-}" = "labeled" ]; then
+            # The sender is the exemption actor ONLY when THIS event added THIS
+            # label. Without the EVENT_LABEL check, adding any unrelated label to
+            # an already-exempt PR would record that person as having granted the
+            # exemption — confidently wrong audit data, which is worse than none,
+            # and it would quietly defeat the drift-detection this description
+            # exists for. (Caught in cross-vendor review of #549.)
+            if [ "$EVENT" = "pull_request_target" ] \
+               && [ "${ACTION:-}" = "labeled" ] \
+               && [ "${EVENT_LABEL:-}" = "review-not-required" ] \
+               && [ -n "${SENDER:-}" ]; then
               actor="$SENDER"
             else
               actor=$(gh api "repos/$REPO/issues/$pr/timeline" \
