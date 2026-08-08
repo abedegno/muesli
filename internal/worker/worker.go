@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/plugin"
 	"github.com/abedegno/muesli/internal/store"
 )
@@ -19,6 +20,8 @@ type Pool struct {
 	workers  int
 	pollWait time.Duration
 	lease    time.Duration
+	claimJob func(context.Context, time.Duration) (model.Job, bool, error)
+	process  func(context.Context, model.Job) error
 
 	wg     sync.WaitGroup
 	cancel context.CancelFunc
@@ -32,13 +35,23 @@ func NewPool(st *store.Store, proc *Processor, workers int) *Pool {
 	if workers < 1 {
 		workers = 1
 	}
-	return &Pool{
+	p := &Pool{
 		store:    st,
 		proc:     proc,
 		workers:  workers,
 		pollWait: time.Second,
 		lease:    defaultJobLease,
 	}
+	if st != nil {
+		p.claimJob = st.ClaimJob
+	}
+	if proc != nil {
+		p.process = func(ctx context.Context, job model.Job) error {
+			proc.Process(ctx, job)
+			return nil
+		}
+	}
+	return p
 }
 
 // Run starts the worker goroutines and blocks until ctx is cancelled (or Stop is
@@ -92,7 +105,7 @@ func (p *Pool) loop(ctx context.Context, id int) {
 			return
 		default:
 		}
-		job, ok, err := p.store.ClaimJob(ctx, p.lease)
+		job, ok, err := p.claimJob(ctx, p.lease)
 		if err != nil {
 			slog.ErrorContext(ctx, "claim error", "worker_id", id, "error", err)
 			sleep(ctx, p.pollWait)
@@ -102,7 +115,9 @@ func (p *Pool) loop(ctx context.Context, id int) {
 			sleep(ctx, p.pollWait)
 			continue
 		}
-		p.proc.Process(ctx, job)
+		if err := p.process(ctx, job); err != nil {
+			slog.ErrorContext(ctx, "process error", "worker_id", id, "job_id", job.ID, "error", err)
+		}
 	}
 }
 
