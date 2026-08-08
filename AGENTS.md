@@ -14,13 +14,13 @@ Concretely: session state must be per-session, not package-level; anything unbou
 
 Before designing something non-trivial, check whether it already exists — in this repo, in a sibling project, or in the dependency you are about to build on top of.
 
-The reflex to check is: *has this problem already been solved by someone whose constraints resemble mine?* Read their interface even if you do not adopt it. A design that has survived contact with users encodes decisions you will otherwise rediscover slowly.
+The reflex to check is: _has this problem already been solved by someone whose constraints resemble mine?_ Read their interface even if you do not adopt it. A design that has survived contact with users encodes decisions you will otherwise rediscover slowly.
 
 ## Do not assume an interface — read it
 
 Check the reference documentation, then the source. Guessing an API's shape, a config key's name, or a tool's accepted flags produces code that looks right, passes review, and fails at runtime.
 
-Two live examples from this codebase: `git revert` was passed a `-q` flag it does not accept, so **every** automatic revert failed for months while four tests asserting the argument *string* stayed green. Separately, a `gh api` call omitted `--paginate`, so it silently read only the first page of results and produced confidently wrong output.
+Two live examples from this codebase: `git revert` was passed a `-q` flag it does not accept, so **every** automatic revert failed for months while four tests asserting the argument _string_ stayed green. Separately, a `gh api` call omitted `--paginate`, so it silently read only the first page of results and produced confidently wrong output.
 
 Neither would have survived reading the documentation for the thing being called.
 
@@ -36,4 +36,4 @@ If three attempts have failed, stop fixing and question the design. Three failur
 
 A guard that has never been observed failing is indistinguishable from one that does not work. When you add a check, break the thing it protects, watch it go red, then restore it — and say so in the PR.
 
-Assert on behaviour, not on the shape of a string. Testing that a command's arguments *look* correct says nothing about whether the command accepts them.
+Assert on behaviour, not on the shape of a string. Testing that a command's arguments _look_ correct says nothing about whether the command accepts them.
