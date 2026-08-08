@@ -1,6 +1,6 @@
 {
   "name": "muesli-desktop",
-  "version": "0.1.15",
+  "version": "0.1.16",
   "description": "Muesli desktop app",
   "main": "out/main/main.js",
   "scripts": {
