@@ -37,11 +37,16 @@ type Config struct {
 	Addr         string
 	ModelDir     string
 	ConfigSchema json.RawMessage
+	// MaxStreamingSessions limits concurrent /stream connections. Values <= 0
+	// use a conservative default.
+	MaxStreamingSessions int
+	serveContext         context.Context
 }
 
 // ServeTranscriber serves the transcriber contract on a loopback listener and
 // blocks until ctx is cancelled.
 func ServeTranscriber(ctx context.Context, cfg Config, eng Transcriber) error {
+	cfg.serveContext = ctx
 	srv, ln, err := NewServer(cfg, TranscriberHandler(cfg, eng))
 	if err != nil {
 		return err
@@ -127,6 +132,9 @@ func TranscriberHandler(cfg Config, eng Transcriber) http.Handler {
 		}
 		writeJSON(w, http.StatusOK, res)
 	})))
+	if streaming, ok := any(eng).(StreamingTranscriber); ok {
+		mux.Handle("/stream", requireBearer(cfg.Token)(newStreamingHandler(cfg, streaming)))
+	}
 	mux.Handle("/v1/audio/transcriptions", requireBearer(cfg.Token)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w, http.MethodPost)
