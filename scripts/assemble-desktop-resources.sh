@@ -6,7 +6,7 @@
 # (see src/main/resourcePaths.ts) -- so this layout is a contract with that file.
 #
 # Layout produced (must match resourcePaths.ts):
-#   build/resources/server/{muesli,whisper-cpp-transcriber,ollama-agent}
+#   build/resources/server/{muesli,whisper-cpp-transcriber,whisper-cpp-streaming,ollama-agent}
 #   build/resources/pg/                 extracted postgres-full bundle (bin/lib/share)
 #   build/resources/pgvector/           vector.{dylib,so,control} + vector--*.sql
 #   build/resources/models/whisper/ggml-tiny.en.bin
@@ -60,7 +60,7 @@ rm -rf "$RES"
 mkdir -p "$RES/server" "$RES/pg" "$RES/pgvector" "$RES/models/whisper" "$RES/bin"
 
 # 1) Go binaries (built by the workflow into build/bin/)
-for b in muesli whisper-cpp-transcriber ollama-agent; do
+for b in muesli whisper-cpp-transcriber whisper-cpp-streaming ollama-agent; do
   if [ -x "$ROOT/build/bin/$b" ]; then
     cp "$ROOT/build/bin/$b" "$RES/server/$b"; chmod +x "$RES/server/$b"
     echo "assemble: server/$b"

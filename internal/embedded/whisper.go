@@ -15,8 +15,10 @@ import (
 )
 
 const (
-	DefaultWhisperName    = "Embedded whisper.cpp transcriber"
-	DefaultWhisperVersion = "0.1.0"
+	DefaultWhisperName             = "Embedded whisper.cpp transcriber"
+	DefaultWhisperVersion          = "0.1.0"
+	DefaultWhisperStreamingName    = "Embedded whisper.cpp streaming transcriber"
+	DefaultWhisperStreamingVersion = "0.1.0"
 
 	// startupCleanupStopTimeout bounds the Stop() call used to clean up a
 	// child process that failed its readiness check during startup. It must

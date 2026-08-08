@@ -125,6 +125,7 @@ func run(ctx context.Context, cfg config.Config) (err error) {
 	}
 	var embeddedAgent *embedded.AgentHandle
 	var embeddedWhisper *embedded.WhisperHandle
+	var embeddedWhisperStreaming *embedded.WhisperHandle
 	var completeEmbeddedStartup func()
 	var startupReporter *embedded.Reporter
 	ollamaURL := embedded.OllamaBaseURL()
@@ -148,6 +149,11 @@ func run(ctx context.Context, cfg config.Config) (err error) {
 			if embeddedWhisper != nil {
 				if err := embeddedWhisper.Stop(shutdownCtx); err != nil {
 					slog.Error("embedded whisper transcriber shutdown", "error", err)
+				}
+			}
+			if embeddedWhisperStreaming != nil {
+				if err := embeddedWhisperStreaming.Stop(shutdownCtx); err != nil {
+					slog.Error("embedded whisper streaming transcriber shutdown", "error", err)
 				}
 			}
 			if err := embeddedStop(shutdownCtx); err != nil {
@@ -319,6 +325,22 @@ func run(ctx context.Context, cfg config.Config) (err error) {
 		}
 		slog.Info("registered embedded whisper transcriber plugin", "url", embeddedWhisper.EndpointURL)
 		applyEmbeddedTranscriberDefault(&cfg, embeddedWhisper.EndpointURL)
+
+		embeddedWhisperStreaming, err = embedded.StartWhisperCppStreaming(ctx)
+		if err != nil {
+			slog.Error("start embedded whisper streaming transcriber", "error", err)
+			return fmt.Errorf("start embedded whisper streaming transcriber: %w", err)
+		}
+		// The bundled whisper.cpp streaming binary is the desktop default in
+		// --embedded mode and takes precedence over any hosted default configured
+		// via MUESLI_DEFAULT_STREAMING_TRANSCRIBER_URL/_TOKEN. Swap in a different
+		// streaming transcriber via Settings or the admin UI/API after boot.
+		if err := st.EnsureDefaultPlugin(ctx, cr, model.PluginStreamingTranscriber, embedded.DefaultWhisperStreamingName,
+			embeddedWhisperStreaming.EndpointURL, embeddedWhisperStreaming.Token, embeddedWhisperStreaming.ConfigJSON); err != nil {
+			slog.Error("register embedded whisper streaming transcriber", "error", err)
+			return fmt.Errorf("register embedded whisper streaming transcriber: %w", err)
+		}
+		slog.Info("registered embedded whisper streaming transcriber plugin", "url", embeddedWhisperStreaming.EndpointURL)
 	}
 
 	srv := api.NewServer(api.Deps{Store: st, Storage: prov, Crypto: cr, Worker: wpool, Config: cfg, Embedder: emb, BackupRunner: backup.PgDumpRunner{}, EmbeddedProgress: startupReporter})
