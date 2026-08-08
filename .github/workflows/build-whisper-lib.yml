@@ -101,7 +101,7 @@ jobs:
           echo "=== $out lib/ ==="; ls -la "$out/lib"
 
       - name: Upload artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: whisper-cpp-${{ matrix.platform }}
           path: whisper-cpp-*.tar.gz

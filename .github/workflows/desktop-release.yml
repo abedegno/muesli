@@ -42,9 +42,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.25'
+          go-version: '1.25.11'
 
       - name: Go tests (macOS-sensitive packages)
         run: go test ./internal/embedded/...
@@ -233,7 +233,7 @@ jobs:
           fi
 
       - name: Upload dmg artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: muesli-macos-arm64-dmg
           path: dist-desktop/*.dmg
@@ -241,16 +241,16 @@ jobs:
 
       - name: Attach to Release (tag only)
         if: startsWith(github.ref, 'refs/tags/desktop-v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist-desktop/*.dmg
   build-linux:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.25'
+          go-version: '1.25.11'
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -340,7 +340,7 @@ jobs:
           fi
 
       - name: Upload AppImage artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: muesli-linux-x64-appimage
           path: dist-desktop/*.AppImage
@@ -348,7 +348,7 @@ jobs:
 
       - name: Attach to Release (tag only)
         if: startsWith(github.ref, 'refs/tags/desktop-v')
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: dist-desktop/*.AppImage
 

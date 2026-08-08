@@ -27,9 +27,9 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.6'
+          go-version: '1.25.11'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -88,9 +88,9 @@ jobs:
           --health-retries 5
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.6'
+          go-version: '1.25.11'
       - name: Resolve DB URL
         run: echo "TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/muesli_test?sslmode=disable" >> "$GITHUB_ENV"
       - run: go build ./...
@@ -123,9 +123,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.6'
+          go-version: '1.25.11'
       - name: Download embedded Postgres bundle
         env:
           BUNDLE_URL: https://github.com/boomship/postgres-vector-embedded/releases/download/v0.2.2/postgres-full-linux-x64.tar.gz
@@ -170,10 +170,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.6'
-      - uses: actions/setup-python@v5
+          go-version: '1.25.11'
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install conformance harness
@@ -232,7 +232,7 @@ jobs:
             install: pip install -e ../whisper-transcriber && pip install -e ../ollama-agent && pip install -e ../parakeet-transcriber && pip install -e '.[test]'
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
       - name: Install (${{ matrix.dir }})
