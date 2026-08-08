@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	ical "github.com/emersion/go-ical"
@@ -18,7 +19,8 @@ func FetchCalDAV(ctx context.Context, baseURL, user, pass string, from, to time.
 		ctx = context.Background()
 	}
 
-	hc := webdav.HTTPClientWithBasicAuth(http.DefaultClient, user, pass)
+	recorder := &statusRecordingTransport{base: http.DefaultTransport}
+	hc := webdav.HTTPClientWithBasicAuth(&http.Client{Transport: recorder}, user, pass)
 	client, err := caldav.NewClient(hc, baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("create caldav client: %w", err)
@@ -59,7 +61,38 @@ func FetchCalDAV(ctx context.Context, baseURL, user, pass string, from, to time.
 		return flattenCalDAVObjects(objects)
 	}
 
-	return nil, fmt.Errorf("fetch caldav events from %q: %w", baseURL, errors.Join(append([]error{discoveryErr}, errs...)...))
+	err = fmt.Errorf("fetch caldav events from %q: %w", baseURL, errors.Join(append([]error{discoveryErr}, errs...)...))
+	if status := recorder.StatusCode(); status != 0 && (status < 200 || status > 299) {
+		err = &HTTPError{StatusCode: status, Err: err}
+	}
+	return nil, err
+}
+
+// statusRecordingTransport retains the status from the most recent completed
+// request. The CalDAV dependency exposes its HTTP error type only from an
+// internal package, so this lets FetchCalDAV preserve that status in our
+// exported HTTPError without interpreting the dependency's error text.
+type statusRecordingTransport struct {
+	base   http.RoundTripper
+	mu     sync.Mutex
+	status int
+}
+
+func (t *statusRecordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := t.base.RoundTrip(req)
+	t.mu.Lock()
+	t.status = 0
+	if resp != nil {
+		t.status = resp.StatusCode
+	}
+	t.mu.Unlock()
+	return resp, err
+}
+
+func (t *statusRecordingTransport) StatusCode() int {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.status
 }
 
 func discoverCalDAVCalendarPath(ctx context.Context, client *caldav.Client) (string, error) {

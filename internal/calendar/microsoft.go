@@ -149,7 +149,7 @@ func FetchMicrosoft(ctx context.Context, clientID, clientSecret, refreshToken st
 			return nil, fmt.Errorf("read microsoft calendar response: %w", readErr)
 		}
 		if resp.StatusCode < 200 || resp.StatusCode > 299 {
-			return nil, fmt.Errorf("fetch microsoft calendar: unexpected status %s: %s", resp.Status, strings.TrimSpace(string(body)))
+			return nil, fmt.Errorf("fetch microsoft calendar: %w", &HTTPError{StatusCode: resp.StatusCode, Err: fmt.Errorf("unexpected status %s: %s", resp.Status, strings.TrimSpace(string(body)))})
 		}
 
 		var page struct {
