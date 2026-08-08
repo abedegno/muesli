@@ -62,6 +62,20 @@ func TestServesEmbeddedAsset(t *testing.T) {
 	}
 }
 
+func TestServesEmbeddedStylesheet(t *testing.T) {
+	h := Handler()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/admin/assets/index.css", nil)
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET stylesheet status %d, want 200", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/css") {
+		t.Fatalf("stylesheet content-type %q, want text/css", ct)
+	}
+}
+
 func TestMissingAssetFallsBackToIndex(t *testing.T) {
 	// A request that *looks* like an asset but doesn't exist still falls back to
 	// index (SPA routes can contain dots); only real files under assets/ 404 is
