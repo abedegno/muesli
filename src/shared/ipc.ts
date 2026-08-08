@@ -5,6 +5,13 @@ import type { SystemAudioFormat } from '../main/systemAudioHelper'
 import type { SysAudioStatus } from '../main/systemAudioPermission'
 import type { ExportOptions } from './export'
 
+/**
+ * Canonical channel names shared by preload and main. Renderer calls are awaited
+ * `ipcRenderer.invoke` requests registered in `src/main/main.ts`; server-facing
+ * business handlers are the same-named methods returned by `createHandlers` in
+ * `src/main/ipcHandlers.ts`. Event-only channels are fire-and-forget main-to-renderer
+ * pushes and therefore have no request handler in `ipcHandlers.ts`.
+ */
 export const IPC = {
   getConfig: 'muesli:getConfig',
   authInvalidated: 'muesli:authInvalidated',
@@ -141,10 +148,12 @@ export const IPC = {
   updateDigestConfig: 'muesli:updateDigestConfig',
 } as const
 
+/** Main-to-renderer `authInvalidated` push emitted by auth handling in `src/main/ipcHandlers.ts`. */
 export interface AuthInvalidatedNotice {
   message: string
 }
 
+/** Renderer-to-main `connect` payload handled by `connect` in `src/main/ipcHandlers.ts`. */
 export interface ConnectRequest {
   serverUrl: string
   email: string
@@ -155,12 +164,21 @@ export interface ConnectRequest {
   allowInsecure?: boolean
 }
 
+/**
+ * Renderer-to-main `uploadAudio` payload handled by `uploadAudio` in
+ * `src/main/ipcHandlers.ts`; null audio asks main to upload an already-staged recording.
+ */
 export interface UploadAudioRequest {
   noteId: string
   audio: ArrayBuffer | null
   audioMimeType?: string
 }
 
+/**
+ * Main-to-renderer `noteStreamEvent` snapshot emitted after stream handling; offsets
+ * are milliseconds and null speaker means diarization has not assigned one.
+ * Stream request handlers live in `src/main/main.ts`, not `ipcHandlers.ts`.
+ */
 export interface NoteStreamSegmentEvent {
   noteId: string
   type: 'segment'
@@ -172,26 +190,36 @@ export interface NoteStreamSegmentEvent {
   final: boolean
 }
 
+/**
+ * Main-to-renderer `noteStreamEvent` connection snapshot; stream request handlers
+ * live in `src/main/main.ts`, with no corresponding handler in `ipcHandlers.ts`.
+ */
 export interface NoteStreamConnectionEvent {
   noteId: string
   type: 'connecting' | 'live' | 'unavailable' | 'dropped'
 }
 
+/**
+ * Fire-and-forget main-to-renderer payload for `noteStreamEvent`; stream lifecycle
+ * requests are handled in `src/main/main.ts`, not `ipcHandlers.ts`.
+ */
 export type NoteStreamEvent = NoteStreamSegmentEvent | NoteStreamConnectionEvent
 
-// Body accepted by MuesliBridge.postDiarizationReview / POST
-// /api/notes/{id}/transcript/review. At least one of segmentId or
-// reviewState is required (enforced server-side); segmentId+speaker together
-// confirm/reassign one turn's speaker, reviewState alone transitions the
-// review lifecycle.
+/**
+ * Renderer-to-main `postDiarizationReview` payload handled by
+ * `postDiarizationReview` in `src/main/ipcHandlers.ts`. At least one of
+ * `segmentId` or `reviewState` is required server-side.
+ */
 export interface DiarizationReviewUpdate {
   segmentId?: string
   speaker?: string
   reviewState?: string
 }
 
-// Optional narrowing for search. `from`/`to` accept RFC3339 or YYYY-MM-DD,
-// while the other filters map directly to the server's query params.
+/**
+ * Renderer-to-main `search` filters handled by `search` in `src/main/ipcHandlers.ts`;
+ * date bounds accept RFC 3339 or `YYYY-MM-DD`, and omissions mean no narrowing.
+ */
 export interface SearchOptions {
   from?: string
   to?: string
@@ -200,11 +228,11 @@ export interface SearchOptions {
   tag?: string
 }
 
-// Body accepted by MuesliBridge.createConversation / POST /api/conversations.
-// When `content` is present the server creates the conversation AND sends the
-// first message in one call ("create-and-send") — the natural path for both
-// "Ask about this note" and starting a new global chat with an initial
-// question. Omit/blank `content` to just create an empty conversation.
+/**
+ * Renderer-to-main `createConversation` payload handled by `createConversation`
+ * in `src/main/ipcHandlers.ts`; content creates and sends the first message atomically,
+ * while omitted/blank content creates an empty conversation.
+ */
 export interface CreateConversationRequest {
   note_id?: string
   title: string
@@ -212,56 +240,83 @@ export interface CreateConversationRequest {
   content?: string
 }
 
-// Response shape for POST /api/conversations: the Conversation fields are
-// always present; `message`/`sources` are present only when `content` was
-// sent (create-and-send).
+/**
+ * Awaited `createConversation` result from its handler in `src/main/ipcHandlers.ts`;
+ * message and sources are absent when no initial content was sent.
+ */
 export interface CreateConversationResponse extends Conversation {
   message?: Message
   sources?: ChatSource[]
 }
 
-// Body accepted by MuesliBridge.sendMessage / POST /api/conversations/{id}/messages.
+/** Renderer-to-main `sendMessage` payload handled by `sendMessage` in `src/main/ipcHandlers.ts`. */
 export interface SendMessageRequest {
   content: string
   model_override?: string
 }
 
+/** Renderer-to-main `updatePerson` patch handled by `updatePerson` in `src/main/ipcHandlers.ts`. */
 export interface UpdatePersonRequest {
   displayName?: string
   companyId?: string | null
 }
 
+/**
+ * Renderer-to-main `updateActionItem` patch handled by `updateActionItem` in
+ * `src/main/ipcHandlers.ts`; null owner explicitly clears assignment, omission preserves it.
+ */
 export interface UpdateActionItemRequest {
   text?: string
   status?: ActionItemStatus
   ownerPersonId?: string | null
 }
 
+/** Renderer export switches consumed by export handlers wired outside `src/main/ipcHandlers.ts`. */
 export type ExportRequestOptions = ExportOptions
 
+/** Awaited renderer snapshot from `listNoteActionItems` in `src/main/ipcHandlers.ts`. */
 export interface ListNoteActionItemsResponse {
   actionItems: ActionItem[]
   decisions: Decision[]
 }
 
-// Response for POST /api/conversations/{id}/messages: the ASSISTANT reply
-// (the user's own message isn't echoed back — callers already have it).
+/**
+ * Awaited result from `sendMessage` in `src/main/ipcHandlers.ts`; it contains the
+ * assistant reply and citations, not the renderer's already-known user message.
+ */
 export interface SendMessageResponse {
   message: Message
   sources: ChatSource[]
 }
 
+/**
+ * Fire-and-forget main-to-renderer meeting prompt payload. Meeting detection is
+ * wired in `src/main/main.ts` and has no handler in `src/main/ipcHandlers.ts`.
+ */
 export interface MeetingDetectionEventPayload {
   event: CalendarEvent
   occurrenceKey: string
 }
 
+/**
+ * Fire-and-forget main-to-renderer auto-record notice. Meeting detection is wired
+ * in `src/main/main.ts` and has no handler in `src/main/ipcHandlers.ts`.
+ */
 export interface MeetingDetectionAutoRecordPayload {
   noteId: string
 }
 
+/** Main-to-renderer tray push target; emitted in main with no `ipcHandlers.ts` handler. */
 export type TrayNavigationTarget = '/new' | '/settings'
 
+/**
+ * Awaited renderer-facing API exposed by preload. Promise methods invoke their
+ * matching `IPC` channel; most delegate to same-named handlers returned by
+ * `createHandlers` in `src/main/ipcHandlers.ts`, while OS/audio/export/meeting
+ * methods are handled directly in `src/main/main.ts`. `on*` methods subscribe to
+ * fire-and-forget main pushes and return an unsubscribe function. Returned objects
+ * are snapshots; callers must invoke again or subscribe to an event for fresh state.
+ */
 export interface MuesliBridge {
   platform: NodeJS.Platform
   onAuthInvalidated?(listener: (notice: AuthInvalidatedNotice) => void): () => void

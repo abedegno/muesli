@@ -1,0 +1,116 @@
+name: Review Gate
+
+# Posts the `review-gate` commit status: the required check answering
+# "has this PR been independently reviewed, or is it explicitly exempt?"
+#
+# It deliberately does NOT look at CI. Branch protection already requires
+# server (go), client (node), embedded-integration, pluginkit-conformance and
+# plugins (python) gate; duplicating that here would create a second source of
+# truth that can disagree with the first.
+#
+# Why this exists: `bircher/cross-review` has exactly one producer (the Bircher
+# runner), so making it required meant ONLY Bircher could merge to main.
+# Adding Dependabot produced 17 structurally unmergeable PRs.
+#
+# Every trigger runs this file as it exists on the default branch, so a PR
+# cannot edit the gate that judges it.
+#
+# Design: docs/superpowers/specs/2026-08-07-review-gate-design.md (muesli-internal)
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+  status:
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number to re-evaluate
+        required: true
+        type: string
+
+permissions: read-all
+
+jobs:
+  gate:
+    # The `status` event fires for EVERY commit status in the repo — including
+    # the one this job posts. Without this guard it retriggers itself forever.
+    # Only react to Bircher's review status.
+    if: >
+      github.event_name != 'status' ||
+      github.event.context == 'bircher/cross-review'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      statuses: write
+      pull-requests: read
+    steps:
+      - name: Resolve PR, head SHA and author
+        id: ctx
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          PR_IN: ${{ github.event.inputs.pr }}
+          PR_NUM: ${{ github.event.pull_request.number }}
+          STATUS_SHA: ${{ github.event.sha }}
+        run: |
+          set -euo pipefail
+          case "$EVENT" in
+            pull_request_target) pr="${PR_NUM:-}" ;;
+            workflow_dispatch)   pr="${PR_IN:-}" ;;
+            status)
+              # Resolve the PR from the SHA the status landed on. A status on a
+              # commit with no PR (e.g. a direct push to main) yields nothing,
+              # which is correct: there is nothing to gate.
+              pr=$(gh api "repos/$REPO/commits/$STATUS_SHA/pulls" --jq '.[0].number // empty' 2>/dev/null || true)
+              ;;
+            *) pr="" ;;
+          esac
+          if [ -z "${pr:-}" ]; then
+            echo "no PR for this event; nothing to gate"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          meta=$(gh api "repos/$REPO/pulls/$pr" --jq '.head.sha + "|" + .user.login')
+          echo "pr=$pr"                     >> "$GITHUB_OUTPUT"
+          echo "sha=${meta%%|*}"            >> "$GITHUB_OUTPUT"
+          echo "author=${meta##*|}"         >> "$GITHUB_OUTPUT"
+          echo "skip=false"                 >> "$GITHUB_OUTPUT"
+
+      - name: Decide and post the status
+        if: steps.ctx.outputs.skip != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ steps.ctx.outputs.pr }}
+          SHA: ${{ steps.ctx.outputs.sha }}
+          AUTHOR: ${{ steps.ctx.outputs.author }}
+        run: |
+          set -euo pipefail
+          # ALLOWLIST, not a denylist. Anything not named here requires a
+          # cross-vendor review. A new bot, a fork, an unfamiliar author — all
+          # fall through to REQUIRING review.
+          #
+          # The failure modes are asymmetric: wrongly requiring review is a
+          # visible nuisance, wrongly exempting merges unreviewed code silently.
+          case "$AUTHOR" in
+            "dependabot[bot]")
+              state=success
+              desc="exempt: $AUTHOR (CI is the gate for dependency updates)"
+              ;;
+            *)
+              reviewed=$(gh api "repos/$REPO/commits/$SHA/status" \
+                --jq '[.statuses[] | select(.context=="bircher/cross-review" and .state=="success")] | length')
+              if [ "${reviewed:-0}" -gt 0 ]; then
+                state=success
+                desc="cross-vendor review PASS on this head"
+              else
+                state=pending
+                desc="awaiting bircher/cross-review on this head"
+              fi
+              ;;
+          esac
+          echo "PR #$PR ($AUTHOR) head=${SHA:0:7} -> $state ($desc)"
+          gh api "repos/$REPO/statuses/$SHA" -X POST \
+            -f state="$state" \
+            -f context=review-gate \
+            -f description="$desc" >/dev/null
