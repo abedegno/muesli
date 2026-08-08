@@ -215,8 +215,9 @@ describe("ApiClient", () => {
 
   it("downloadBackup fetches with the bearer token and saves the blob via an anchor click", async () => {
     session.setToken("tok");
-    const blob = new Blob(["dump bytes"], { type: "application/octet-stream" });
-    fetchMock.mockResolvedValueOnce(new Response(blob, { status: 200 }));
+    fetchMock.mockResolvedValueOnce(
+      new Response("dump bytes", { status: 200, headers: { "Content-Type": "application/octet-stream" } }),
+    );
 
     const createObjectURL = vi.fn().mockReturnValue("blob:fake-url");
     const revokeObjectURL = vi.fn();
