@@ -105,8 +105,19 @@ jobs:
                && [ -n "${SENDER:-}" ]; then
               actor="$SENDER"
             else
-              actor=$(gh api "repos/$REPO/issues/$pr/timeline" \
-                --jq '[.[] | select(.event=="labeled" and .label.name=="review-not-required")] | last | .actor.login // empty' 2>/dev/null || true)
+              # --paginate is required: the timeline is paged (30 per page), so on
+              # a busy PR the relevant `labeled` event is not on page one and the
+              # actor silently becomes an older applier or @unknown. This is the
+              # COMMON path — every synchronize/status/manual trigger after the
+              # initial labelling lands here, not just rare cases.
+              #
+              # With --paginate the --jq filter runs PER PAGE, so this emits one
+              # login per matching event across all pages and `tail -1` takes the
+              # most recent. Do NOT fold this back into `| last` inside the jq:
+              # that returns the last match of each page, not overall.
+              actor=$(gh api --paginate "repos/$REPO/issues/$pr/timeline" \
+                --jq '.[] | select(.event=="labeled" and .label.name=="review-not-required") | .actor.login' 2>/dev/null \
+                | tail -1 || true)
             fi
           fi
           echo "label_actor=${actor:-unknown}" >> "$GITHUB_OUTPUT"

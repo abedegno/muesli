@@ -184,11 +184,26 @@ For a human-authored PR, the check will initially show
 maintainer to route it through independent review. If your PR is stuck on this
 check, ask a maintainer to arrange that review; you cannot clear it yourself.
 
-Currently, only `dependabot[bot]` is exempt. Exemptions are an allowlist by
-design, not a denylist: wrongly requiring review is a visible nuisance, while
-wrongly exempting an author could silently let unreviewed code merge. Any
-unrecognized author therefore falls through to requiring review rather than
-bypassing it.
+`dependabot[bot]` is exempt automatically — for a dependency bump, CI is the
+real signal and a review adds nothing.
+
+For a change the pipeline cannot produce — a CI or signing change, native
+platform work, a fix that needed the app running — there are two routes, and the
+first is the default:
+
+1. **Ask a maintainer to route it through review.** The PR is adopted and given
+   a genuine cross-vendor review, after which the gate clears normally. This is
+   a real review, not a formality, and it is how changes to the merge gate
+   itself have landed.
+2. **The `review-not-required` label**, for when that is not possible: no runner
+   access, the runner is down, or the PR changes the runner itself. It bypasses
+   **only** the review requirement — every CI check still applies — and the gate
+   records who applied it, so exemptions stay countable rather than invisible.
+
+Exemptions are an allowlist by design, not a denylist: wrongly requiring review
+is a visible nuisance, while wrongly exempting an author could silently let
+unreviewed code merge. Any unrecognized author therefore falls through to
+requiring review rather than bypassing it.
 
 ## Licensing of contributions
 
