@@ -94,13 +94,13 @@ func TestSyncSourceDispatchAndStatuses(t *testing.T) {
 		})
 	}
 
-	t.Run("unknown kind", func(t *testing.T) {
-		sourceID := createCalendarSyncSource(t, st, cr, ownerID, "exchange", map[string]string{})
-		if err := SyncSource(ctx, st, cr, "", "", "", "", sourceID); err == nil {
-			t.Fatal("SyncSource() error = nil, want unknown-kind error")
-		}
-		assertSourceStatus(t, st, ownerID, sourceID, "error")
-	})
+	// SyncSource's default branch (unknown kind) is deliberately NOT covered here.
+	// calendar_sources constrains the column:
+	//     kind TEXT NOT NULL CHECK (kind IN ('ics','caldav','google','microsoft'))
+	// so no other value can be stored, and SyncSource only ever reads kinds back out
+	// of that table. The branch is defence in depth against a future migration
+	// widening the constraint, not a reachable state -- a test for it would have to
+	// insert a row the database rejects, which is what it did before this comment.
 
 	t.Run("decode credentials", func(t *testing.T) {
 		sealed, err := cr.Seal([]byte("not-json"))
@@ -148,11 +148,21 @@ func TestSyncAllSourcesOnceContinuesAcrossOwners(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Make ONE source fail while staying inside the kind constraint: both are valid
+	// `ics` sources, and the stub fails only the first one's URL. Manufacturing the
+	// failure with an invalid kind is not possible -- the CHECK constraint rejects
+	// the insert before the test can run.
+	const failURL = "https://example.test/fail.ics"
 	originalICS := fetchICS
 	t.Cleanup(func() { fetchICS = originalICS })
-	fetchICS = func(context.Context, *http.Client, string) ([]calendar.NormalizedEvent, error) { return nil, nil }
+	fetchICS = func(_ context.Context, _ *http.Client, url string) ([]calendar.NormalizedEvent, error) {
+		if url == failURL {
+			return nil, errors.New("fetch failed for this source")
+		}
+		return nil, nil
+	}
 
-	failingID := createCalendarSyncSource(t, st, cr, ownerOne, "unknown", map[string]string{})
+	failingID := createCalendarSyncSource(t, st, cr, ownerOne, "ics", icsCreds{URL: failURL})
 	successID := createCalendarSyncSource(t, st, cr, ownerTwo.ID, "ics", icsCreds{URL: "https://example.test/ok.ics"})
 	syncAllSourcesOnce(ctx, st, cr, "", "", "", "")
 	assertSourceStatus(t, st, ownerOne, failingID, "error")
