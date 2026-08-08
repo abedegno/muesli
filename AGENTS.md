@@ -32,8 +32,16 @@ The failure mode is picking a theory that fits one visible symptom and patching 
 
 If three attempts have failed, stop fixing and question the design. Three failures usually means the shape is wrong, not that the fourth patch will land.
 
+## A red check is a real failure until proven otherwise
+
+When CI goes red, assume the failure is genuine and read the log. "Probably infrastructure" is a conclusion to be earned, not a starting position. Guessing wrong costs a re-run at best; at worst it hides a real defect behind minutes of silent retrying while the build looks like it is making progress.
+
+Two things this has already caught here. First, `client (node)` runs `prettier --check .` over the **whole repo, markdown included** — so a documentation-only change with no code in it can turn CI red. Run `npx prettier --write` on any markdown you add. Second, an automated recovery path classified that exact prettier failure as infrastructural and re-ran the build rather than reporting it. Defaulting to "infra" on an ambiguous signal is the wrong direction: a real failure retried silently wastes time and buries its cause, whereas an infra blip reported as real is merely visible.
+
 ## Tests must be able to fail
 
 A guard that has never been observed failing is indistinguishable from one that does not work. When you add a check, break the thing it protects, watch it go red, then restore it — and say so in the PR.
 
 Assert on behaviour, not on the shape of a string. Testing that a command's arguments _look_ correct says nothing about whether the command accepts them.
+
+This applies to throwaway verification at the terminal, not only to committed tests. `pgrep -f "some-task"` matches any command line containing that string — including the shell you just typed it into — so it reports the task as running whether or not it is. The same pattern given to `pkill -f` kills the invoking shell. Both happened here in a single command: the `pkill` stopped the work before it started, and the `pgrep` then confirmed it was running.
