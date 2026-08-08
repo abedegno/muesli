@@ -32,6 +32,25 @@ on:
 
 permissions: read-all
 
+# Serialize per PR, newest event wins.
+#
+# Without this, `labeled` and `unlabeled` run concurrently and can finish out of
+# order: a run that observed the label posts `success` AFTER a newer unlabel run
+# posted `pending`, leaving exactly the stale-green state this gate exists to
+# prevent. Label, merge, unlabel — no trace and no gate.
+#
+# cancel-in-progress kills the superseded run rather than letting it race to the
+# finish. The key must resolve for every trigger: PR number where we have it,
+# head SHA for `status`, the input for a manual dispatch.
+concurrency:
+  group: >-
+    review-gate-${{
+      github.event.pull_request.number ||
+      github.event.inputs.pr ||
+      github.event.sha
+    }}
+  cancel-in-progress: true
+
 jobs:
   gate:
     # The `status` event fires for EVERY commit status in the repo — including
@@ -131,10 +150,20 @@ jobs:
           PR: ${{ steps.ctx.outputs.pr }}
           SHA: ${{ steps.ctx.outputs.sha }}
           AUTHOR: ${{ steps.ctx.outputs.author }}
-          HAS_LABEL: ${{ steps.ctx.outputs.has_label }}
           LABEL_ACTOR: ${{ steps.ctx.outputs.label_actor }}
         run: |
           set -euo pipefail
+          # RE-READ the label immediately before deciding, rather than trusting the
+          # value resolved earlier in the job.
+          #
+          # The concurrency group above serializes runs that share a key, but the
+          # key differs by trigger — `pull_request_target` keys on the PR number,
+          # `status` keys on the head SHA — so those two land in DIFFERENT groups
+          # and can still overlap. Reading here shrinks the window between "what
+          # the label was" and "what we post" to milliseconds, which is what
+          # actually prevents a stale green from outliving an unlabel.
+          HAS_LABEL=$(gh api "repos/$REPO/pulls/$PR" \
+            --jq '[.labels[].name] | index("review-not-required") != null')
           # ALLOWLIST, not a denylist. Anything not named here requires a
           # cross-vendor review. A new bot, a fork, an unfamiliar author — all
           # fall through to REQUIRING review.
