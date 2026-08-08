@@ -43,7 +43,7 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - name: Build and load ${{ matrix.name }} for scan
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
@@ -79,7 +79,7 @@ jobs:
           trivyignores: .trivyignore
 
       - name: Upload Trivy report for ${{ matrix.name }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: trivy-${{ matrix.name }}
           path: trivy-${{ matrix.name }}.txt
@@ -94,7 +94,7 @@ jobs:
           upload-release-assets: false
 
       - name: Upload SBOM artifact for ${{ matrix.name }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sbom-${{ matrix.name }}
           path: sbom-${{ matrix.name }}.spdx.json
@@ -241,7 +241,7 @@ jobs:
             type=ref,event=tag
 
       - name: Build and load ${{ matrix.name }} for scan
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
@@ -266,7 +266,7 @@ jobs:
           trivyignores: .trivyignore
 
       - name: Upload Trivy report for ${{ matrix.name }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: trivy-${{ matrix.name }}
           path: trivy-${{ matrix.name }}.txt
@@ -281,14 +281,14 @@ jobs:
           upload-release-assets: false
 
       - name: Upload SBOM artifact for ${{ matrix.name }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sbom-${{ matrix.name }}
           path: sbom-${{ matrix.name }}.spdx.json
 
       - name: Build and push ${{ matrix.name }}
         id: push
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
@@ -332,7 +332,7 @@ jobs:
           ls -l dist
 
       - name: Publish the release with the asset bundle
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           files: |
             dist/docker-compose.prod.yml
