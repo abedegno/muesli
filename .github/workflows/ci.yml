@@ -29,7 +29,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.6'
+          go-version: '1.25.11'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -90,7 +90,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.6'
+          go-version: '1.25.11'
       - name: Resolve DB URL
         run: echo "TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/muesli_test?sslmode=disable" >> "$GITHUB_ENV"
       - run: go build ./...
@@ -125,7 +125,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.6'
+          go-version: '1.25.11'
       - name: Download embedded Postgres bundle
         env:
           BUNDLE_URL: https://github.com/boomship/postgres-vector-embedded/releases/download/v0.2.2/postgres-full-linux-x64.tar.gz
@@ -172,7 +172,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.6'
+          go-version: '1.25.11'
       - uses: actions/setup-python@v7
         with:
           python-version: '3.12'
