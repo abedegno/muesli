@@ -2,6 +2,7 @@ package calendar
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/abedegno/muesli/internal/model"
 	gcal "google.golang.org/api/calendar/v3"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 
 	"golang.org/x/oauth2"
@@ -94,6 +96,10 @@ func FetchGoogle(ctx context.Context, clientID, clientSecret, refreshToken strin
 			return nil
 		})
 		if err != nil {
+			var apiErr *googleapi.Error
+			if errors.As(err, &apiErr) {
+				err = &HTTPError{StatusCode: apiErr.Code, Err: err}
+			}
 			return nil, fmt.Errorf("list google calendar %q: %w", calendarID, err)
 		}
 	}

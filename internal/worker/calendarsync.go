@@ -3,16 +3,17 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/abedegno/muesli/internal/calendar"
 	"github.com/abedegno/muesli/internal/crypto"
 	"github.com/abedegno/muesli/internal/people"
 	"github.com/abedegno/muesli/internal/store"
+	"golang.org/x/oauth2"
 )
 
 // calendarSyncInterval is how often the background calendar scheduler
@@ -42,6 +43,13 @@ type googleCreds struct {
 type microsoftCreds struct {
 	RefreshToken string `json:"refresh_token"`
 }
+
+var (
+	fetchICS       = calendar.FetchICS
+	fetchCalDAV    = calendar.FetchCalDAV
+	fetchGoogle    = calendar.FetchGoogle
+	fetchMicrosoft = calendar.FetchMicrosoft
+)
 
 // SyncSource fetches upstream events for a single calendar source, upserts
 // them, prunes anything no longer present upstream, and records the
@@ -81,28 +89,28 @@ func SyncSource(ctx context.Context, st *store.Store, cr *crypto.Crypto, googleC
 			markSourceStatus(ctx, st, sourceID, "error")
 			return fmt.Errorf("sync source %s: decode ics credentials: %w", sourceID, err)
 		}
-		events, err = calendar.FetchICS(ctx, http.DefaultClient, creds.URL)
+		events, err = fetchICS(ctx, http.DefaultClient, creds.URL)
 	case "caldav":
 		var creds caldavCreds
 		if err := json.Unmarshal(plaintext, &creds); err != nil {
 			markSourceStatus(ctx, st, sourceID, "error")
 			return fmt.Errorf("sync source %s: decode caldav credentials: %w", sourceID, err)
 		}
-		events, err = calendar.FetchCalDAV(ctx, creds.URL, creds.User, creds.Pass, from, to)
+		events, err = fetchCalDAV(ctx, creds.URL, creds.User, creds.Pass, from, to)
 	case "google":
 		var creds googleCreds
 		if err := json.Unmarshal(plaintext, &creds); err != nil {
 			markSourceStatus(ctx, st, sourceID, "error")
 			return fmt.Errorf("sync source %s: decode google credentials: %w", sourceID, err)
 		}
-		events, err = calendar.FetchGoogle(ctx, googleClientID, googleClientSecret, creds.RefreshToken, selected, from, to)
+		events, err = fetchGoogle(ctx, googleClientID, googleClientSecret, creds.RefreshToken, selected, from, to)
 	case "microsoft":
 		var creds microsoftCreds
 		if err := json.Unmarshal(plaintext, &creds); err != nil {
 			markSourceStatus(ctx, st, sourceID, "error")
 			return fmt.Errorf("sync source %s: decode microsoft credentials: %w", sourceID, err)
 		}
-		events, err = calendar.FetchMicrosoft(ctx, microsoftClientID, microsoftClientSecret, creds.RefreshToken, selected, from, to)
+		events, err = fetchMicrosoft(ctx, microsoftClientID, microsoftClientSecret, creds.RefreshToken, selected, from, to)
 	default:
 		markSourceStatus(ctx, st, sourceID, "error")
 		return fmt.Errorf("sync source %s: unknown source kind %q", sourceID, kind)
@@ -141,21 +149,27 @@ func markSourceStatus(ctx context.Context, st *store.Store, sourceID, status str
 	}
 }
 
-// isAuthError applies a documented heuristic to classify a fetch error as an
-// auth failure: the ICS/CalDAV fetchers wrap the upstream HTTP status text
-// (e.g. "401 Unauthorized", "403 Forbidden") rather than exposing a typed
-// status, so we look for those markers in the wrapped error chain. Anything
-// else (network errors, parse errors, ambiguous CalDAV discovery failures)
-// defaults to the generic "error" status rather than over-fitting this check.
+// isAuthError classifies typed upstream HTTP and OAuth token errors. Errors
+// without a response status (including transport failures) deliberately fall
+// back to transient: an extra retry is safer than needlessly asking someone to
+// re-authenticate a working calendar.
 func isAuthError(err error) bool {
-	msg := strings.ToLower(err.Error())
-	return strings.Contains(msg, "401") ||
-		strings.Contains(msg, "403") ||
-		strings.Contains(msg, "unauthorized") ||
-		strings.Contains(msg, "forbidden") ||
-		strings.Contains(msg, "invalid_grant") ||
-		strings.Contains(msg, "invalid_client") ||
-		strings.Contains(msg, "unauthorized_client")
+	var httpErr *calendar.HTTPError
+	if errors.As(err, &httpErr) {
+		return httpErr.StatusCode == http.StatusUnauthorized || httpErr.StatusCode == http.StatusForbidden
+	}
+
+	var oauthErr *oauth2.RetrieveError
+	if errors.As(err, &oauthErr) {
+		switch oauthErr.ErrorCode {
+		case "invalid_grant", "invalid_client", "unauthorized_client":
+			return true
+		}
+		if oauthErr.Response != nil {
+			return oauthErr.Response.StatusCode == http.StatusUnauthorized || oauthErr.Response.StatusCode == http.StatusForbidden
+		}
+	}
+	return false
 }
 
 // syncAllSourcesOnce syncs every calendar source across all owners once,

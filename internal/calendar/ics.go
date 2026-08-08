@@ -80,7 +80,7 @@ func FetchICS(ctx context.Context, hc *http.Client, url string) ([]NormalizedEve
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("fetch ics: unexpected status %s", resp.Status)
+		return nil, fmt.Errorf("fetch ics: %w", &HTTPError{StatusCode: resp.StatusCode, Err: fmt.Errorf("unexpected status %s", resp.Status)})
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxICSSize))
