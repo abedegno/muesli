@@ -47,6 +47,17 @@ func TestEmbeddedMainE2E(t *testing.T) {
 		t.Fatalf("go build whisper-cpp-transcriber failed: %v\n%s", err, buildWhisperOut)
 	}
 
+	// The embedded server also always spawns whisper-cpp-streaming as the
+	// desktop-default streaming transcriber plugin. Build its untagged stub and
+	// point the embedded locate step at it just like the batch transcriber.
+	whisperStreamingBin := filepath.Join(t.TempDir(), "whisper-cpp-streaming")
+	buildWhisperStreaming := exec.Command("go", "build", "-o", whisperStreamingBin, "github.com/abedegno/muesli/cmd/whisper-cpp-streaming")
+	buildWhisperStreaming.Dir = cwd
+	buildWhisperStreamingOut, err := buildWhisperStreaming.CombinedOutput()
+	if err != nil {
+		t.Fatalf("go build whisper-cpp-streaming failed: %v\n%s", err, buildWhisperStreamingOut)
+	}
+
 	addr := freeLoopbackAddress(t)
 	root := t.TempDir()
 	appDataDir := filepath.Join(root, "appdata")
@@ -64,6 +75,7 @@ func TestEmbeddedMainE2E(t *testing.T) {
 		"MUESLI_STORAGE_DIR":                 storageDir,
 		"MUESLI_EMBEDDED_PGVECTOR_DIR":       os.Getenv("MUESLI_EMBEDDED_PGVECTOR_DIR"),
 		"MUESLI_WHISPER_CPP_TRANSCRIBER_BIN": whisperBin,
+		"MUESLI_WHISPER_CPP_STREAMING_BIN":   whisperStreamingBin,
 	})
 
 	cmd := exec.Command(bin, "--embedded")

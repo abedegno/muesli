@@ -54,7 +54,10 @@ func TestLocateWhisperCppStreamingBinary(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			tmpDir := t.TempDir()
+			tmpDir, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatalf("eval symlinks: %v", err)
+			}
 			binDir := tmpDir
 			if tt.override == "" {
 				binDir = filepath.Join(tmpDir, "bin")
