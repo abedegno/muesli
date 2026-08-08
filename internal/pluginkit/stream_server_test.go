@@ -4,13 +4,13 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/abedegno/muesli/internal/plugin"
+	"go.uber.org/goleak"
 	"net/http/httptest"
 )
 
@@ -100,7 +100,10 @@ func TestStreamingWireProtocolWithRealClient(t *testing.T) {
 }
 
 func TestStreamingDisconnectDoesNotLeakGoroutines(t *testing.T) {
-	before := runtime.NumGoroutine()
+	// Snapshot the goroutines already running (the test binary's own, plus
+	// anything a previous test left parked) so this only reports goroutines
+	// this test's server created.
+	ignoreExisting := goleak.IgnoreCurrent()
 	engine := newWireTestEngine()
 	server := httptest.NewServer(TranscriberHandler(Config{Token: "secret"}, engine))
 	session := openWireSession(t, server.URL, "secret", "disconnect")
@@ -113,15 +116,10 @@ func TestStreamingDisconnectDoesNotLeakGoroutines(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("engine session was not closed after disconnect")
 	}
+	// Blocks until every handler goroutine has returned.
 	server.Close()
-	deadline := time.Now().Add(2 * time.Second)
-	for runtime.NumGoroutine() > before+1 && time.Now().Before(deadline) {
-		runtime.GC()
-		time.Sleep(20 * time.Millisecond)
-	}
-	if after := runtime.NumGoroutine(); after > before+1 {
-		t.Fatalf("goroutines did not settle: before=%d after=%d", before, after)
-	}
+	// Names the leaked stack rather than reporting a count that drifted.
+	goleak.VerifyNone(t, ignoreExisting)
 }
 
 func TestStreamingSessionCapRejectsOnlyExcessSession(t *testing.T) {
