@@ -45,3 +45,17 @@ A guard that has never been observed failing is indistinguishable from one that 
 Assert on behaviour, not on the shape of a string. Testing that a command's arguments _look_ correct says nothing about whether the command accepts them.
 
 This applies to throwaway verification at the terminal, not only to committed tests. `pgrep -f "some-task"` matches any command line containing that string — including the shell you just typed it into — so it reports the task as running whether or not it is. The same pattern given to `pkill -f` kills the invoking shell. Both happened here in a single command: the `pkill` stopped the work before it started, and the `pgrep` then confirmed it was running.
+
+## Build fixtures from real data, not from its assumed shape
+
+A test is only as good as the sample it runs on. Hand-written fixtures encode what you _believe_ the data looks like, and that belief is exactly what the test was supposed to check — so a wrong one produces a test that passes, reads correctly in review, and asserts nothing.
+
+Take one real sample first: a captured API response, actual command output, a row from the table. Then write the fixture from it.
+
+Three of these landed in a single afternoon in this project's tooling, all of them plausible on the page:
+
+- A fixture used `success`/`failure` where the function under test consumed `pass`/`fail`. Nothing matched, the verdict fell through to the default, and one assertion passed for entirely the wrong reason.
+- A fake `gh` had a catch-all branch that answered every unrecognised subcommand with the same string. A newly added call then received that string as if it were a list of required checks.
+- A fixture meant to prove exact-vs-substring matching contained none of the values it was matching against, making it indistinguishable from the separate case where nothing matches at all.
+
+The first two were caught only by running the suite; the third only by a later change colliding with it. None would have been caught by reading.
