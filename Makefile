@@ -1,4 +1,4 @@
-.PHONY: run test test-whisper-cgo test-db test-db-stop tidy build-admin build up dev lint check smoke new-migration check-test-determinism prod-up prod-down prod-logs prod-ps prod-backup prod-upgrade
+.PHONY: run test test-whisper-cgo test-db test-db-stop tidy build-admin check-admin-dist build up dev lint check smoke new-migration check-test-determinism prod-up prod-down prod-logs prod-ps prod-backup prod-upgrade
 
 PROD_DIR ?= .
 PROD_COMPOSE = docker compose --env-file $(PROD_DIR)/.env -f $(PROD_DIR)/docker-compose.prod.yml
@@ -12,6 +12,11 @@ tidy:
 # Build the admin SPA into the Go embed dir (internal/adminui/dist).
 build-admin:
 	cd web/admin && npm ci && npm run build
+
+# Build and verify the admin SPA/Go embed contract locally with one command:
+# `make check-admin-dist`.
+check-admin-dist: build-admin
+	node scripts/check-admin-dist.mjs
 
 # Build the server binary with the admin UI embedded. build-admin runs first so
 # the freshly compiled assets are what get embedded by `go build`.

@@ -157,6 +157,10 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - name: Build admin SPA
+        run: make build-admin
+      - name: Check admin embed contract
+        run: node scripts/check-admin-dist.mjs
       - name: Lint (ESLint)
         run: npm run lint
       - name: Format check (Prettier)
