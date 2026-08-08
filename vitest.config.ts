@@ -25,7 +25,8 @@ export default defineConfig({
         ...coverageConfigDefaults.exclude,
         'out/**',
         'internal/adminui/dist/**',
-        'web/admin/dist/**',
+        // The admin SPA owns its own Vitest config and test suite.
+        'web/admin/**',
       ],
     },
   },
