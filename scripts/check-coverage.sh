@@ -15,6 +15,11 @@ if [[ ! -f "$floor_file" ]]; then
   exit 2
 fi
 
+if grep -q '/node_modules/' "$coverage_file"; then
+  echo "coverage profile contains vendored node_modules packages; exclude node_modules from the go test package list" >&2
+  exit 1
+fi
+
 total="$(go tool cover -func="$coverage_file" | awk '/^total:/ { gsub(/%/, "", $3); print $3 }')"
 floor="$(tr -d '[:space:]' < "$floor_file")"
 
