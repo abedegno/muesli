@@ -54,6 +54,17 @@ func ServeTranscriber(ctx context.Context, cfg Config, eng Transcriber) error {
 	return serve(ctx, srv, ln)
 }
 
+// ServeStreamingTranscriber serves the streaming-only plugin contract on a
+// loopback listener and blocks until ctx is cancelled.
+func ServeStreamingTranscriber(ctx context.Context, cfg Config, eng StreamingTranscriber) error {
+	cfg.serveContext = ctx
+	srv, ln, err := NewServer(cfg, StreamingTranscriberHandler(cfg, eng))
+	if err != nil {
+		return err
+	}
+	return serve(ctx, srv, ln)
+}
+
 // ServeAgent serves the agent contract on a loopback listener and blocks until
 // ctx is cancelled.
 func ServeAgent(ctx context.Context, cfg Config, eng Agent) error {
@@ -183,6 +194,33 @@ func TranscriberHandler(cfg Config, eng Transcriber) http.Handler {
 		text := segmentsText(res.Segments)
 		writeJSON(w, http.StatusOK, map[string]string{"text": text})
 	})))
+	return mux
+}
+
+// StreamingTranscriberHandler returns the single-kind streaming plugin HTTP
+// contract. It intentionally does not expose the batch /transcribe endpoint.
+func StreamingTranscriberHandler(cfg Config, eng StreamingTranscriber) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", handleHealth)
+	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		if sr, ok := any(eng).(StatusReporter); ok {
+			status, model, percent := sr.Status()
+			writeJSON(w, http.StatusOK, struct {
+				Status  string `json:"status"`
+				Model   string `json:"model"`
+				Percent int    `json:"percent"`
+			}{status, model, percent})
+			return
+		}
+		handleStatus(w, r)
+	})
+	mux.Handle("/info", requireBearer(cfg.Token)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(w, http.StatusOK, Info{
+			Name: cfg.Name, Version: cfg.Version, PluginAPI: 1,
+			Kind: model.PluginStreamingTranscriber, ConfigSchema: infoConfigSchema(cfg.ConfigSchema),
+		})
+	})))
+	mux.Handle("/stream", requireBearer(cfg.Token)(newStreamingHandler(cfg, eng)))
 	return mux
 }
 
