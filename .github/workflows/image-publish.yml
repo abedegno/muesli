@@ -38,7 +38,7 @@ jobs:
             dockerfile: plugins/streaming-transcriber/Dockerfile
             image: ghcr.io/abedegno/muesli-streaming-transcriber
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: docker/setup-buildx-action@v3
 
@@ -217,7 +217,7 @@ jobs:
             image: ghcr.io/abedegno/muesli-streaming-transcriber
             platforms: linux/amd64,linux/arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - uses: docker/setup-qemu-action@v3
 
@@ -314,7 +314,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Build the release asset bundle
         run: |
