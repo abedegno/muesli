@@ -6,6 +6,70 @@ on:
     branches: [main]
 
 jobs:
+  coverage-report:
+    name: coverage report (informational)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: muesli_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.6'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Resolve DB URL
+        run: echo "TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5432/muesli_test?sslmode=disable" >> "$GITHUB_ENV"
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
+      - run: npm ci
+      - name: Measure server coverage
+        run: go test ./... -p 4 -parallel 2 -coverprofile=coverage.out
+      - name: Enforce server coverage floor
+        run: scripts/check-coverage.sh coverage.out coverage-floors/server.txt
+      - name: Measure and enforce client coverage
+        run: npm run test:coverage
+      - name: Build coverage report
+        run: |
+          server_total=$(go tool cover -func=coverage.out | awk '/^total:/ { gsub(/%/, "", $3); print $3 }')
+          server_floor=$(tr -d '[:space:]' < coverage-floors/server.txt)
+          client_total=$(node -p "require('./coverage/coverage-summary.json').total.lines.pct")
+          client_floor=$(awk '/^[[:space:]]+lines:/ { gsub(/,/, "", $2); print $2; exit }' vitest.config.ts)
+          server_delta=$(awk -v current="$server_total" -v floor="$server_floor" 'BEGIN { printf "%+.1f", current - floor }')
+          client_delta=$(awk -v current="$client_total" -v floor="$client_floor" 'BEGIN { printf "%+.2f", current - floor }')
+          {
+            echo '## Coverage report'
+            echo
+            echo '| Suite | Current | Floor | Delta |'
+            echo '| --- | ---: | ---: | ---: |'
+            echo "| Server (Go) | ${server_total}% | ${server_floor}% | ${server_delta} points |"
+            echo "| Client (Vitest, lines) | ${client_total}% | ${client_floor}% | ${client_delta} points |"
+          } | tee coverage-report.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Publish coverage on pull request
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: gh pr comment "$PR_NUMBER" --body-file coverage-report.md
+
   server:
     name: server (go)
     runs-on: ubuntu-latest

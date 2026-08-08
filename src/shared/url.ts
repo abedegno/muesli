@@ -1,12 +1,14 @@
-// Sentinel thrown by the connect handler when a plain-HTTP connection to a
-// non-loopback server is blocked. The renderer matches on it to show the
-// "connect anyway?" guardrail instead of a raw error.
+/**
+ * Sentinel thrown by main's connect handler for blocked remote plain-HTTP URLs.
+ * The renderer matches this stable value to offer the explicit insecure override.
+ */
 export const INSECURE_CONNECTION_CODE = 'ERR_INSECURE_CONNECTION'
 
-// isInsecureRemote reports whether connecting to serverUrl would send traffic
-// unencrypted to a non-loopback host — i.e. plain `http:` to anything but
-// localhost. `https:` is safe; loopback `http:` is safe (local dev). An
-// unparseable URL returns false so the connect attempt surfaces the real error.
+/**
+ * Reports whether main would send credentials unencrypted to a non-loopback host.
+ * Invalid URLs return `false` so the connection parser can surface its own error;
+ * loopback HTTP is permitted for local development.
+ */
 export function isInsecureRemote(serverUrl: string): boolean {
   let u: URL
   try {
