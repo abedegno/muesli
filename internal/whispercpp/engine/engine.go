@@ -55,6 +55,9 @@ func New(cfg Config) *Engine {
 	return &Engine{cfg: cfg}
 }
 
+// EnsureReady lazily prepares the configured model without running inference.
+func (e *Engine) EnsureReady(ctx context.Context) error { return e.ensureModel(ctx) }
+
 type pluginConfig struct {
 	Model    string `json:"model"`
 	Language string `json:"language"`

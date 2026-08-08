@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/abedegno/muesli/cmd/whisper-cpp-transcriber/internal/engine"
+	"github.com/abedegno/muesli/internal/whispercpp/engine"
 )
 
 func TestLoadConfigUsesEnvAndFlags(t *testing.T) {
