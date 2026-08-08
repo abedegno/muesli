@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/plugin"
+	"go.uber.org/goleak"
 )
 
 // TestNewPool_ClampsWorkersToMinOne verifies that NewPool enforces a minimum of
@@ -54,6 +56,148 @@ func TestPool_RunAndStopIdle(t *testing.T) {
 		// Good: Run returned after the cancelled context caused the worker to exit.
 	case <-time.After(3 * time.Second):
 		t.Fatal("Run did not return within 3 seconds after context was pre-cancelled")
+	}
+}
+
+func TestPool_RunReturnsOnCancellationWhileActive(t *testing.T) {
+	ignore := goleak.IgnoreCurrent()
+	ctx, cancel := context.WithCancel(context.Background())
+	claimed := make(chan struct{})
+	p := NewPool(nil, nil, 2)
+	p.claimJob = func(ctx context.Context, _ time.Duration) (model.Job, bool, error) {
+		select {
+		case claimed <- struct{}{}:
+		case <-ctx.Done():
+		}
+		<-ctx.Done()
+		return model.Job{}, false, ctx.Err()
+	}
+
+	done := make(chan struct{})
+	go func() {
+		p.Run(ctx)
+		close(done)
+	}()
+	for range p.workers {
+		select {
+		case <-claimed:
+		case <-time.After(time.Second):
+			t.Fatal("worker did not start claiming jobs")
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Run did not return after active pool context was cancelled")
+	}
+	p.Stop()
+	p.Stop()
+	goleak.VerifyNone(t, ignore)
+}
+
+func TestPool_StopWaitsForEveryWorkerAndIsIdempotent(t *testing.T) {
+	ignore := goleak.IgnoreCurrent()
+	started := make(chan struct{})
+	exited := make(chan struct{}, 3)
+	p := NewPool(nil, nil, 3)
+	p.claimJob = func(ctx context.Context, _ time.Duration) (model.Job, bool, error) {
+		started <- struct{}{}
+		<-ctx.Done()
+		exited <- struct{}{}
+		return model.Job{}, false, ctx.Err()
+	}
+
+	runDone := make(chan struct{})
+	go func() {
+		p.Run(context.Background())
+		close(runDone)
+	}()
+	for range p.workers {
+		select {
+		case <-started:
+		case <-time.After(time.Second):
+			t.Fatal("worker did not start")
+		}
+	}
+	p.Stop()
+	for range p.workers {
+		select {
+		case <-exited:
+		case <-time.After(time.Second):
+			t.Fatal("Stop returned before every worker exited")
+		}
+	}
+	select {
+	case <-runDone:
+	case <-time.After(time.Second):
+		t.Fatal("Run remained blocked after Stop")
+	}
+	p.Stop()
+	goleak.VerifyNone(t, ignore)
+}
+
+func TestPoolLoopProcessesJobsAndContinuesAfterProcessError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	jobs := make(chan model.Job, 2)
+	jobs <- model.Job{ID: "errors"}
+	jobs <- model.Job{ID: "succeeds"}
+	processed := make(chan string, 2)
+	p := NewPool(nil, nil, 1)
+	p.claimJob = func(ctx context.Context, _ time.Duration) (model.Job, bool, error) {
+		select {
+		case job := <-jobs:
+			return job, true, nil
+		case <-ctx.Done():
+			return model.Job{}, false, ctx.Err()
+		}
+	}
+	p.process = func(_ context.Context, job model.Job) error {
+		processed <- job.ID
+		if job.ID == "errors" {
+			return errors.New("controlled process failure")
+		}
+		return nil
+	}
+	done := make(chan struct{})
+	go func() {
+		p.loop(ctx, 0)
+		close(done)
+	}()
+	for _, want := range []string{"errors", "succeeds"} {
+		select {
+		case got := <-processed:
+			if got != want {
+				t.Fatalf("processed job %q, want %q", got, want)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("worker did not process %q", want)
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("loop did not exit after cancellation")
+	}
+}
+
+func TestSleepReturnsOnCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	entered := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		close(entered)
+		sleep(ctx, time.Hour)
+		close(done)
+	}()
+	<-entered
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("sleep waited out its duration after context cancellation")
 	}
 }
 
