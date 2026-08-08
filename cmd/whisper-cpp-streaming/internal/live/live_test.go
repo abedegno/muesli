@@ -5,7 +5,6 @@ package live
 import (
 	"context"
 	"testing"
-	"time"
 
 	"github.com/abedegno/muesli/internal/pluginkit"
 	"github.com/abedegno/muesli/internal/whispercpp/engine"
@@ -13,18 +12,13 @@ import (
 
 func TestSessionProducesPartialAndFinal(t *testing.T) {
 	eng := New(engine.Config{Model: "tiny.en", Language: "en"})
-	req := pluginkit.StreamingStartRequest{Type: "start", SampleRate: 16_000, Channels: 1}
-	var session pluginkit.StreamingEngineSession
-	for range 1000 {
-		var err error
-		session, err = eng.StartStream(context.Background(), req)
-		if err == nil {
-			break
-		}
-		time.Sleep(time.Millisecond)
+	if err := eng.whisper.EnsureReady(context.Background()); err != nil {
+		t.Fatalf("prepare model: %v", err)
 	}
-	if session == nil {
-		t.Fatal("engine did not become ready")
+	req := pluginkit.StreamingStartRequest{Type: "start", SampleRate: 16_000, Channels: 1}
+	session, err := eng.StartStream(context.Background(), req)
+	if err != nil {
+		t.Fatalf("start stream: %v", err)
 	}
 	speech := make([]float32, 24_000)
 	for i := range speech {
