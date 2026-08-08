@@ -115,7 +115,7 @@ describe('serverSupervisor', () => {
     const child = createFakeChild()
     spawnMock.mockReturnValue(child)
 
-    const fetchMock = vi.mocked(globalThis.fetch)
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock
       .mockRejectedValueOnce(new Error('connect ECONNREFUSED'))
       .mockResolvedValueOnce(new Response('not ready', { status: 503 }))
@@ -162,7 +162,7 @@ describe('serverSupervisor', () => {
     const child = createFakeChild()
     spawnMock.mockReturnValue(child)
 
-    const fetchMock = vi.mocked(globalThis.fetch)
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
 
     const originalServerBin = process.env.MUESLI_SERVER_BIN
@@ -218,7 +218,7 @@ describe('serverSupervisor', () => {
     const child = createFakeChild()
     spawnMock.mockReturnValue(child)
 
-    const fetchMock = vi.mocked(globalThis.fetch)
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
     const onUnexpectedExit = vi.fn()
 
@@ -249,7 +249,7 @@ describe('serverSupervisor', () => {
     const child = createFakeChild()
     spawnMock.mockReturnValue(child)
 
-    const fetchMock = vi.mocked(globalThis.fetch)
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
     const onUnexpectedExit = vi.fn()
 
@@ -280,7 +280,7 @@ describe('serverSupervisor', () => {
     spawnMock.mockReturnValue(child)
     ;(process as NodeJS.Process & { resourcesPath: string }).resourcesPath = '/R'
 
-    const fetchMock = vi.mocked(globalThis.fetch)
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
 
     const { startServerSupervisor } = await loadSupervisor()
@@ -316,7 +316,7 @@ describe('serverSupervisor', () => {
     const child = createFakeChild()
     spawnMock.mockReturnValue(child)
 
-    const fetchMock = vi.mocked(globalThis.fetch)
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockRejectedValue(new Error('still starting'))
 
     const { startServerSupervisor } = await loadSupervisor()
@@ -343,7 +343,7 @@ describe('serverSupervisor', () => {
     const child = createFakeChild()
     spawnMock.mockReturnValue(child)
 
-    const fetchMock = vi.mocked(globalThis.fetch)
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
 
     const { startServerSupervisor } = await loadSupervisor()
@@ -388,7 +388,7 @@ describe('serverSupervisor', () => {
     })
     spawnMock.mockReturnValue(child)
 
-    const fetchMock = vi.mocked(globalThis.fetch)
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
 
     const { startServerSupervisor } = await loadSupervisor()
@@ -433,7 +433,7 @@ describe('serverSupervisor', () => {
     })
     spawnMock.mockReturnValue(child)
 
-    const fetchMock = vi.mocked(globalThis.fetch)
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockResolvedValue(new Response(JSON.stringify({ status: 'ok' }), { status: 200 }))
     const onUnexpectedExit = vi.fn()
 
@@ -483,7 +483,7 @@ describe('serverSupervisor', () => {
     const child = createFakeChild()
     spawnMock.mockReturnValue(child)
 
-    const fetchMock = vi.mocked(globalThis.fetch)
+    const fetchMock = globalThis.fetch as unknown as ReturnType<typeof vi.fn>
     fetchMock.mockRejectedValue(new Error('still starting'))
 
     const { startServerSupervisor } = await loadSupervisor()
