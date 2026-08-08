@@ -51,6 +51,7 @@ export function resolveResourceEnv(opts: { isPackaged: boolean; resourcesPath: s
     MUESLI_EMBEDDED_PGVECTOR_DIR: join(opts.resourcesPath, 'pgvector'),
     MUESLI_AUDIOTAP_BIN: join(opts.resourcesPath, 'server', `muesli-audiotap${exeSuffix(platform)}`),
     MUESLI_WHISPER_CPP_TRANSCRIBER_BIN: join(opts.resourcesPath, 'server', `whisper-cpp-transcriber${exeSuffix(platform)}`),
+    MUESLI_WHISPER_CPP_STREAMING_BIN: join(opts.resourcesPath, 'server', `whisper-cpp-streaming${exeSuffix(platform)}`),
     MUESLI_WHISPER_MODEL_DIR: join(opts.resourcesPath, 'models', 'whisper'),
     MUESLI_WHISPER_MODEL: 'ggml-tiny.en',
     MUESLI_FFMPEG_BIN: join(opts.resourcesPath, 'bin', `ffmpeg${exeSuffix(platform)}`),

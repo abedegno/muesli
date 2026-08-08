@@ -1,7 +1,7 @@
 name: Desktop release (macOS)
 
 # Signed + notarized macOS arm64 .dmg. Native arm64 build on macos-14: the Go
-# server (make build), ollama-agent, and the whisper.cpp cgo transcriber (linked
+# server (make build), ollama-agent, and the whisper.cpp cgo batch and streaming transcribers (linked
 # against an inline Metal lib build), then assemble the native deps and let
 # electron-builder sign + (on tag) notarize + staple.
 #
@@ -72,6 +72,8 @@ jobs:
           go build -o build/bin/ollama-agent ./cmd/ollama-agent
           C_INCLUDE_PATH="$WLIB/include" LIBRARY_PATH="$WLIB/lib" CGO_ENABLED=1 \
             go build -tags whisper_cgo -o build/bin/whisper-cpp-transcriber ./cmd/whisper-cpp-transcriber
+          C_INCLUDE_PATH="$WLIB/include" LIBRARY_PATH="$WLIB/lib" CGO_ENABLED=1 \
+            go build -tags whisper_cgo -o build/bin/whisper-cpp-streaming ./cmd/whisper-cpp-streaming
 
       - name: Build muesli-audiotap (Swift system-audio helper, macOS)
         # Pin the deployment target: the Core Audio process-tap API is macOS 14.2+,
@@ -277,6 +279,8 @@ jobs:
           go build -o build/bin/ollama-agent ./cmd/ollama-agent
           C_INCLUDE_PATH="$WLIB/include" LIBRARY_PATH="$WLIB/lib" CGO_ENABLED=1 \
             go build -tags whisper_cgo -o build/bin/whisper-cpp-transcriber ./cmd/whisper-cpp-transcriber
+          C_INCLUDE_PATH="$WLIB/include" LIBRARY_PATH="$WLIB/lib" CGO_ENABLED=1 \
+            go build -tags whisper_cgo -o build/bin/whisper-cpp-streaming ./cmd/whisper-cpp-streaming
 
       - name: Install node deps (brings ffmpeg-static)
         run: npm ci
