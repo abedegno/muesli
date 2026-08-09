@@ -168,6 +168,24 @@ JSON
 `strict:false` = no forced rebase-before-merge. Emergency override (rare): re-run
 the same call with `"enforce_admins": false`, merge, then restore `true`.
 
+#### The `e2e-desktop` check
+
+`e2e-desktop` runs the Playwright end-to-end suite against the desktop app in embedded mode
+on Linux — a real Go server, real embedded Postgres, and fake plugins substituted for
+whisper and the agent so results are deterministic. It takes 2-3 minutes.
+
+**Some of its specs are marked `test.fail()` on purpose.** They are regression tests for
+defects that are still open: they assert that the bug _reproduces_. Playwright treats an
+expected failure as a pass, so CI stays green while the defect exists.
+
+The consequence matters if you are fixing one of those defects: **the moment your fix
+works, that spec starts passing, Playwright reports "expected failure that passed", and
+`e2e-desktop` goes red.** That is deliberate — it is what stops a fixed bug leaving a stale
+expected-failure behind. Remove the `test.fail(...)` line **in the same PR as your fix**.
+
+Each annotation names the issue it belongs to, so search the spec for the issue number you
+are fixing.
+
 #### The `review-gate` check
 
 Branch protection also requires the `review-gate` status check. It answers one
