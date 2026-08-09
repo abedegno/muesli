@@ -10,6 +10,7 @@ type AppFixtures = {
   page: Page
   userDataDir: string
   serverAddr: string
+  fakeTranscript: string
 }
 
 async function reservePort(): Promise<number> {
@@ -32,6 +33,7 @@ async function reservePort(): Promise<number> {
 }
 
 export const test = base.extend<AppFixtures>({
+  fakeTranscript: ['hello from fakeplugin', { option: true }],
   userDataDir: async ({}, use) => {
     const dir = await mkdtemp(join(tmpdir(), 'muesli-e2e-'))
     try {
@@ -48,7 +50,7 @@ export const test = base.extend<AppFixtures>({
     const port = await reservePort()
     await use(`127.0.0.1:${port}`)
   },
-  electronApp: async ({ serverAddr, userDataDir }, use) => {
+  electronApp: async ({ fakeTranscript, serverAddr, userDataDir }, use) => {
     // resolveResourceEnv() (src/main/resourcePaths.ts) returns {} when the app is not
     // packaged, and it is the ONLY setter of MUESLI_MODE. config.Load reads MUESLI_MODE
     // rather than the --embedded argument, so an unpackaged launch starts a server that
@@ -77,6 +79,9 @@ export const test = base.extend<AppFixtures>({
         MUESLI_EMBEDDED_PG_BINARIES: pgBinaries,
         MUESLI_EMBEDDED_PGVECTOR_DIR: pgVector,
         MUESLI_ADDR: serverAddr,
+        MUESLI_PUBLIC_URL: `http://${serverAddr}`,
+        MUESLI_INTERNAL_URL: `http://${serverAddr}`,
+        MUESLI_FAKE_TRANSCRIPT: fakeTranscript,
         MUESLI_SERVER_BIN: join(binDir, 'muesli'),
         MUESLI_WHISPER_CPP_TRANSCRIBER_BIN: join(binDir, 'fakeplugin-transcriber'),
         MUESLI_OLLAMA_AGENT_BIN: join(binDir, 'fakeplugin-agent'),
