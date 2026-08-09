@@ -66,7 +66,6 @@ test('recovers the existing session after an abnormal exit', async ({
   const originalPid = originalProcess.pid
   const descendantPids = originalPid === undefined ? [] : collectDescendantPids(originalPid)
   originalProcess.kill('SIGKILL')
-  killProcesses(descendantPids)
   await expect
     .poll(() => originalProcess.killed || originalProcess.exitCode !== null, { timeout: 10_000 })
     .toBe(true)
@@ -106,6 +105,7 @@ test('recovers the existing session after an abnormal exit', async ({
     await expect(relaunchedPage.getByText(title)).toBeVisible({ timeout: 45_000 })
     await expect(relaunchedPage.getByText('First run (create the account)')).toBeHidden()
   } finally {
+    killProcesses(descendantPids)
     await relaunchedApp?.close()
   }
 })
