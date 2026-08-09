@@ -104,7 +104,7 @@ func TestReapOrphanPostgresStopsLiveOwnerProcess(t *testing.T) {
 	t.Setenv(embeddedPGBinaryEnv, "")
 	dataDir := t.TempDir()
 
-	proc := exec.Command("sleep", "30")
+	proc := exec.Command("bash", "-c", `exec -a "$0" sleep 30`, "postgres -D "+dataDir)
 	if err := proc.Start(); err != nil {
 		t.Fatalf("start dummy process: %v", err)
 	}
@@ -157,6 +157,55 @@ func TestReapOrphanPostgresLeavesForeignProcess(t *testing.T) {
 	}
 	if !processAlive(pid) {
 		t.Fatal("expected the foreign process to be left running")
+	}
+}
+
+func TestReapOrphanPostgresLeavesUnrelatedLiveOwnerProcess(t *testing.T) {
+	t.Setenv(embeddedPGBinaryEnv, "")
+	dataDir := t.TempDir()
+	proc := exec.Command("sleep", "30")
+	if err := proc.Start(); err != nil {
+		t.Fatalf("start dummy process: %v", err)
+	}
+	pid := proc.Process.Pid
+	t.Cleanup(func() { _ = proc.Process.Kill() })
+
+	pidBody := fmt.Sprintf("%d\n%s\n1700000000\n55999\n/tmp\nlocalhost\n  123 456\nready\n", pid, dataDir)
+	if err := os.WriteFile(filepath.Join(dataDir, postmasterPIDFile), []byte(pidBody), 0o600); err != nil {
+		t.Fatalf("write postmaster.pid: %v", err)
+	}
+
+	p := &PG{dataDir: dataDir}
+	reaped, err := p.reapOrphanPostgres(context.Background())
+	if err != nil {
+		t.Fatalf("reapOrphanPostgres: %v", err)
+	}
+	if reaped {
+		t.Fatal("expected reaped=false for an unrelated live process")
+	}
+	if !processAlive(pid) {
+		t.Fatal("expected the unrelated live process to be left running")
+	}
+}
+
+func TestProcessIsPostgresForRejectsUnrelatedLiveProcess(t *testing.T) {
+	proc := exec.Command("sleep", "30")
+	if err := proc.Start(); err != nil {
+		t.Fatalf("start dummy process: %v", err)
+	}
+	t.Cleanup(func() { _ = proc.Process.Kill() })
+
+	if processIsPostgresFor(proc.Process.Pid, t.TempDir()) {
+		t.Fatal("processIsPostgresFor() = true for an unrelated live process")
+	}
+}
+
+func TestProcessIsPostgresForRejectsInvalidAndMissingPIDs(t *testing.T) {
+	dataDir := t.TempDir()
+	for _, pid := range []int{0, -1, 1_000_000_000} {
+		if processIsPostgresFor(pid, dataDir) {
+			t.Fatalf("processIsPostgresFor(%d, %q) = true, want false", pid, dataDir)
+		}
 	}
 }
 

@@ -321,9 +321,10 @@ func (p *PG) pgCtlPath() string {
 
 // reapOrphanPostgres detects a LIVE postmaster still holding p.dataDir -- an
 // orphan left by a previous app instance that exited without stopping Postgres --
-// and shuts it down so a fresh instance can start. It only acts on a postmaster
-// that records OUR data dir (guarding against pid reuse). Returns true if it
-// stopped one. Dead/parse-error pid files are left to removeStalePostmasterPID.
+// and shuts it down so a fresh instance can start. It only acts when both the pid
+// file records our data dir and the live process has a matching Postgres command
+// line. Returns true if it stopped one. Dead/parse-error pid files are left to
+// removeStalePostmasterPID.
 func (p *PG) reapOrphanPostgres(ctx context.Context) (bool, error) {
 	pid, ownerDir, err := readPostmasterInfo(p.dataDir)
 	if err != nil {
@@ -333,6 +334,14 @@ func (p *PG) reapOrphanPostgres(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	if filepath.Clean(ownerDir) != filepath.Clean(p.dataDir) {
+		return false, nil
+	}
+
+	// The checks above prove only what the FILE says. Confirm the live process is
+	// actually our Postgres before doing anything to it. If identity cannot be
+	// established, leave the pid file to removeStalePostmasterPID and let startup
+	// fail loudly -- failing to start is recoverable, killing a stranger is not.
+	if !processIsPostgresFor(pid, p.dataDir) {
 		return false, nil
 	}
 
