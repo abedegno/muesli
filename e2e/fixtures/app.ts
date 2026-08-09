@@ -49,11 +49,33 @@ export const test = base.extend<AppFixtures>({
     await use(`127.0.0.1:${port}`)
   },
   electronApp: async ({ serverAddr, userDataDir }, use) => {
+    // resolveResourceEnv() (src/main/resourcePaths.ts) returns {} when the app is not
+    // packaged, and it is the ONLY setter of MUESLI_MODE. config.Load reads MUESLI_MODE
+    // rather than the --embedded argument, so an unpackaged launch starts a server that
+    // demands an external DATABASE_URL. Supply it here: serverSupervisor spreads `...env`
+    // AFTER resolveResourceEnv(), so these win.
+    const pgBinaries = process.env.MUESLI_EMBEDDED_PG_BINARIES ?? ''
+    const pgVector = process.env.MUESLI_EMBEDDED_PGVECTOR_DIR ?? ''
+    if (pgBinaries === '' || pgVector === '') {
+      // Fail here rather than letting the server fail far from the cause.
+      throw new Error(
+        'MUESLI_EMBEDDED_PG_BINARIES and MUESLI_EMBEDDED_PGVECTOR_DIR must be set. CI ' +
+          'exports them in the embedded Postgres bundle step; locally, export them the ' +
+          'same way the embedded-integration job does.'
+      )
+    }
     const binDir = resolve('e2e/.bin')
     const app = await _electron.launch({
-      args: ['out/main/main.js', `--user-data-dir=${userDataDir}`],
+      args: [
+        'out/main/main.js',
+        `--user-data-dir=${userDataDir}`,
+        ...(process.env.CI ? ['--no-sandbox'] : []),
+      ],
       env: {
         ...process.env,
+        MUESLI_MODE: 'embedded',
+        MUESLI_EMBEDDED_PG_BINARIES: pgBinaries,
+        MUESLI_EMBEDDED_PGVECTOR_DIR: pgVector,
         MUESLI_ADDR: serverAddr,
         MUESLI_SERVER_BIN: join(binDir, 'muesli'),
         MUESLI_WHISPER_CPP_TRANSCRIBER_BIN: join(binDir, 'fakeplugin-transcriber'),
