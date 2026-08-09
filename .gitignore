@@ -31,6 +31,9 @@ internal/adminui/dist/assets/*
 # desktop packaging build artifacts
 build/resources/
 dist-desktop/
+e2e/.bin/
+test-results/
+playwright-report/
 # Generated coverage reports.
 coverage/
 coverage.out
