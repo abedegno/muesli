@@ -55,9 +55,11 @@ func (h *WhisperHandle) Stop(ctx context.Context) error {
 			if h.cmd != nil && h.cmd.Process != nil {
 				_ = h.cmd.Process.Kill()
 			}
+			killCtx, cancelKill := context.WithTimeout(ctx, killWait)
+			defer cancelKill()
 			select {
 			case h.stopErr = <-h.done:
-			case <-time.After(2 * time.Second):
+			case <-killCtx.Done():
 				h.stopErr = ctx.Err()
 			}
 		}

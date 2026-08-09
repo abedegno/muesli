@@ -144,6 +144,7 @@ describe('serverSupervisor', () => {
         env: expect.objectContaining({
           MUESLI_ADDR: '127.0.0.1:4567',
           MUESLI_APPDATA: '/tmp/userData/embedded-server',
+          MUESLI_PARENT_PID: String(process.pid),
         }),
         stdio: ['ignore', 'pipe', 'pipe'],
       }))

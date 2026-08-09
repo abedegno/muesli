@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -28,8 +29,22 @@ import (
 )
 
 func main() {
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Parent-death cancels exactly what SIGTERM cancels, so there is one shutdown
+	// path and no second timeout to keep in sync. Gated on MUESLI_PARENT_PID, which
+	// only the desktop app sets — a standalone `muesli --embedded` gets no watch.
+	ctx, cancelForParentDeath := context.WithCancel(sigCtx)
+	defer cancelForParentDeath()
+	if raw := strings.TrimSpace(os.Getenv("MUESLI_PARENT_PID")); raw != "" {
+		if parentPID, convErr := strconv.Atoi(raw); convErr == nil && parentPID > 0 {
+			go watchParentDeath(ctx, parentPID, time.Second, os.Getppid, func() {
+				slog.Warn("parent process exited; shutting down", "parent_pid", parentPID)
+				cancelForParentDeath()
+			})
+		}
+	}
 
 	cfg, err := config.FromEnv()
 	if err != nil {

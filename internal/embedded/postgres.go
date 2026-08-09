@@ -24,7 +24,7 @@ const (
 	postmasterPIDFile   = "postmaster.pid"
 	pgStartTimeout      = 60 * time.Second
 	pgStopTimeout       = 5 * time.Second
-	pgKillWait          = 2 * time.Second
+	killWait            = 2 * time.Second
 	passwordEntropy     = 32
 )
 
@@ -129,7 +129,7 @@ func (p *PG) Stop(ctx context.Context) error {
 		if err := p.forceKill(); err != nil {
 			return err
 		}
-		waitCtx, cancelWait := context.WithTimeout(context.Background(), pgKillWait)
+		waitCtx, cancelWait := context.WithTimeout(ctx, killWait)
 		defer cancelWait()
 		select {
 		case <-done:

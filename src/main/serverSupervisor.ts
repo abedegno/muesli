@@ -297,6 +297,7 @@ export async function startServerSupervisor(opts: ServerSupervisorOptions = {}):
         ? {}
         : { MUESLI_APPDATA: join(userDataPath, 'embedded-server') }),
       MUESLI_ADDR: `${addr.host}:${addr.port}`,
+      MUESLI_PARENT_PID: String(process.pid),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   }) as unknown as ChildProcessWithoutNullStreams
