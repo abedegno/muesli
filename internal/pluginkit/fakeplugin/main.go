@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,12 +24,30 @@ func (fakeTranscriber) Transcribe(_ context.Context, pcm []float32, _ pluginkit.
 	_ = pcm
 	return pluginkit.TranscribeResult{
 		Segments: []model.Segment{
-			{StartMS: 0, EndMS: 1000, Text: "hello from fakeplugin", Source: "mic"},
+			{StartMS: 0, EndMS: 1000, Text: scriptedTranscript(), Source: "mic"},
 		},
 		Language:   "en",
 		Model:      "fake-transcriber",
 		DurationMS: 1000,
 	}, nil
+}
+
+func kindFromBinaryName(path string) string {
+	name := filepath.Base(path)
+	if strings.HasSuffix(name, "-agent") {
+		return "agent"
+	}
+	if strings.HasSuffix(name, "-transcriber") {
+		return "transcriber"
+	}
+	return ""
+}
+
+func scriptedTranscript() string {
+	if transcript := strings.TrimSpace(os.Getenv("MUESLI_FAKE_TRANSCRIPT")); transcript != "" {
+		return transcript
+	}
+	return "hello from fakeplugin"
 }
 
 type fakeAgent struct{}
@@ -55,6 +75,9 @@ func main() {
 		version = flag.String("version", "dev", "plugin version")
 	)
 	flag.Parse()
+	if *kind == "" {
+		*kind = kindFromBinaryName(os.Args[0])
+	}
 
 	if *kind != "transcriber" && *kind != "agent" {
 		fmt.Fprintln(os.Stderr, "--kind must be transcriber or agent")
