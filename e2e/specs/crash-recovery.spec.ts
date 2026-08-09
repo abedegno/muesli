@@ -21,6 +21,7 @@ test('recovers the existing session after an abnormal exit', async ({
   await page.evaluate(async (noteTitle) => {
     await (window as MuesliWindow).muesli.createNote(noteTitle)
   }, title)
+  await page.getByRole('link', { name: 'All notes' }).click()
   await expect(page.getByText(title)).toBeVisible()
 
   const originalProcess = electronApp.process()
