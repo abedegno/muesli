@@ -89,13 +89,22 @@ test('recovers notes after an abnormal exit', async ({
     console.log(
       `DIAG_PRE setup/status=${preCrashStatus.status} body=${await preCrashStatus.text()}`
     )
-    const tokenBefore =
-      (
-        JSON.parse(readFileSync(join(userDataDir, 'muesli-credentials.json'), 'utf8')) as {
-          token?: string
-        }
-      ).token ?? ''
-    console.log(`DIAG_PRE tokenLen=${tokenBefore.length}`)
+    // The token on disk is encrypted/base64; only TokenStore.load decodes it. Take
+    // the REAL bearer token from getConfig() and prove it works before the crash,
+    // so a post-crash 401 means something.
+    const tokenBefore = await firstPage.evaluate(async () => {
+      const cfg = await (
+        window as unknown as { muesli: { getConfig(): Promise<{ token: string } | null> } }
+      ).muesli.getConfig()
+      return cfg === null ? '' : cfg.token
+    })
+    const control = await fetch(`http://${serverAddr}/api/notes`, {
+      headers: { Authorization: `Bearer ${tokenBefore}` },
+    })
+    console.log(
+      `DIAG_PRE control GET /api/notes -> ${control.status} (must be 200 or the probe is void)`
+    )
+    console.log(`DIAG_PRE dataDir=${join(userDataDir, 'embedded-server', 'postgres', 'data')}`)
 
     const appProcess = firstApp.process()
     appProcess.kill('SIGKILL')
@@ -104,6 +113,17 @@ test('recovers notes after an abnormal exit', async ({
       .poll(() => appProcess.killed || appProcess.exitCode !== null, { timeout: 15_000 })
       .toBe(true)
 
+    // serverSupervisor opens server.log with flag 'w', so the relaunch destroys the
+    // crashed instance's log. Keep a copy first.
+    const logPath = join(userDataDir, 'logs', 'server.log')
+    let firstLog = ''
+    try {
+      firstLog = readFileSync(logPath, 'utf8')
+    } catch (err) {
+      firstLog = `unreadable: ${String(err)}`
+    }
+    console.log(`DIAG_LOG1 first-launch server.log tail:\n${firstLog.slice(-1500)}`)
+
     recoveredApp = await launchApp(launchOptions)
     const recoveredPage = await recoveredApp.firstWindow()
 
@@ -111,7 +131,7 @@ test('recovers notes after an abnormal exit', async ({
     // no renderer, no CORS, no auth. needs_setup=true => the user is gone and this
     // is data loss, not a session bug. Sampled over time to separate a transient
     // recovery window from a permanent state.
-    for (let i = 0; i < 16; i++) {
+    for (let i = 0; i < 48; i++) {
       let line: string
       try {
         const r = await fetch(`http://${serverAddr}/api/setup/status`)
@@ -131,6 +151,14 @@ test('recovers notes after an abnormal exit', async ({
       console.log(`DIAG_REC t=${(i * 2.5).toFixed(1)}s setup/status=[${line}] notes=[${notesLine}]`)
       await new Promise((r) => setTimeout(r, 2_500))
     }
+
+    let secondLog = ''
+    try {
+      secondLog = readFileSync(logPath, 'utf8')
+    } catch (err) {
+      secondLog = `unreadable: ${String(err)}`
+    }
+    console.log(`DIAG_LOG2 recovered server.log tail:\n${secondLog.slice(-3000)}`)
 
     await expect(recoveredPage.getByText(title)).toBeVisible({ timeout: 45_000 })
     await expect(recoveredPage.getByText('First run (create the account)')).toBeHidden()
