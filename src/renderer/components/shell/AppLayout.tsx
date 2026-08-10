@@ -52,6 +52,7 @@ export function AppLayout() {
   const [loaded, setLoaded] = useState(false)
   const [searching, setSearching] = useState(false)
   const [searchMatches, setSearchMatches] = useState<SearchMatch[] | null>(null)
+  const [semanticSearchAvailable, setSemanticSearchAvailable] = useState<boolean | null>(null)
   const [dateFrom, setDateFrom] = useState('')
   const [dateTo, setDateTo] = useState('')
   // Tracks the (query, date-range) key of the most recently *issued* search so
@@ -126,12 +127,24 @@ export function AppLayout() {
     const q = query.trim()
     const key = `${q}|${dateFrom}|${dateTo}`
     latestSearchKeyRef.current = key
-    if (!q) { setSearchMatches(null); setSearching(false); return }
+    if (!q) { setSearchMatches(null); setSemanticSearchAvailable(null); setSearching(false); return }
     setSearchMatches(null)
+    setSemanticSearchAvailable(null)
     const h = setTimeout(() => {
       setSearching(true)
       muesli.search(q, { from: dateFrom || undefined, to: dateTo || undefined })
-        .then((matches) => { if (latestSearchKeyRef.current === key) setSearchMatches(matches) })
+        .then((result) => {
+          if (latestSearchKeyRef.current !== key) return
+          // Array compatibility keeps older preload mocks/servers harmless
+          // during rolling desktop upgrades.
+          if (Array.isArray(result)) {
+            setSearchMatches(result)
+            setSemanticSearchAvailable(false)
+          } else {
+            setSearchMatches(result.matches)
+            setSemanticSearchAvailable(result.semanticSearchAvailable)
+          }
+        })
         .catch(() => { if (latestSearchKeyRef.current === key) setSearchMatches(null) })
         .finally(() => { if (latestSearchKeyRef.current === key) setSearching(false) })
     }, 250)
@@ -288,7 +301,7 @@ export function AppLayout() {
             onDismiss={dismissPrompt}
           />
         )}
-        <Outlet context={{ notes: lexicalNotes, semanticNotes, semanticMatches, allNotes: notes, refresh, heading, isFiltered, view, searchQuery: query.trim(), folders, loaded: currentNotesLoaded, searching, onReorderNote: reorderNote }} />
+        <Outlet context={{ notes: lexicalNotes, semanticNotes, semanticMatches, semanticSearchAvailable, allNotes: notes, refresh, heading, isFiltered, view, searchQuery: query.trim(), folders, loaded: currentNotesLoaded, searching, onReorderNote: reorderNote }} />
       </main>
       {editingFolder && (
         <FolderDialog

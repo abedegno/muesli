@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -269,6 +270,17 @@ func TestSearchEmptyQuery(t *testing.T) {
 	}
 }
 
+func TestSearchHandlerDoesNotLoadFullNoteList(t *testing.T) {
+	t.Parallel()
+	source, err := os.ReadFile("search.go")
+	if err != nil {
+		t.Fatalf("read search handler: %v", err)
+	}
+	if strings.Contains(string(source), ".ListNotes(") {
+		t.Fatal("search handler must not load the owner's full note list")
+	}
+}
+
 func TestSearchLexicalOnly(t *testing.T) {
 	t.Parallel()
 	srv, _ := newSearchServer(t, nil)
@@ -283,6 +295,29 @@ func TestSearchLexicalOnly(t *testing.T) {
 	}
 	if len(matchesForNote(matches, grocery)) != 0 {
 		t.Fatalf("lexical search for acme = %+v, must not contain grocery %s", matches, grocery)
+	}
+}
+
+func TestSearchLexicalTranscriptWithoutEmbedder(t *testing.T) {
+	t.Parallel()
+	srv, st := newSearchServer(t, nil)
+	hdr := authHeader(t, srv, "transcript@example.com")
+
+	transcriptNote := createNote(t, srv, hdr, "Weekly meeting")
+	otherNote := createNote(t, srv, hdr, "Unrelated note")
+	addTranscript(t, st, transcriptNote, []model.Segment{{
+		StartMS: 500, EndMS: 900, Text: "The zephyr launch is scheduled for Tuesday.", Source: "whisper",
+	}})
+
+	matches := searchMatches(t, srv, hdr, "zephyr", nil)
+	if !hasMatchType(matchesForNote(matches, transcriptNote), "transcript") {
+		t.Fatalf("transcript search = %+v, want transcript match for %s", matches, transcriptNote)
+	}
+	if len(matchesForNote(matches, otherNote)) != 0 {
+		t.Fatalf("transcript search = %+v, must not contain unrelated note %s", matches, otherNote)
+	}
+	if got := searchMatches(t, srv, hdr, "termnotpresent", nil); len(got) != 0 {
+		t.Fatalf("absent term search = %+v, want no matches", got)
 	}
 }
 

@@ -15,6 +15,7 @@ interface Ctx {
   allNotes?: Note[]
   semanticNotes?: Note[]
   semanticMatches?: Record<string, SearchMatch[]>
+  semanticSearchAvailable?: boolean | null
   searchQuery?: string
   refresh: () => void
   folders: Folder[]
@@ -118,7 +119,7 @@ function OnboardingHint({ isEmbeddedMode }: { isEmbeddedMode: boolean }) {
 }
 
 export function NotesListScreen() {
-  const { notes, semanticNotes = [], semanticMatches = {}, folders, heading, view, loaded, refresh, searching, searchQuery = '', onReorderNote } = useOutletContext<Ctx>()
+  const { notes, semanticNotes = [], semanticMatches = {}, semanticSearchAvailable, folders, heading, view, loaded, refresh, searching, searchQuery = '', onReorderNote } = useOutletContext<Ctx>()
   const navigate = useNavigate()
   const [isEmbeddedMode, setIsEmbeddedMode] = useState(true)
   const showFolderOrdering = view.type === 'folder' && searchQuery.trim() === ''
@@ -156,7 +157,9 @@ export function NotesListScreen() {
       {searching && <Skeleton className="h-1 w-full mb-3" data-testid="search-loading" />}
       {notes.length === 0 && semanticNotes.length === 0 ? (
         searchQuery.trim() !== '' ? (
-          <EmptyState title="No matching notes" hint={`No notes matched "${searchQuery}". Try broader keywords or a different view.`} />
+          <EmptyState title="No matching notes" hint={semanticSearchAvailable === false
+            ? `No keyword matches for "${searchQuery}". Semantic search is unavailable, so related notes may not appear.`
+            : `No notes matched "${searchQuery}". Try broader keywords or a different view.`} />
         ) : view.type === 'folder' ? (
           <EmptyState title="This folder is empty" hint="Drag a note here or start a new meeting." />
         ) : view.type === 'list' ? (
