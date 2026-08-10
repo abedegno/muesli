@@ -6,6 +6,13 @@ import { seedNoteWithAudio, waitForMuesliConnection } from '../helpers/seed'
 
 test.setTimeout(180_000)
 
+// TEMPORARY DIAGNOSTIC (#585) -- NOT FOR MERGE. Types for the in-page probe below.
+type ProbeAttempt = { attempt: number; readyz: string; notes: string }
+type MuesliProbeBridge = {
+  getReadyz(): Promise<unknown>
+  listNotes(): Promise<{ title: string }[]>
+}
+
 async function launchApp({
   fakeTranscript,
   serverAddr,
@@ -76,6 +83,38 @@ test('recovers notes after an abnormal exit', async ({
     recoveredApp = await launchApp(launchOptions)
     const recoveredPage = await recoveredApp.firstWindow()
     await waitForMuesliConnection(recoveredPage)
+
+    // TEMPORARY DIAGNOSTIC (#585) -- NOT FOR MERGE.
+    // Decides whether the recovered notes load REJECTS (server not ready, and
+    // AppLayout never retries) or SUCCEEDS-EMPTY (a data/identity problem).
+    // Both render an identical empty list, so no amount of DOM inspection can
+    // separate them; only the call's own outcome can.
+    const probe = await recoveredPage.evaluate(async () => {
+      const bridge = (window as unknown as { muesli: MuesliProbeBridge }).muesli
+      const attempts: ProbeAttempt[] = []
+      for (let i = 0; i < 8; i++) {
+        let readyz: string
+        try {
+          readyz = JSON.stringify(await bridge.getReadyz())
+        } catch (err) {
+          readyz = `THREW: ${String(err)}`
+        }
+        let notes: string
+        try {
+          const list = await bridge.listNotes()
+          notes = `OK count=${list.length} titles=${JSON.stringify(list.map((n) => n.title))}`
+        } catch (err) {
+          notes = `REJECTED: ${String(err)}`
+        }
+        attempts.push({ attempt: i, readyz, notes })
+        await new Promise((r) => setTimeout(r, 2_500))
+      }
+      return attempts
+    })
+    for (const a of probe) {
+      console.log(`DIAG attempt=${a.attempt} readyz=${a.readyz} listNotes=${a.notes}`)
+    }
+
     await expect(recoveredPage.getByText(title)).toBeVisible({ timeout: 90_000 })
     await expect(recoveredPage.getByText('First run (create the account)')).toBeHidden()
   } finally {
