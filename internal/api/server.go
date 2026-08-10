@@ -144,6 +144,7 @@ func (s *Server) routes() {
 		r.Get("/api/notes/{id}", s.handleGetNote)
 		r.Delete("/api/notes/{id}", s.handleDeleteNote)
 		r.Post("/api/notes/{id}/duplicate", s.handleDuplicateNote)
+		r.Post("/api/notes/{id}/start-capture", s.handleStartNoteCapture)
 		r.Post("/api/notes/{id}/share", s.handleCreateShare)
 		r.Get("/api/notes/{id}/shares", s.handleListNoteShares)
 		r.Post("/api/export/batch", s.handleBatchExport)

@@ -15,7 +15,7 @@ describe('NoteListItem', () => {
   it('renders the monogram initial, title, snippet, status and relative time', () => {
     const recent = { ...note, created_at: new Date(Date.now() - 30_000).toISOString() }
     render(<NoteListItem note={recent} />)
-    expect(screen.getByText('S')).toBeInTheDocument()       // monogram
+    expect(screen.getByText('S')).toBeInTheDocument()
     expect(screen.getByText('Standup')).toBeInTheDocument()
     expect(screen.getByText('auth to prod')).toBeInTheDocument()
     expect(screen.getByText(/ready/i)).toBeInTheDocument()
@@ -59,5 +59,12 @@ describe('NoteListItem', () => {
 
     rerender(<NoteListItem note={{ ...note, folder_ids: [] }} folders={folders} />)
     expect(screen.queryByText('Work')).toBeNull()
+  })
+
+  it('shows an uncaptured fresh or duplicated note as Draft, never Recording', () => {
+    render(<NoteListItem note={{ ...note, title: 'Copy of Planning', status: 'draft' }} />)
+
+    expect(screen.getByText('Draft')).toBeInTheDocument()
+    expect(screen.queryByText('Recording')).not.toBeInTheDocument()
   })
 })

@@ -2,6 +2,8 @@ import type { NoteStatus } from '../../shared/types'
 
 export function statusLabel(s: NoteStatus): string {
   switch (s) {
+    case 'draft':
+      return 'Draft'
     case 'recording':
       return 'Recording'
     case 'uploaded':

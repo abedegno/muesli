@@ -19,6 +19,7 @@ async function createLinkedMeetingNote(
   try {
     const note = await muesli.createNote(event.title)
     await muesli.linkNoteEvent(note.id, event.id)
+    await muesli.startNoteCapture(note.id)
     refresh()
     navigate(`/notes/${note.id}?capture=1&autostart=1`, { replace: true })
   } catch (err) {
@@ -45,10 +46,15 @@ export function useMeetingDetectionLoop({ navigate, notify, refresh }: UseMeetin
     clearPrompt()
   }, [clearPrompt])
 
-  const handleAutoRecord = useCallback((payload: { noteId: string }) => {
+  const handleAutoRecord = useCallback(async (payload: { noteId: string }) => {
     clearPrompt()
-    navigate(`/notes/${payload.noteId}?capture=1&autostart=1`, { replace: true })
-  }, [clearPrompt, navigate])
+    try {
+      await muesli.startNoteCapture(payload.noteId)
+      navigate(`/notes/${payload.noteId}?capture=1&autostart=1`, { replace: true })
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Could not start meeting recording', 'error')
+    }
+  }, [clearPrompt, navigate, notify])
 
   useEffect(() => {
     void muesli.meetingDetectionRendererReady?.()
