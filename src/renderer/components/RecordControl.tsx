@@ -5,6 +5,8 @@ import { Button } from '@/components/ui/Button'
 import { useAnnouncer } from '@/hooks/useAnnouncer'
 import { loadAudioPrefs, saveAudioPrefs } from '@/lib/audioPrefs'
 import type { SysAudioStatus } from '../../main/systemAudioPermission'
+import { startMicrophonePreview, type MicrophonePreview } from '../audio/microphonePreview'
+import { AudioLevelMeter } from './AudioLevelMeter'
 
 export type RecordState = 'idle' | 'recording' | 'processing'
 
@@ -37,6 +39,7 @@ export function RecordControl({
   onGainChange,
   micError,
   onRetry,
+  recordingLevel = 0,
 }: {
   state: RecordState
   elapsedMs: number
@@ -49,6 +52,8 @@ export function RecordControl({
   micError?: Error | null
   /** Called when the user clicks Retry after a mic error. */
   onRetry?: () => void
+  /** Post-gain level reported by the active recording capture graph. */
+  recordingLevel?: number
 }) {
   const { announceAssertive } = useAnnouncer()
   const prevStateRef = useRef<RecordState>(state)
@@ -59,6 +64,9 @@ export function RecordControl({
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>(prefs.deviceId)
   const [gainPct, setGainPct] = useState<number>(Math.round(prefs.gain * 100))
   const [systemAudioStatus, setSystemAudioStatus] = useState<SysAudioStatus | null>(null)
+  const [previewLevel, setPreviewLevel] = useState(0)
+  const previewRef = useRef<MicrophonePreview | null>(null)
+  const previewGenerationRef = useRef(0)
 
   // Announce recording state changes via the live region.
   useEffect(() => {
@@ -86,6 +94,39 @@ export function RecordControl({
     ((micError as { code?: string }).code === 'mic-permission-denied' ||
       micError.name === 'NotAllowedError' ||
       micError.name === 'MicPermissionDeniedError')
+
+  useEffect(() => {
+    const generation = ++previewGenerationRef.current
+    const stopPreview = async () => {
+      const preview = previewRef.current
+      previewRef.current = null
+      await preview?.stop()
+    }
+    if (state !== 'idle' || isPermDenied || isDeviceInvalid) {
+      void stopPreview()
+      return
+    }
+    void (async () => {
+      await stopPreview()
+      try {
+        const preview = await startMicrophonePreview({
+          deviceId: selectedDeviceId,
+          gainLinear: gainPct / 100,
+          onLevel: (level) => {
+            if (previewGenerationRef.current === generation) setPreviewLevel(level)
+          },
+        })
+        if (previewGenerationRef.current !== generation) await preview.stop()
+        else previewRef.current = preview
+      } catch {
+        // The regular permission/device error UI handles unavailable previews.
+      }
+    })()
+    return () => {
+      previewGenerationRef.current = generation + 1
+      void stopPreview()
+    }
+  }, [gainPct, isDeviceInvalid, isPermDenied, selectedDeviceId, state])
 
   async function enumerateDevices() {
     try {
@@ -273,6 +314,8 @@ export function RecordControl({
         </select>
       </label>
 
+      <AudioLevelMeter level={state === 'recording' ? recordingLevel : previewLevel} />
+
       {/* Gain slider */}
       <label className="flex flex-col gap-1 text-sm">
         <span className="text-muted-foreground">Gain</span>
@@ -310,7 +353,16 @@ export function RecordControl({
       <div className="flex flex-col gap-3">
         {showSystemAudioNotice ? <SystemAudioNotice /> : null}
         {controls}
-        <Button variant="primary" onClick={onStart}>
+        <Button
+          variant="primary"
+          onClick={() => {
+            previewGenerationRef.current++
+            const preview = previewRef.current
+            previewRef.current = null
+            void preview?.stop()
+            onStart()
+          }}
+        >
           <Mic size={18} /> Record
         </Button>
       </div>

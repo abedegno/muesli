@@ -633,6 +633,7 @@ export function NoteScreen() {
   const [recordState, setRecordState] = useState<RecordState>('idle')
   const [elapsedMs, setElapsedMs] = useState(0)
   const [micError, setMicError] = useState<Error | null>(null)
+  const [microphoneLevel, setMicrophoneLevel] = useState(0)
   const [transcriptCopied, setTranscriptCopied] = useState(false)
   const [pendingUpload, setPendingUpload] = useState<{
     audio: ArrayBuffer
@@ -946,6 +947,7 @@ export function NoteScreen() {
         new ElectronCapture({
           deviceId: selectedDeviceId,
           gainLinear,
+          onLevel: setMicrophoneLevel,
           onPcmFrame: (frame) => {
             void muesli.sendNoteStreamAudio?.(id, frame)?.catch(() => {})
           },
@@ -1215,6 +1217,7 @@ export function NoteScreen() {
           setGainLinear(gain)
           saveAudioPrefs({ deviceId: selectedDeviceId, gain })
         }}
+        recordingLevel={microphoneLevel}
         onMicRetry={() => { setMicError(null); void start() }}
         disabledReason={recordDisabledReason}
         onTitleSaved={(t) => {

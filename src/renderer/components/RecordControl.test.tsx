@@ -47,6 +47,26 @@ function setPlatform(platform: string) {
 // ---------------------------------------------------------------------------
 
 describe('RecordControl', () => {
+  it.each(['idle', 'recording'] as const)(
+    'renders the microphone level meter next to the selector while %s',
+    (state) => {
+      mockEnumerateDevices([])
+      render(
+        <RecordControl
+          state={state}
+          elapsedMs={0}
+          onStart={() => {}}
+          onStop={() => {}}
+          recordingLevel={0.4}
+        />,
+      )
+      const selector = screen.getByRole('combobox', { name: /microphone/i })
+      const meter = screen.getByTestId('microphone-level-meter')
+      expect(selector.parentElement?.parentElement).toContainElement(meter)
+      expect(screen.getByRole('meter', { name: /microphone level/i })).toBeVisible()
+    },
+  )
+
   it('idle shows Record and calls onStart', async () => {
     mockEnumerateDevices([])
     const onStart = vi.fn()

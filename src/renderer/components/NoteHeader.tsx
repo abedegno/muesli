@@ -24,6 +24,7 @@ export function NoteHeader({
   onStop,
   onDeviceChange,
   onGainChange,
+  recordingLevel,
   onMicRetry,
   onTitleSaved,
   onDeleteNote,
@@ -54,6 +55,7 @@ export function NoteHeader({
   onStop: () => void
   onDeviceChange?: (deviceId: string | undefined) => void
   onGainChange?: (gainLinear: number) => void
+  recordingLevel?: number
   onMicRetry?: () => void
   onTitleSaved: (t: string) => void
   onDeleteNote: () => void
@@ -273,6 +275,7 @@ export function NoteHeader({
         onStop={onStop}
         onDeviceChange={onDeviceChange}
         onGainChange={onGainChange}
+        recordingLevel={recordingLevel}
         micError={micError}
         onRetry={onMicRetry}
         disabledReason={disabledReason}

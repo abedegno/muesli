@@ -51,6 +51,11 @@ function makeAudioContext(gainNode: ReturnType<typeof makeGainNode>) {
     createGain: vi.fn(() => gainNode),
     createMediaStreamDestination: vi.fn(() => destination),
     createChannelMerger: vi.fn(() => merger),
+    createAnalyser: vi.fn(() => ({
+      fftSize: 0,
+      getFloatTimeDomainData: vi.fn((samples: Float32Array) => samples.fill(0.25)),
+      disconnect: vi.fn(),
+    })),
     close: vi.fn().mockResolvedValue(undefined),
     source,
     destination,
@@ -89,6 +94,36 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('ElectronCapture', () => {
+  it('reports post-gain microphone levels from an analyser attached after the gain node', async () => {
+    const gainNode = makeGainNode()
+    const ctx = makeAudioContext(gainNode)
+    const rec = makeMediaRecorder()
+    let animationCallback: FrameRequestCallback | undefined
+    vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
+      animationCallback = callback
+      return 1
+    }))
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    vi.stubGlobal('AudioContext', vi.fn(() => ctx))
+    vi.stubGlobal('MediaRecorder', Object.assign(vi.fn(() => rec), {
+      isTypeSupported: vi.fn(() => true),
+    }))
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(makeMicStream()) },
+    })
+    const onLevel = vi.fn()
+
+    const capture = new ElectronCapture({ gainLinear: 0.5, onLevel })
+    await capture.start()
+    animationCallback?.(0)
+
+    const analyser = ctx.createAnalyser.mock.results[0].value
+    expect(gainNode.connect).toHaveBeenCalledWith(analyser)
+    expect(onLevel).toHaveBeenCalledWith(1)
+    await capture.stop()
+    expect(cancelAnimationFrame).toHaveBeenCalled()
+  })
+
   it('forwards deviceId constraint to getUserMedia', async () => {
     const gainNode = makeGainNode()
     const ctx = makeAudioContext(gainNode)
