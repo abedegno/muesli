@@ -116,13 +116,13 @@ describe('ipc handlers', () => {
     expect(cfg?.token).toMatch(/^app-/)
   })
 
-  it('finishes fresh embedded provisioning before an immediate createNote call', async () => {
+  it('finishes fresh embedded provisioning before immediate authenticated calls', async () => {
     const tokenStore = new TokenStore(dir, fakeSafe)
     const setup = vi.fn(async () => ({ id: 'u1', email: 'desktop@localhost' }))
     const login = vi.fn(async () => 'session-1')
     const createToken = vi.fn(async () => 'app-fresh')
     let readinessCalls = 0
-    const fetch = vi.fn(async (input: string | URL) => {
+    const fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
       const path = new URL(String(input)).pathname
       if (path === '/readyz') {
         readinessCalls++
@@ -134,6 +134,12 @@ describe('ipc handlers', () => {
       }
       if (path === '/api/notes') {
         expect(tokenStore.load()?.token).toBe('app-fresh')
+        if ((init?.method ?? 'GET') === 'GET') {
+          return new Response(JSON.stringify([]), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
         return new Response(JSON.stringify({ id: 'note-1', title: 'Fresh note', status: 'recording' }), {
           status: 201,
           headers: { 'Content-Type': 'application/json' },
@@ -156,11 +162,16 @@ describe('ipc handlers', () => {
       generatePassword: () => 'fresh-password',
     })
 
-    await expect(h.createNote('Fresh note')).resolves.toMatchObject({ id: 'note-1' })
+    const [note, notes] = await Promise.all([h.createNote('Fresh note'), h.listNotes()])
+    expect(note).toMatchObject({ id: 'note-1' })
+    expect(notes).toEqual([])
     expect(setup).toHaveBeenCalledWith('desktop@localhost', 'fresh-password')
     expect(login).toHaveBeenCalledWith('desktop@localhost', 'fresh-password')
     expect(createToken).toHaveBeenCalledWith('muesli-desktop', 'session-1')
     expect(readinessCalls).toBe(2)
+    expect(setup).toHaveBeenCalledTimes(1)
+    expect(login).toHaveBeenCalledTimes(1)
+    expect(createToken).toHaveBeenCalledTimes(1)
     expect(tokenStore.load()).toEqual({ serverUrl: 'http://127.0.0.1:9000', token: 'app-fresh' })
   })
 

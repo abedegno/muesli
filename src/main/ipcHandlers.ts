@@ -270,7 +270,27 @@ export function createHandlers(deps: HandlerDeps): Handlers {
   // Build an authenticated client from persisted config, or throw if absent.
   function authedClient(): MuesliClient {
     const cfg = tokenStore.load()
-    if (!cfg) throw new Error('not connected: no saved server/token')
+    if (!cfg) {
+      if (!deps.embedded) throw new Error('not connected: no saved server/token')
+
+      // Every authenticated IPC method uses authedClient, so defer the method
+      // call until the shared embedded-session attempt has finished. This
+      // closes the startup race for all handlers, not only createNote.
+      return new Proxy({} as MuesliClient, {
+        get(_target, prop) {
+          return async (...args: unknown[]) => {
+            const result = await establishLocalSession()
+            if (result !== 'connected') {
+              throw new Error(`local session is not connected: ${result}`)
+            }
+            const client = authedClient()
+            const method = Reflect.get(client, prop)
+            if (typeof method !== 'function') return method
+            return method.apply(client, args)
+          }
+        },
+      })
+    }
     const client = new MuesliClient({ baseUrl: cfg.serverUrl, token: cfg.token, fetch: fetchImpl })
     return new Proxy(client, {
       get(target, prop, receiver) {
@@ -508,7 +528,6 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     },
 
     async createNote(title) {
-      if (deps.embedded) await establishLocalSession()
       return authedClient().createNote(title)
     },
 

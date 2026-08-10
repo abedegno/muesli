@@ -2,6 +2,8 @@ import type { MuesliClient } from './muesliClient'
 import type { SecretStore } from './secretStore'
 import type { TokenStore } from './tokenStore'
 
+const DEFAULT_READINESS_DELAYS_MS = [0, 100, 200, 400, 800, ...Array<number>(15).fill(1000)]
+
 export type LocalSessionResult = 'connected' | 'needs-setup' | 'server-unreachable' | 'manual' | 'skipped'
 
 export interface LocalSessionDeps {
@@ -28,7 +30,7 @@ export async function ensureLocalSession(deps: LocalSessionDeps): Promise<LocalS
   // the first request racing the Go server's listen socket.
   const isReady = deps.isReady ?? (async () => true)
   const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
-  const delays = deps.readinessDelaysMs ?? [0, 100, 200, 400, 800, 1000, 1000, 1000]
+  const delays = deps.readinessDelaysMs ?? DEFAULT_READINESS_DELAYS_MS
   for (const [index, delay] of delays.entries()) {
     if (delay > 0) await sleep(delay)
     if (await isReady().catch(() => false)) break
