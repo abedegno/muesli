@@ -116,6 +116,44 @@ describe('ipc handlers', () => {
     expect(cfg?.token).toMatch(/^app-/)
   })
 
+  it('finishes fresh embedded provisioning before an immediate createNote call', async () => {
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    const setup = vi.fn(async () => ({ id: 'u1', email: 'desktop@localhost' }))
+    const login = vi.fn(async () => 'session-1')
+    const createToken = vi.fn(async () => 'app-fresh')
+    const fetch = vi.fn(async (input: string | URL) => {
+      const path = new URL(String(input)).pathname
+      if (path === '/api/notes') {
+        expect(tokenStore.load()?.token).toBe('app-fresh')
+        return new Response(JSON.stringify({ id: 'note-1', title: 'Fresh note', status: 'recording' }), {
+          status: 201,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response('unexpected', { status: 500 })
+    }) as typeof server.fetch
+    const h = createHandlers({
+      tokenStore,
+      fetch,
+      embedded: true,
+      embeddedBaseUrl: 'http://127.0.0.1:9000',
+      onProgress: () => {},
+      makeClient: () => ({
+        setupNeeded: vi.fn(async () => true),
+        setup,
+        login,
+        createToken,
+      }),
+      generatePassword: () => 'fresh-password',
+    })
+
+    await expect(h.createNote('Fresh note')).resolves.toMatchObject({ id: 'note-1' })
+    expect(setup).toHaveBeenCalledWith('desktop@localhost', 'fresh-password')
+    expect(login).toHaveBeenCalledWith('desktop@localhost', 'fresh-password')
+    expect(createToken).toHaveBeenCalledWith('muesli-desktop', 'session-1')
+    expect(tokenStore.load()).toEqual({ serverUrl: 'http://127.0.0.1:9000', token: 'app-fresh' })
+  })
+
   it('connect (login, not first run) skips setup', async () => {
     server.seedUser('o@example.com', 'password123')
     const h = makeHandlers()

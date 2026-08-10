@@ -253,6 +253,19 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     },
     log: deps.log,
   }
+  let localSessionPromise: Promise<LocalSessionResult> | null = null
+
+  // Renderer startup and direct IPC calls can race on a fresh install. Share
+  // one provisioning attempt so authenticated work cannot observe the token
+  // store between setup starting and createToken persisting the token.
+  function establishLocalSession(): Promise<LocalSessionResult> {
+    if (!localSessionPromise) {
+      localSessionPromise = ensureLocalSession(localSessionDeps).finally(() => {
+        localSessionPromise = null
+      })
+    }
+    return localSessionPromise
+  }
 
   // Build an authenticated client from persisted config, or throw if absent.
   function authedClient(): MuesliClient {
@@ -280,7 +293,7 @@ export function createHandlers(deps: HandlerDeps): Handlers {
   return {
     async getConfig() {
       try {
-        await ensureLocalSession(localSessionDeps)
+        await establishLocalSession()
       } catch (err) {
         deps.log?.('ensureLocalSession failed', err)
       }
@@ -291,7 +304,7 @@ export function createHandlers(deps: HandlerDeps): Handlers {
 
     async getLocalSessionStatus() {
       try {
-        return await ensureLocalSession(localSessionDeps)
+        return await establishLocalSession()
       } catch (err) {
         deps.log?.('ensureLocalSession failed', err)
         return 'server-unreachable'
@@ -495,6 +508,7 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     },
 
     async createNote(title) {
+      if (deps.embedded) await establishLocalSession()
       return authedClient().createNote(title)
     },
 
