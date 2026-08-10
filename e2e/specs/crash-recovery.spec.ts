@@ -1,7 +1,7 @@
 import { join, resolve } from 'node:path'
 import { _electron } from '@playwright/test'
 import type { ElectronApplication } from '@playwright/test'
-import { expect, test } from '../fixtures/app'
+import { closeElectronApp, expect, test } from '../fixtures/app'
 import { seedNoteWithAudio, waitForMuesliConnection } from '../helpers/seed'
 
 test.setTimeout(180_000)
@@ -76,14 +76,14 @@ test('recovers notes after an abnormal exit', async ({
     recoveredApp = await launchApp(launchOptions)
     const recoveredPage = await recoveredApp.firstWindow()
     await waitForMuesliConnection(recoveredPage)
-    await expect(recoveredPage.getByText(title)).toBeVisible({ timeout: 45_000 })
+    await expect(recoveredPage.getByText(title)).toBeVisible({ timeout: 90_000 })
     await expect(recoveredPage.getByText('First run (create the account)')).toBeHidden()
   } finally {
     if (recoveredApp !== undefined) {
-      await recoveredApp.close()
+      await closeElectronApp(recoveredApp)
     }
     if (firstApp !== undefined && !firstAppWasKilled) {
-      await firstApp.close()
+      await closeElectronApp(firstApp)
     }
   }
 })

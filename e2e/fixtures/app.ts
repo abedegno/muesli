@@ -13,6 +13,32 @@ type AppFixtures = {
   fakeTranscript: string
 }
 
+const APP_CLOSE_TIMEOUT_MS = 10_000
+
+export async function closeElectronApp(app: ElectronApplication): Promise<void> {
+  const appProcess = app.process()
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const closeTimedOut = new Promise<never>((_, reject) => {
+    timeout = setTimeout(
+      () => reject(new Error(`Electron app did not close within ${APP_CLOSE_TIMEOUT_MS}ms`)),
+      APP_CLOSE_TIMEOUT_MS
+    )
+  })
+
+  try {
+    await Promise.race([app.close(), closeTimedOut])
+  } catch (error) {
+    if (appProcess.exitCode === null && !appProcess.killed) {
+      appProcess.kill('SIGKILL')
+    }
+    if (!(error instanceof Error) || !error.message.includes('did not close within')) {
+      throw error
+    }
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout)
+  }
+}
+
 async function reservePort(): Promise<number> {
   const server = createServer()
   await new Promise<void>((resolveListen, reject) => {
@@ -91,7 +117,7 @@ export const test = base.extend<AppFixtures>({
     try {
       await use(app)
     } finally {
-      await app.close()
+      await closeElectronApp(app)
     }
   },
   page: async ({ electronApp }, use) => {
