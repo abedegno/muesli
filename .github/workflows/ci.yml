@@ -204,13 +204,18 @@ jobs:
         run: node scripts/check-e2e-defect-annotations.mjs
       - name: Run desktop E2E tests
         run: xvfb-run --auto-servernum npm run test:e2e
-      - name: Upload Playwright report
+      # playwright-report/ is produced by the HTML reporter, which this project
+      # does not configure, so this step uploaded nothing on every failing run --
+      # silently, because if-no-files-found was `ignore`. Traces (trace:
+      # 'retain-on-failure') are written to e2e/test-results/ instead.
+      # `warn` so the next time the path is wrong it is visible in the log.
+      - name: Upload Playwright traces
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
-          path: playwright-report/
-          if-no-files-found: ignore
+          name: playwright-traces
+          path: e2e/test-results/
+          if-no-files-found: warn
 
   client:
     name: client (node)
