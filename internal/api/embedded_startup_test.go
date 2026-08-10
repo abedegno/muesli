@@ -34,7 +34,7 @@ func TestEmbeddedStartup(t *testing.T) {
 				Detail:   "",
 				Percent:  100,
 				Ready:    true,
-				Degraded: false,
+				Degraded: true,
 			},
 		},
 		{

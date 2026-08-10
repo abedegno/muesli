@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { muesli } from '@/api'
 import type { EmbeddedStartupStatus } from '../../shared/types'
+import { AI_UNAVAILABLE_MESSAGE, OLLAMA_DOWNLOAD_URL } from './AgentUnavailableNotice'
 
 function formatPercent(percent?: number | null): string | null {
   if (typeof percent !== 'number' || !Number.isFinite(percent)) return null
@@ -39,7 +40,7 @@ function StartupBanner({
     <div className="border-b border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-950 dark:text-amber-100">
       <div className="mx-auto flex max-w-5xl items-start gap-3">
         <div className="min-w-0 flex-1">
-          <p className="font-medium">Install Ollama to enable summaries & search.</p>
+          <p className="font-medium">{AI_UNAVAILABLE_MESSAGE}</p>
           <p className="mt-1 text-amber-900/80 dark:text-amber-100/75">
             <button
               type="button"
@@ -50,7 +51,7 @@ function StartupBanner({
               Open AI settings
             </button>
             {' '}
-            <a className="underline underline-offset-2 hover:no-underline" href="https://ollama.com/download" target="_blank" rel="noreferrer" style={linkStyle}>
+            <a className="underline underline-offset-2 hover:no-underline" href={OLLAMA_DOWNLOAD_URL} target="_blank" rel="noreferrer" style={linkStyle}>
               Download Ollama
             </a>
             {' – '}

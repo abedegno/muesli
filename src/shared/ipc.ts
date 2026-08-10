@@ -30,6 +30,7 @@ export const IPC = {
   listPeople: 'muesli:listPeople',
   listCompanies: 'muesli:listCompanies',
   getInsights: 'muesli:getInsights',
+  getCapabilities: 'muesli:getCapabilities',
   listNoteActionItems: 'muesli:listNoteActionItems',
   listNoteLinks: 'muesli:listNoteLinks',
   listRelatedNotes: 'muesli:listRelatedNotes',
@@ -337,6 +338,7 @@ export interface MuesliBridge {
   listPeople(): Promise<PersonWithCompany[]>
   listCompanies(): Promise<CompanyWithCount[]>
   getInsights(from?: string, to?: string): Promise<InsightsResponse>
+  getCapabilities(): Promise<{ agentConfigured: boolean }>
   listNoteActionItems(noteId: string): Promise<ListNoteActionItemsResponse>
   listNoteLinks(id: string): Promise<NoteLinksResponse>
   listRelatedNotes(id: string): Promise<RelatedNote[]>

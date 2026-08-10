@@ -7,6 +7,8 @@ import { MonogramAvatar } from './MonogramAvatar'
 import { Input } from '@/components/ui/Input'
 import { Skeleton } from '@/components/ui/Skeleton'
 import type { CompanyWithCount, PersonWithCompany } from '../../shared/types'
+import { useAgentCapability } from '@/lib/agentCapability'
+import { AgentUnavailableNotice } from './AgentUnavailableNotice'
 
 type Tab = 'people' | 'companies'
 type SortMode = 'name' | 'recent'
@@ -119,6 +121,7 @@ function CompanyRow({ company, onOpen }: { company: CompanyWithCount; onOpen: ()
 }
 
 export function PeopleScreen() {
+  const agentConfigured = useAgentCapability()
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState<Tab>('people')
   const [sortMode, setSortMode] = useState<SortMode>('name')
@@ -189,6 +192,7 @@ export function PeopleScreen() {
 
   return (
     <div className="mx-auto max-w-3xl p-6">
+      {agentConfigured === false ? <div className="mb-4"><AgentUnavailableNotice compact /></div> : null}
       <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="font-serif text-xl font-semibold">People</h1>

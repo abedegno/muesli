@@ -240,6 +240,18 @@ describe('NoteHeader', () => {
     expect(screen.queryByRole('menuitem', { name: /re-run summary/i })).not.toBeInTheDocument()
   })
 
+  it('disables Re-run summary with a visible reason when no agent is configured', async () => {
+    const onResummarize = vi.fn()
+    const { props, unmount } = renderHeader(vi.fn(), vi.fn(), vi.fn(), onResummarize)
+    unmount()
+    render(<NoteHeader {...props} onResummarize={onResummarize} agentConfigured={false} />)
+    await userEvent.click(screen.getByRole('button', { name: /note actions/i }))
+    const reRunBtn = screen.getByRole('menuitem', { name: /re-run summary/i })
+    expect(reRunBtn).toBeDisabled()
+    expect(reRunBtn).toHaveTextContent('Agent plugin required')
+    expect(reRunBtn).toHaveAttribute('title', 'AI features need an agent plugin configured.')
+  })
+
   it('opens the enhance dialog and calls onRetranscribe with only the filled overrides', async () => {
     const user = userEvent.setup()
     const onRetranscribe = vi.fn().mockResolvedValue(undefined)

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/abedegno/muesli/internal/auth"
+	"github.com/abedegno/muesli/internal/crypto"
 	"github.com/abedegno/muesli/internal/model"
 )
 
@@ -668,6 +669,27 @@ func TestResummarizeAPI(t *testing.T) {
 	staleID, err := st.CreatePendingSummary(ctx, note.ID, tmpls[0].ID)
 	if err != nil {
 		t.Fatalf("CreatePendingSummary: %v", err)
+	}
+
+	// Without a configured agent, reject before queuing a job that the worker
+	// would necessarily skip.
+	rec = doJSON(t, srv, http.MethodPost, "/api/notes/"+note.ID+"/resummarize", nil, hdr)
+	if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "no default agent configured") {
+		t.Fatalf("resummarize without agent = %d %s, want 422 clear error", rec.Code, rec.Body)
+	}
+
+	cr, err := crypto.New("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	plug, err := st.CreatePlugin(ctx, cr, model.Plugin{
+		Kind: model.PluginAgent, Name: "test agent", EndpointURL: "http://agent.invalid", Enabled: true,
+	})
+	if err != nil {
+		t.Fatalf("CreatePlugin: %v", err)
+	}
+	if err := st.SetDefaultPlugin(ctx, plug.ID); err != nil {
+		t.Fatalf("SetDefaultPlugin: %v", err)
 	}
 
 	// With a transcript → 202.

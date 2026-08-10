@@ -5,11 +5,13 @@ import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { PeopleScreen } from './PeopleScreen'
 import type { CompanyWithCount, PersonWithCompany } from '../../shared/types'
+import { clearAgentCapabilityCache } from '@/lib/agentCapability'
 
-const { listPeopleMock, listCompaniesMock, navigateMock } = vi.hoisted(() => ({
+const { listPeopleMock, listCompaniesMock, navigateMock, getCapabilitiesMock } = vi.hoisted(() => ({
   listPeopleMock: vi.fn(),
   listCompaniesMock: vi.fn(),
   navigateMock: vi.fn(),
+  getCapabilitiesMock: vi.fn(),
 }))
 
 vi.mock('react-router-dom', () => ({
@@ -32,6 +34,7 @@ vi.mock('@/api', () => ({
   muesli: {
     listPeople: () => listPeopleMock(),
     listCompanies: () => listCompaniesMock(),
+    getCapabilities: () => getCapabilitiesMock(),
   },
 }))
 
@@ -41,6 +44,9 @@ beforeEach(() => {
   listPeopleMock.mockReset()
   listCompaniesMock.mockReset()
   navigateMock.mockReset()
+  getCapabilitiesMock.mockReset()
+  getCapabilitiesMock.mockResolvedValue({ agentConfigured: true })
+  clearAgentCapabilityCache()
 })
 
 const person = (over: Partial<PersonWithCompany> = {}): PersonWithCompany => ({
@@ -72,6 +78,15 @@ const company = (over: Partial<CompanyWithCount> = {}): CompanyWithCount => ({
 })
 
 describe('PeopleScreen', () => {
+  it('shows a non-blocking agent notice while preserving calendar-derived counts', async () => {
+    getCapabilitiesMock.mockResolvedValue({ agentConfigured: false })
+    listPeopleMock.mockResolvedValue([person()])
+    listCompaniesMock.mockResolvedValue([company()])
+    render(<PeopleScreen />)
+    expect(await screen.findByText(/AI features need an agent plugin configured/i)).toBeInTheDocument()
+    expect(await screen.findByText('1 people · 1 companies')).toBeInTheDocument()
+  })
+
   it('renders people with their name, email, and company', async () => {
     listPeopleMock.mockResolvedValue([person()])
     listCompaniesMock.mockResolvedValue([])

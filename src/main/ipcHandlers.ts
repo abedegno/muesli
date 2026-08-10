@@ -47,6 +47,7 @@ interface Handlers {
   listPeople(): Promise<PersonWithCompany[]>
   listCompanies(): Promise<CompanyWithCount[]>
   getInsights(from?: string, to?: string): Promise<InsightsResponse>
+  getCapabilities(): Promise<{ agentConfigured: boolean }>
   listNoteActionItems(noteId: string): Promise<ListNoteActionItemsResponse>
   listNoteLinks(id: string): Promise<NoteLinksResponse>
   listRelatedNotes(id: string): Promise<RelatedNote[]>
@@ -381,6 +382,10 @@ export function createHandlers(deps: HandlerDeps): Handlers {
 
     async getInsights(from, to) {
       return authedClient().getInsights(from, to)
+    },
+
+    async getCapabilities() {
+      return authedClient().getCapabilities()
     },
 
     async listNoteActionItems(noteId) {

@@ -3,6 +3,8 @@ import { muesli } from '@/api'
 import { EmptyState } from './EmptyState'
 import { Skeleton } from '@/components/ui/Skeleton'
 import type { InsightsResponse, MeetingCountByDay, MeetingHoursByWeek, PersonWithMeetingCount, CompanyWithMeetingCount, FolderWithMeetingCount } from '../../shared/types'
+import { useAgentCapability } from '@/lib/agentCapability'
+import { AgentUnavailableNotice } from './AgentUnavailableNotice'
 
 const DAY_FORMATTER = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' })
 const WEEK_FORMATTER = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' })
@@ -434,6 +436,7 @@ function DateRangeControl({
 }
 
 export function InsightsScreen() {
+  const agentConfigured = useAgentCapability()
   const [insights, setInsights] = useState<InsightsResponse | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [isFetching, setIsFetching] = useState(true)
@@ -574,6 +577,7 @@ export function InsightsScreen() {
 
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-6 p-6">
+      {agentConfigured === false ? <AgentUnavailableNotice compact /> : null}
       <div>
         <h1 className="font-serif text-xl font-semibold">Insights</h1>
         <p className="text-sm text-muted-foreground">Meeting trends and top collaborators across the selected range.</p>

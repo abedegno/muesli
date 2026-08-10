@@ -126,7 +126,7 @@ describe('EmbeddedStartupGate', () => {
     await act(async () => emit({ status: 'ready', degraded: true }))
 
     expect(screen.getByText('App body')).toBeInTheDocument()
-    expect(screen.getByText(/install ollama to enable summaries & search/i)).toBeInTheDocument()
+    expect(screen.getByText(/AI features need an agent plugin configured/i)).toBeInTheDocument()
     expect(screen.getByRole('link', { name: /download ollama/i })).toHaveAttribute('href', 'https://ollama.com/download')
     expect(screen.getByRole('link', { name: /learn more/i })).toHaveAttribute(
       'href',
@@ -181,7 +181,7 @@ describe('EmbeddedStartupGate', () => {
     const root = container.firstElementChild as HTMLElement
     expect(root).toHaveClass('flex', 'h-screen', 'min-h-screen', 'overflow-hidden')
     expect(root.children).toHaveLength(2)
-    expect((root.children[0] as HTMLElement)).toHaveTextContent(/install ollama to enable summaries & search/i)
+    expect((root.children[0] as HTMLElement)).toHaveTextContent(/AI features need an agent plugin configured/i)
     expect((root.children[1] as HTMLElement)).toHaveClass('min-h-0', 'flex-1')
     expect(screen.getByText('App body')).toBeInTheDocument()
   })

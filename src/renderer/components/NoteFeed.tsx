@@ -4,6 +4,8 @@ import { useToast } from '@/components/ui/Toast'
 import { NoteListItem } from './NoteListItem'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger } from '@/components/ui/ContextMenu'
 import type { Folder, Note } from '../../shared/types'
+import { useAgentCapability } from '@/lib/agentCapability'
+import { AI_UNAVAILABLE_MESSAGE } from './AgentUnavailableNotice'
 
 export type NoteGroup = { label: string; notes: Note[] }
 
@@ -20,13 +22,15 @@ export function FeedNoteRow({
 }) {
   const { notify } = useToast()
   const pinned = Boolean(note.pinned)
+  const agentConfigured = useAgentCapability()
 
   const run = async (fn: () => Promise<void>) => {
     try {
       await fn()
       refresh()
     } catch (err) {
-      notify(err instanceof Error ? err.message : String(err), 'error')
+      const message = err instanceof Error ? err.message : String(err)
+      notify(message === 'no default agent configured' ? AI_UNAVAILABLE_MESSAGE : message, 'error')
     }
   }
 
@@ -83,8 +87,14 @@ export function FeedNoteRow({
           </ContextMenuSubContent>
         </ContextMenuSub>
         <ContextMenuSeparator />
-        <ContextMenuItem onSelect={() => run(() => muesli.resummarize(note.id))}>
+        <ContextMenuItem
+          disabled={agentConfigured === false}
+          title={agentConfigured === false ? AI_UNAVAILABLE_MESSAGE : undefined}
+          onSelect={() => run(() => muesli.resummarize(note.id))}
+          className="data-[disabled]:cursor-not-allowed data-[disabled]:text-muted-foreground"
+        >
           Re-run summary
+          {agentConfigured === false ? <span className="text-xs">Agent plugin required</span> : null}
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>

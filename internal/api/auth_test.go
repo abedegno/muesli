@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/abedegno/muesli/internal/api"
+	"github.com/abedegno/muesli/internal/crypto"
 	"github.com/abedegno/muesli/internal/store"
 	"github.com/abedegno/muesli/internal/testutil"
 )
@@ -17,7 +18,11 @@ import (
 func newTestServer(t *testing.T) (*api.Server, *store.Store) {
 	t.Helper()
 	st := store.New(testutil.NewPool(t))
-	return api.NewServer(api.Deps{Store: st}), st
+	cr, err := crypto.New("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return api.NewServer(api.Deps{Store: st, Crypto: cr}), st
 }
 
 func doJSON(t *testing.T, srv *api.Server, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {

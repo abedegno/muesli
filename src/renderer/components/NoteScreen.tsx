@@ -18,6 +18,8 @@ import { LiveTranscriptPanel } from './LiveTranscriptPanel'
 import { tagIndex } from '@/lib/tagIndex'
 import { loadAudioPrefs, saveAudioPrefs } from '@/lib/audioPrefs'
 import { useAnnouncer } from '@/hooks/useAnnouncer'
+import { useAgentCapability } from '@/lib/agentCapability'
+import { AI_UNAVAILABLE_MESSAGE } from './AgentUnavailableNotice'
 // Lazy so TipTap (the renderer-bundle bulk) is only fetched when an editor mounts.
 const NoteEditor = lazy(() => import('./NoteEditor').then((m) => ({ default: m.NoteEditor })))
 import { NoteView } from './NoteView'
@@ -620,6 +622,7 @@ export function NoteScreen() {
   const { allNotes, folders, refresh } = useOutletContext<Ctx>()
   const { notify } = useToast()
   const { addUpload, updateUpload, addProcessing, updateProcessing } = useActivity()
+  const agentConfigured = useAgentCapability()
 
   const [full, setFull] = useState<FullNote | null>(null)
   const [templates, setTemplates] = useState<Template[]>([])
@@ -859,7 +862,8 @@ export function NoteScreen() {
         })
         .catch(() => {})
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Could not re-run the summary', 'error')
+      const message = err instanceof Error ? err.message : 'Could not re-run the summary'
+      notify(message === 'no default agent configured' ? AI_UNAVAILABLE_MESSAGE : message, 'error')
     }
   }
 
@@ -1232,6 +1236,7 @@ export function NoteScreen() {
         onDeleteNote={() => setConfirmDelete(true)}
         onDuplicate={duplicateNote}
         onResummarize={reRunSummary}
+        agentConfigured={agentConfigured !== false}
         onRetranscribe={full.note.status === 'ready' || full.note.status === 'failed' ? retranscribeNote : undefined}
         pinned={Boolean(full.note.pinned)}
         onTogglePinned={() => void togglePinned()}
