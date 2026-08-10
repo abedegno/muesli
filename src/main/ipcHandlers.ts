@@ -33,6 +33,7 @@ interface HandlerDeps {
 
 interface Handlers {
   getConfig(): Promise<ServerConfig | null>
+  hasLocalSession(): Promise<boolean>
   getManualServer(): Promise<boolean>
   getOnboarded(): Promise<boolean>
   setOnboarded(onboarded: boolean): Promise<void>
@@ -275,6 +276,11 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       const cfg = tokenStore.load()
       if (!cfg) return null
       return { ...cfg, manualServer: secretStore.getManualServer() }
+    },
+
+    async hasLocalSession() {
+      if (!(deps.embedded ?? false) || secretStore.getManualServer()) return false
+      return tokenStore.exists() || secretStore.loadCreds() !== null
     },
 
     async getManualServer() {

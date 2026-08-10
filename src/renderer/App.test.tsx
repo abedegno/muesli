@@ -5,6 +5,7 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Outlet, useLocation } from 'react-router-dom'
 
 const getConfig = vi.fn()
+const hasLocalSession = vi.fn()
 const getOnboarded = vi.fn()
 const authListeners: Array<(notice: { message: string }) => void> = []
 const startupListeners: Array<(status: import('../shared/types').EmbeddedStartupStatus) => void> = []
@@ -14,6 +15,7 @@ const connect = vi.fn()
 vi.mock('@/api', () => ({
   muesli: {
     getConfig: () => getConfig(),
+    hasLocalSession: () => hasLocalSession(),
     getOnboarded: () => getOnboarded(),
     onAuthInvalidated: (listener: (notice: { message: string }) => void) => {
       authListeners.push(listener)
@@ -57,6 +59,7 @@ vi.mock('./components/HomeScreen', () => ({
 import { App } from './App'
 
 afterEach(() => {
+  vi.useRealTimers()
   cleanup()
   vi.clearAllMocks()
   authListeners.splice(0, authListeners.length)
@@ -73,6 +76,92 @@ function emitTray(target: '/new' | '/settings') {
 }
 
 describe('App', () => {
+  it('keeps the startup state visible while an embedded local session reconnects', async () => {
+    vi.useFakeTimers()
+    hasLocalSession.mockResolvedValue(true)
+    getConfig
+      .mockResolvedValueOnce(null)
+      .mockRejectedValueOnce(new Error('connection refused'))
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ serverUrl: 'http://localhost:8080', token: 'app-token' })
+    getOnboarded.mockResolvedValue(true)
+
+    render(
+      <MemoryRouter>
+        <App />
+      </MemoryRouter>,
+    )
+
+    await act(async () => {
+      emitStartup({ status: 'ready', degraded: false })
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0)
+    })
+    expect(screen.getByText('Starting Muesli…')).toBeInTheDocument()
+    expect(screen.queryByText('Connect to Muesli')).not.toBeInTheDocument()
+    expect(screen.queryByText('First run (create the account)')).not.toBeInTheDocument()
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1750)
+    })
+
+    expect(screen.getByText('home app')).toBeInTheDocument()
+    expect(screen.queryByText('Connect to Muesli')).not.toBeInTheDocument()
+    expect(screen.queryByText('First run (create the account)')).not.toBeInTheDocument()
+    expect(getConfig).toHaveBeenCalledTimes(4)
+    vi.useRealTimers()
+  })
+
+  it('explains when the embedded local server remains unreachable without offering first-run setup', async () => {
+    vi.useFakeTimers()
+    hasLocalSession.mockResolvedValue(true)
+    getConfig.mockResolvedValue(null)
+    getOnboarded.mockResolvedValue(true)
+
+    render(
+      <MemoryRouter>
+        <App />
+      </MemoryRouter>,
+    )
+
+    await act(async () => {
+      emitStartup({ status: 'ready', degraded: false })
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3250)
+    })
+
+    expect(screen.getByRole('alert')).toHaveTextContent("Couldn't reach the local server")
+    expect(screen.queryByText('First run (create the account)')).not.toBeInTheDocument()
+    expect(getConfig).toHaveBeenCalledTimes(5)
+    vi.useRealTimers()
+  })
+
+  it('keeps the first-run connect path for a genuinely unconfigured install', async () => {
+    vi.useFakeTimers()
+    hasLocalSession.mockResolvedValue(false)
+    getConfig.mockResolvedValue(null)
+    getOnboarded.mockResolvedValue(false)
+
+    render(
+      <MemoryRouter>
+        <App />
+      </MemoryRouter>,
+    )
+
+    await act(async () => {
+      emitStartup({ status: 'ready', degraded: false })
+    })
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3250)
+    })
+
+    expect(screen.getByText('Connect to Muesli')).toBeInTheDocument()
+    expect(screen.getByText('First run (create the account)')).toBeInTheDocument()
+    expect(screen.getByRole('checkbox', { name: 'First run (create the account)' })).toBeVisible()
+  })
+
   it('switches to the reconnect screen when auth invalidation is signaled', async () => {
     getConfig.mockResolvedValue({ serverUrl: 'http://localhost:8080', token: 'app-token' })
     getOnboarded.mockResolvedValue(true)

@@ -4,7 +4,15 @@ import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
 import { INSECURE_CONNECTION_CODE } from '../../shared/url'
 
-export function ConnectScreen({ onConnected, message }: { onConnected: () => void; message?: string | null }) {
+export function ConnectScreen({
+  onConnected,
+  message,
+  showFirstRun = true,
+}: {
+  onConnected: () => void
+  message?: string | null
+  showFirstRun?: boolean
+}) {
   const [serverUrl, setServerUrl] = useState('http://localhost:8080')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -46,10 +54,12 @@ export function ConnectScreen({ onConnected, message }: { onConnected: () => voi
           <Field label="Server URL"><Input value={serverUrl} onChange={(e) => setServerUrl(e.target.value)} /></Field>
           <Field label="Email"><Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
           <Field label="Password"><Input type="password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
-          <label className="flex items-center gap-2 text-sm text-muted-foreground">
-            <input type="checkbox" checked={isFirstRun} onChange={(e) => setIsFirstRun(e.target.checked)} />
-            First run (create the account)
-          </label>
+          {showFirstRun && (
+            <label className="flex items-center gap-2 text-sm text-muted-foreground">
+              <input type="checkbox" checked={isFirstRun} onChange={(e) => setIsFirstRun(e.target.checked)} />
+              First run (create the account)
+            </label>
+          )}
           {insecureBlocked && (
             <div role="alert" className="rounded-[var(--radius)] border border-destructive/40 bg-destructive/10 p-2 text-sm">
               <p className="text-destructive">This server uses an unencrypted (HTTP) connection — your audio, notes, and password would be sent in the clear.</p>

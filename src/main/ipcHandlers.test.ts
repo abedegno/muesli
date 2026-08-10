@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -114,6 +114,27 @@ describe('ipc handlers', () => {
     const cfg = await h.getConfig()
     expect(cfg?.serverUrl).toBe('http://localhost')
     expect(cfg?.token).toMatch(/^app-/)
+  })
+
+  it('reports an existing embedded local session even when its token file is temporarily unreadable', async () => {
+    writeFileSync(join(dir, 'muesli-credentials.json'), '{incomplete')
+    const h = createHandlers({
+      tokenStore: new TokenStore(dir, fakeSafe),
+      fetch: server.fetch,
+      onProgress: () => {},
+      embedded: true,
+    })
+
+    await expect(h.hasLocalSession()).resolves.toBe(true)
+    await expect(h.getConfig()).resolves.toBeNull()
+  })
+
+  it('does not classify remote mode as an embedded local session', async () => {
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'https://muesli.example', token: 'app-token' })
+    const h = createHandlers({ tokenStore, fetch: server.fetch, onProgress: () => {} })
+
+    await expect(h.hasLocalSession()).resolves.toBe(false)
   })
 
   it('connect (login, not first run) skips setup', async () => {

@@ -7,6 +7,7 @@ describe('IPC channels', () => {
 
     expect(IPC.listNotes).toBe('muesli:listNotes')
     expect(IPC.getConfig).toBe('muesli:getConfig')
+    expect(IPC.hasLocalSession).toBe('muesli:hasLocalSession')
     expect(IPC.getOnboarded).toBe('muesli:getOnboarded')
     expect(IPC.setOnboarded).toBe('muesli:setOnboarded')
     expect(IPC.getKeepRunningInBackground).toBe('muesli:getKeepRunningInBackground')

@@ -59,6 +59,10 @@ export class TokenStore {
     }
   }
 
+  exists(): boolean {
+    return existsSync(this.path)
+  }
+
   save(config: ServerConfig): void {
     const canEncrypt = this.safe.isEncryptionAvailable()
     const tokenB64 = canEncrypt

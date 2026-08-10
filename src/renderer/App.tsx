@@ -8,6 +8,14 @@ import { ConnectScreen } from './components/ConnectScreen'
 import { NotesListScreen } from './components/NotesListScreen'
 import { AnnouncerProvider, AriaAnnouncer } from './components/AriaAnnouncer'
 
+const EMBEDDED_CONNECTION_RETRY_DELAYS_MS = [0, 250, 500, 1000, 1500]
+const LOCAL_SERVER_UNREACHABLE_MESSAGE =
+  "Couldn't reach the local server after waiting for it to start. You can try connecting again."
+
+function delay(ms: number) {
+  return new Promise<void>((resolve) => window.setTimeout(resolve, ms))
+}
+
 const NewMeetingScreen = lazy(() => import('./components/NewMeetingScreen').then(m => ({ default: m.NewMeetingScreen })))
 const HomeScreen = lazy(() => import('./components/HomeScreen').then(m => ({ default: m.HomeScreen })))
 const SettingsScreen = lazy(() => import('./components/SettingsScreen').then(m => ({ default: m.SettingsScreen })))
@@ -27,20 +35,41 @@ function AppContent() {
   const [connected, setConnected] = useState<boolean | null>(null)
   const [onboarded, setOnboarded] = useState<boolean | null>(null)
   const [connectMessage, setConnectMessage] = useState<string | null>(null)
+  const [hasLocalSession, setHasLocalSession] = useState(false)
   const navigate = useNavigate()
   async function refreshConnection() {
-    try {
-      const onboardedPromise = muesli.getOnboarded
-        ? muesli.getOnboarded().catch(() => false)
-        : Promise.resolve(false)
-      const [cfg, nextOnboarded] = await Promise.all([muesli.getConfig?.(), onboardedPromise])
-      setConnected(!!cfg)
-      setOnboarded(nextOnboarded ?? false)
-      if (cfg) setConnectMessage(null)
-    } catch {
-      setConnected(false)
-      setOnboarded(false)
+    const embedded = typeof muesli.onEmbeddedStartupStatus === 'function'
+    const savedLocalSession = embedded
+      ? await muesli.hasLocalSession?.().catch(() => false) ?? false
+      : false
+    setHasLocalSession(savedLocalSession)
+
+    const retryDelays = embedded ? EMBEDDED_CONNECTION_RETRY_DELAYS_MS : [0]
+    for (const retryDelay of retryDelays) {
+      if (retryDelay > 0) await delay(retryDelay)
+      try {
+        const onboardedPromise = muesli.getOnboarded
+          ? muesli.getOnboarded().catch(() => false)
+          : Promise.resolve(false)
+        const [cfg, nextOnboarded] = await Promise.all([muesli.getConfig?.(), onboardedPromise])
+        if (cfg) {
+          setConnected(true)
+          setOnboarded(nextOnboarded ?? false)
+          setConnectMessage(null)
+          return
+        }
+      } catch {
+        // A not-yet-listening embedded server is expected briefly during launch.
+      }
     }
+
+    const localSessionAfterRetries = embedded
+      ? await muesli.hasLocalSession?.().catch(() => savedLocalSession) ?? savedLocalSession
+      : false
+    setHasLocalSession(localSessionAfterRetries)
+    setConnectMessage(localSessionAfterRetries ? LOCAL_SERVER_UNREACHABLE_MESSAGE : null)
+    setConnected(false)
+    setOnboarded(false)
   }
 
   useEffect(() => {
@@ -66,7 +95,7 @@ function AppContent() {
     <AnnouncerProvider>
       <AriaAnnouncer />
       {connected === null && (
-        <div className="p-8 text-muted-foreground">Loading…</div>
+        <div className="p-8 text-muted-foreground">Starting Muesli…</div>
       )}
       {connected === false && (
         <ConnectScreen
@@ -75,6 +104,7 @@ function AppContent() {
             setConnected(true)
           }}
           message={connectMessage}
+          showFirstRun={!hasLocalSession}
         />
       )}
       {connected === true && onboarded === false && (

@@ -11,6 +11,7 @@ const bridge: MuesliBridge = {
     return () => ipcRenderer.removeListener(IPC.authInvalidated, wrapped)
   },
   getConfig: () => ipcRenderer.invoke(IPC.getConfig),
+  hasLocalSession: () => ipcRenderer.invoke(IPC.hasLocalSession),
   getManualServer: () => ipcRenderer.invoke(IPC.getManualServer),
   getOnboarded: () => ipcRenderer.invoke(IPC.getOnboarded),
   setOnboarded: (b) => ipcRenderer.invoke(IPC.setOnboarded, b),
