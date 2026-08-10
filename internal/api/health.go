@@ -10,6 +10,9 @@ import (
 // A nil prober (or a nil entry in the map) should use the default HTTP prober.
 type DepProber func(ctx context.Context, url string) error
 
+// DatabaseProber probes whether the database can currently serve queries.
+type DatabaseProber func(ctx context.Context) error
+
 // probeClient is used by defaultProber. It never follows redirects so that any
 // HTTP response (including 3xx) is treated as "the service is up". The timeout
 // is left at zero because defaultProber supplies a context deadline instead.
@@ -76,8 +79,20 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		{"embeddings", cfg.EmbeddingsURL},
 	}
 
-	deps := make(map[string]depStatus, len(specs))
+	deps := make(map[string]depStatus, len(specs)+1)
 	allOK := true
+	databaseProber := s.deps.DatabaseProber
+	if databaseProber == nil && s.deps.Store != nil {
+		databaseProber = s.deps.Store.Pool().Ping
+	}
+	if databaseProber == nil {
+		deps["database"] = depStatus{Configured: false, Ok: true}
+	} else if err := databaseProber(r.Context()); err != nil {
+		deps["database"] = depStatus{Configured: true, Ok: false, Error: err.Error()}
+		allOK = false
+	} else {
+		deps["database"] = depStatus{Configured: true, Ok: true}
+	}
 	for _, spec := range specs {
 		if spec.url == "" {
 			deps[spec.name] = depStatus{Configured: false, Ok: true}
