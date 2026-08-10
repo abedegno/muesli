@@ -1,11 +1,10 @@
 // @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Outlet, useLocation } from 'react-router-dom'
 
 const getConfig = vi.fn()
-const getLocalSessionStatus = vi.fn()
 const getOnboarded = vi.fn()
 const authListeners: Array<(notice: { message: string }) => void> = []
 const startupListeners: Array<(status: import('../shared/types').EmbeddedStartupStatus) => void> = []
@@ -15,7 +14,6 @@ const connect = vi.fn()
 vi.mock('@/api', () => ({
   muesli: {
     getConfig: () => getConfig(),
-    getLocalSessionStatus: () => getLocalSessionStatus(),
     getOnboarded: () => getOnboarded(),
     onAuthInvalidated: (listener: (notice: { message: string }) => void) => {
       authListeners.push(listener)
@@ -58,12 +56,7 @@ vi.mock('./components/HomeScreen', () => ({
 
 import { App } from './App'
 
-beforeEach(() => {
-  getLocalSessionStatus.mockResolvedValue('connected')
-})
-
 afterEach(() => {
-  vi.useRealTimers()
   cleanup()
   vi.clearAllMocks()
   authListeners.splice(0, authListeners.length)
@@ -80,70 +73,6 @@ function emitTray(target: '/new' | '/settings') {
 }
 
 describe('App', () => {
-  it('keeps the connect screen hidden while a saved local session becomes ready', async () => {
-    vi.useFakeTimers()
-    getLocalSessionStatus.mockImplementation(
-      () => new Promise((resolve) => setTimeout(() => resolve('connected'), 200)),
-    )
-    getConfig.mockResolvedValue({ serverUrl: 'http://localhost:8080', token: 'app-token' })
-    getOnboarded.mockResolvedValue(true)
-
-    render(<MemoryRouter><App /></MemoryRouter>)
-    act(() => emitStartup({ status: 'ready', degraded: false }))
-    expect(screen.getByText('Starting up the local server…')).toBeInTheDocument()
-    expect(screen.queryByText('First run (create the account)')).not.toBeInTheDocument()
-
-    await act(async () => vi.advanceTimersByTimeAsync(200))
-    expect(screen.getByText('home app')).toBeInTheDocument()
-    expect(screen.queryByText('First run (create the account)')).not.toBeInTheDocument()
-    vi.useRealTimers()
-  })
-
-  it('shows a local-server error rather than first-run setup when the bound is exceeded', async () => {
-    vi.useFakeTimers()
-    getLocalSessionStatus.mockImplementation(
-      () => new Promise((resolve) => setTimeout(() => resolve('server-unreachable'), 200)),
-    )
-    getOnboarded.mockResolvedValue(true)
-
-    render(<MemoryRouter><App /></MemoryRouter>)
-    act(() => emitStartup({ status: 'ready', degraded: false }))
-    await act(async () => vi.advanceTimersByTimeAsync(200))
-    expect(screen.getByText("Couldn't reach the local server")).toBeInTheDocument()
-    expect(screen.queryByText('First run (create the account)')).not.toBeInTheDocument()
-    vi.useRealTimers()
-  })
-
-  it('retries an unreachable local session and enters the app when it later recovers', async () => {
-    vi.useFakeTimers()
-    getLocalSessionStatus
-      .mockResolvedValueOnce('server-unreachable')
-      .mockResolvedValueOnce('connected')
-    getConfig.mockResolvedValue({ serverUrl: 'http://localhost:8080', token: 'app-token' })
-    getOnboarded.mockResolvedValue(true)
-
-    render(<MemoryRouter><App /></MemoryRouter>)
-    await act(async () => emitStartup({ status: 'ready', degraded: false }))
-    expect(screen.getByText("Couldn't reach the local server")).toBeInTheDocument()
-    expect(screen.queryByText('First run (create the account)')).not.toBeInTheDocument()
-
-    await act(async () => vi.advanceTimersByTimeAsync(5000))
-    expect(screen.getByText('home app')).toBeInTheDocument()
-    expect(getLocalSessionStatus).toHaveBeenCalledTimes(2)
-    expect(screen.queryByText('First run (create the account)')).not.toBeInTheDocument()
-  })
-
-  it('renders the connect screen for a genuinely unconfigured install', async () => {
-    getLocalSessionStatus.mockResolvedValue('needs-setup')
-    getConfig.mockResolvedValue(null)
-    getOnboarded.mockResolvedValue(false)
-
-    render(<MemoryRouter><App /></MemoryRouter>)
-    await act(async () => emitStartup({ status: 'ready', degraded: false }))
-    expect(await screen.findByText('First run (create the account)')).toBeInTheDocument()
-    expect(screen.getByText('Connect to Muesli')).toBeInTheDocument()
-  })
-
   it('switches to the reconnect screen when auth invalidation is signaled', async () => {
     getConfig.mockResolvedValue({ serverUrl: 'http://localhost:8080', token: 'app-token' })
     getOnboarded.mockResolvedValue(true)

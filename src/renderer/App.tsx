@@ -24,60 +24,33 @@ const CompanyDetailScreen = lazy(() => import('./components/CompanyDetailScreen'
 const NoteScreen = lazy(() => import('./components/NoteScreen').then((m) => ({ default: m.NoteScreen })))
 
 function AppContent() {
-  const [connection, setConnection] = useState<'starting' | 'connected' | 'needs-setup' | 'server-unreachable'>('starting')
+  const [connected, setConnected] = useState<boolean | null>(null)
   const [onboarded, setOnboarded] = useState<boolean | null>(null)
   const [connectMessage, setConnectMessage] = useState<string | null>(null)
   const navigate = useNavigate()
-  async function refreshConnection(): Promise<boolean> {
+  async function refreshConnection() {
     try {
-      setConnection('starting')
       const onboardedPromise = muesli.getOnboarded
         ? muesli.getOnboarded().catch(() => false)
         : Promise.resolve(false)
-      const localStatus = muesli.getLocalSessionStatus
-        ? await muesli.getLocalSessionStatus()
-        : null
-      if (localStatus === 'server-unreachable') {
-        setConnection('server-unreachable')
-        setOnboarded(false)
-        return true
-      }
       const [cfg, nextOnboarded] = await Promise.all([muesli.getConfig?.(), onboardedPromise])
-      const isConnected = !!cfg && localStatus !== 'needs-setup'
-      setConnection(isConnected ? 'connected' : 'needs-setup')
+      setConnected(!!cfg)
       setOnboarded(nextOnboarded ?? false)
       if (cfg) setConnectMessage(null)
-      return false
     } catch {
-      setConnection('server-unreachable')
+      setConnected(false)
       setOnboarded(false)
-      return true
     }
   }
 
   useEffect(() => {
-    let cancelled = false
-    let retryTimer: number | null = null
-
-    const connectWithRetries = async (attempt: number) => {
-      const shouldRetry = await refreshConnection()
-      if (cancelled || !shouldRetry || attempt >= 2) return
-      retryTimer = window.setTimeout(() => {
-        void connectWithRetries(attempt + 1)
-      }, 5000)
-    }
-
-    void connectWithRetries(0)
-    return () => {
-      cancelled = true
-      if (retryTimer !== null) window.clearTimeout(retryTimer)
-    }
+    void refreshConnection()
   }, [])
 
   useEffect(() => {
     const unsubscribe = muesli.onAuthInvalidated?.((notice) => {
       setConnectMessage(notice.message)
-      setConnection('needs-setup')
+      setConnected(false)
     })
     return unsubscribe
   }, [])
@@ -92,27 +65,19 @@ function AppContent() {
   return (
     <AnnouncerProvider>
       <AriaAnnouncer />
-      {connection === 'starting' && (
-        <div className="flex h-full items-center justify-center p-8 text-muted-foreground">Starting up the local server…</div>
+      {connected === null && (
+        <div className="p-8 text-muted-foreground">Loading…</div>
       )}
-      {connection === 'server-unreachable' && (
-        <div className="flex h-full items-center justify-center p-8">
-          <section className="max-w-xl rounded-[var(--radius)] border border-destructive/30 bg-card px-8 py-7 shadow-md">
-            <h1 className="text-2xl font-semibold tracking-tight">Couldn't reach the local server</h1>
-            <p className="mt-3 text-sm text-muted-foreground">Muesli could not finish starting its local server. Your saved account and notes have not been changed. Restart Muesli to try again.</p>
-          </section>
-        </div>
-      )}
-      {connection === 'needs-setup' && (
+      {connected === false && (
         <ConnectScreen
           onConnected={() => {
             setConnectMessage(null)
-            setConnection('connected')
+            setConnected(true)
           }}
           message={connectMessage}
         />
       )}
-      {connection === 'connected' && onboarded === false && (
+      {connected === true && onboarded === false && (
         <SetupWizard
           onDone={() => {
             void muesli.setOnboarded(true)
@@ -120,7 +85,7 @@ function AppContent() {
           }}
         />
       )}
-      {connection === 'connected' && onboarded === true && (
+      {connected === true && onboarded === true && (
         <Suspense fallback={<div className="p-8 text-muted-foreground">Loading…</div>}>
           <Routes>
             <Route element={<AppLayout />}>
@@ -134,7 +99,7 @@ function AppContent() {
                   <SettingsScreen
                     onDisconnected={() => {
                       setConnectMessage(null)
-                      setConnection('needs-setup')
+                      setConnected(false)
                     }}
                     onResetToBuiltIn={async () => {
                       setConnectMessage(null)
@@ -159,7 +124,7 @@ function AppContent() {
           </Routes>
         </Suspense>
       )}
-      {connection === 'connected' && onboarded === null && (
+      {connected === true && onboarded === null && (
         <div className="p-8 text-muted-foreground">Loading…</div>
       )}
     </AnnouncerProvider>

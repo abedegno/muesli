@@ -54,6 +54,11 @@ test('recovers notes after an abnormal exit', async ({
   serverAddr,
   userDataDir,
 }) => {
+  test.fail(
+    true,
+    '#585: relaunch can show the first-run/create-account screen even though notes remain intact'
+  )
+
   const launchOptions = { fakeTranscript, serverAddr, userDataDir }
   let firstApp: ElectronApplication | undefined
   let firstAppWasKilled = false

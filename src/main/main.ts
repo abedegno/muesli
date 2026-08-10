@@ -292,7 +292,6 @@ app.whenReady().then(async () => {
     })
 
     ipcMain.handle(IPC.getConfig, () => handlers.getConfig())
-    ipcMain.handle(IPC.getLocalSessionStatus, () => handlers.getLocalSessionStatus())
     ipcMain.handle(IPC.getManualServer, () => handlers.getManualServer())
     ipcMain.handle(IPC.getOnboarded, () => handlers.getOnboarded())
     ipcMain.handle(IPC.setOnboarded, (_e, onboarded: boolean) => handlers.setOnboarded(onboarded))

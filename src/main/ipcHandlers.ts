@@ -9,7 +9,7 @@ import type { AuthInvalidatedNotice } from '../shared/ipc'
 import type { UploadProgress } from './uploadMachine'
 import { ApiError, MuesliClient, type FetchLike, type NoteExportData } from './muesliClient'
 import type { SecretStore } from './secretStore'
-import { ensureLocalSession, type LocalSessionResult } from './localSession'
+import { ensureLocalSession } from './localSession'
 import { uploadAudioToNote } from './uploadMachine'
 import { TokenStore } from './tokenStore'
 
@@ -33,7 +33,6 @@ interface HandlerDeps {
 
 interface Handlers {
   getConfig(): Promise<ServerConfig | null>
-  getLocalSessionStatus(): Promise<LocalSessionResult>
   getManualServer(): Promise<boolean>
   getOnboarded(): Promise<boolean>
   setOnboarded(onboarded: boolean): Promise<void>
@@ -240,57 +239,13 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     },
     makeClient,
     generatePassword: deps.generatePassword ?? (() => ''),
-    isReady: async () => {
-      if (!fetchImpl) return false
-      try {
-        const res = await fetchImpl(new URL('/readyz', deps.embeddedBaseUrl ?? ''))
-        if (!res.ok) return false
-        const body = (await res.json()) as { status?: unknown }
-        return body.status === 'ready'
-      } catch {
-        return false
-      }
-    },
     log: deps.log,
-  }
-  let localSessionPromise: Promise<LocalSessionResult> | null = null
-
-  // Renderer startup and direct IPC calls can race on a fresh install. Share
-  // one provisioning attempt so authenticated work cannot observe the token
-  // store between setup starting and createToken persisting the token.
-  function establishLocalSession(): Promise<LocalSessionResult> {
-    if (!localSessionPromise) {
-      localSessionPromise = ensureLocalSession(localSessionDeps).finally(() => {
-        localSessionPromise = null
-      })
-    }
-    return localSessionPromise
   }
 
   // Build an authenticated client from persisted config, or throw if absent.
   function authedClient(): MuesliClient {
     const cfg = tokenStore.load()
-    if (!cfg) {
-      if (!deps.embedded) throw new Error('not connected: no saved server/token')
-
-      // Every authenticated IPC method uses authedClient, so defer the method
-      // call until the shared embedded-session attempt has finished. This
-      // closes the startup race for all handlers, not only createNote.
-      return new Proxy({} as MuesliClient, {
-        get(_target, prop) {
-          return async (...args: unknown[]) => {
-            const result = await establishLocalSession()
-            if (result !== 'connected') {
-              throw new Error(`local session is not connected: ${result}`)
-            }
-            const client = authedClient()
-            const method = Reflect.get(client, prop)
-            if (typeof method !== 'function') return method
-            return method.apply(client, args)
-          }
-        },
-      })
-    }
+    if (!cfg) throw new Error('not connected: no saved server/token')
     const client = new MuesliClient({ baseUrl: cfg.serverUrl, token: cfg.token, fetch: fetchImpl })
     return new Proxy(client, {
       get(target, prop, receiver) {
@@ -313,22 +268,13 @@ export function createHandlers(deps: HandlerDeps): Handlers {
   return {
     async getConfig() {
       try {
-        await establishLocalSession()
+        await ensureLocalSession(localSessionDeps)
       } catch (err) {
         deps.log?.('ensureLocalSession failed', err)
       }
       const cfg = tokenStore.load()
       if (!cfg) return null
       return { ...cfg, manualServer: secretStore.getManualServer() }
-    },
-
-    async getLocalSessionStatus() {
-      try {
-        return await establishLocalSession()
-      } catch (err) {
-        deps.log?.('ensureLocalSession failed', err)
-        return 'server-unreachable'
-      }
     },
 
     async getManualServer() {
