@@ -206,15 +206,22 @@ jobs:
         run: xvfb-run --auto-servernum npm run test:e2e
       # playwright-report/ is produced by the HTML reporter, which this project
       # does not configure, so this step uploaded nothing on every failing run --
-      # silently, because if-no-files-found was `ignore`. Traces (trace:
-      # 'retain-on-failure') are written to e2e/test-results/ instead.
-      # `warn` so the next time the path is wrong it is visible in the log.
+      # silently, because if-no-files-found was `ignore`.
+      #
+      # The traces (use: { trace: 'retain-on-failure' }) go to test-results/ at
+      # the REPO ROOT, not next to e2e/playwright.config.ts: Playwright defaults
+      # outputDir relative to the package.json directory, not the config
+      # directory. testDir is resolved relative to the config, which is what
+      # makes the wrong guess so easy. Verified by running a failing test
+      # through this exact layout before trusting it.
+      #
+      # `warn`, not `ignore`, so a wrong path says so instead of looking healthy.
       - name: Upload Playwright traces
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-traces
-          path: e2e/test-results/
+          path: test-results/
           if-no-files-found: warn
 
   client:
