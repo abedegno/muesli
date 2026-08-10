@@ -144,6 +144,16 @@ jobs:
           echo "LD_LIBRARY_PATH=$bundle_dir/postgres-full-linux-x64/lib" >> "$GITHUB_ENV"
       - run: go build ./...
       - run: go vet ./...
+      - name: Build parent-death integration binaries
+        run: |
+          bin_dir="$RUNNER_TEMP/parent-death-integration"
+          mkdir -p "$bin_dir"
+          go build -o "$bin_dir/muesli" ./cmd/muesli
+          go build -o "$bin_dir/whisper-cpp-transcriber" ./cmd/whisper-cpp-transcriber
+          go build -o "$bin_dir/whisper-cpp-streaming" ./cmd/whisper-cpp-streaming
+          echo "MUESLI_SERVER_BIN=$bin_dir/muesli" >> "$GITHUB_ENV"
+          echo "MUESLI_WHISPER_CPP_TRANSCRIBER_BIN=$bin_dir/whisper-cpp-transcriber" >> "$GITHUB_ENV"
+          echo "MUESLI_WHISPER_CPP_STREAMING_BIN=$bin_dir/whisper-cpp-streaming" >> "$GITHUB_ENV"
       - run: go test ./internal/embedded/... -run Integration -v
       - run: go test ./cmd/muesli/... -run TestEmbeddedMainE2E -v
 
