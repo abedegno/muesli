@@ -7,8 +7,6 @@ type MuesliWindow = Window & typeof globalThis & { muesli: MuesliBridge }
 test.setTimeout(120_000)
 
 test('uploaded note audio is decodable and seekable', async ({ page }) => {
-  test.fail(true, '#588: storage serves every object as application/octet-stream')
-
   await expect(page.getByRole('link', { name: 'All notes' })).toBeVisible({ timeout: 60_000 })
   const { noteId } = await seedNoteWithAudio(page, { title: 'Audio playback regression' })
   const grant = await page.evaluate(
