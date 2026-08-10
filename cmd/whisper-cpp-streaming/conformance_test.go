@@ -108,8 +108,11 @@ func assertDownloadingEvent(t *testing.T, baseURL string) {
 		t.Fatal(err)
 	}
 	event := readWireEvent(t, conn)
-	if event.Type != "error" || !strings.Contains(event.Message, "downloading") {
-		t.Fatalf("initial event = %+v, want downloading error", event)
+	if event.Type != "loading" {
+		t.Fatalf("initial event = %+v, want loading event", event)
+	}
+	if event = readWireEvent(t, conn); event.Type != "ready" {
+		t.Fatalf("event after loading = %+v, want ready", event)
 	}
 }
 

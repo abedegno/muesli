@@ -35,11 +35,11 @@ func (e *Engine) Status() (string, string, int) { return e.whisper.Status() }
 func (e *Engine) StartStream(_ context.Context, req pluginkit.StreamingStartRequest) (pluginkit.StreamingEngineSession, error) {
 	status, model, _ := e.whisper.Status()
 	if status != "ready" {
-		e.startLoading()
 		if status == "error" {
-			return nil, fmt.Errorf("model %s is retrying download", model)
+			return nil, fmt.Errorf("model %s failed to load", model)
 		}
-		return nil, fmt.Errorf("model %s is downloading; retry shortly", model)
+		e.startLoading()
+		return nil, fmt.Errorf("model %s is loading: %w", model, pluginkit.ErrStreamingModelLoading)
 	}
 	if req.SampleRate <= 0 || req.Channels <= 0 {
 		return nil, errors.New("sample rate and channels must be positive")

@@ -163,4 +163,25 @@ describe('LiveTranscriptPanel', () => {
     expect(await screen.findByTestId('live-transcript-unavailable')).toBeInTheDocument()
     expect(screen.queryByTestId('live-transcript-panel')).not.toBeInTheDocument()
   })
+
+  it('stays visible with distinct startup copy while loading, then transitions to listening and segments', async () => {
+	const source = createSource()
+	render(<LiveTranscriptPanel noteId="note-1" isRecording source={source} />)
+
+	act(() => source.emit({ noteId: 'note-1', type: 'loading' }))
+
+	expect(await screen.findByTestId('live-transcript-panel')).toBeVisible()
+	expect(screen.getByText(/Starting the transcription engine/)).toBeInTheDocument()
+	expect(screen.queryByText('Listening…')).not.toBeInTheDocument()
+
+	act(() => source.emit({ noteId: 'note-1', type: 'live' }))
+	expect(screen.getByText('Listening…')).toBeInTheDocument()
+	expect(screen.queryByText(/Starting the transcription engine/)).not.toBeInTheDocument()
+
+	act(() => source.emit({
+		noteId: 'note-1', type: 'segment', text: 'Ready now', start_ms: 0, end_ms: 100,
+		speaker: null, provisional: true, final: true,
+	}))
+	expect(screen.getByText('Ready now')).toBeInTheDocument()
+  })
 })

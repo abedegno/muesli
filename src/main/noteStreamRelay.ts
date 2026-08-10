@@ -7,7 +7,7 @@ interface NoteStreamRelayDeps {
   emit: (event: NoteStreamEvent) => void
 }
 
-type StreamStatus = 'idle' | 'connecting' | 'live' | 'unavailable' | 'dropped'
+type StreamStatus = 'idle' | 'connecting' | 'loading' | 'live' | 'unavailable' | 'dropped'
 
 class ActiveStream {
   private readonly pendingFrames: ArrayBuffer[] = []
@@ -60,6 +60,16 @@ class ActiveStream {
         this.pendingFrames.length = 0
         this.emit({ noteId: this.noteId, type: 'unavailable' })
         this.close()
+        return
+      }
+      if (message.type === 'loading') {
+        this.status = 'loading'
+        this.emit({ noteId: this.noteId, type: 'loading' })
+        return
+      }
+      if (message.type === 'ready') {
+        this.status = 'live'
+        this.emit({ noteId: this.noteId, type: 'live' })
         return
       }
       if (message.type === 'segment') {

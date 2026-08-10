@@ -8,11 +8,16 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
 
 const defaultMaxStreamingSessions = 2
+
+// ErrStreamingModelLoading tells the streaming server that the engine has
+// started warming up and the session should remain open until it is ready.
+var ErrStreamingModelLoading = errors.New("streaming model is loading")
 
 // StreamingStartRequest describes the audio negotiated by a streaming client.
 type StreamingStartRequest struct {
@@ -111,7 +116,7 @@ func (h *streamingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	session, err := h.engine.StartStream(ctx, start)
+	session, err := h.startSession(ctx, conn, start)
 	if err != nil {
 		_ = writeStreamingEvent(conn, StreamingEvent{Type: "error", Message: err.Error()})
 		return
@@ -156,6 +161,27 @@ func (h *streamingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			}
 			_ = writeStreamingEvent(conn, StreamingEvent{Type: "error", Message: "invalid streaming control frame"})
 			return
+		}
+	}
+}
+
+func (h *streamingHandler) startSession(ctx context.Context, conn *websocket.Conn, start StreamingStartRequest) (StreamingEngineSession, error) {
+	loadingSent := false
+	for {
+		session, err := h.engine.StartStream(ctx, start)
+		if !errors.Is(err, ErrStreamingModelLoading) {
+			return session, err
+		}
+		if !loadingSent {
+			if err := writeStreamingEvent(conn, StreamingEvent{Type: "loading"}); err != nil {
+				return nil, err
+			}
+			loadingSent = true
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(100 * time.Millisecond):
 		}
 	}
 }
