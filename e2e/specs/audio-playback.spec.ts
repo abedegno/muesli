@@ -6,9 +6,12 @@ type MuesliWindow = Window & typeof globalThis & { muesli: MuesliBridge }
 
 test.setTimeout(120_000)
 
-test('uploaded note audio is decodable and seekable', async ({ page }) => {
-  test.fail(true, '#588: storage serves every object as application/octet-stream')
+// Skipped, not test.fail: the spec never reaches its assertions -- the renderer
+// rejects the media URL before decoding, so we do NOT know whether #588 reproduces.
+// test.fail would claim we do. See #621.
+test.skip(true, 'blocked by the renderer URL safety check; see #621')
 
+test('uploaded note audio is decodable and seekable', async ({ page }) => {
   await expect(page.getByRole('link', { name: 'All notes' })).toBeVisible({ timeout: 60_000 })
   const { noteId } = await seedNoteWithAudio(page, { title: 'Audio playback regression' })
   const grant = await page.evaluate(

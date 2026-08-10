@@ -186,6 +186,10 @@ jobs:
           echo "MUESLI_EMBEDDED_PGVECTOR_DIR=$bundle_dir/postgres-full-linux-x64" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=$bundle_dir/postgres-full-linux-x64/lib" >> "$GITHUB_ENV"
       - run: npm ci
+      - name: Install ffmpeg
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg
       - name: Build fake plugins
         run: |
           mkdir -p e2e/.bin
