@@ -39,11 +39,6 @@ function AppContent() {
   const navigate = useNavigate()
   async function refreshConnection() {
     const embedded = typeof muesli.onEmbeddedStartupStatus === 'function'
-    const savedLocalSession = embedded
-      ? await muesli.hasLocalSession?.().catch(() => false) ?? false
-      : false
-    setHasLocalSession(savedLocalSession)
-
     const retryDelays = embedded ? EMBEDDED_CONNECTION_RETRY_DELAYS_MS : [0]
     for (const retryDelay of retryDelays) {
       if (retryDelay > 0) await delay(retryDelay)
@@ -53,6 +48,10 @@ function AppContent() {
           : Promise.resolve(false)
         const [cfg, nextOnboarded] = await Promise.all([muesli.getConfig?.(), onboardedPromise])
         if (cfg) {
+          const savedLocalSession = embedded
+            ? await muesli.hasLocalSession?.().catch(() => true) ?? true
+            : false
+          setHasLocalSession(savedLocalSession)
           setConnected(true)
           setOnboarded(nextOnboarded ?? false)
           setConnectMessage(null)
@@ -64,7 +63,7 @@ function AppContent() {
     }
 
     const localSessionAfterRetries = embedded
-      ? await muesli.hasLocalSession?.().catch(() => savedLocalSession) ?? savedLocalSession
+      ? await muesli.hasLocalSession?.().catch(() => false) ?? false
       : false
     setHasLocalSession(localSessionAfterRetries)
     setConnectMessage(localSessionAfterRetries ? LOCAL_SERVER_UNREACHABLE_MESSAGE : null)

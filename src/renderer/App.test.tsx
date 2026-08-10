@@ -11,11 +11,18 @@ const authListeners: Array<(notice: { message: string }) => void> = []
 const startupListeners: Array<(status: import('../shared/types').EmbeddedStartupStatus) => void> = []
 const trayListeners: Array<(target: '/new' | '/settings') => void> = []
 const connect = vi.fn()
+const startupCalls: string[] = []
 
 vi.mock('@/api', () => ({
   muesli: {
-    getConfig: () => getConfig(),
-    hasLocalSession: () => hasLocalSession(),
+    getConfig: () => {
+      startupCalls.push('getConfig')
+      return getConfig()
+    },
+    hasLocalSession: () => {
+      startupCalls.push('hasLocalSession')
+      return hasLocalSession()
+    },
     getOnboarded: () => getOnboarded(),
     onAuthInvalidated: (listener: (notice: { message: string }) => void) => {
       authListeners.push(listener)
@@ -65,6 +72,7 @@ afterEach(() => {
   authListeners.splice(0, authListeners.length)
   startupListeners.splice(0, startupListeners.length)
   trayListeners.splice(0, trayListeners.length)
+  startupCalls.splice(0, startupCalls.length)
 })
 
 function emitStartup(status: import('../shared/types').EmbeddedStartupStatus) {
@@ -110,6 +118,7 @@ describe('App', () => {
     expect(screen.queryByText('Connect to Muesli')).not.toBeInTheDocument()
     expect(screen.queryByText('First run (create the account)')).not.toBeInTheDocument()
     expect(getConfig).toHaveBeenCalledTimes(4)
+    expect(startupCalls[0]).toBe('getConfig')
     vi.useRealTimers()
   })
 

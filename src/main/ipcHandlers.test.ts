@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FakeServer } from '../../test/fakeServer'
 import { createHandlers } from './ipcHandlers'
-import { type SecretStore } from './secretStore'
+import { SecretStore } from './secretStore'
 import { TokenStore, type SafeStorageLike } from './tokenStore'
 
 const fakeSafe: SafeStorageLike = {
@@ -127,6 +127,20 @@ describe('ipc handlers', () => {
 
     await expect(h.hasLocalSession()).resolves.toBe(true)
     await expect(h.getConfig()).resolves.toBeNull()
+  })
+
+  it('does not treat an onboarded-only marker as an existing embedded session', async () => {
+    const secretStore = new SecretStore(dir, fakeSafe)
+    secretStore.setOnboarded(true)
+    const h = createHandlers({
+      tokenStore: new TokenStore(dir, fakeSafe),
+      secretStore,
+      fetch: server.fetch,
+      onProgress: () => {},
+      embedded: true,
+    })
+
+    await expect(h.hasLocalSession()).resolves.toBe(false)
   })
 
   it('does not classify remote mode as an embedded local session', async () => {
