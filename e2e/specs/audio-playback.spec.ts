@@ -6,14 +6,22 @@ type MuesliWindow = Window & typeof globalThis & { muesli: MuesliBridge }
 
 test.setTimeout(120_000)
 
-// Skipped, not test.fail: the spec never reaches its assertions -- the renderer
-// rejects the media URL before decoding, so we do NOT know whether #588 reproduces.
-// test.fail would claim we do. See #621.
-test.skip(true, 'blocked by the renderer URL safety check; see #621')
-
 test('uploaded note audio is decodable and seekable', async ({ page }) => {
   await expect(page.getByRole('link', { name: 'All notes' })).toBeVisible({ timeout: 60_000 })
   const { noteId } = await seedNoteWithAudio(page, { title: 'Audio playback regression' })
+
+  await page.getByRole('link', { name: 'All notes' }).click()
+  await page.getByRole('button', { name: 'Audio playback regression' }).click()
+  await page.getByRole('radio', { name: 'Transcript' }).click()
+
+  const audio = page.locator('audio[controls]')
+  await expect(audio).toBeVisible({ timeout: 30_000 })
+  await expect
+    .poll(() => audio.evaluate((element) => (element as HTMLAudioElement).readyState), {
+      timeout: 30_000,
+    })
+    .toBeGreaterThan(0)
+
   const grant = await page.evaluate(
     (id) => (window as MuesliWindow).muesli.getNoteAudioUrl(id),
     noteId
@@ -24,30 +32,14 @@ test('uploaded note audio is decodable and seekable', async ({ page }) => {
     throw new Error('Expected uploaded audio to have a URL grant')
   }
 
-  const playback = await page.evaluate(async (src) => {
-    const audio = document.createElement('audio')
-    audio.preload = 'metadata'
-    audio.src = src
-
-    await new Promise<void>((resolve) => {
-      const finish = (): void => {
-        clearTimeout(timeout)
-        audio.removeEventListener('loadedmetadata', finish)
-        audio.removeEventListener('error', finish)
-        resolve()
-      }
-      const timeout = window.setTimeout(finish, 10_000)
-      audio.addEventListener('loadedmetadata', finish, { once: true })
-      audio.addEventListener('error', finish, { once: true })
-      audio.load()
-    })
-
+  const playback = await audio.evaluate((element) => {
+    const audio = element as HTMLAudioElement
     return {
       error: audio.error === null ? null : { code: audio.error.code, message: audio.error.message },
       readyState: audio.readyState,
       duration: audio.duration,
     }
-  }, grant.url)
+  })
 
   expect(playback.error).toBeNull()
   expect(playback.readyState).toBeGreaterThan(0)
