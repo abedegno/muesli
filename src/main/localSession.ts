@@ -23,8 +23,12 @@ export interface LocalSessionDeps {
 }
 
 export async function ensureLocalSession(deps: LocalSessionDeps): Promise<LocalSessionResult> {
-  if (!deps.embedded) return 'skipped'
-  if (deps.secretStore.getManualServer()) return 'manual'
+  const finish = (result: LocalSessionResult): LocalSessionResult => {
+    deps.log?.(`[muesli-debug] local session -> ${result}`)
+    return result
+  }
+  if (!deps.embedded) return finish('skipped')
+  if (deps.secretStore.getManualServer()) return finish('manual')
   const token = deps.tokenStore.load()
   const creds = deps.secretStore.loadCreds()
 
@@ -36,10 +40,15 @@ export async function ensureLocalSession(deps: LocalSessionDeps): Promise<LocalS
   const delays = deps.readinessDelaysMs ?? DEFAULT_READINESS_DELAYS_MS
   for (const [index, delay] of delays.entries()) {
     if (delay > 0) await sleep(delay)
-    if (await isReady().catch(() => false)) break
-    if (index === delays.length - 1) return 'server-unreachable'
+    const ready = await isReady().catch((err) => {
+      deps.log?.(`[muesli-debug] readiness ${index + 1}/${delays.length} threw`, err)
+      return false
+    })
+    deps.log?.(`[muesli-debug] readiness ${index + 1}/${delays.length} -> ${ready}`)
+    if (ready) break
+    if (index === delays.length - 1) return finish('server-unreachable')
   }
-  if (token) return 'connected'
+  if (token) return finish('connected')
 
   const client = deps.makeClient(deps.baseUrl)
   const needs = await client.setupNeeded()
@@ -53,11 +62,11 @@ export async function ensureLocalSession(deps: LocalSessionDeps): Promise<LocalS
     await client.setup(sessionCreds.email, sessionCreds.password)
     deps.secretStore.saveCreds(sessionCreds)
   } else if (!sessionCreds) {
-    return 'needs-setup'
+    return finish('needs-setup')
   }
 
   const session = await client.login(sessionCreds.email, sessionCreds.password)
   const appToken = await client.createToken('muesli-desktop', session)
   deps.tokenStore.save({ serverUrl: deps.baseUrl, token: appToken })
-  return 'connected'
+  return finish('connected')
 }
