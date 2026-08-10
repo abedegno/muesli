@@ -114,6 +114,25 @@ describe('App', () => {
     vi.useRealTimers()
   })
 
+  it('retries an unreachable local session and enters the app when it later recovers', async () => {
+    vi.useFakeTimers()
+    getLocalSessionStatus
+      .mockResolvedValueOnce('server-unreachable')
+      .mockResolvedValueOnce('connected')
+    getConfig.mockResolvedValue({ serverUrl: 'http://localhost:8080', token: 'app-token' })
+    getOnboarded.mockResolvedValue(true)
+
+    render(<MemoryRouter><App /></MemoryRouter>)
+    await act(async () => emitStartup({ status: 'ready', degraded: false }))
+    expect(screen.getByText("Couldn't reach the local server")).toBeInTheDocument()
+    expect(screen.queryByText('First run (create the account)')).not.toBeInTheDocument()
+
+    await act(async () => vi.advanceTimersByTimeAsync(5000))
+    expect(screen.getByText('home app')).toBeInTheDocument()
+    expect(getLocalSessionStatus).toHaveBeenCalledTimes(2)
+    expect(screen.queryByText('First run (create the account)')).not.toBeInTheDocument()
+  })
+
   it('renders the connect screen for a genuinely unconfigured install', async () => {
     getLocalSessionStatus.mockResolvedValue('needs-setup')
     getConfig.mockResolvedValue(null)

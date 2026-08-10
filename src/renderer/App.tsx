@@ -28,7 +28,7 @@ function AppContent() {
   const [onboarded, setOnboarded] = useState<boolean | null>(null)
   const [connectMessage, setConnectMessage] = useState<string | null>(null)
   const navigate = useNavigate()
-  async function refreshConnection() {
+  async function refreshConnection(): Promise<boolean> {
     try {
       setConnection('starting')
       const onboardedPromise = muesli.getOnboarded
@@ -40,21 +40,38 @@ function AppContent() {
       if (localStatus === 'server-unreachable') {
         setConnection('server-unreachable')
         setOnboarded(false)
-        return
+        return true
       }
       const [cfg, nextOnboarded] = await Promise.all([muesli.getConfig?.(), onboardedPromise])
       const isConnected = !!cfg && localStatus !== 'needs-setup'
       setConnection(isConnected ? 'connected' : 'needs-setup')
       setOnboarded(nextOnboarded ?? false)
       if (cfg) setConnectMessage(null)
+      return false
     } catch {
       setConnection('server-unreachable')
       setOnboarded(false)
+      return true
     }
   }
 
   useEffect(() => {
-    void refreshConnection()
+    let cancelled = false
+    let retryTimer: number | null = null
+
+    const connectWithRetries = async (attempt: number) => {
+      const shouldRetry = await refreshConnection()
+      if (cancelled || !shouldRetry || attempt >= 2) return
+      retryTimer = window.setTimeout(() => {
+        void connectWithRetries(attempt + 1)
+      }, 5000)
+    }
+
+    void connectWithRetries(0)
+    return () => {
+      cancelled = true
+      if (retryTimer !== null) window.clearTimeout(retryTimer)
+    }
   }, [])
 
   useEffect(() => {

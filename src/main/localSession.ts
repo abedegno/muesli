@@ -2,7 +2,10 @@ import type { MuesliClient } from './muesliClient'
 import type { SecretStore } from './secretStore'
 import type { TokenStore } from './tokenStore'
 
-const DEFAULT_READINESS_DELAYS_MS = [0, 100, 200, 400, 800, ...Array<number>(15).fill(1000)]
+// Allow crash-recovery WAL replay ample time while remaining below the
+// renderer/E2E visibility budget. The zero-delay probe keeps the normal path
+// immediate; only an unavailable database consumes the trailing retries.
+const DEFAULT_READINESS_DELAYS_MS = [0, 100, 200, 400, 800, ...Array<number>(32).fill(1000)]
 
 export type LocalSessionResult = 'connected' | 'needs-setup' | 'server-unreachable' | 'manual' | 'skipped'
 
