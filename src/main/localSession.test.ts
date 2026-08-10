@@ -2,6 +2,46 @@ import { describe, expect, it, vi } from 'vitest'
 import { ensureLocalSession } from './localSession'
 
 describe('ensureLocalSession', () => {
+  it('waits for readiness before trusting an existing token', async () => {
+    const isReady = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValue(true)
+    const sleep = vi.fn(async () => {})
+    const out = await ensureLocalSession({
+      embedded: true,
+      baseUrl: 'http://localhost:8080',
+      tokenStore: { load: () => ({ serverUrl: 'http://localhost:8080', token: 'saved' }), save: vi.fn() },
+      secretStore: { loadCreds: () => null, saveCreds: vi.fn(), getManualServer: () => false },
+      makeClient: vi.fn(),
+      generatePassword: () => 'unused',
+      isReady,
+      sleep,
+      readinessDelaysMs: [0, 10, 20],
+    })
+
+    expect(out).toBe('connected')
+    expect(isReady).toHaveBeenCalledTimes(3)
+    expect(sleep).toHaveBeenCalledTimes(2)
+  })
+
+  it('returns server-unreachable without clearing an existing token when readiness stays false', async () => {
+    const token = { serverUrl: 'http://localhost:8080', token: 'saved' }
+    const tokenStore = { load: vi.fn(() => token), save: vi.fn() }
+    const out = await ensureLocalSession({
+      embedded: true,
+      baseUrl: token.serverUrl,
+      tokenStore,
+      secretStore: { loadCreds: () => null, saveCreds: vi.fn(), getManualServer: () => false },
+      makeClient: vi.fn(),
+      generatePassword: () => 'unused',
+      isReady: async () => false,
+      sleep: async () => {},
+      readinessDelaysMs: [0, 10],
+    })
+
+    expect(out).toBe('server-unreachable')
+    expect(tokenStore.load()).toEqual(token)
+    expect(tokenStore.save).not.toHaveBeenCalled()
+  })
+
   it('provisions a fresh embedded install', async () => {
     const tokenStore = {
       load: vi.fn(() => null),

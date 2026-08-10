@@ -14,6 +14,7 @@ import type { ExportOptions } from './export'
  */
 export const IPC = {
   getConfig: 'muesli:getConfig',
+  getLocalSessionStatus: 'muesli:getLocalSessionStatus',
   authInvalidated: 'muesli:authInvalidated',
   getManualServer: 'muesli:getManualServer',
   getOnboarded: 'muesli:getOnboarded',
@@ -322,6 +323,7 @@ export interface MuesliBridge {
   platform: NodeJS.Platform
   onAuthInvalidated?(listener: (notice: AuthInvalidatedNotice) => void): () => void
   getConfig(): Promise<ServerConfig | null>
+  getLocalSessionStatus?(): Promise<'connected' | 'needs-setup' | 'server-unreachable' | 'manual' | 'skipped'>
   getManualServer(): Promise<boolean>
   getOnboarded(): Promise<boolean>
   setOnboarded(b: boolean): Promise<void>

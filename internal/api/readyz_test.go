@@ -120,6 +120,59 @@ func TestReadyz_OneDepUnreachable(t *testing.T) {
 	}
 }
 
+func TestReadyz_DatabaseUnreachable(t *testing.T) {
+	t.Parallel()
+
+	srv := NewServer(Deps{
+		DatabaseProber: func(context.Context) error { return fmt.Errorf("database is recovering") },
+	})
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503, got %d", rec.Code)
+	}
+	var resp readyzResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	database := resp.Deps["database"]
+	if database.Ok || database.Error == "" {
+		t.Fatalf("database status = %#v, want failed probe", database)
+	}
+}
+
+func TestReadyz_DatabaseReachable(t *testing.T) {
+	t.Parallel()
+
+	calls := 0
+	srv := NewServer(Deps{
+		DatabaseProber: func(context.Context) error {
+			calls++
+			return nil
+		},
+	})
+	for range 2 {
+		req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+		rec := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("want 200, got %d", rec.Code)
+		}
+		var resp readyzResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		if database := resp.Deps["database"]; !database.Ok {
+			t.Fatalf("database status = %#v, want ok", database)
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("database probe calls = %d, want one per request", calls)
+	}
+}
+
 func TestReadyz_NoDepsConfigured(t *testing.T) {
 	t.Parallel()
 

@@ -9,7 +9,7 @@ import type { AuthInvalidatedNotice } from '../shared/ipc'
 import type { UploadProgress } from './uploadMachine'
 import { ApiError, MuesliClient, type FetchLike, type NoteExportData } from './muesliClient'
 import type { SecretStore } from './secretStore'
-import { ensureLocalSession } from './localSession'
+import { ensureLocalSession, type LocalSessionResult } from './localSession'
 import { uploadAudioToNote } from './uploadMachine'
 import { TokenStore } from './tokenStore'
 
@@ -33,6 +33,7 @@ interface HandlerDeps {
 
 interface Handlers {
   getConfig(): Promise<ServerConfig | null>
+  getLocalSessionStatus(): Promise<LocalSessionResult>
   getManualServer(): Promise<boolean>
   getOnboarded(): Promise<boolean>
   setOnboarded(onboarded: boolean): Promise<void>
@@ -239,6 +240,17 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     },
     makeClient,
     generatePassword: deps.generatePassword ?? (() => ''),
+    isReady: async () => {
+      if (!fetchImpl) return false
+      try {
+        const res = await fetchImpl(new URL('/readyz', deps.embeddedBaseUrl ?? ''))
+        if (!res.ok) return false
+        const body = (await res.json()) as { status?: unknown }
+        return body.status === 'ready'
+      } catch {
+        return false
+      }
+    },
     log: deps.log,
   }
 
@@ -275,6 +287,15 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       const cfg = tokenStore.load()
       if (!cfg) return null
       return { ...cfg, manualServer: secretStore.getManualServer() }
+    },
+
+    async getLocalSessionStatus() {
+      try {
+        return await ensureLocalSession(localSessionDeps)
+      } catch (err) {
+        deps.log?.('ensureLocalSession failed', err)
+        return 'server-unreachable'
+      }
     },
 
     async getManualServer() {
