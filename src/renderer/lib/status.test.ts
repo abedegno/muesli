@@ -5,6 +5,7 @@ import type { NoteStatus } from '../../shared/types'
 describe('status helpers', () => {
   describe('statusLabel', () => {
     const cases: [NoteStatus, string][] = [
+      ['draft',       'Draft'],
       ['recording',   'Recording'],
       ['uploaded',    'Uploaded'],
       ['transcribing','Transcribing'],
@@ -19,6 +20,7 @@ describe('status helpers', () => {
 
   describe('statusTone', () => {
     const cases: [NoteStatus, 'neutral' | 'primary' | 'accent' | 'destructive'][] = [
+      ['draft',       'neutral'],
       ['recording',   'neutral'],
       ['uploaded',    'accent'],
       ['transcribing','accent'],
@@ -33,6 +35,7 @@ describe('status helpers', () => {
 
   describe('isProcessing', () => {
     const cases: [NoteStatus, boolean][] = [
+      ['draft',       false],
       ['recording',   false],
       ['uploaded',    true],
       ['transcribing',true],

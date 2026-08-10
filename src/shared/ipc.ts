@@ -44,6 +44,7 @@ export const IPC = {
   getCompany: 'muesli:getCompany',
   getFull: 'muesli:getFull',
   createNote: 'muesli:createNote',
+  startNoteCapture: 'muesli:startNoteCapture',
   updateBody: 'muesli:updateBody',
   updateTitle: 'muesli:updateTitle',
   deleteNote: 'muesli:deleteNote',
@@ -350,6 +351,7 @@ export interface MuesliBridge {
   getCompany(id: string): Promise<CompanyWithPeople>
   getFull(id: string): Promise<FullNote>
   createNote(title: string): Promise<Note>
+  startNoteCapture(id: string): Promise<Note>
   updateBody(id: string, content: string): Promise<void>
   updateTitle(id: string, title: string): Promise<void>
   deleteNote(id: string): Promise<void>

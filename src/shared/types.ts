@@ -1,5 +1,6 @@
 /** Server-produced note states in progression order; renderer uses the order for hints. */
 export const NOTE_STATUSES = [
+  'draft',
   'recording',
   'uploaded',
   'transcribing',

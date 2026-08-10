@@ -32,8 +32,21 @@ func TestNotesAPI(t *testing.T) {
 	}
 	var created struct{ ID, Status string }
 	_ = json.Unmarshal(rec.Body.Bytes(), &created)
-	if created.ID == "" || created.Status != "recording" {
+	if created.ID == "" || created.Status != "draft" {
 		t.Fatalf("unexpected created note %+v", created)
+	}
+
+	// Starting capture advances the draft, and retrying the action is idempotent.
+	for range 2 {
+		rec = doJSON(t, srv, http.MethodPost, "/api/notes/"+created.ID+"/start-capture", nil, hdr)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("start capture status %d body %s", rec.Code, rec.Body)
+		}
+		var started struct{ Status string }
+		_ = json.Unmarshal(rec.Body.Bytes(), &started)
+		if started.Status != "recording" {
+			t.Fatalf("start capture status=%q, want recording", started.Status)
+		}
 	}
 
 	// Get.
@@ -167,8 +180,8 @@ func TestDuplicateNoteHandlerCopiesEditableContent(t *testing.T) {
 	if duplicated.Title != "Copy of Original title" {
 		t.Fatalf("duplicate title=%q", duplicated.Title)
 	}
-	if duplicated.Status != "recording" {
-		t.Fatalf("duplicate status=%q, want recording", duplicated.Status)
+	if duplicated.Status != "draft" {
+		t.Fatalf("duplicate status=%q, want draft", duplicated.Status)
 	}
 	if len(duplicated.Tags) != 1 || duplicated.Tags[0] != "work" {
 		t.Fatalf("duplicate tags=%v", duplicated.Tags)
@@ -190,7 +203,7 @@ func TestDuplicateNoteHandlerCopiesEditableContent(t *testing.T) {
 		BodyMarkdown string `json:"body_markdown"`
 	}
 	_ = json.Unmarshal(fullRec.Body.Bytes(), &full)
-	if full.Note.ID != duplicated.ID || full.Note.Title != duplicated.Title || full.Note.Status != "recording" {
+	if full.Note.ID != duplicated.ID || full.Note.Title != duplicated.Title || full.Note.Status != "draft" {
 		t.Fatalf("full note mismatch: %+v", full.Note)
 	}
 	if full.BodyMarkdown != "# live notes" {

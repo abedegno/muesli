@@ -74,6 +74,10 @@ export class MuesliClient {
     return this.json<Note>('POST', '/api/notes', { title })
   }
 
+  async startNoteCapture(id: string): Promise<Note> {
+    return this.json<Note>('POST', `/api/notes/${id}/start-capture`)
+  }
+
   async listNotes(folderId?: string): Promise<Note[]> {
     const path = folderId ? `/api/notes?folder_id=${encodeURIComponent(folderId)}` : '/api/notes'
     return this.json<Note[]>('GET', path)

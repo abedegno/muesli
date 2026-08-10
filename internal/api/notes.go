@@ -26,12 +26,31 @@ type retranscribeRequest struct {
 
 // validNoteStatuses is the set of accepted values for the ?status= query param.
 var validNoteStatuses = map[string]bool{
+	"draft":        true,
 	"recording":    true,
 	"uploaded":     true,
 	"transcribing": true,
 	"summarizing":  true,
 	"ready":        true,
 	"failed":       true,
+}
+
+func (s *Server) handleStartNoteCapture(w http.ResponseWriter, r *http.Request) {
+	uid, _ := userIDFromContext(r.Context())
+	id := chi.URLParam(r, "id")
+	if !validNoteID(id) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	n, err := s.deps.Store.StartNoteCapture(r.Context(), uid, id)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, n)
 }
 
 func decodeOptionalJSONBody(r *http.Request, dst any) error {

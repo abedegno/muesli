@@ -12,7 +12,7 @@ const FIELD_OPS: Record<RuleField, RuleOperator[]> = {
   created: ['withinLastDays'],
   folder: ['is', 'isNot'],
 }
-const STATUSES = ['recording', 'uploaded', 'transcribing', 'summarizing', 'ready', 'failed']
+const STATUSES = ['draft', 'recording', 'uploaded', 'transcribing', 'summarizing', 'ready', 'failed']
 const newCondition = (): RuleCondition => ({ field: 'title', operator: 'contains', value: '' })
 
 export function RuleEditor({
