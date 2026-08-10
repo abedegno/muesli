@@ -2,7 +2,7 @@ import { join, resolve } from 'node:path'
 import { _electron } from '@playwright/test'
 import type { ElectronApplication } from '@playwright/test'
 import { expect, test } from '../fixtures/app'
-import { seedNoteWithAudio } from '../helpers/seed'
+import { seedNoteWithAudio, waitForMuesliConnection } from '../helpers/seed'
 
 test.setTimeout(180_000)
 
@@ -67,6 +67,7 @@ test('recovers notes after an abnormal exit', async ({
   try {
     firstApp = await launchApp(launchOptions)
     const firstPage = await firstApp.firstWindow()
+    await waitForMuesliConnection(firstPage)
     const title = 'Crash recovery keeps the cobalt lighthouse note'
     await seedNoteWithAudio(firstPage, { title })
 
@@ -79,6 +80,7 @@ test('recovers notes after an abnormal exit', async ({
 
     recoveredApp = await launchApp(launchOptions)
     const recoveredPage = await recoveredApp.firstWindow()
+    await waitForMuesliConnection(recoveredPage)
     await expect(recoveredPage.getByText(title)).toBeVisible({ timeout: 45_000 })
     await expect(recoveredPage.getByText('First run (create the account)')).toBeHidden()
   } finally {
