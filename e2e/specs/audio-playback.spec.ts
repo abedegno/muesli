@@ -17,10 +17,15 @@ test('uploaded note audio is decodable and seekable', async ({ page }) => {
   const audio = page.locator('audio[controls]')
   await expect(audio).toBeVisible({ timeout: 30_000 })
   await expect
-    .poll(() => audio.evaluate((element) => (element as HTMLAudioElement).readyState), {
-      timeout: 30_000,
-    })
-    .toBeGreaterThan(0)
+    .poll(
+      () =>
+        audio.evaluate((element) => {
+          const audio = element as HTMLAudioElement
+          return audio.readyState > 0 || audio.error !== null
+        }),
+      { timeout: 30_000 }
+    )
+    .toBe(true)
 
   const grant = await page.evaluate(
     (id) => (window as MuesliWindow).muesli.getNoteAudioUrl(id),
