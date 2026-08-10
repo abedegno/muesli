@@ -1027,10 +1027,13 @@ describe('ipc handlers', () => {
     tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
     const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
     const matches = await handlers.search('budget review')
-    expect(matches).toEqual([
-      { note_id: 'id1', match_type: 'title' },
-      { note_id: 'id2', match_type: 'transcript', segment_id: 'seg1', start_ms: 500, snippet: '…budget review…' },
-    ])
+    expect(matches).toEqual({
+      matches: [
+        { note_id: 'id1', match_type: 'title' },
+        { note_id: 'id2', match_type: 'transcript', segment_id: 'seg1', start_ms: 500, snippet: '…budget review…' },
+      ],
+      semanticSearchAvailable: false,
+    })
     expect(seen.some((s) => s.startsWith('GET') && s.includes('/api/search?q=budget+review'))).toBe(true)
   })
 

@@ -36,6 +36,44 @@ func notesOrderClause(folderIDSet bool) string {
 	return "n.pinned DESC, n.created_at DESC, n.id"
 }
 
+func noteFilterSQL(ownerID string, f ListNotesFilter) (string, string, []any) {
+	where := []string{"n.owner_id=$1", "n.deleted_at IS NULL"}
+	args := []any{ownerID}
+	joinFolder := ""
+	if f.Tag != "" {
+		args = append(args, f.Tag)
+		where = append(where, fmt.Sprintf(`EXISTS (SELECT 1 FROM note_tags nt JOIN tags t ON t.id = nt.tag_id
+			WHERE nt.note_id = n.id AND lower(t.name) = lower($%d) AND t.owner_id = n.owner_id)`, len(args)))
+	}
+	if f.Status != "" {
+		args = append(args, f.Status)
+		where = append(where, fmt.Sprintf("n.status = $%d", len(args)))
+	}
+	if f.FolderIDSet {
+		args = append(args, f.FolderID)
+		joinFolder = fmt.Sprintf(`JOIN note_folders nf ON nf.note_id = n.id AND nf.folder_id = $%d`, len(args))
+	}
+	if f.PersonIDSet {
+		args = append(args, f.PersonID)
+		where = append(where, fmt.Sprintf(`(
+			EXISTS (SELECT 1 FROM calendar_events ce JOIN people p ON p.id = $%d AND p.owner_id = n.owner_id
+				WHERE ce.id = n.event_id AND ce.owner_id = n.owner_id AND EXISTS (
+					SELECT 1 FROM jsonb_array_elements(COALESCE(ce.attendees, '[]'::jsonb)) attendee
+					WHERE lower(attendee->>'email') = lower(p.primary_email)))
+			OR EXISTS (SELECT 1 FROM note_speaker_aliases nsa WHERE nsa.note_id = n.id
+				AND nsa.owner_id = n.owner_id AND nsa.person_id = $%d))`, len(args), len(args)))
+	}
+	if f.CreatedFrom != nil {
+		args = append(args, *f.CreatedFrom)
+		where = append(where, fmt.Sprintf("n.created_at >= $%d", len(args)))
+	}
+	if f.CreatedTo != nil {
+		args = append(args, *f.CreatedTo)
+		where = append(where, fmt.Sprintf("n.created_at <= $%d", len(args)))
+	}
+	return joinFolder, strings.Join(where, " AND "), args
+}
+
 func (s *Store) CreateNote(ctx context.Context, ownerID, title string) (model.Note, error) {
 	id := uuid.NewString()
 	tx, err := s.pool.Begin(ctx)
@@ -439,58 +477,7 @@ func (s *Store) NoteBody(ctx context.Context, noteID string) (string, error) {
 // the fields in f. All active filters are AND-ed. An unknown tag/status/folder
 // returns an empty slice rather than an error.
 func (s *Store) ListNotes(ctx context.Context, ownerID string, f ListNotesFilter) ([]model.Note, error) {
-	// Build the WHERE clause dynamically with positional parameters.
-	where := []string{"n.owner_id=$1", "n.deleted_at IS NULL"}
-	args := []any{ownerID}
-	joinFolder := ""
-
-	if f.Tag != "" {
-		args = append(args, f.Tag)
-		where = append(where, fmt.Sprintf(
-			`EXISTS (SELECT 1 FROM note_tags nt JOIN tags t ON t.id = nt.tag_id
-			          WHERE nt.note_id = n.id AND lower(t.name) = lower($%d) AND t.owner_id = n.owner_id)`,
-			len(args)))
-	}
-	if f.Status != "" {
-		args = append(args, f.Status)
-		where = append(where, fmt.Sprintf("n.status = $%d", len(args)))
-	}
-	if f.FolderIDSet {
-		args = append(args, f.FolderID)
-		joinFolder = fmt.Sprintf(`JOIN note_folders nf ON nf.note_id = n.id AND nf.folder_id = $%d`, len(args))
-	}
-	if f.PersonIDSet {
-		args = append(args, f.PersonID)
-		where = append(where, fmt.Sprintf(`(
-			EXISTS (
-				SELECT 1
-				FROM calendar_events ce
-				JOIN people p ON p.id = $%d AND p.owner_id = n.owner_id
-				WHERE ce.id = n.event_id
-				  AND ce.owner_id = n.owner_id
-				  AND EXISTS (
-					SELECT 1
-					FROM jsonb_array_elements(COALESCE(ce.attendees, '[]'::jsonb)) attendee
-					WHERE lower(attendee->>'email') = lower(p.primary_email)
-				  )
-			)
-			OR EXISTS (
-				SELECT 1
-				FROM note_speaker_aliases nsa
-				WHERE nsa.note_id = n.id
-				  AND nsa.owner_id = n.owner_id
-				  AND nsa.person_id = $%d
-			)
-		)`, len(args), len(args)))
-	}
-	if f.CreatedFrom != nil {
-		args = append(args, *f.CreatedFrom)
-		where = append(where, fmt.Sprintf("n.created_at >= $%d", len(args)))
-	}
-	if f.CreatedTo != nil {
-		args = append(args, *f.CreatedTo)
-		where = append(where, fmt.Sprintf("n.created_at <= $%d", len(args)))
-	}
+	joinFolder, where, args := noteFilterSQL(ownerID, f)
 
 	query := fmt.Sprintf(
 		`SELECT n.id, n.owner_id, n.title, n.status, n.pinned, n.started_at, n.ended_at,
@@ -499,7 +486,7 @@ func (s *Store) ListNotes(ctx context.Context, ownerID string, f ListNotesFilter
 		 %s
 		 LEFT JOIN note_bodies nb ON nb.note_id = n.id
 		 WHERE %s ORDER BY %s`,
-		joinFolder, strings.Join(where, " AND "),
+		joinFolder, where,
 		notesOrderClause(f.FolderIDSet))
 
 	rows, err := s.pool.Query(ctx, query, args...)

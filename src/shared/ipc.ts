@@ -1,4 +1,4 @@
-import type { ActionItem, ActionItemStatus, AudioUrlGrant, CalendarEvent, ChatSource, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, EmbeddedStartupStatus, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, Plugin, PluginHealth, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from './types'
+import type { ActionItem, ActionItemStatus, AudioUrlGrant, CalendarEvent, ChatSource, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, EmbeddedStartupStatus, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, Plugin, PluginHealth, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchResult, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from './types'
 import type { UploadProgress } from '../main/uploadMachine'
 import type { MicStatus } from '../main/micPermission'
 import type { SystemAudioFormat } from '../main/systemAudioHelper'
@@ -410,7 +410,7 @@ export interface MuesliBridge {
   regenerateSummary(noteId: string, templateId: string): Promise<void>
   retryNote(id: string): Promise<void>
   processNextNote(id: string): Promise<void>
-  search(q: string, opts?: SearchOptions): Promise<SearchMatch[]>
+  search(q: string, opts?: SearchOptions): Promise<SearchResult>
   onUploadProgress(cb: (p: UploadProgress) => void): () => void
   onTrayNavigate?(cb: (target: TrayNavigationTarget) => void): () => void
   getDefaultTranscriberStatus(): Promise<PluginStatus>

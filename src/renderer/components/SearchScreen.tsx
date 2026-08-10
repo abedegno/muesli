@@ -105,9 +105,9 @@ export function SearchScreen() {
       folderId: folderId || undefined,
       tag: tag.trim() || undefined,
     })
-      .then((matches) => {
+      .then((result) => {
         if (searchRequestId.current !== requestId) return
-        setResults(matches)
+        setResults(Array.isArray(result) ? result : result.matches)
       })
       .catch((err) => {
         if (searchRequestId.current !== requestId) return

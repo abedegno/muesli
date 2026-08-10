@@ -353,6 +353,11 @@ export interface SearchMatch {
   snippet?: string
 }
 
+export interface SearchResult {
+  matches: SearchMatch[]
+  semanticSearchAvailable: boolean
+}
+
 /** Server-owned diarization review lifecycle rendered by the client. */
 export type DiarizationReviewState = 'pending' | 'in_review' | 'completed'
 
