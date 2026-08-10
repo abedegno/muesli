@@ -1,7 +1,10 @@
 package embedded
 
 import (
+	"context"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"testing"
@@ -61,5 +64,69 @@ func TestStillOwnsPostmasterFailsClosed(t *testing.T) {
 	}
 	if (&PG{dataDir: dataDir, pid: 4242}).stillOwnsPostmaster() {
 		t.Fatal("claimed ownership from an unparseable postmaster.pid")
+	}
+}
+
+// The behavioural case, driven through the real PG.Stop: a replacement instance
+// owns the directory, and Stop must decline AND leave that process alive. The
+// helper-only tests above cannot show this -- they never reach Stop.
+func TestStopDeclinesAndLeavesReplacementAlive(t *testing.T) {
+	dataDir := t.TempDir()
+
+	// Stand-in for the replacement postmaster: a real, live process we can assert on.
+	replacement := exec.Command("sleep", "30")
+	if err := replacement.Start(); err != nil {
+		t.Fatalf("start replacement: %v", err)
+	}
+	t.Cleanup(func() { _ = replacement.Process.Kill() })
+	writePostmasterPID(t, dataDir, replacement.Process.Pid)
+
+	p := &PG{
+		dataDir: dataDir,
+		pid:     replacement.Process.Pid + 100000, // we started something else
+		ep:      newEmbeddedPostgres(dataDir, 5999, "pw"),
+	}
+
+	err := p.Stop(context.Background())
+	if !errors.Is(err, ErrPostmasterNotOwned) {
+		t.Fatalf("Stop err = %v, want ErrPostmasterNotOwned", err)
+	}
+	if !processAlive(replacement.Process.Pid) {
+		t.Fatal("Stop killed a postmaster belonging to another instance (this is #585)")
+	}
+}
+
+// The other direction: when we DO own it, Stop must not short-circuit. Stopping a
+// never-started embedded instance surfaces an error from the library, which is
+// proof the guard let the call through rather than declining.
+func TestStopProceedsWhenOwned(t *testing.T) {
+	dataDir := t.TempDir()
+	writePostmasterPID(t, dataDir, 4242)
+
+	p := &PG{dataDir: dataDir, pid: 4242, ep: newEmbeddedPostgres(dataDir, 5999, "pw")}
+
+	err := p.Stop(context.Background())
+	if errors.Is(err, ErrPostmasterNotOwned) {
+		t.Fatal("declined to stop a postmaster this instance owns; a clean quit would leak it")
+	}
+}
+
+// forceKill must never fall back to the shared pid file.
+func TestForceKillRefusesWithoutCapturedPID(t *testing.T) {
+	dataDir := t.TempDir()
+
+	bystander := exec.Command("sleep", "30")
+	if err := bystander.Start(); err != nil {
+		t.Fatalf("start bystander: %v", err)
+	}
+	t.Cleanup(func() { _ = bystander.Process.Kill() })
+	writePostmasterPID(t, dataDir, bystander.Process.Pid)
+
+	p := &PG{dataDir: dataDir, pid: 0}
+	if err := p.forceKill(); !errors.Is(err, ErrPostmasterNotOwned) {
+		t.Fatalf("forceKill err = %v, want ErrPostmasterNotOwned", err)
+	}
+	if !processAlive(bystander.Process.Pid) {
+		t.Fatal("forceKill killed a process named only by the shared pid file")
 	}
 }

@@ -29,6 +29,12 @@ const (
 	passwordEntropy     = 32
 )
 
+// ErrPostmasterNotOwned reports that the postmaster recorded in the data
+// directory was started by a different instance, so this one refused to act on
+// it. Callers should treat it as "shutdown did not happen", not as a failure to
+// be retried against the same directory.
+var ErrPostmasterNotOwned = errors.New("embedded postgres: postmaster not owned by this instance")
+
 // PG wraps a running embedded Postgres instance.
 type PG struct {
 	ep         *embeddedpostgres.EmbeddedPostgres
@@ -125,7 +131,10 @@ func (p *PG) Stop(ctx context.Context) error {
 		p.ep = nil
 		p.pid = 0
 		p.mu.Unlock()
-		return nil
+		// Deliberately NOT nil: the caller asked for a shutdown and did not get
+		// one. Reporting success here would be the same class of lie that made
+		// this bug hard to see.
+		return ErrPostmasterNotOwned
 	}
 
 	done := make(chan error, 1)
@@ -490,17 +499,12 @@ func isPortTakenError(err error) bool {
 }
 
 func (p *PG) forceKill() error {
-	p.mu.Lock()
-	pid := p.pid
+	// Only ever kill the pid we captured at start. Reading it back from the
+	// shared pid file would reintroduce exactly the bug this file now guards
+	// against: that file can name a postmaster belonging to another instance.
+	pid := p.startedPID()
 	if pid == 0 {
-		var err error
-		pid, err = readPostmasterPID(p.dataDir)
-		p.mu.Unlock()
-		if err != nil {
-			return err
-		}
-	} else {
-		p.mu.Unlock()
+		return ErrPostmasterNotOwned
 	}
 
 	proc, err := os.FindProcess(pid)
