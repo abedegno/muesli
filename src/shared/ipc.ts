@@ -196,7 +196,7 @@ export interface NoteStreamSegmentEvent {
  */
 export interface NoteStreamConnectionEvent {
   noteId: string
-  type: 'connecting' | 'live' | 'unavailable' | 'dropped'
+  type: 'connecting' | 'loading' | 'live' | 'unavailable' | 'dropped'
 }
 
 /**
