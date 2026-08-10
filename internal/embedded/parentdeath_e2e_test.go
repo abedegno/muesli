@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -94,6 +95,95 @@ func TestParentDeathIntegration(t *testing.T) {
 	if err := waitForProcessesGone(20*time.Second, append([]int{serverPID}, childPIDs...)); err != nil {
 		cleanupProcesses(nil, serverPID, childPIDs)
 		t.Fatalf("processes survived parent death: %v\noutput:\n%s", err, readLog(parentLog))
+	}
+}
+
+func TestParentDeathPipeSIGPIPEIntegration(t *testing.T) {
+	if os.Getenv("MUESLI_EMBEDDED_IT") == "" || os.Getenv("MUESLI_SERVER_BIN") == "" {
+		t.Skip("set MUESLI_EMBEDDED_IT and MUESLI_SERVER_BIN to run parent-death integration test")
+	}
+
+	serverBin := os.Getenv("MUESLI_SERVER_BIN")
+	if info, err := os.Stat(serverBin); err != nil || info.IsDir() {
+		t.Skipf("MUESLI_SERVER_BIN must point at a built muesli binary: %q", serverBin)
+	}
+
+	root := t.TempDir()
+	appDataDir := filepath.Join(root, "appdata")
+	serverPIDFile := filepath.Join(root, "server.pid")
+	masterKey := make([]byte, 32)
+	if _, err := rand.Read(masterKey); err != nil {
+		t.Fatalf("generate master key: %v", err)
+	}
+
+	// The server inherits this pipe from its throwaway parent, matching the
+	// desktop launch. Closing the read end below makes every subsequent server
+	// log write encounter a broken pipe.
+	pipeReader, pipeWriter, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("create parent output pipe: %v", err)
+	}
+	defer pipeReader.Close()
+	defer pipeWriter.Close()
+	go func() {
+		_, _ = io.Copy(io.Discard, pipeReader)
+	}()
+
+	parent := exec.Command("sh", "-c", `export MUESLI_PARENT_PID=$$; "$1" --embedded & echo $! > "$2"; sleep 300`, "sh", serverBin, serverPIDFile)
+	parent.Env = append(os.Environ(),
+		"DATABASE_URL=postgres://placeholder?sslmode=disable",
+		"MUESLI_ADDR=127.0.0.1:0",
+		"MUESLI_APPDATA="+appDataDir,
+		"MUESLI_MASTER_KEY="+base64.StdEncoding.EncodeToString(masterKey),
+		"MUESLI_PUBLIC_URL=http://127.0.0.1:0",
+		"MUESLI_STORAGE_DIR="+filepath.Join(root, "storage"),
+	)
+	parent.Stdout = pipeWriter
+	parent.Stderr = pipeWriter
+	if err := parent.Start(); err != nil {
+		t.Fatalf("start throwaway parent: %v", err)
+	}
+	// Only the throwaway parent and server should retain the write end.
+	if err := pipeWriter.Close(); err != nil {
+		_ = parent.Process.Kill()
+		_ = parent.Wait()
+		t.Fatalf("close local pipe writer: %v", err)
+	}
+
+	serverPID, err := waitForPIDFile(serverPIDFile, 5*time.Second)
+	if err != nil {
+		_ = parent.Process.Kill()
+		_ = parent.Wait()
+		t.Fatalf("server pid: %v", err)
+	}
+
+	var childPIDs []int
+	deadline := time.Now().Add(20 * time.Second)
+	for time.Now().Before(deadline) {
+		childPIDs, err = directChildPIDs(serverPID)
+		if err == nil && len(childPIDs) >= 2 {
+			break
+		}
+		time.Sleep(time.Second)
+	}
+	if len(childPIDs) < 2 {
+		cleanupProcesses(parent, serverPID, childPIDs)
+		t.Fatalf("server %d did not spawn both whisper children (pids %v)", serverPID, childPIDs)
+	}
+
+	if err := pipeReader.Close(); err != nil {
+		cleanupProcesses(parent, serverPID, childPIDs)
+		t.Fatalf("close pipe reader: %v", err)
+	}
+	if err := parent.Process.Kill(); err != nil {
+		cleanupProcesses(parent, serverPID, childPIDs)
+		t.Fatalf("kill throwaway parent: %v", err)
+	}
+	_ = parent.Wait()
+
+	if err := waitForProcessesGone(20*time.Second, append([]int{serverPID}, childPIDs...)); err != nil {
+		cleanupProcesses(nil, serverPID, childPIDs)
+		t.Fatalf("server or whisper children survived parent death with broken output pipe: %v", err)
 	}
 }
 
