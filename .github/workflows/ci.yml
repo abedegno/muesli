@@ -198,6 +198,10 @@ jobs:
           go build -o e2e/.bin/muesli ./cmd/muesli
           go build -o e2e/.bin/whisper-cpp-streaming ./cmd/whisper-cpp-streaming
       - run: npm run build
+      - name: Check e2e defect annotations
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/check-e2e-defect-annotations.mjs
       - name: Run desktop E2E tests
         run: xvfb-run --auto-servernum npm run test:e2e
       - name: Upload Playwright report
