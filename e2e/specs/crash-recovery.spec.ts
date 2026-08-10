@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { _electron } from '@playwright/test'
 import type { ElectronApplication } from '@playwright/test'
@@ -73,6 +74,15 @@ test('recovers notes after an abnormal exit', async ({
     const title = 'Crash recovery keeps the cobalt lighthouse note'
     await seedNoteWithAudio(firstPage, { title })
 
+    // TEMPORARY DIAGNOSTIC (#585) -- capture the token before the crash clears it.
+    const tokenBeforeCrash =
+      (
+        JSON.parse(readFileSync(join(userDataDir, 'muesli-credentials.json'), 'utf8')) as {
+          token?: string
+        }
+      ).token ?? ''
+    console.log(`DIAG0 token before crash len=${tokenBeforeCrash.length}`)
+
     const appProcess = firstApp.process()
     appProcess.kill('SIGKILL')
     firstAppWasKilled = true
@@ -83,6 +93,25 @@ test('recovers notes after an abnormal exit', async ({
     recoveredApp = await launchApp(launchOptions)
     const recoveredPage = await recoveredApp.firstWindow()
     await waitForMuesliConnection(recoveredPage)
+
+    // TEMPORARY DIAGNOSTIC (#585) part 2 -- NOT FOR MERGE.
+    // Asked from NODE, not the renderer: no CORS, and it can read the token file
+    // directly. Separates "the DB lost the user" from "the DB kept the user but
+    // the token row is gone".
+    {
+      const credsPath = join(userDataDir, 'muesli-credentials.json')
+      const rawCreds = existsSync(credsPath) ? readFileSync(credsPath, 'utf8') : '(absent)'
+      const savedToken = tokenBeforeCrash
+      const status = await fetch(`http://${serverAddr}/api/setup/status`)
+      console.log(`DIAG2 setup/status=${status.status} body=${await status.text()}`)
+      const notes = await fetch(`http://${serverAddr}/api/notes`, {
+        headers: { Authorization: `Bearer ${savedToken}` },
+      })
+      console.log(
+        `DIAG2 GET /api/notes with saved token -> ${notes.status} body=${(await notes.text()).slice(0, 200)}`
+      )
+      console.log(`DIAG2 token file present=${rawCreds.length > 0} tokenLen=${savedToken.length}`)
+    }
 
     // TEMPORARY DIAGNOSTIC (#585) -- NOT FOR MERGE.
     // Decides whether the recovered notes load REJECTS (server not ready, and
