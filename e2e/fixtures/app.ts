@@ -91,7 +91,10 @@ export const test = base.extend<AppFixtures>({
     try {
       await use(app)
     } finally {
-      await app.close()
+      const appProcess = app.process()
+      if (!appProcess.killed && appProcess.exitCode === null) {
+        await app.close()
+      }
     }
   },
   page: async ({ electronApp }, use) => {
