@@ -29,6 +29,11 @@ import (
 )
 
 func main() {
+	// The desktop app owns the read ends of stdout and stderr. If it is killed,
+	// writes during parent-death shutdown must fail with EPIPE rather than letting
+	// SIGPIPE terminate the process before deferred child cleanup completes.
+	signal.Ignore(syscall.SIGPIPE)
+
 	sigCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
