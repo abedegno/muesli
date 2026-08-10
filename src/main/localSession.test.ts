@@ -76,6 +76,34 @@ describe('ensureLocalSession', () => {
     expect(tokenStore.save).toHaveBeenCalledWith({ serverUrl: 'http://localhost:8080', token: 'app-1' })
   })
 
+  it('retries readiness before making the first fresh-install provisioning request', async () => {
+    const callOrder: string[] = []
+    const isReady = vi.fn(async () => {
+      callOrder.push('readyz')
+      if (isReady.mock.calls.length === 1) throw new TypeError('fetch failed')
+      return true
+    })
+    const out = await ensureLocalSession({
+      embedded: true,
+      baseUrl: 'http://localhost:8080',
+      tokenStore: { load: () => null, save: vi.fn() },
+      secretStore: { loadCreds: () => null, saveCreds: vi.fn(), getManualServer: () => false },
+      makeClient: () => ({
+        setupNeeded: vi.fn(async () => { callOrder.push('setupNeeded'); return true }),
+        setup: vi.fn(async () => { callOrder.push('setup'); return { id: 'u1', email: 'desktop@localhost' } }),
+        login: vi.fn(async () => { callOrder.push('login'); return 'session-1' }),
+        createToken: vi.fn(async () => { callOrder.push('createToken'); return 'app-1' }),
+      }),
+      generatePassword: () => 'pw-1',
+      isReady,
+      sleep: async () => {},
+      readinessDelaysMs: [0, 10],
+    })
+
+    expect(out).toBe('connected')
+    expect(callOrder).toEqual(['readyz', 'readyz', 'setupNeeded', 'setup', 'login', 'createToken'])
+  })
+
   it('skips when a token already exists', async () => {
     const tokenStore = {
       load: vi.fn(() => ({ serverUrl: 'http://localhost:8080', token: 'app-1' })),

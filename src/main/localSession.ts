@@ -23,19 +23,18 @@ export async function ensureLocalSession(deps: LocalSessionDeps): Promise<LocalS
   const token = deps.tokenStore.load()
   const creds = deps.secretStore.loadCreds()
 
-  // Existing installations must wait for the embedded server and its database
-  // to become queryable. A saved token only proves that setup happened before.
-  if (token || creds) {
-    const isReady = deps.isReady ?? (async () => true)
-    const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
-    const delays = deps.readinessDelaysMs ?? [0, 100, 200, 400, 800, 1000, 1000, 1000]
-    for (const [index, delay] of delays.entries()) {
-      if (delay > 0) await sleep(delay)
-      if (await isReady()) break
-      if (index === delays.length - 1) return 'server-unreachable'
-    }
-    if (token) return 'connected'
+  // No embedded session HTTP call is safe until the server and its database
+  // are queryable. This also protects a fresh install: setupNeeded must not be
+  // the first request racing the Go server's listen socket.
+  const isReady = deps.isReady ?? (async () => true)
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
+  const delays = deps.readinessDelaysMs ?? [0, 100, 200, 400, 800, 1000, 1000, 1000]
+  for (const [index, delay] of delays.entries()) {
+    if (delay > 0) await sleep(delay)
+    if (await isReady().catch(() => false)) break
+    if (index === delays.length - 1) return 'server-unreachable'
   }
+  if (token) return 'connected'
 
   const client = deps.makeClient(deps.baseUrl)
   const needs = await client.setupNeeded()

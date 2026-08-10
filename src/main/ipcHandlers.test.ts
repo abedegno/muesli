@@ -121,8 +121,17 @@ describe('ipc handlers', () => {
     const setup = vi.fn(async () => ({ id: 'u1', email: 'desktop@localhost' }))
     const login = vi.fn(async () => 'session-1')
     const createToken = vi.fn(async () => 'app-fresh')
+    let readinessCalls = 0
     const fetch = vi.fn(async (input: string | URL) => {
       const path = new URL(String(input)).pathname
+      if (path === '/readyz') {
+        readinessCalls++
+        if (readinessCalls === 1) throw new TypeError('fetch failed')
+        return new Response(JSON.stringify({ status: 'ready' }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
       if (path === '/api/notes') {
         expect(tokenStore.load()?.token).toBe('app-fresh')
         return new Response(JSON.stringify({ id: 'note-1', title: 'Fresh note', status: 'recording' }), {
@@ -151,6 +160,7 @@ describe('ipc handlers', () => {
     expect(setup).toHaveBeenCalledWith('desktop@localhost', 'fresh-password')
     expect(login).toHaveBeenCalledWith('desktop@localhost', 'fresh-password')
     expect(createToken).toHaveBeenCalledWith('muesli-desktop', 'session-1')
+    expect(readinessCalls).toBe(2)
     expect(tokenStore.load()).toEqual({ serverUrl: 'http://127.0.0.1:9000', token: 'app-fresh' })
   })
 
