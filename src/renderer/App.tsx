@@ -30,7 +30,6 @@ function AppContent() {
   const navigate = useNavigate()
   async function refreshConnection(): Promise<boolean> {
     try {
-      console.log('[muesli-debug] connection -> starting')
       setConnection('starting')
       const onboardedPromise = muesli.getOnboarded
         ? muesli.getOnboarded().catch(() => false)
@@ -39,24 +38,17 @@ function AppContent() {
         ? await muesli.getLocalSessionStatus()
         : null
       if (localStatus === 'server-unreachable') {
-        console.log('[muesli-debug] connection -> server-unreachable')
         setConnection('server-unreachable')
         setOnboarded(false)
         return true
       }
       const [cfg, nextOnboarded] = await Promise.all([muesli.getConfig?.(), onboardedPromise])
       const isConnected = !!cfg && localStatus !== 'needs-setup'
-      console.log(`[muesli-debug] connection -> ${isConnected ? 'connected' : 'needs-setup'}`, {
-        localStatus,
-        hasConfig: !!cfg,
-        onboarded: nextOnboarded,
-      })
       setConnection(isConnected ? 'connected' : 'needs-setup')
       setOnboarded(nextOnboarded ?? false)
       if (cfg) setConnectMessage(null)
       return false
-    } catch (err) {
-      console.error('[muesli-debug] connection -> server-unreachable (error)', err)
+    } catch {
       setConnection('server-unreachable')
       setOnboarded(false)
       return true

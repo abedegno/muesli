@@ -49,18 +49,6 @@ async function launchApp({
   })
 }
 
-function attachDiagnostics(
-  label: 'first' | 'recovered',
-  app: ElectronApplication,
-  page: Awaited<ReturnType<ElectronApplication['firstWindow']>>
-) {
-  const child = app.process()
-  child.stdout?.on('data', (data) => console.log(`[${label}-stdout]`, data.toString()))
-  child.stderr?.on('data', (data) => console.error(`[${label}-stderr]`, data.toString()))
-  page.on('console', (message) => console.log(`[${label}-console]`, message.text()))
-  page.on('pageerror', (error) => console.error(`[${label}-pageerror]`, error.message))
-}
-
 test('recovers notes after an abnormal exit', async ({
   fakeTranscript,
   serverAddr,
@@ -74,7 +62,6 @@ test('recovers notes after an abnormal exit', async ({
   try {
     firstApp = await launchApp(launchOptions)
     const firstPage = await firstApp.firstWindow()
-    attachDiagnostics('first', firstApp, firstPage)
     const title = 'Crash recovery keeps the cobalt lighthouse note'
     await seedNoteWithAudio(firstPage, { title })
 
@@ -87,7 +74,6 @@ test('recovers notes after an abnormal exit', async ({
 
     recoveredApp = await launchApp(launchOptions)
     const recoveredPage = await recoveredApp.firstWindow()
-    attachDiagnostics('recovered', recoveredApp, recoveredPage)
     await expect(recoveredPage.getByText(title)).toBeVisible({ timeout: 45_000 })
     await expect(recoveredPage.getByText('First run (create the account)')).toBeHidden()
   } finally {

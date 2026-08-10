@@ -24,7 +24,7 @@ export interface LocalSessionDeps {
 
 export async function ensureLocalSession(deps: LocalSessionDeps): Promise<LocalSessionResult> {
   const finish = (result: LocalSessionResult): LocalSessionResult => {
-    deps.log?.(`[muesli-debug] local session -> ${result}`)
+    deps.log?.(`local session result: ${result}`)
     return result
   }
   if (!deps.embedded) return finish('skipped')
@@ -40,11 +40,7 @@ export async function ensureLocalSession(deps: LocalSessionDeps): Promise<LocalS
   const delays = deps.readinessDelaysMs ?? DEFAULT_READINESS_DELAYS_MS
   for (const [index, delay] of delays.entries()) {
     if (delay > 0) await sleep(delay)
-    const ready = await isReady().catch((err) => {
-      deps.log?.(`[muesli-debug] readiness ${index + 1}/${delays.length} threw`, err)
-      return false
-    })
-    deps.log?.(`[muesli-debug] readiness ${index + 1}/${delays.length} -> ${ready}`)
+    const ready = await isReady().catch(() => false)
     if (ready) break
     if (index === delays.length - 1) return finish('server-unreachable')
   }
