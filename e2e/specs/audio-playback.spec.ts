@@ -6,7 +6,7 @@ type MuesliWindow = Window & typeof globalThis & { muesli: MuesliBridge }
 
 test.setTimeout(120_000)
 
-test('uploaded note audio is decodable and seekable', async ({ page }) => {
+test('uploaded note audio is decodable and seekable', async ({ page, request }) => {
   await expect(page.getByRole('link', { name: 'All notes' })).toBeVisible({ timeout: 60_000 })
   const { noteId } = await seedNoteWithAudio(page, { title: 'Audio playback regression' })
 
@@ -50,15 +50,9 @@ test('uploaded note audio is decodable and seekable', async ({ page }) => {
   expect(playback.readyState).toBeGreaterThan(0)
   expect(Number.isFinite(playback.duration)).toBe(true)
 
-  const responses = await page.evaluate(async (url) => {
-    const plain = await fetch(url)
-    const ranged = await fetch(url, { headers: { Range: 'bytes=0-99' } })
-    return {
-      acceptRanges: plain.headers.get('Accept-Ranges'),
-      rangedStatus: ranged.status,
-    }
-  }, grant.url)
+  const plain = await request.fetch(grant.url)
+  const ranged = await request.fetch(grant.url, { headers: { Range: 'bytes=0-99' } })
 
-  expect(responses.acceptRanges).toBe('bytes')
-  expect(responses.rangedStatus).toBe(206)
+  expect(plain.headers()['accept-ranges']).toBe('bytes')
+  expect(ranged.status()).toBe(206)
 })
