@@ -10,6 +10,7 @@ type E2ENote = {
 }
 
 type E2EMuesliBridge = {
+  getConfig(): Promise<{ serverUrl: string; token: string } | null>
   createNote(title: string): Promise<E2ENote>
   uploadAudio(req: {
     noteId: string
@@ -21,10 +22,24 @@ type E2EMuesliBridge = {
 
 type MuesliWindow = Window & typeof globalThis & { muesli: E2EMuesliBridge }
 
+export async function waitForMuesliConnection(page: Page): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        page.evaluate(async () => {
+          const config = await (window as MuesliWindow).muesli.getConfig()
+          return config !== null
+        }),
+      { timeout: 30_000 }
+    )
+    .toBe(true)
+}
+
 export async function seedNoteWithAudio(
   page: Page,
   opts: { title: string }
 ): Promise<{ noteId: string }> {
+  await waitForMuesliConnection(page)
   const audioBytes = Array.from(makeSilentWav(1))
   const noteId = await page.evaluate(
     async ({ title, bytes }) => {
