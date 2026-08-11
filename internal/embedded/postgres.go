@@ -87,11 +87,11 @@ func StartPostgres(ctx context.Context, dataDir string, port int) (*PG, error) {
 		// library has failure paths after launch. Confirm it is gone before handing
 		// the directory on; passing a nil error here would short-circuit the check
 		// and release regardless.
-		if pid := pg.startedPID(); pid == 0 || !processAlive(pid) {
+		if !postmasterStillRunning(dataDir, pg.startedPID()) {
 			lock.release()
 		} else {
 			slog.Error("embedded postgres: start failed with a postmaster still running; keeping the data directory locked",
-				"pid", pid, "error", err)
+				"data_dir", dataDir, "error", err)
 		}
 		return nil, err
 	}
@@ -185,6 +185,24 @@ func (p *PG) Stop(ctx context.Context) error {
 			"pid", pid, "error", err)
 	}
 	return err
+}
+
+// postmasterStillRunning reports whether a postmaster for dataDir is alive.
+//
+// capturedPID is consulted first, but it cannot be relied on alone: p.pid is only
+// recorded once the embedded library's Start returns successfully, and that
+// library can launch PostgreSQL, fail a later step, fail its own cleanup, and
+// return an error -- leaving a live postmaster with no captured pid. So when we
+// have no pid, ask the data directory who owns it.
+func postmasterStillRunning(dataDir string, capturedPID int) bool {
+	if capturedPID != 0 {
+		return processAlive(capturedPID)
+	}
+	pid, _, err := readPostmasterInfo(dataDir)
+	if err != nil {
+		return false
+	}
+	return processAlive(pid) && processIsPostgresFor(pid, dataDir)
 }
 
 // shouldReleaseOwnerLock reports whether the data-directory lock may be handed on.

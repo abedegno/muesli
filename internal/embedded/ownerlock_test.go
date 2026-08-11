@@ -65,3 +65,35 @@ func TestShouldReleaseOwnerLockOnlyWhenExitIsConfirmed(t *testing.T) {
 		t.Fatal("withheld the lock with no captured pid")
 	}
 }
+
+// The case the reviewer identified: the embedded library launched a postmaster,
+// failed later, failed its own cleanup, and returned an error -- so no pid was
+// ever captured while a postmaster is alive. Releasing the lock there hands the
+// directory to a second instance alongside a live database.
+func TestPostmasterStillRunningWithoutACapturedPID(t *testing.T) {
+	dataDir := t.TempDir()
+
+	live := exec.Command("bash", "-c", `exec -a "$0" sleep 30`, "postgres -D "+dataDir)
+	if err := live.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	go func() { _ = live.Wait() }() // reap: a zombie still answers signal 0
+	t.Cleanup(func() { _ = live.Process.Kill() })
+	writePostmasterPID(t, dataDir, live.Process.Pid)
+
+	if !postmasterStillRunning(dataDir, 0) {
+		t.Fatal("missed a live postmaster because no pid was captured; the lock would be released")
+	}
+
+	// A pid file naming something that is not our postgres must not hold the lock.
+	other := t.TempDir()
+	writePostmasterPID(t, other, live.Process.Pid) // live, but serving a different dir
+	if postmasterStillRunning(other, 0) {
+		t.Fatal("treated an unrelated process as this directory's postmaster")
+	}
+
+	// No pid file at all.
+	if postmasterStillRunning(t.TempDir(), 0) {
+		t.Fatal("claimed a postmaster with no pid file present")
+	}
+}
