@@ -22,10 +22,11 @@ export function parseChatError(err: unknown): ChatError {
   if (m && m[1] === '422') {
     return {
       kind: 'no-agent',
-      message: 'Chat needs an agent plugin configured. Install Ollama, or ask your administrator to configure one.',
+      message: CHAT_UNAVAILABLE_MESSAGE,
     }
   }
   // 400/404/500 (missing/misconfigured plugin, plugin-call failure, etc.) all
   // surface as a generic, retryable error — never crash the thread view.
   return { kind: 'generic', message: (m ? m[2] : raw) || 'Something went wrong. Please try again.' }
 }
+import { CHAT_UNAVAILABLE_MESSAGE } from '../AgentUnavailableNotice'

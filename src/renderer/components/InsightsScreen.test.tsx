@@ -1,23 +1,32 @@
 // @vitest-environment jsdom
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { InsightsScreen } from './InsightsScreen'
 import type { InsightsResponse } from '../../shared/types'
+import { clearAgentCapabilityCache } from '@/lib/agentCapability'
 
-const { getInsightsMock } = vi.hoisted(() => ({
+const { getInsightsMock, getCapabilitiesMock } = vi.hoisted(() => ({
   getInsightsMock: vi.fn(),
+  getCapabilitiesMock: vi.fn(),
 }))
 
 vi.mock('@/api', () => ({
   muesli: {
     getInsights: (...args: unknown[]) => getInsightsMock(...args),
+    getCapabilities: () => getCapabilitiesMock(),
   },
 }))
 
 afterEach(() => {
   cleanup()
   getInsightsMock.mockReset()
+  getCapabilitiesMock.mockReset()
+  clearAgentCapabilityCache()
+})
+
+beforeEach(() => {
+  getCapabilitiesMock.mockResolvedValue({ agentConfigured: true })
 })
 
 function utcDateString(date: Date): string {
@@ -80,7 +89,16 @@ function insights(over: Partial<InsightsResponse> = {}): InsightsResponse {
 }
 
 describe('InsightsScreen', () => {
+  it('shows a non-blocking agent notice without replacing calendar-derived insights', async () => {
+    getCapabilitiesMock.mockResolvedValue({ agentConfigured: false })
+    getInsightsMock.mockResolvedValue(insights())
+    render(<InsightsScreen />)
+    expect(await screen.findByText(/AI features need an agent plugin configured/i)).toBeInTheDocument()
+    expect(await screen.findByText('Total meetings')).toBeInTheDocument()
+  })
+
   it('reloads insights when a preset changes', async () => {
+    getCapabilitiesMock.mockResolvedValue({ agentConfigured: true })
     getInsightsMock.mockImplementation((from?: string, to?: string) => {
       if (from === thirtyDaysAgo && to === today) {
         return Promise.resolve(insights())

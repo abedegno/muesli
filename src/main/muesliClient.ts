@@ -99,6 +99,11 @@ export class MuesliClient {
     return this.json<InsightsResponse>('GET', path)
   }
 
+  async getCapabilities(): Promise<{ agentConfigured: boolean }> {
+    const result = await this.json<{ agent_configured: boolean }>('GET', '/api/capabilities')
+    return { agentConfigured: result.agent_configured }
+  }
+
   async listNoteActionItems(id: string): Promise<ListNoteActionItemsResponse> {
     const res = await this.json<{ action_items: ActionItem[]; decisions: Decision[] }>('GET', `/api/notes/${id}/action-items`)
     return { actionItems: res.action_items, decisions: res.decisions }

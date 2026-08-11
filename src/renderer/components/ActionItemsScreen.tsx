@@ -5,6 +5,8 @@ import { EmptyState } from './EmptyState'
 import { MonogramAvatar } from './MonogramAvatar'
 import { Skeleton } from '@/components/ui/Skeleton'
 import type { ActionItem, Note, PersonWithCompany } from '../../shared/types'
+import { useAgentCapability } from '@/lib/agentCapability'
+import { AgentUnavailableNotice } from './AgentUnavailableNotice'
 
 type StatusFilter = 'open' | 'done' | 'all'
 
@@ -130,6 +132,7 @@ function NoteGroup({
 }
 
 export function ActionItemsScreen() {
+  const agentConfigured = useAgentCapability()
   const [notesById, setNotesById] = useState<Record<string, Note> | null>(null)
   const [people, setPeople] = useState<PersonWithCompany[] | null>(null)
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('open')
@@ -328,9 +331,13 @@ export function ActionItemsScreen() {
         <div>
           <h1 className="font-serif text-xl font-semibold">Action items</h1>
           <p className="text-sm text-muted-foreground">Across all meetings and notes.</p>
-          <p className="text-sm text-muted-foreground">
-            {statusCounts.open} open - {statusCounts.done} done
-          </p>
+          {agentConfigured === false && statusCounts.open === 0 && statusCounts.done === 0 ? (
+            <div className="mt-2"><AgentUnavailableNotice compact /></div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              {statusCounts.open} open - {statusCounts.done} done
+            </p>
+          )}
         </div>
 
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-end">

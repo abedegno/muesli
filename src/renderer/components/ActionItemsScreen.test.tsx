@@ -5,11 +5,13 @@ import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Route, Routes, useParams } from 'react-router-dom'
 import type { ActionItem, Note, PersonWithCompany } from '../../shared/types'
 import { ActionItemsScreen } from './ActionItemsScreen'
+import { clearAgentCapabilityCache } from '@/lib/agentCapability'
 
-const { listNotesMock, listPeopleMock, listActionItemsMock } = vi.hoisted(() => ({
+const { listNotesMock, listPeopleMock, listActionItemsMock, getCapabilitiesMock } = vi.hoisted(() => ({
   listNotesMock: vi.fn(),
   listPeopleMock: vi.fn(),
   listActionItemsMock: vi.fn(),
+  getCapabilitiesMock: vi.fn(),
 }))
 
 vi.mock('@/api', () => ({
@@ -17,6 +19,7 @@ vi.mock('@/api', () => ({
     listNotes: () => listNotesMock(),
     listPeople: () => listPeopleMock(),
     listActionItems: () => listActionItemsMock(),
+    getCapabilities: () => getCapabilitiesMock(),
   },
 }))
 
@@ -66,6 +69,9 @@ beforeEach(() => {
   listNotesMock.mockReset()
   listPeopleMock.mockReset()
   listActionItemsMock.mockReset()
+  getCapabilitiesMock.mockReset()
+  getCapabilitiesMock.mockResolvedValue({ agentConfigured: true })
+  clearAgentCapabilityCache()
 })
 
 afterEach(() => {
@@ -84,6 +90,16 @@ describe('ActionItemsScreen', () => {
       </MemoryRouter>,
     )
   }
+
+  it('replaces zero counts with the shared unavailable state when no agent is configured', async () => {
+    getCapabilitiesMock.mockResolvedValue({ agentConfigured: false })
+    listNotesMock.mockResolvedValue([])
+    listPeopleMock.mockResolvedValue([])
+    listActionItemsMock.mockResolvedValue([])
+    renderScreen()
+    expect(await screen.findByText(/AI features need an agent plugin configured/i)).toBeInTheDocument()
+    expect(screen.queryByText('0 open - 0 done')).not.toBeInTheDocument()
+  })
 
   beforeEach(() => {
     listNotesMock.mockResolvedValue([

@@ -45,6 +45,7 @@ export function NoteHeader({
   onRetranscribe,
   autoFocusTitle,
   disabledReason,
+  agentConfigured = true,
 }: {
   noteId: string
   title: string
@@ -76,6 +77,7 @@ export function NoteHeader({
   onRetranscribe?: (options: RetranscribeNoteRequest) => Promise<void>
   autoFocusTitle?: boolean
   disabledReason?: string
+  agentConfigured?: boolean
 }) {
   const [value, setValue] = useState(title)
   const [isDirty, setIsDirty] = useState(false)
@@ -305,10 +307,13 @@ export function NoteHeader({
             {onResummarize && (
               <button
                 role="menuitem"
+                disabled={!agentConfigured}
+                title={!agentConfigured ? 'AI features need an agent plugin configured.' : undefined}
                 onClick={() => { closeMenu(); onResummarize() }}
-                className="block w-full rounded px-2 py-1 text-left text-sm hover:bg-muted"
+                className="block w-full rounded px-2 py-1 text-left text-sm hover:bg-muted disabled:cursor-not-allowed disabled:text-muted-foreground"
               >
                 Re-run summary
+                {!agentConfigured ? <span className="block text-xs">Agent plugin required</span> : null}
               </button>
             )}
             {canRetranscribe && (

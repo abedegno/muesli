@@ -400,6 +400,15 @@ func (s *Server) handleResummarize(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
+	agentConfigured, err := s.agentConfigured(r)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !agentConfigured {
+		writeError(w, http.StatusUnprocessableEntity, noDefaultAgentMessage)
+		return
+	}
 	if err := s.deps.Store.DeleteNoteSummaries(r.Context(), uid, id); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
