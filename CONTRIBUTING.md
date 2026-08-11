@@ -192,17 +192,25 @@ the same call with `"enforce_admins": false`, merge, then restore `true`.
 on Linux — a real Go server, real embedded Postgres, and fake plugins substituted for
 whisper and the agent so results are deterministic. It takes 2-3 minutes.
 
-**Some of its specs are marked `test.fail()` on purpose.** They are regression tests for
-defects that are still open: they assert that the bug _reproduces_. Playwright treats an
-expected failure as a pass, so CI stays green while the defect exists.
+**A spec may be marked `test.fail()` on purpose.** Such a spec is a regression test for a
+defect that is still open: it asserts that the bug _reproduces_. Playwright treats an
+expected failure as a pass, so CI stays green while the defect exists. No spec currently
+carries one — they are removed as the defects are fixed — but the mechanism is live, and
+`scripts/check-e2e-defect-annotations.mjs` enforces it.
 
-The consequence matters if you are fixing one of those defects: **the moment your fix
+The consequence matters if you are fixing a defect that has one: **the moment your fix
 works, that spec starts passing, Playwright reports "expected failure that passed", and
 `e2e-desktop` goes red.** That is deliberate — it is what stops a fixed bug leaving a stale
 expected-failure behind. Remove the `test.fail(...)` line **in the same PR as your fix**.
 
-Each annotation names the issue it belongs to, so search the spec for the issue number you
-are fixing.
+Each annotation names the issue it belongs to. The audit fails CI when an annotation names
+a **closed** issue, so the annotation cannot outlive the defect in either direction.
+
+Be aware of what the annotation hides while it is in place: Playwright reports an expected
+failure as a pass **wherever it failed**, including during setup. A spec can therefore be
+green for months while never reaching its assertions. If you are relying on such a spec as
+evidence that something works, remove the annotation and watch it pass on its own merits
+first.
 
 #### The `review-gate` check
 
