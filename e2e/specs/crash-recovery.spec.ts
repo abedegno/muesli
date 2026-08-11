@@ -54,11 +54,6 @@ test('recovers notes after an abnormal exit', async ({
   serverAddr,
   userDataDir,
 }) => {
-  test.fail(
-    true,
-    '#585: relaunch can show the first-run/create-account screen even though notes remain intact'
-  )
-
   const launchOptions = { fakeTranscript, serverAddr, userDataDir }
   let firstApp: ElectronApplication | undefined
   let firstAppWasKilled = false
@@ -73,8 +68,24 @@ test('recovers notes after an abnormal exit', async ({
     const appProcess = firstApp.process()
     appProcess.kill('SIGKILL')
     firstAppWasKilled = true
+    // ChildProcess.killed only means the signal was SENT, so ORing it in here made
+    // this resolve before the process had exited and left the relaunch racing the
+    // dying instance -- scheduler-dependent, and a likely source of the
+    // passes-on-branch/fails-on-main behaviour. Wait for actual exit: exitCode is
+    // set when the process is reaped, and kill(pid, 0) throws once it is gone.
     await expect
-      .poll(() => appProcess.killed || appProcess.exitCode !== null, { timeout: 15_000 })
+      .poll(
+        () => {
+          if (appProcess.exitCode !== null) return true
+          try {
+            process.kill(appProcess.pid as number, 0)
+            return false
+          } catch {
+            return true
+          }
+        },
+        { timeout: 15_000 }
+      )
       .toBe(true)
 
     recoveredApp = await launchApp(launchOptions)
