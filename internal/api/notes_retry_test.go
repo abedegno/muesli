@@ -26,7 +26,7 @@ func TestRetryNoteAPI(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &login)
 	hdr := map[string]string{"Authorization": "Bearer " + login.Token}
 
-	// Create a note via the API (starts as "recording").
+	// Create a note via the API (starts as "draft").
 	rec = doJSON(t, srv, http.MethodPost, "/api/notes",
 		map[string]string{"title": "Failed note"}, hdr)
 	if rec.Code != http.StatusCreated {
@@ -38,7 +38,7 @@ func TestRetryNoteAPI(t *testing.T) {
 		t.Fatal("no note id")
 	}
 
-	// 409: note not in failed state (still "recording").
+	// 409: note not in failed state (still "draft").
 	rec = doJSON(t, srv, http.MethodPost, "/api/notes/"+note.ID+"/retry", nil, hdr)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("retry non-failed note: got %d, want 409; body %s", rec.Code, rec.Body)

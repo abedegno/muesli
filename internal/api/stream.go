@@ -62,17 +62,30 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	streamClient := plugin.NewStreaming(plug.EndpointURL, plug.Token)
+	modelWasLoading := false
 	sess, err := streamClient.Open(r.Context(), plugin.StreamingStartRequest{
 		LanguageHint: "",
 		Options:      json.RawMessage(`{}`),
 		Config:       plug.Config,
 		SampleRate:   16000,
 		Channels:     1,
+	}, func(ev plugin.StreamingEvent) {
+		if ev.Type == "loading" {
+			modelWasLoading = true
+			_ = writeStreamControl(conn, map[string]string{"type": "loading"})
+		}
 	})
 	if err != nil {
 		_ = writeStreamControl(conn, map[string]string{"type": "unavailable"})
 		_ = closeWebsocketCleanly(conn)
 		return
+	}
+	if modelWasLoading {
+		if err := writeStreamControl(conn, map[string]string{"type": "ready"}); err != nil {
+			_ = sess.Close()
+			_ = closeWebsocketCleanly(conn)
+			return
+		}
 	}
 
 	audioCh := make(chan []byte, streamingAudioBuffer)

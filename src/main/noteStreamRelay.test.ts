@@ -155,6 +155,23 @@ describe('NoteStreamRelay', () => {
     expect(socket.closeCalls).toBe(0)
   })
 
+  it('relays loading without closing the connection', async () => {
+	const { emit, relayFactory } = makeRelay()
+	const relay = await relayFactory()
+	relay.start('note-1')
+	const socket = websocketState.websocketInstances[0]
+	socket.open()
+
+	socket.emit('message', Buffer.from(JSON.stringify({ type: 'loading' })))
+
+	expect(emit).toHaveBeenCalledWith({ noteId: 'note-1', type: 'loading' })
+	expect(socket.closeCalls).toBe(0)
+	socket.emit('message', Buffer.from(JSON.stringify({ type: 'ready' })))
+	expect(emit).toHaveBeenCalledWith({ noteId: 'note-1', type: 'live' })
+	relay.sendAudio('note-1', Uint8Array.from([1]).buffer)
+	expect(socket.sent).toEqual([Buffer.from([1])])
+  })
+
   it('releases the active stream on stop and makes later sends no-ops', async () => {
     const { relayFactory } = makeRelay()
     const relay = await relayFactory()

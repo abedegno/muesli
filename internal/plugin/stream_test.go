@@ -156,6 +156,35 @@ func TestStreamingOpenDialFailure(t *testing.T) {
 	}
 }
 
+func TestStreamingOpenReportsLoadingBeforeReady(t *testing.T) {
+	upgrader := websocket.Upgrader{CheckOrigin: func(*http.Request) bool { return true }}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		defer conn.Close()
+		_, _, _ = conn.ReadMessage()
+		_ = conn.WriteJSON(StreamingEvent{Type: "loading"})
+		_ = conn.WriteJSON(StreamingEvent{Type: "loading"})
+		_ = conn.WriteJSON(StreamingEvent{Type: "ready"})
+	}))
+	defer srv.Close()
+
+	var events []StreamingEvent
+	sess, err := NewStreaming(srv.URL, "tok").Open(context.Background(), StreamingStartRequest{}, func(event StreamingEvent) {
+		events = append(events, event)
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer sess.Close()
+	if len(events) != 2 || events[0].Type != "loading" || events[1].Type != "loading" {
+		t.Fatalf("loading callbacks = %#v", events)
+	}
+}
+
 func TestStreamingWriteAudioAndStop(t *testing.T) {
 	type received struct {
 		types    []int

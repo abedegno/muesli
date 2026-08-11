@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { muesli } from '@/api'
 import type { NoteStreamEvent } from '../../shared/ipc'
 
-type LiveState = 'idle' | 'connecting' | 'live' | 'unavailable' | 'dropped'
+type LiveState = 'idle' | 'connecting' | 'loading' | 'live' | 'unavailable' | 'dropped'
 
 interface LiveTranscriptSource {
   onNoteStreamEvent?: (cb: (event: NoteStreamEvent) => void) => () => void
@@ -91,6 +91,27 @@ export function LiveTranscriptPanel({
     )
   }
 
+  if (status === 'loading') {
+    return (
+      <section
+        data-testid="live-transcript-panel"
+        className="mx-6 rounded-[var(--radius)] border border-amber-500/40 bg-amber-500/5 px-4 py-3 shadow-sm"
+        role="status"
+        aria-live="polite"
+      >
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <span className="inline-flex h-2 w-2 animate-pulse rounded-full bg-amber-500" aria-hidden />
+          <span className="font-medium text-foreground">Live transcript</span>
+          <span aria-hidden>·</span>
+          <span>Starting</span>
+        </div>
+        <p className="mt-3 text-sm leading-6 text-muted-foreground">
+          Starting the transcription engine — this takes a few seconds the first time.
+        </p>
+      </section>
+    )
+  }
+
   return (
     <section data-testid="live-transcript-panel" className="mx-6 rounded-[var(--radius)] border border-border/70 bg-background/80 px-4 py-3 shadow-sm">
       <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -101,7 +122,7 @@ export function LiveTranscriptPanel({
       </div>
       <div className="mt-3 space-y-3 text-sm leading-6 text-foreground">
         {segments.length === 0 && interimSegment === null ? (
-          <p className="text-muted-foreground">Listening for the first finalized segment…</p>
+          <p className="text-muted-foreground">Listening…</p>
         ) : (
           <>
             {segments.map((segment) => (

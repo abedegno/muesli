@@ -5,12 +5,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"sync"
 
+	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/pluginkit"
 	"github.com/abedegno/muesli/internal/whispercpp/engine"
 )
+
+var whisperSilenceToken = regexp.MustCompile(`(?i)^(?:blank(?:[\s_-]*audio)?|silence)$`)
 
 // Engine adapts the shared whisper.cpp batch engine to pluginkit's disposable
 // live-session protocol. It never persists or forwards live text to batch jobs.
@@ -31,11 +35,11 @@ func (e *Engine) Status() (string, string, int) { return e.whisper.Status() }
 func (e *Engine) StartStream(_ context.Context, req pluginkit.StreamingStartRequest) (pluginkit.StreamingEngineSession, error) {
 	status, model, _ := e.whisper.Status()
 	if status != "ready" {
-		e.startLoading()
 		if status == "error" {
-			return nil, fmt.Errorf("model %s is retrying download", model)
+			return nil, fmt.Errorf("model %s failed to load", model)
 		}
-		return nil, fmt.Errorf("model %s is downloading; retry shortly", model)
+		e.startLoading()
+		return nil, fmt.Errorf("model %s is loading: %w", model, pluginkit.ErrStreamingModelLoading)
 	}
 	if req.SampleRate <= 0 || req.Channels <= 0 {
 		return nil, errors.New("sample rate and channels must be positive")
@@ -103,13 +107,30 @@ func (s *session) transcribe(samples []float32) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	parts := make([]string, 0, len(result.Segments))
-	for _, segment := range result.Segments {
-		if text := strings.TrimSpace(segment.Text); text != "" {
+	return joinTranscriptionSegments(result.Segments), nil
+}
+
+func joinTranscriptionSegments(segments []model.Segment) string {
+	parts := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		text := strings.TrimSpace(segment.Text)
+		if text != "" && !isWhisperSilenceToken(text) {
 			parts = append(parts, text)
 		}
 	}
-	return strings.Join(parts, " "), nil
+	return strings.Join(parts, " ")
+}
+
+func isWhisperSilenceToken(text string) bool {
+	text = strings.TrimSpace(text)
+	if len(text) < 2 {
+		return false
+	}
+	opening, closing := text[0], text[len(text)-1]
+	if !((opening == '[' && closing == ']') || (opening == '(' && closing == ')')) {
+		return false
+	}
+	return whisperSilenceToken.MatchString(strings.TrimSpace(text[1 : len(text)-1]))
 }
 
 func (s *session) emit(segment pluginkit.StreamingSegment, err error) {

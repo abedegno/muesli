@@ -325,6 +325,7 @@ func TestStreamingE2E_LiveSegmentsAndBatchFinalize(t *testing.T) {
 			EndMS:       4000,
 		},
 	}, 0)
+	streamPlugin.emitLoading = true
 	pluginID := registerPlugin(t, fixture.srv, fixture.hdr, model.PluginStreamingTranscriber, "streaming-fake", streamPlugin.URL(), "stream-token")
 	if err := fixture.st.SetDefaultPlugin(context.Background(), pluginID); err != nil {
 		t.Fatalf("set default streaming plugin: %v", err)
@@ -334,6 +335,16 @@ func TestStreamingE2E_LiveSegmentsAndBatchFinalize(t *testing.T) {
 	setNoteAudioAndJob(t, fixture.st, noteID)
 
 	conn := openStream(t, httpSrv.URL, noteID, strings.TrimPrefix(fixture.hdr["Authorization"], "Bearer "))
+	for _, wantType := range []string{"loading", "ready"} {
+		_, payload, err := conn.ReadMessage()
+		if err != nil {
+			t.Fatalf("read %s stream message: %v", wantType, err)
+		}
+		var control map[string]any
+		if err := json.Unmarshal(payload, &control); err != nil || control["type"] != wantType {
+			t.Fatalf("%s payload = %s, err = %v", wantType, payload, err)
+		}
+	}
 	frames := pcmFixtureAllFrames(t)
 	if len(frames) != 2 {
 		t.Fatalf("pcm fixture frames = %d, want 2", len(frames))

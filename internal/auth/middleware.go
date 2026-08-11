@@ -2,8 +2,12 @@ package auth
 
 import (
 	"context"
+	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
+
+	"github.com/abedegno/muesli/internal/store"
 )
 
 // UserResolver looks up a user ID from a token hash.
@@ -16,7 +20,7 @@ type CtxSetter func(ctx context.Context, uid string) context.Context
 
 // Middleware authenticates requests via `Authorization: Bearer <token>` or a
 // `muesli_session` cookie. On success it sets the user ID in context; on
-// failure it responds 401.
+// invalid credentials it responds 401. Resolver failures respond 503.
 func Middleware(resolver UserResolver, set CtxSetter) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -26,8 +30,13 @@ func Middleware(resolver UserResolver, set CtxSetter) func(http.Handler) http.Ha
 				return
 			}
 			uid, err := resolver.UserIDByTokenHash(r.Context(), HashToken(raw))
-			if err != nil || uid == "" {
+			if errors.Is(err, store.ErrNotFound) || (err == nil && uid == "") {
 				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+				return
+			}
+			if err != nil {
+				slog.ErrorContext(r.Context(), "resolve authenticated user", "error", err)
+				http.Error(w, `{"error":"service unavailable"}`, http.StatusServiceUnavailable)
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(set(r.Context(), uid)))

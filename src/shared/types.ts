@@ -1,5 +1,6 @@
 /** Server-produced note states in progression order; renderer uses the order for hints. */
 export const NOTE_STATUSES = [
+  'draft',
   'recording',
   'uploaded',
   'transcribing',
@@ -351,6 +352,11 @@ export interface SearchMatch {
   start_ms?: number
   /** Context snippet around the match; set for transcript/summary, absent for title. */
   snippet?: string
+}
+
+export interface SearchResult {
+  matches: SearchMatch[]
+  semanticSearchAvailable: boolean
 }
 
 /** Server-owned diarization review lifecycle rendered by the client. */

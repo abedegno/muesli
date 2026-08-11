@@ -41,12 +41,12 @@ beforeEach(() => {
   getManualServer.mockResolvedValue(false)
 })
 
-function OutletStub({ notes, heading = 'All notes', view = { type: 'all' } as ActiveView, loaded = true, folders = [], refresh = () => {}, semanticNotes = [], semanticMatches = {}, searchQuery = '' }: {
+function OutletStub({ notes, heading = 'All notes', view = { type: 'all' } as ActiveView, loaded = true, folders = [], refresh = () => {}, semanticNotes = [], semanticMatches = {}, semanticSearchAvailable, searchQuery = '' }: {
   notes: Note[]; heading?: string; view?: ActiveView; loaded?: boolean; folders?: Folder[];
-  refresh?: () => void; semanticNotes?: Note[]; semanticMatches?: Record<string, SearchMatch[]>; searchQuery?: string;
+  refresh?: () => void; semanticNotes?: Note[]; semanticMatches?: Record<string, SearchMatch[]>; semanticSearchAvailable?: boolean; searchQuery?: string;
 }) {
   const isFiltered = view.type !== 'all' || searchQuery.trim() !== ''
-  return <Outlet context={{ notes, refresh, heading, isFiltered, view, folders, loaded, semanticNotes, semanticMatches, searchQuery, onReorderNote: reorderNoteInFolder }} />
+  return <Outlet context={{ notes, refresh, heading, isFiltered, view, folders, loaded, semanticNotes, semanticMatches, semanticSearchAvailable, searchQuery, onReorderNote: reorderNoteInFolder }} />
 }
 
 function renderWithCtx(notes: Note[], heading?: string, view?: ActiveView, loaded = true) {
@@ -315,6 +315,31 @@ describe('USE09 search result clarity', () => {
     )
     expect(screen.getByText(/no matching notes/i)).toBeInTheDocument()
     expect(screen.getByText(/standup/i)).toBeInTheDocument()
+  })
+
+  it('distinguishes complete semantic search from lexical-only empty results', () => {
+    const { rerender } = render(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route element={<OutletStub notes={[]} semanticNotes={[]} semanticSearchAvailable searchQuery="zephyr" />}>
+            <Route path="/" element={<NotesListScreen />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    )
+    expect(screen.getByText(/try broader keywords/i)).toBeInTheDocument()
+    expect(screen.queryByText(/semantic search is unavailable/i)).not.toBeInTheDocument()
+
+    rerender(
+      <MemoryRouter initialEntries={['/']}>
+        <Routes>
+          <Route element={<OutletStub notes={[]} semanticNotes={[]} semanticSearchAvailable={false} searchQuery="zephyr" />}>
+            <Route path="/" element={<NotesListScreen />} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    )
+    expect(screen.getByText(/semantic search is unavailable/i)).toBeInTheDocument()
   })
 
   it('shows view-specific message (not embedding an empty query) when view is filtered but searchQuery is empty', () => {

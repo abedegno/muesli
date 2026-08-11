@@ -5,8 +5,9 @@ import (
 	"time"
 )
 
-// Note status values.
+// Note status values: draft→recording→uploaded→transcribing→summarizing→ready/failed.
 const (
+	NoteDraft        = "draft"
 	NoteRecording    = "recording"
 	NoteUploaded     = "uploaded"
 	NoteTranscribing = "transcribing"

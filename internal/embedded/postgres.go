@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,9 +25,19 @@ const (
 	postmasterPIDFile   = "postmaster.pid"
 	pgStartTimeout      = 60 * time.Second
 	pgStopTimeout       = 5 * time.Second
-	pgKillWait          = 2 * time.Second
+	killWait            = 2 * time.Second
 	passwordEntropy     = 32
 )
+
+// ownerLockTimeout bounds how long a launch waits for a previous instance to
+// release the data directory. A var, not a const, so tests need not spend it.
+var ownerLockTimeout = 30 * time.Second
+
+// ErrPostmasterNotOwned reports that the postmaster recorded in the data
+// directory was started by a different instance, so this one refused to act on
+// it. Callers should treat it as "shutdown did not happen", not as a failure to
+// be retried against the same directory.
+var ErrPostmasterNotOwned = errors.New("embedded postgres: postmaster not owned by this instance")
 
 // PG wraps a running embedded Postgres instance.
 type PG struct {
@@ -36,6 +47,7 @@ type PG struct {
 	port       int
 	password   string
 	pid        int
+	lock       *ownerLock
 	mu         sync.Mutex
 }
 
@@ -51,8 +63,22 @@ func StartPostgres(ctx context.Context, dataDir string, port int) (*PG, error) {
 		return nil, fmt.Errorf("create postgres data dir %q: %w", dataDir, err)
 	}
 
+	// Serialize every instance that touches this directory (#585) BEFORE touching
+	// any shared state in it. The previous instance holds this until its shutdown
+	// completes, so our reap-and-start cannot interleave with its stop; if it was
+	// SIGKILLed the kernel has already released the lock for us.
+	//
+	// Ordering matters: the password file lives in this directory, so two cold
+	// starts racing here would each generate a password and overwrite the other's,
+	// leaving a cluster initialized with one and a file holding the other.
+	lock, err := acquireOwnerLock(dataDir, ownerLockTimeout)
+	if err != nil {
+		return nil, err
+	}
+
 	password, err := loadOrCreatePassword(dataDir)
 	if err != nil {
+		lock.release()
 		return nil, err
 	}
 
@@ -61,9 +87,23 @@ func StartPostgres(ctx context.Context, dataDir string, port int) (*PG, error) {
 		runtimeDir: runtimePathForDataDir(dataDir),
 		port:       port,
 		password:   password,
+		lock:       lock,
 	}
 
 	if err := pg.start(ctx); err != nil {
+		// A failed start can still have left a postmaster running -- the embedded
+		// library has failure paths after launch. Confirm it is gone before handing
+		// the directory on; passing a nil error here would short-circuit the check
+		// and release regardless.
+		if !postmasterStillRunning(dataDir, pg.startedPID()) {
+			lock.release()
+		} else {
+			// pg is about to become unreachable; retain the lock explicitly or the
+			// finalizer will close its descriptor and release it.
+			retainOwnerLock(lock)
+			slog.Error("embedded postgres: start failed with a postmaster still running; keeping the data directory locked",
+				"data_dir", dataDir, "error", err)
+		}
 		return nil, err
 	}
 
@@ -110,39 +150,157 @@ func (p *PG) Stop(ctx context.Context) error {
 		return nil
 	}
 
-	done := make(chan error, 1)
-	go func() {
-		done <- ep.Stop()
-	}()
+	// Only stop the postmaster we started (#585). ep.Stop() shuts down whatever
+	// postmaster.pid currently names, which is not necessarily ours: when the
+	// desktop app is SIGKILLed, this server keeps running until the parent-death
+	// watch fires up to a second later, and in that window the relaunched app can
+	// reap our postmaster and start its own in the same data directory. Stopping
+	// then kills the NEW instance's database, and the replacement server dies at
+	// startup with "connection refused" -- leaving the user with no server at all.
+	pid := p.startedPID()
+
+	// Both outcomes below share one release decision. Returning early from the
+	// not-owned branch used to release the lock without checking whether OUR
+	// postmaster was still alive -- and it can be, since losing ownership only
+	// means postmaster.pid no longer names us (it may be missing or unreadable).
+	var err error
+	if !p.stillOwnsPostmaster() {
+		slog.Warn("embedded postgres: data directory no longer owned by this instance; not stopping it",
+			"data_dir", p.dataDir, "started_pid", pid)
+		// Deliberately not nil: the caller asked for a shutdown and did not get
+		// one. Reporting success here would be the same class of lie that made
+		// this bug hard to see.
+		err = ErrPostmasterNotOwned
+	} else {
+		err = p.stopOwnPostmaster(ctx)
+	}
+
+	p.mu.Lock()
+	p.ep = nil
+	p.pid = 0
+	lock := p.lock
+	p.mu.Unlock()
+
+	// Release ONLY once the postmaster is confirmed down. If the shutdown failed
+	// and the process is still alive, holding the lock is the point: letting the
+	// next instance start alongside a postmaster we could not kill is the hazard
+	// this lock exists to prevent. The kernel releases it if we die.
+	if shouldReleaseOwnerLock(err, pid) {
+		p.mu.Lock()
+		p.lock = nil
+		p.mu.Unlock()
+		lock.release()
+	} else {
+		// The caller may drop this PG; retain so the finalizer cannot release it.
+		retainOwnerLock(lock)
+		slog.Error("embedded postgres: shutdown did not confirm exit; keeping the data directory locked",
+			"pid", pid, "error", err)
+	}
+	return err
+}
+
+// postmasterStillRunning reports whether a postmaster for dataDir is alive.
+//
+// capturedPID is consulted first, but it cannot be relied on alone: p.pid is only
+// recorded once the embedded library's Start returns successfully, and that
+// library can launch PostgreSQL, fail a later step, fail its own cleanup, and
+// return an error -- leaving a live postmaster with no captured pid. So when we
+// have no pid, ask the data directory who owns it.
+func postmasterStillRunning(dataDir string, capturedPID int) bool {
+	if capturedPID != 0 {
+		return processAlive(capturedPID)
+	}
+	pid, _, err := readPostmasterInfo(dataDir)
+	if err != nil {
+		return false
+	}
+	return processAlive(pid) && processIsPostgresFor(pid, dataDir)
+}
+
+// shouldReleaseOwnerLock reports whether the data-directory lock may be handed on.
+//
+// Pure so the decision can be tested without arranging an unkillable process:
+// release when the shutdown reported success, or when the postmaster is
+// demonstrably gone regardless of what the shutdown reported.
+func shouldReleaseOwnerLock(stopErr error, pid int) bool {
+	if stopErr == nil {
+		return true
+	}
+	if pid == 0 {
+		return true
+	}
+	return !processAlive(pid)
+}
+
+// stopOwnPostmaster shuts down the postmaster THIS instance started, addressing
+// it by pid rather than by data directory.
+//
+// The distinction is the whole point (#585). `pg_ctl stop -D <dir>` re-resolves
+// the target through postmaster.pid at the moment it acts, so an ownership check
+// beforehand is a TOCTOU: the check can pass, a replacement instance can take the
+// directory over, and pg_ctl then stops the NEW postmaster. Signalling a captured
+// pid cannot retarget -- if that process is already gone, the signal fails
+// harmlessly instead of hitting somebody else.
+//
+// SIGINT is Postgres's fast shutdown: disconnect clients, roll back in-flight
+// transactions, checkpoint, exit.
+func (p *PG) stopOwnPostmaster(ctx context.Context) error {
+	pid := p.startedPID()
+	if pid == 0 {
+		return ErrPostmasterNotOwned
+	}
+	// Guard against pid reuse: our postmaster may have exited and its pid been
+	// recycled by an unrelated process since we captured it.
+	if !processIsPostgresFor(pid, p.dataDir) {
+		if processAlive(pid) {
+			return ErrPostmasterNotOwned
+		}
+		return nil // already gone; nothing to do
+	}
+
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	if err := proc.Signal(syscall.SIGINT); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return err
+	}
 
 	stopCtx, cancel := context.WithTimeout(ctx, pgStopTimeout)
 	defer cancel()
-
-	select {
-	case err := <-done:
-		p.mu.Lock()
-		p.ep = nil
-		p.pid = 0
-		p.mu.Unlock()
-		return err
-	case <-stopCtx.Done():
-		if err := p.forceKill(); err != nil {
-			return err
-		}
-		waitCtx, cancelWait := context.WithTimeout(context.Background(), pgKillWait)
-		defer cancelWait()
-		select {
-		case <-done:
-		case <-waitCtx.Done():
-		}
-		p.mu.Lock()
-		p.ep = nil
-		p.pid = 0
-		p.mu.Unlock()
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
+	if waitForExit(stopCtx, pid) {
 		return nil
+	}
+
+	if err := p.forceKill(); err != nil {
+		return err
+	}
+	killCtx, cancelKill := context.WithTimeout(ctx, killWait)
+	defer cancelKill()
+	if !waitForExit(killCtx, pid) {
+		// Reporting success here would tell the caller the database is down when it
+		// is not -- the same shape of lie this whole change exists to remove.
+		return fmt.Errorf("embedded postgres: pid %d still alive after SIGKILL", pid)
+	}
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return nil
+}
+
+// waitForExit polls until pid is gone or ctx expires, reporting whether it exited.
+func waitForExit(ctx context.Context, pid int) bool {
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if !processAlive(pid) {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return !processAlive(pid)
+		case <-ticker.C:
+		}
 	}
 }
 
@@ -295,6 +453,38 @@ func readPostmasterPID(dataDir string) (int, error) {
 
 // readPostmasterInfo returns the pid (line 1) and the data directory the
 // postmaster recorded (line 2) from a postmaster.pid file.
+// startedPID returns the postmaster pid this instance launched, or 0.
+func (p *PG) startedPID() int {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.pid
+}
+
+// stillOwnsPostmaster reports whether the postmaster recorded in the data
+// directory is the one this instance started (#585).
+//
+// It fails CLOSED: if we never captured a pid, or the pid file is unreadable or
+// names a different process, we do not claim ownership and therefore do not stop
+// it. Declining to stop a postmaster we may not own can at worst leak one that
+// something else is already responsible for; stopping one we do not own takes
+// the database out from under a live instance, which is the far worse outcome.
+//
+// There is a residual TOCTOU window between this check and the shutdown itself.
+// It is orders of magnitude smaller than the seconds-wide race it closes, but
+// closing it entirely needs an inter-process lock held for the data directory's
+// whole lifetime -- worth doing separately.
+func (p *PG) stillOwnsPostmaster() bool {
+	started := p.startedPID()
+	if started == 0 {
+		return false
+	}
+	current, _, err := readPostmasterInfo(p.dataDir)
+	if err != nil {
+		return false
+	}
+	return current == started
+}
+
 func readPostmasterInfo(dataDir string) (int, string, error) {
 	data, err := os.ReadFile(filepath.Join(dataDir, postmasterPIDFile))
 	if err != nil {
@@ -321,9 +511,10 @@ func (p *PG) pgCtlPath() string {
 
 // reapOrphanPostgres detects a LIVE postmaster still holding p.dataDir -- an
 // orphan left by a previous app instance that exited without stopping Postgres --
-// and shuts it down so a fresh instance can start. It only acts on a postmaster
-// that records OUR data dir (guarding against pid reuse). Returns true if it
-// stopped one. Dead/parse-error pid files are left to removeStalePostmasterPID.
+// and shuts it down so a fresh instance can start. It only acts when both the pid
+// file records our data dir and the live process has a matching Postgres command
+// line. Returns true if it stopped one. Dead/parse-error pid files are left to
+// removeStalePostmasterPID.
 func (p *PG) reapOrphanPostgres(ctx context.Context) (bool, error) {
 	pid, ownerDir, err := readPostmasterInfo(p.dataDir)
 	if err != nil {
@@ -333,6 +524,14 @@ func (p *PG) reapOrphanPostgres(ctx context.Context) (bool, error) {
 		return false, nil
 	}
 	if filepath.Clean(ownerDir) != filepath.Clean(p.dataDir) {
+		return false, nil
+	}
+
+	// The checks above prove only what the FILE says. Confirm the live process is
+	// actually our Postgres before doing anything to it. If identity cannot be
+	// established, leave the pid file to removeStalePostmasterPID and let startup
+	// fail loudly -- failing to start is recoverable, killing a stranger is not.
+	if !processIsPostgresFor(pid, p.dataDir) {
 		return false, nil
 	}
 
@@ -431,17 +630,12 @@ func isPortTakenError(err error) bool {
 }
 
 func (p *PG) forceKill() error {
-	p.mu.Lock()
-	pid := p.pid
+	// Only ever kill the pid we captured at start. Reading it back from the
+	// shared pid file would reintroduce exactly the bug this file now guards
+	// against: that file can name a postmaster belonging to another instance.
+	pid := p.startedPID()
 	if pid == 0 {
-		var err error
-		pid, err = readPostmasterPID(p.dataDir)
-		p.mu.Unlock()
-		if err != nil {
-			return err
-		}
-	} else {
-		p.mu.Unlock()
+		return ErrPostmasterNotOwned
 	}
 
 	proc, err := os.FindProcess(pid)

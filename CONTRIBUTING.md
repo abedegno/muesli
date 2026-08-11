@@ -82,6 +82,24 @@ npm test             # Vitest
 npm run dev          # launch Electron against http://localhost:8080
 ```
 
+#### Testing the packaged app on macOS
+
+As general macOS behavior, TCC privacy permissions such as microphone, camera,
+and screen recording are attributed to the process that actually launches the
+app. Starting a binary directly from a shell attributes its permission requests
+to the terminal rather than to the app itself. For UI or capture testing, launch
+the packaged app through LaunchServices instead of executing
+`Muesli.app/Contents/MacOS/Muesli` directly:
+
+```bash
+open -a /Applications/Muesli.app --args --remote-debugging-port=9333
+```
+
+If TCC-gated capture behaves unexpectedly, check System Settings → Privacy &
+Security → Microphone (or the relevant permission). Seeing the terminal app
+listed instead of Muesli confirms that the app was launched with terminal
+attribution.
+
 ### Work on a plugin
 
 Each plugin has its own virtualenv (gitignored):

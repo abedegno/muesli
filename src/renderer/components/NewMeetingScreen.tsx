@@ -18,7 +18,8 @@ export function NewMeetingScreen() {
     setError(null)
     const defaultTitle = defaultMeetingTitle(new Date())
     muesli.createNote(defaultTitle)
-      .then((n) => {
+      .then(async (n) => {
+        await muesli.startNoteCapture(n.id)
         refresh()
         navigate(`/notes/${n.id}?capture=1`, { replace: true })
       })

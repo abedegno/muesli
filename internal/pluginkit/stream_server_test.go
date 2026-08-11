@@ -20,6 +20,44 @@ type wireTestEngine struct {
 	started  chan *wireTestSession
 }
 
+type loadingWireEngine struct {
+	attempts int
+	ready    *wireTestEngine
+}
+
+func (e *loadingWireEngine) Transcribe(context.Context, []float32, TranscribeRequest) (TranscribeResult, error) {
+	return TranscribeResult{}, nil
+}
+
+func (e *loadingWireEngine) StartStream(ctx context.Context, req StreamingStartRequest) (StreamingEngineSession, error) {
+	e.attempts++
+	if e.attempts < 3 {
+		return nil, ErrStreamingModelLoading
+	}
+	return e.ready.StartStream(ctx, req)
+}
+
+func TestStreamingLoadingKeepsSessionOpenUntilReady(t *testing.T) {
+	engine := &loadingWireEngine{ready: newWireTestEngine()}
+	server := httptest.NewServer(TranscriberHandler(Config{Token: "secret"}, engine))
+	defer server.Close()
+
+	var events []plugin.StreamingEvent
+	session, err := plugin.NewStreaming(server.URL, "secret").Open(context.Background(), wireStart("warm"), func(event plugin.StreamingEvent) {
+		events = append(events, event)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	if len(events) != 1 || events[0].Type != "loading" {
+		t.Fatalf("loading events = %#v, want one loading event", events)
+	}
+	if engine.attempts != 3 {
+		t.Fatalf("StartStream attempts = %d, want 3", engine.attempts)
+	}
+}
+
 func newWireTestEngine() *wireTestEngine {
 	return &wireTestEngine{started: make(chan *wireTestSession, 8)}
 }

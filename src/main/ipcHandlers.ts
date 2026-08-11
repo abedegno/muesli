@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import JSZip from 'jszip'
 import { fullNoteToMarkdown } from '../renderer/lib/noteMarkdown'
-import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, DigestConfig, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, Plugin, PluginHealth, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from '../shared/types'
+import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, DigestConfig, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, Plugin, PluginHealth, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchResult, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from '../shared/types'
 import type { ConnectRequest, CreateConversationRequest, CreateConversationResponse, DiarizationReviewUpdate, ExportRequestOptions, ListNoteActionItemsResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdateActionItemRequest, UpdatePersonRequest, UploadAudioRequest } from '../shared/ipc'
 import { INSECURE_CONNECTION_CODE, isInsecureRemote } from '../shared/url'
 import type { AuthInvalidatedNotice } from '../shared/ipc'
@@ -61,6 +61,7 @@ interface Handlers {
   getCompany(id: string): Promise<CompanyWithPeople>
   getFull(id: string): Promise<FullNote>
   createNote(title: string): Promise<Note>
+  startNoteCapture(id: string): Promise<Note>
   updateBody(id: string, content: string): Promise<void>
   updateTitle(id: string, title: string): Promise<void>
   deleteNote(id: string): Promise<void>
@@ -111,7 +112,7 @@ interface Handlers {
   processNextNote(id: string): Promise<void>
   resummarize(id: string): Promise<void>
   regenerateSummary(noteId: string, templateId: string): Promise<void>
-  search(q: string, opts?: SearchOptions): Promise<SearchMatch[]>
+  search(q: string, opts?: SearchOptions): Promise<SearchResult>
   exportAllNotes(savePath: string): Promise<{ success: true; path: string } | { success: false; error: string }>
   getDefaultTranscriberStatus(): Promise<PluginStatus>
   listPlugins(): Promise<Plugin[]>
@@ -474,6 +475,10 @@ export function createHandlers(deps: HandlerDeps): Handlers {
 
     async createNote(title) {
       return authedClient().createNote(title)
+    },
+
+    async startNoteCapture(id) {
+      return authedClient().startNoteCapture(id)
     },
 
     async updateBody(id, content) {

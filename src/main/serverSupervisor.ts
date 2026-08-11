@@ -181,7 +181,16 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
       }
 
       try {
-        const res = await fetchImpl(this.healthUrl)
+        const remainingForRequest = deadline - Date.now()
+        if (remainingForRequest <= 0) break
+        const controller = new AbortController()
+        const abortTimer = setTimeout(() => controller.abort(), remainingForRequest)
+        let res: Response
+        try {
+          res = await fetchImpl(this.healthUrl, { signal: controller.signal })
+        } finally {
+          clearTimeout(abortTimer)
+        }
         if (res.ok) {
           this.hasBecomeHealthy = true
           return
@@ -218,10 +227,14 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
     if (this.quitting) return
     this.quitting = true
     event.preventDefault()
-    void this.shutdown().finally(() => {
-      this.removeLifecycleHooks()
-      electronApp.quit()
-    })
+    void this.shutdown()
+      .catch((err) => {
+        console.error('[muesli-server] shutdown did not complete cleanly', err)
+      })
+      .finally(() => {
+        this.removeLifecycleHooks()
+        electronApp.quit()
+      })
   }
 
   async shutdown(): Promise<void> {
@@ -257,10 +270,14 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
       this.child.kill('SIGKILL')
     }
 
-    await Promise.race([
-      exitPromise,
-      delay(1_000),
+    const reaped = await Promise.race([
+      exitPromise.then(() => true),
+      delay(this.killTimeoutMs).then(() => false),
     ])
+
+    if (!reaped && !this.childExited) {
+      throw new Error(`embedded server did not exit after SIGKILL within ${this.killTimeoutMs}ms`)
+    }
   }
 }
 
@@ -297,6 +314,7 @@ export async function startServerSupervisor(opts: ServerSupervisorOptions = {}):
         ? {}
         : { MUESLI_APPDATA: join(userDataPath, 'embedded-server') }),
       MUESLI_ADDR: `${addr.host}:${addr.port}`,
+      MUESLI_PARENT_PID: String(process.pid),
     },
     stdio: ['ignore', 'pipe', 'pipe'],
   }) as unknown as ChildProcessWithoutNullStreams
