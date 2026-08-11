@@ -31,7 +31,11 @@ func TestSessionProducesPartialAndFinal(t *testing.T) {
 	if err != nil || len(events) != 1 || events[0].Final {
 		t.Fatalf("partial events = %#v, err = %v", events, err)
 	}
-	events, err = session.WriteAudio(context.Background(), make([]float32, 12_000))
+	// The default config now tolerates SilenceHysteresis (300ms) of
+	// below-threshold audio before it starts counting toward
+	// SilenceDuration (700ms), so genuine trailing silence must span more
+	// than their sum (here 20,000 samples = 1.25s at 16kHz) to finalize.
+	events, err = session.WriteAudio(context.Background(), make([]float32, 20_000))
 	if err != nil || len(events) != 1 || !events[0].Final || events[0].Text == "" {
 		t.Fatalf("final events = %#v, err = %v", events, err)
 	}

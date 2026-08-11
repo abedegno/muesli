@@ -32,7 +32,7 @@ type StreamingStartRequest struct {
 // StreamingEvent is an event sent to a streaming client.
 type StreamingEvent struct {
 	Type    string  `json:"type"`
-	Final   bool    `json:"final,omitempty"`
+	Final   bool    `json:"final"`
 	Text    string  `json:"text,omitempty"`
 	T0      float64 `json:"t0,omitempty"`
 	T1      float64 `json:"t1,omitempty"`

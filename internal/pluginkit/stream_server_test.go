@@ -210,6 +210,37 @@ func TestStreamingConcurrentSessionsDoNotCrossTalk(t *testing.T) {
 	}
 }
 
+// TestStreamingEventSerializesFalseFinalExplicitly guards the wire protocol
+// directly at the JSON level: with `final,omitempty` on StreamingEvent.Final
+// (as this struct originally had it), Go's encoding/json drops a false Final
+// entirely from the frame instead of writing "final":false. Any consumer
+// that inspects the raw bytes rather than decoding into this exact Go type
+// (the plugin conformance suite, a non-Go client, a hand-rolled decoder)
+// would see partial and final events looking identical without inspecting
+// the omitted field for absence. Asserting on the encoded string, not on a
+// round-tripped struct, is what actually catches that class of bug: Go's
+// decoder reconstructs the zero value for the missing key either way, which
+// is why TestStreamingWireProtocolWithRealClient alone does not catch it.
+func TestStreamingEventSerializesFalseFinalExplicitly(t *testing.T) {
+	partial := StreamingEvent{Type: "segment", Final: false, Text: "hello"}
+	raw, err := json.Marshal(partial)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"final":false`) {
+		t.Fatalf("serialized partial event = %s, want it to contain %q", raw, `"final":false`)
+	}
+
+	final := StreamingEvent{Type: "segment", Final: true, Text: "hello"}
+	raw, err = json.Marshal(final)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"final":true`) {
+		t.Fatalf("serialized final event = %s, want it to contain %q", raw, `"final":true`)
+	}
+}
+
 func openWireSession(t *testing.T, url, token, id string) *plugin.StreamingSession {
 	t.Helper()
 	session, err := plugin.NewStreaming(url, token).Open(context.Background(), wireStart(id))
