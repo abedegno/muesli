@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/abedegno/muesli/internal/crypto"
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/store"
 	"github.com/abedegno/muesli/internal/testutil"
@@ -137,6 +138,14 @@ func TestResummarizeGuardReleasedAfterSuccess(t *testing.T) {
 	if err := st.SeedBuiltInTemplates(ctx); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
+	cr, err := crypto.New("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The i591 no-agent guard correctly rejects an unconfigured fixture with
+	// 422. Configure an agent here because this test exercises guard release
+	// after a successful resummarize, not the no-agent behavior.
+	createDefaultAgentPlugin(t, st, cr, nil)
 	hdr := setupGuardTestUser(t, srv, "guard-success@example.com")
 
 	rec := doGuardJSON(t, srv, http.MethodPost, "/api/notes",

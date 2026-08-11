@@ -1,5 +1,7 @@
 export const AI_UNAVAILABLE_MESSAGE =
   'AI features need an agent plugin configured. Install Ollama, or ask your administrator to configure one.'
+export const CHAT_UNAVAILABLE_MESSAGE =
+  'Chat needs an agent plugin configured. Install Ollama, or ask your administrator to configure one.'
 export const OLLAMA_DOWNLOAD_URL = 'https://ollama.com/download'
 
 export function AgentUnavailableNotice({ compact = false }: { compact?: boolean }) {

@@ -5,7 +5,7 @@ describe('parseChatError', () => {
   it('classifies 422 no-agent errors with actionable copy', () => {
     expect(parseChatError(new Error('[422] no default agent configured'))).toEqual({
       kind: 'no-agent',
-      message: 'AI features need an agent plugin configured. Install Ollama, or ask your administrator to configure one.',
+      message: 'Chat needs an agent plugin configured. Install Ollama, or ask your administrator to configure one.',
     })
   })
 
