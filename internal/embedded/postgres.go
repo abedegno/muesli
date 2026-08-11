@@ -6,7 +6,6 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -28,12 +27,6 @@ const (
 	killWait            = 2 * time.Second
 	passwordEntropy     = 32
 )
-
-// ErrPostmasterNotOwned reports that the postmaster recorded in the data
-// directory was started by a different instance, so this one refused to act on
-// it. Callers should treat it as "shutdown did not happen", not as a failure to
-// be retried against the same directory.
-var ErrPostmasterNotOwned = errors.New("embedded postgres: postmaster not owned by this instance")
 
 // PG wraps a running embedded Postgres instance.
 type PG struct {
@@ -115,26 +108,6 @@ func (p *PG) Stop(ctx context.Context) error {
 	p.mu.Unlock()
 	if ep == nil {
 		return nil
-	}
-
-	// Only stop the postmaster we started (#585). ep.Stop() shuts down whatever
-	// postmaster.pid currently names, which is not necessarily ours: when the
-	// desktop app is SIGKILLed, this server keeps running until the parent-death
-	// watch fires up to a second later, and in that window the relaunched app can
-	// reap our postmaster and start its own in the same data directory. Stopping
-	// then kills the NEW instance's database, and the replacement server dies at
-	// startup with "connection refused" -- leaving the user with no server at all.
-	if !p.stillOwnsPostmaster() {
-		slog.Warn("embedded postgres: data directory no longer owned by this instance; not stopping it",
-			"data_dir", p.dataDir, "started_pid", p.startedPID())
-		p.mu.Lock()
-		p.ep = nil
-		p.pid = 0
-		p.mu.Unlock()
-		// Deliberately NOT nil: the caller asked for a shutdown and did not get
-		// one. Reporting success here would be the same class of lie that made
-		// this bug hard to see.
-		return ErrPostmasterNotOwned
 	}
 
 	done := make(chan error, 1)
@@ -322,38 +295,6 @@ func readPostmasterPID(dataDir string) (int, error) {
 
 // readPostmasterInfo returns the pid (line 1) and the data directory the
 // postmaster recorded (line 2) from a postmaster.pid file.
-// startedPID returns the postmaster pid this instance launched, or 0.
-func (p *PG) startedPID() int {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	return p.pid
-}
-
-// stillOwnsPostmaster reports whether the postmaster recorded in the data
-// directory is the one this instance started (#585).
-//
-// It fails CLOSED: if we never captured a pid, or the pid file is unreadable or
-// names a different process, we do not claim ownership and therefore do not stop
-// it. Declining to stop a postmaster we may not own can at worst leak one that
-// something else is already responsible for; stopping one we do not own takes
-// the database out from under a live instance, which is the far worse outcome.
-//
-// There is a residual TOCTOU window between this check and the shutdown itself.
-// It is orders of magnitude smaller than the seconds-wide race it closes, but
-// closing it entirely needs an inter-process lock held for the data directory's
-// whole lifetime -- worth doing separately.
-func (p *PG) stillOwnsPostmaster() bool {
-	started := p.startedPID()
-	if started == 0 {
-		return false
-	}
-	current, _, err := readPostmasterInfo(p.dataDir)
-	if err != nil {
-		return false
-	}
-	return current == started
-}
-
 func readPostmasterInfo(dataDir string) (int, string, error) {
 	data, err := os.ReadFile(filepath.Join(dataDir, postmasterPIDFile))
 	if err != nil {
@@ -499,12 +440,17 @@ func isPortTakenError(err error) bool {
 }
 
 func (p *PG) forceKill() error {
-	// Only ever kill the pid we captured at start. Reading it back from the
-	// shared pid file would reintroduce exactly the bug this file now guards
-	// against: that file can name a postmaster belonging to another instance.
-	pid := p.startedPID()
+	p.mu.Lock()
+	pid := p.pid
 	if pid == 0 {
-		return ErrPostmasterNotOwned
+		var err error
+		pid, err = readPostmasterPID(p.dataDir)
+		p.mu.Unlock()
+		if err != nil {
+			return err
+		}
+	} else {
+		p.mu.Unlock()
 	}
 
 	proc, err := os.FindProcess(pid)
