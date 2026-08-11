@@ -47,6 +47,52 @@ function setPlatform(platform: string) {
 // ---------------------------------------------------------------------------
 
 describe('RecordControl', () => {
+  it('does not request microphone access when recording is disabled', async () => {
+    const getUserMedia = vi.fn()
+    Object.defineProperty(navigator, 'mediaDevices', {
+      value: {
+        enumerateDevices: vi.fn().mockResolvedValue([]),
+        getUserMedia,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      },
+      configurable: true,
+    })
+
+    render(
+      <RecordControl
+        state="idle"
+        elapsedMs={0}
+        onStart={() => {}}
+        onStop={() => {}}
+        disabledReason="Recording is unavailable for this note"
+      />,
+    )
+
+    await waitFor(() => expect(screen.getByText('Recording is unavailable for this note')).toBeVisible())
+    expect(getUserMedia).not.toHaveBeenCalled()
+  })
+
+  it.each(['idle', 'recording'] as const)(
+    'renders the microphone level meter next to the selector while %s',
+    (state) => {
+      mockEnumerateDevices([])
+      render(
+        <RecordControl
+          state={state}
+          elapsedMs={0}
+          onStart={() => {}}
+          onStop={() => {}}
+          recordingLevel={0.4}
+        />,
+      )
+      const selector = screen.getByRole('combobox', { name: /microphone/i })
+      const meter = screen.getByTestId('microphone-level-meter')
+      expect(selector.parentElement?.parentElement).toContainElement(meter)
+      expect(screen.getByRole('meter', { name: /microphone level/i })).toBeVisible()
+    },
+  )
+
   it('idle shows Record and calls onStart', async () => {
     mockEnumerateDevices([])
     const onStart = vi.fn()

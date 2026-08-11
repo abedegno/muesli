@@ -1,5 +1,6 @@
 import type { AudioCapture, CaptureResult } from '../../main/capture/audioCapture'
 import { PcmFrameEncoder } from '../../shared/pcm'
+import { rmsLevel } from '../audio/microphonePreview'
 
 // ElectronCapture (v1): microphone via getUserMedia, optional system audio via
 // an injected provider. Both streams are mixed in a single AudioContext and
@@ -35,6 +36,8 @@ export interface ElectronCaptureConfig {
   getSystemAudioStream?: () => Promise<MediaStream | null>
   /** Optional PCM callback used by the live transcript stream. */
   onPcmFrame?: (frame: ArrayBuffer) => void
+  /** Reports a normalized microphone level after the configured gain. */
+  onLevel?: (level: number) => void
 }
 
 export class ElectronCapture implements AudioCapture {
@@ -45,6 +48,8 @@ export class ElectronCapture implements AudioCapture {
   private pcmEncoder?: PcmFrameEncoder
   private pcmTap?: ScriptProcessorNode
   private pcmTapSink?: GainNode
+  private levelAnalyser?: AnalyserNode
+  private levelAnimationFrame?: number
   private startedAt = 0
   private hasSystem = false
   private hasMic = false
@@ -53,12 +58,14 @@ export class ElectronCapture implements AudioCapture {
   private readonly gainLinear: number
   private readonly getSystemAudioStream?: () => Promise<MediaStream | null>
   private readonly onPcmFrame?: (frame: ArrayBuffer) => void
+  private readonly onLevel?: (level: number) => void
 
   constructor(config: ElectronCaptureConfig = {}) {
     this.deviceId = config.deviceId
     this.gainLinear = config.gainLinear ?? 1.0
     this.getSystemAudioStream = config.getSystemAudioStream
     this.onPcmFrame = config.onPcmFrame
+    this.onLevel = config.onLevel
   }
 
   isRecording(): boolean {
@@ -112,6 +119,23 @@ export class ElectronCapture implements AudioCapture {
       gainNode = ctx.createGain()
       gainNode.gain.value = this.gainLinear
       micSource.connect(gainNode)
+      if (this.onLevel) {
+        const analyser = ctx.createAnalyser()
+        analyser.fftSize = 512
+        gainNode.connect(analyser)
+        this.levelAnalyser = analyser
+        const samples = new Float32Array(analyser.fftSize)
+        let lastReportedAt = Number.NEGATIVE_INFINITY
+        const readLevel = (timestamp: number) => {
+          if (timestamp - lastReportedAt >= 100) {
+            analyser.getFloatTimeDomainData(samples)
+            this.onLevel?.(rmsLevel(samples))
+            lastReportedAt = timestamp
+          }
+          this.levelAnimationFrame = requestAnimationFrame(readLevel)
+        }
+        this.levelAnimationFrame = requestAnimationFrame(readLevel)
+      }
       this.hasMic = true
     } catch (err) {
       if (err instanceof Error && err.name === 'NotAllowedError') {
@@ -182,10 +206,14 @@ export class ElectronCapture implements AudioCapture {
     this.streams.forEach((s) => s.getTracks().forEach((t) => t.stop()))
     this.pcmTap?.disconnect()
     this.pcmTapSink?.disconnect()
+    if (this.levelAnimationFrame !== undefined) cancelAnimationFrame(this.levelAnimationFrame)
+    this.levelAnalyser?.disconnect()
     await this.audioCtx?.close()
     this.pcmTap = undefined
     this.pcmTapSink = undefined
     this.pcmEncoder = undefined
+    this.levelAnalyser = undefined
+    this.levelAnimationFrame = undefined
 
     const bytes = new Uint8Array(await blob.arrayBuffer())
     return {

@@ -633,6 +633,7 @@ export function NoteScreen() {
   const [recordState, setRecordState] = useState<RecordState>('idle')
   const [elapsedMs, setElapsedMs] = useState(0)
   const [micError, setMicError] = useState<Error | null>(null)
+  const [microphoneLevel, setMicrophoneLevel] = useState(0)
   const [transcriptCopied, setTranscriptCopied] = useState(false)
   const [pendingUpload, setPendingUpload] = useState<{
     audio: ArrayBuffer
@@ -946,6 +947,7 @@ export function NoteScreen() {
         new ElectronCapture({
           deviceId: selectedDeviceId,
           gainLinear,
+          onLevel: setMicrophoneLevel,
           onPcmFrame: (frame) => {
             void muesli.sendNoteStreamAudio?.(id, frame)?.catch(() => {})
           },
@@ -1037,6 +1039,7 @@ export function NoteScreen() {
     const session = sessionRef.current
     if (!session) return
     if (timerRef.current) clearInterval(timerRef.current)
+    setMicrophoneLevel(0)
     try {
       const result = await session.stop()
       void muesli.stopNoteStream?.(id)?.catch(() => {})
@@ -1083,7 +1086,11 @@ export function NoteScreen() {
     { id: 'docx', label: 'Word', onSelect: () => { void exportServerNote('docx') } },
   ]
 
-  const recordDisabledReason: string | undefined = loadError ? 'Server unreachable' : undefined
+  const recordDisabledReason: string | undefined = loadError
+    ? 'Server unreachable'
+    : full?.note.status !== 'recording'
+      ? 'Recording is unavailable for this note'
+      : undefined
 
   const capture = params.get('capture') === '1'
   const autostart = params.get('autostart') === '1'
@@ -1215,6 +1222,7 @@ export function NoteScreen() {
           setGainLinear(gain)
           saveAudioPrefs({ deviceId: selectedDeviceId, gain })
         }}
+        recordingLevel={microphoneLevel}
         onMicRetry={() => { setMicError(null); void start() }}
         disabledReason={recordDisabledReason}
         onTitleSaved={(t) => {

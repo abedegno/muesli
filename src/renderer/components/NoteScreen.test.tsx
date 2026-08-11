@@ -113,9 +113,10 @@ vi.mock('../capture/electronCapture', () => ({ ElectronCapture: class {} }))
 // Child components reduced to inert stand-ins. NoteHeader exposes the start/stop
 // and duplicate callbacks as buttons so the test can drive the lifecycle.
 vi.mock('./NoteHeader', () => ({
-  NoteHeader: (props: { title: string; onStart: () => void; onStop: () => void; onDeleteNote: () => void; onDuplicate: () => void; onExportWithOptions?: () => void }) => (
+  NoteHeader: (props: { title: string; onStart: () => void; onStop: () => void; onDeleteNote: () => void; onDuplicate: () => void; onExportWithOptions?: () => void; disabledReason?: string }) => (
     <div>
       <span data-testid="note-title">{props.title}</span>
+      <span data-testid="record-disabled-reason">{props.disabledReason ?? ''}</span>
       <button onClick={props.onStart}>start-rec</button>
       <button onClick={props.onStop}>stop-rec</button>
       <button onClick={props.onDeleteNote}>delete-note</button>
@@ -210,6 +211,13 @@ async function recordThenStopMidUpload(user: ReturnType<typeof userEvent.setup>)
 }
 
 describe('NoteScreen — upload AbortController micro-race', () => {
+  it('disables microphone preview for an already-transcribed note', async () => {
+    render(<NoteScreen />)
+    expect(await screen.findByTestId('record-disabled-reason')).toHaveTextContent(
+      'Recording is unavailable for this note',
+    )
+  })
+
   it('aborts the controller created in stop() when the user navigates away mid-upload', async () => {
     const user = userEvent.setup()
     const stopControllers = await recordThenStopMidUpload(user)
