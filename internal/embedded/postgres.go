@@ -83,7 +83,11 @@ func StartPostgres(ctx context.Context, dataDir string, port int) (*PG, error) {
 	}
 
 	if err := pg.start(ctx); err != nil {
-		lock.release()
+		// start() leaves nothing running on its failure paths, but confirm rather
+		// than assume before handing the directory on.
+		if shouldReleaseOwnerLock(nil, pg.startedPID()) {
+			lock.release()
+		}
 		return nil, err
 	}
 
@@ -153,17 +157,44 @@ func (p *PG) Stop(ctx context.Context) error {
 		return ErrPostmasterNotOwned
 	}
 
+	pid := p.startedPID()
 	err := p.stopOwnPostmaster(ctx)
+
 	p.mu.Lock()
 	p.ep = nil
 	p.pid = 0
 	lock := p.lock
-	p.lock = nil
 	p.mu.Unlock()
-	// Released only once the postmaster is actually down, so the next instance
-	// cannot start until this one has finished.
-	lock.release()
+
+	// Release ONLY once the postmaster is confirmed down. If the shutdown failed
+	// and the process is still alive, holding the lock is the point: letting the
+	// next instance start alongside a postmaster we could not kill is the hazard
+	// this lock exists to prevent. The kernel releases it if we die.
+	if shouldReleaseOwnerLock(err, pid) {
+		p.mu.Lock()
+		p.lock = nil
+		p.mu.Unlock()
+		lock.release()
+	} else {
+		slog.Error("embedded postgres: shutdown did not confirm exit; keeping the data directory locked",
+			"pid", pid, "error", err)
+	}
 	return err
+}
+
+// shouldReleaseOwnerLock reports whether the data-directory lock may be handed on.
+//
+// Pure so the decision can be tested without arranging an unkillable process:
+// release when the shutdown reported success, or when the postmaster is
+// demonstrably gone regardless of what the shutdown reported.
+func shouldReleaseOwnerLock(stopErr error, pid int) bool {
+	if stopErr == nil {
+		return true
+	}
+	if pid == 0 {
+		return true
+	}
+	return !processAlive(pid)
 }
 
 // stopOwnPostmaster shuts down the postmaster THIS instance started, addressing
