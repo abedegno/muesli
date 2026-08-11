@@ -137,39 +137,79 @@ func (p *PG) Stop(ctx context.Context) error {
 		return ErrPostmasterNotOwned
 	}
 
-	done := make(chan error, 1)
-	go func() {
-		done <- ep.Stop()
-	}()
+	err := p.stopOwnPostmaster(ctx)
+	p.mu.Lock()
+	p.ep = nil
+	p.pid = 0
+	p.mu.Unlock()
+	return err
+}
+
+// stopOwnPostmaster shuts down the postmaster THIS instance started, addressing
+// it by pid rather than by data directory.
+//
+// The distinction is the whole point (#585). `pg_ctl stop -D <dir>` re-resolves
+// the target through postmaster.pid at the moment it acts, so an ownership check
+// beforehand is a TOCTOU: the check can pass, a replacement instance can take the
+// directory over, and pg_ctl then stops the NEW postmaster. Signalling a captured
+// pid cannot retarget -- if that process is already gone, the signal fails
+// harmlessly instead of hitting somebody else.
+//
+// SIGINT is Postgres's fast shutdown: disconnect clients, roll back in-flight
+// transactions, checkpoint, exit.
+func (p *PG) stopOwnPostmaster(ctx context.Context) error {
+	pid := p.startedPID()
+	if pid == 0 {
+		return ErrPostmasterNotOwned
+	}
+	// Guard against pid reuse: our postmaster may have exited and its pid been
+	// recycled by an unrelated process since we captured it.
+	if !processIsPostgresFor(pid, p.dataDir) {
+		if processAlive(pid) {
+			return ErrPostmasterNotOwned
+		}
+		return nil // already gone; nothing to do
+	}
+
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	if err := proc.Signal(syscall.SIGINT); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		return err
+	}
 
 	stopCtx, cancel := context.WithTimeout(ctx, pgStopTimeout)
 	defer cancel()
-
-	select {
-	case err := <-done:
-		p.mu.Lock()
-		p.ep = nil
-		p.pid = 0
-		p.mu.Unlock()
-		return err
-	case <-stopCtx.Done():
-		if err := p.forceKill(); err != nil {
-			return err
-		}
-		waitCtx, cancelWait := context.WithTimeout(ctx, killWait)
-		defer cancelWait()
-		select {
-		case <-done:
-		case <-waitCtx.Done():
-		}
-		p.mu.Lock()
-		p.ep = nil
-		p.pid = 0
-		p.mu.Unlock()
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
+	if waitForExit(stopCtx, pid) {
 		return nil
+	}
+
+	if err := p.forceKill(); err != nil {
+		return err
+	}
+	killCtx, cancelKill := context.WithTimeout(ctx, killWait)
+	defer cancelKill()
+	waitForExit(killCtx, pid)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	return nil
+}
+
+// waitForExit polls until pid is gone or ctx expires, reporting whether it exited.
+func waitForExit(ctx context.Context, pid int) bool {
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if !processAlive(pid) {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return !processAlive(pid)
+		case <-ticker.C:
+		}
 	}
 }
 

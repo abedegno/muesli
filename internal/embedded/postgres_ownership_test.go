@@ -78,6 +78,7 @@ func TestStopDeclinesAndLeavesReplacementAlive(t *testing.T) {
 	if err := replacement.Start(); err != nil {
 		t.Fatalf("start replacement: %v", err)
 	}
+	go func() { _ = replacement.Wait() }() // reap: a zombie still answers signal 0
 	t.Cleanup(func() { _ = replacement.Process.Kill() })
 	writePostmasterPID(t, dataDir, replacement.Process.Pid)
 
@@ -101,13 +102,25 @@ func TestStopDeclinesAndLeavesReplacementAlive(t *testing.T) {
 // proof the guard let the call through rather than declining.
 func TestStopProceedsWhenOwned(t *testing.T) {
 	dataDir := t.TempDir()
-	writePostmasterPID(t, dataDir, 4242)
 
-	p := &PG{dataDir: dataDir, pid: 4242, ep: newEmbeddedPostgres(dataDir, 5999, "pw")}
+	// A live stand-in whose argv satisfies the identity check, so Stop treats it as
+	// our postmaster and must actually signal it. Without a real process this test
+	// passes trivially via the "already gone" path and proves nothing.
+	owned := exec.Command("sh", "-c", "exec -a 'postgres -D "+dataDir+"' sleep 30")
+	if err := owned.Start(); err != nil {
+		t.Fatalf("start owned: %v", err)
+	}
+	go func() { _ = owned.Wait() }() // reap: a zombie still answers signal 0
+	t.Cleanup(func() { _ = owned.Process.Kill() })
+	writePostmasterPID(t, dataDir, owned.Process.Pid)
 
-	err := p.Stop(context.Background())
-	if errors.Is(err, ErrPostmasterNotOwned) {
-		t.Fatal("declined to stop a postmaster this instance owns; a clean quit would leak it")
+	p := &PG{dataDir: dataDir, pid: owned.Process.Pid, ep: newEmbeddedPostgres(dataDir, 5999, "pw")}
+
+	if err := p.Stop(context.Background()); err != nil {
+		t.Fatalf("Stop err = %v, want nil for an owned postmaster", err)
+	}
+	if processAlive(owned.Process.Pid) {
+		t.Fatal("did not stop the postmaster this instance owns; a clean quit would leak it")
 	}
 }
 
@@ -119,6 +132,7 @@ func TestForceKillRefusesWithoutCapturedPID(t *testing.T) {
 	if err := bystander.Start(); err != nil {
 		t.Fatalf("start bystander: %v", err)
 	}
+	go func() { _ = bystander.Wait() }() // reap: a zombie still answers signal 0
 	t.Cleanup(func() { _ = bystander.Process.Kill() })
 	writePostmasterPID(t, dataDir, bystander.Process.Pid)
 
