@@ -39,16 +39,27 @@ type StreamingConfig struct {
 	PartialInterval time.Duration
 	SilenceDuration time.Duration
 	EnergyThreshold float64
+
+	// SilenceHysteresis tolerates a run of below-threshold audio, within an
+	// already-active utterance, that is shorter than this duration: it is
+	// treated as a natural dip in continuous speech (a breath, a quieter
+	// syllable, a sibilant) rather than genuine silence, so it neither joins
+	// the SilenceDuration finalize clock nor breaks the utterance. Only once
+	// the low-energy run outlasts SilenceHysteresis does the excess start
+	// counting toward SilenceDuration. Zero disables the tolerance and
+	// reproduces the original single-frame threshold behavior.
+	SilenceHysteresis time.Duration
 }
 
 // DefaultStreamingConfig returns the recommended live-transcription defaults.
 func DefaultStreamingConfig() StreamingConfig {
 	return StreamingConfig{
-		SampleRate:      16_000,
-		MaxWindow:       30 * time.Second,
-		PartialInterval: 1500 * time.Millisecond,
-		SilenceDuration: 700 * time.Millisecond,
-		EnergyThreshold: 0.01,
+		SampleRate:        16_000,
+		MaxWindow:         30 * time.Second,
+		PartialInterval:   1500 * time.Millisecond,
+		SilenceDuration:   700 * time.Millisecond,
+		EnergyThreshold:   0.01,
+		SilenceHysteresis: 300 * time.Millisecond,
 	}
 }
 
@@ -82,6 +93,7 @@ type StreamingSession struct {
 	lastSpeechEndSample   int64
 	speechSincePartial    int64
 	continuousSilence     int64
+	lowEnergySamples      int64
 	active                bool
 	transcriptionInFlight bool
 	wg                    sync.WaitGroup
@@ -103,6 +115,9 @@ func NewStreamingSession(cfg StreamingConfig, vad VAD, transcribe TranscribeFunc
 	}
 	if cfg.EnergyThreshold < 0 {
 		return nil, errors.New("streaming energy threshold must not be negative")
+	}
+	if cfg.SilenceHysteresis < 0 {
+		return nil, errors.New("streaming silence hysteresis must not be negative")
 	}
 	if durationSamples(cfg.MaxWindow, cfg.SampleRate) == 0 ||
 		durationSamples(cfg.PartialInterval, cfg.SampleRate) == 0 ||
@@ -137,24 +152,47 @@ func (s *StreamingSession) Feed(frame []float32) {
 			s.windowStartSample = frameStart
 		}
 		s.continuousSilence = 0
-		s.speechSincePartial += int64(len(frameCopy))
-		s.lastSpeechEndSample = s.totalSamples
-		s.window = append(s.window, frameCopy...)
-		s.boundWindow()
-		if s.speechSincePartial >= s.durationSamples(s.cfg.PartialInterval) {
-			s.speechSincePartial = 0
-			s.startTranscriptionLocked(false)
-		}
+		s.lowEnergySamples = 0
+		s.appendSpeechLocked(frameCopy)
 		return
 	}
 
 	if !s.active {
 		return
 	}
-	s.continuousSilence += int64(len(frameCopy))
+
+	// A run of below-threshold frames shorter than SilenceHysteresis is
+	// tolerated as a natural dip within continuous speech rather than
+	// genuine silence: the audio still joins the transcription window and
+	// the utterance stays active, so a brief dip alone cannot trigger a
+	// false final. Only the excess beyond the hysteresis window counts
+	// toward the SilenceDuration finalize clock. With SilenceHysteresis
+	// zero this reduces to the original single-frame threshold behavior.
+	s.lowEnergySamples += int64(len(frameCopy))
+	hysteresisSamples := s.durationSamples(s.cfg.SilenceHysteresis)
+	if s.lowEnergySamples <= hysteresisSamples {
+		s.appendSpeechLocked(frameCopy)
+		return
+	}
+
+	s.continuousSilence = s.lowEnergySamples - hysteresisSamples
 	if s.continuousSilence >= s.durationSamples(s.cfg.SilenceDuration) {
 		s.startTranscriptionLocked(true)
 		s.resetUtteranceLocked()
+	}
+}
+
+// appendSpeechLocked folds one frame of speech (or hysteresis-tolerated,
+// speech-adjacent) audio into the active utterance's transcription window
+// and advances the partial-result cadence. Callers must hold s.mu.
+func (s *StreamingSession) appendSpeechLocked(frame []float32) {
+	s.speechSincePartial += int64(len(frame))
+	s.lastSpeechEndSample = s.totalSamples
+	s.window = append(s.window, frame...)
+	s.boundWindow()
+	if s.speechSincePartial >= s.durationSamples(s.cfg.PartialInterval) {
+		s.speechSincePartial = 0
+		s.startTranscriptionLocked(false)
 	}
 }
 
@@ -211,6 +249,7 @@ func (s *StreamingSession) resetUtteranceLocked() {
 	s.window = nil
 	s.active = false
 	s.continuousSilence = 0
+	s.lowEnergySamples = 0
 	s.speechSincePartial = 0
 	s.windowStartSample = 0
 	s.lastSpeechEndSample = 0

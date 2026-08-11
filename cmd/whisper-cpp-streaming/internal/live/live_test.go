@@ -13,17 +13,29 @@ import (
 	"github.com/abedegno/muesli/internal/whispercpp/engine"
 )
 
+// streamingSamples converts a duration to a sample count at the given
+// sample rate, matching pluginkit's internal duration/sample conversion.
+func streamingSamples(d time.Duration, sampleRate int) int {
+	return int(int64(d) * int64(sampleRate) / int64(time.Second))
+}
+
 func TestSessionProducesPartialAndFinal(t *testing.T) {
 	eng := New(engine.Config{Model: "tiny.en", Language: "en"})
 	if err := eng.whisper.EnsureReady(context.Background()); err != nil {
 		t.Fatalf("prepare model: %v", err)
 	}
-	req := pluginkit.StreamingStartRequest{Type: "start", SampleRate: 16_000, Channels: 1}
+	const sampleRate = 16_000
+	req := pluginkit.StreamingStartRequest{Type: "start", SampleRate: sampleRate, Channels: 1}
 	session, err := eng.StartStream(context.Background(), req)
 	if err != nil {
 		t.Fatalf("start stream: %v", err)
 	}
-	speech := make([]float32, 24_000)
+	// StartStream configures the session with pluginkit.DefaultStreamingConfig;
+	// derive this test's synthetic audio timing from those same fields so it
+	// cannot silently drift out of sync with the config as it evolves.
+	cfg := pluginkit.DefaultStreamingConfig()
+
+	speech := make([]float32, streamingSamples(cfg.PartialInterval, sampleRate))
 	for i := range speech {
 		speech[i] = .25
 	}
@@ -31,7 +43,12 @@ func TestSessionProducesPartialAndFinal(t *testing.T) {
 	if err != nil || len(events) != 1 || events[0].Final {
 		t.Fatalf("partial events = %#v, err = %v", events, err)
 	}
-	events, err = session.WriteAudio(context.Background(), make([]float32, 12_000))
+	// SilenceHysteresis tolerates a run of below-threshold audio before it
+	// starts counting toward SilenceDuration, so genuine trailing silence
+	// must span more than their sum to finalize; add a healthy margin so
+	// this isn't balanced on the exact boundary.
+	trailingSilence := streamingSamples(cfg.SilenceHysteresis+cfg.SilenceDuration+300*time.Millisecond, sampleRate)
+	events, err = session.WriteAudio(context.Background(), make([]float32, trailingSilence))
 	if err != nil || len(events) != 1 || !events[0].Final || events[0].Text == "" {
 		t.Fatalf("final events = %#v, err = %v", events, err)
 	}
