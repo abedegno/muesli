@@ -1,6 +1,7 @@
 package storage_test
 
 import (
+	"bytes"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,100 @@ import (
 
 	"github.com/abedegno/muesli/internal/storage"
 )
+
+func TestUploadHandler_WebMContentTypeRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	p, err := storage.NewLocal(dir, "http://example.test", "", []byte("test-signing-key-0123456789"))
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	handler := p.UploadHandler()
+	data := append([]byte{0x1a, 0x45, 0xdf, 0xa3}, bytes.Repeat([]byte{0x00}, 252)...)
+	grant, err := p.PresignUpload("notes/abc/audio/recording.webm", time.Minute)
+	if err != nil {
+		t.Fatalf("presign upload: %v", err)
+	}
+	put := httptest.NewRequest(http.MethodPut, grant.URL, bytes.NewReader(data))
+	put.Header.Set("Content-Type", "audio/webm")
+	putResponse := httptest.NewRecorder()
+	handler.ServeHTTP(putResponse, put)
+	if putResponse.Code != http.StatusOK {
+		t.Fatalf("PUT status = %d, want %d", putResponse.Code, http.StatusOK)
+	}
+
+	downloadURL, err := p.PresignDownload(grant.Key, time.Minute)
+	if err != nil {
+		t.Fatalf("presign download: %v", err)
+	}
+	get := httptest.NewRequest(http.MethodGet, downloadURL, nil)
+	getResponse := httptest.NewRecorder()
+	handler.ServeHTTP(getResponse, get)
+	if got := getResponse.Header().Get("Content-Type"); got != "audio/webm" {
+		t.Fatalf("Content-Type = %q, want audio/webm", got)
+	}
+	if got := getResponse.Header().Get("Content-Length"); got != "256" {
+		t.Fatalf("Content-Length = %q, want 256", got)
+	}
+	if got := getResponse.Header().Get("Accept-Ranges"); got != "bytes" {
+		t.Fatalf("Accept-Ranges = %q, want bytes", got)
+	}
+	if !bytes.Equal(getResponse.Body.Bytes(), data) {
+		t.Fatal("GET body does not match uploaded WebM bytes")
+	}
+	if detected := http.DetectContentType(getResponse.Body.Bytes()); detected != "video/webm" {
+		t.Fatalf("fixture detection = %q, want video/webm WebM signature", detected)
+	}
+
+	rangeRequest := httptest.NewRequest(http.MethodGet, downloadURL, nil)
+	rangeRequest.Header.Set("Range", "bytes=100-199")
+	rangeResponse := httptest.NewRecorder()
+	handler.ServeHTTP(rangeResponse, rangeRequest)
+	if rangeResponse.Code != http.StatusPartialContent {
+		t.Fatalf("range status = %d, want %d", rangeResponse.Code, http.StatusPartialContent)
+	}
+	if got := rangeResponse.Header().Get("Content-Range"); got != "bytes 100-199/256" {
+		t.Fatalf("Content-Range = %q, want bytes 100-199/256", got)
+	}
+	if got := rangeResponse.Body.Len(); got != 100 {
+		t.Fatalf("range body length = %d, want 100", got)
+	}
+	if !bytes.Equal(rangeResponse.Body.Bytes(), data[100:200]) {
+		t.Fatal("range body does not match requested WebM bytes")
+	}
+}
+
+func TestUploadHandler_LegacyObjectFallsBackToDetectedContentType(t *testing.T) {
+	dir := t.TempDir()
+	p, err := storage.NewLocal(dir, "http://example.test", "", []byte("test-signing-key-0123456789"))
+	if err != nil {
+		t.Fatalf("new: %v", err)
+	}
+	key := "notes/legacy/audio.bin"
+	objectPath := filepath.Join(dir, filepath.FromSlash(key))
+	if err := os.MkdirAll(filepath.Dir(objectPath), 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	data := bytes.Repeat([]byte{0x00}, 256)
+	if err := os.WriteFile(objectPath, data, 0o644); err != nil {
+		t.Fatalf("write legacy object: %v", err)
+	}
+
+	downloadURL, err := p.PresignDownload(key, time.Minute)
+	if err != nil {
+		t.Fatalf("presign download: %v", err)
+	}
+	response := httptest.NewRecorder()
+	p.UploadHandler().ServeHTTP(response, httptest.NewRequest(http.MethodGet, downloadURL, nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("GET status = %d, want %d", response.Code, http.StatusOK)
+	}
+	if got := response.Header().Get("Content-Type"); got != "application/octet-stream" {
+		t.Fatalf("Content-Type = %q, want application/octet-stream", got)
+	}
+	if !bytes.Equal(response.Body.Bytes(), data) {
+		t.Fatal("legacy object body does not round-trip")
+	}
+}
 
 // countingReader wraps an io.Reader and records the total number of bytes
 // actually returned across all Read calls. It lets a test observe how much of
@@ -62,6 +157,10 @@ func TestLocalProviderRoundTrip(t *testing.T) {
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 	resp.Body.Close()
+	contentTypePath := filepath.Join(dir, filepath.FromSlash(grant.Key)) + ".contenttype"
+	if stored, err := os.ReadFile(contentTypePath); err != nil || string(stored) != "audio/webm" {
+		t.Fatalf("stored content type = %q, err=%v", stored, err)
+	}
 
 	// After upload: present with correct size.
 	ok, size, err := p.Verify(grant.Key)
@@ -116,11 +215,15 @@ func TestLocalPresignDownloadAndDelete(t *testing.T) {
 	}
 
 	// Delete removes the object.
+	contentTypePath := filepath.Join(dir, filepath.FromSlash(key)) + ".contenttype"
 	if err := p.Delete(key); err != nil {
 		t.Fatalf("delete: %v", err)
 	}
 	if ok, _, _ := p.Verify(key); ok {
 		t.Fatal("object should be gone after delete")
+	}
+	if _, err := os.Stat(contentTypePath); !os.IsNotExist(err) {
+		t.Fatalf("content type sidecar still exists after delete: %v", err)
 	}
 	// Delete is idempotent (no error for a missing key).
 	if err := p.Delete(key); err != nil {

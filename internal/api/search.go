@@ -39,6 +39,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	w.Header().Set("X-Muesli-Semantic-Search", "unavailable")
 	from, to, err := parseSearchDateRange(r.URL.Query().Get("from"), r.URL.Query().Get("to"))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -52,6 +53,7 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 	f := store.ListNotesFilter{
 		Tag:         query.Get("tag"),
+		Status:      query.Get("status"),
 		CreatedFrom: from,
 		CreatedTo:   to,
 	}
@@ -75,23 +77,16 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	scores := map[string]float64{} // noteID -> blended score
 	noteByID := map[string]model.Note{}
 
-	// Lexical: load the owner's live notes and match title/snippet
-	// (case-insensitive substring). Each match adds a flat bonus so keyword
-	// hits always surface.
-	notes, err := s.deps.Store.ListNotes(ctx, uid, f)
+	// Lexical matching is performed in PostgreSQL and bounded to the maximum
+	// number of notes the endpoint can return.
+	notes, err := s.deps.Store.SearchNotesLexical(ctx, uid, q, f, 30)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "search failed")
 		return
 	}
-	allowed := make(map[string]struct{}, len(notes))
-	lq := strings.ToLower(q)
 	for _, n := range notes {
 		noteByID[n.ID] = n
-		allowed[n.ID] = struct{}{}
-		if strings.Contains(strings.ToLower(n.Title), lq) ||
-			strings.Contains(strings.ToLower(n.Snippet), lq) {
-			scores[n.ID] += 0.5
-		}
+		scores[n.ID] += 0.5
 	}
 
 	// Semantic: embed the query and add cosine-similarity scores (0..1). Only
@@ -110,6 +105,21 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		} else if hits, serr := s.deps.Store.SearchEmbeddings(ctx, uid, s.deps.Config.EmbeddingsModel, vec, s.deps.Embedder.Dim(), 20); serr != nil {
 			slog.WarnContext(ctx, "search: vector search", "error", serr)
 		} else {
+			w.Header().Set("X-Muesli-Semantic-Search", "available")
+			hitIDs := make([]string, 0, len(hits))
+			for _, h := range hits {
+				hitIDs = append(hitIDs, h.ID)
+			}
+			allowedNotes, ferr := s.deps.Store.FilterNotesByIDs(ctx, uid, hitIDs, f)
+			if ferr != nil {
+				writeError(w, http.StatusInternalServerError, "search failed")
+				return
+			}
+			allowed := make(map[string]struct{}, len(allowedNotes))
+			for _, n := range allowedNotes {
+				allowed[n.ID] = struct{}{}
+				noteByID[n.ID] = n
+			}
 			hitsAdded := 0
 			for _, h := range hits {
 				if _, ok := allowed[h.ID]; !ok {
@@ -130,9 +140,9 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Build a title-lookup map so rankScores can apply the hybrid title boost.
-	titleByID := make(map[string]string, len(notes))
-	for _, n := range notes {
-		titleByID[n.ID] = n.Title
+	titleByID := make(map[string]string, len(noteByID))
+	for id, n := range noteByID {
+		titleByID[id] = n.Title
 	}
 
 	ids := rankScores(scores, titleByID, q, hybrid, 30)

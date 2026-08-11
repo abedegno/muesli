@@ -3,7 +3,6 @@ import { seedNoteWithAudio } from '../helpers/seed'
 
 test.use({ fakeTranscript: 'The zarquon pricing review is on Thursday.' })
 test.setTimeout(120_000)
-test.fail(true, '#589: search matches title and snippet only, never transcript text')
 
 test('search finds a note by transcript body text', async ({ page }) => {
   const title = 'Quarterly planning conversation'

@@ -28,7 +28,7 @@ func TestNotesStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	if n.Status != model.NoteRecording || n.OwnerID != owner.ID {
+	if n.Status != model.NoteDraft || n.OwnerID != owner.ID {
 		t.Fatalf("unexpected note %+v", n)
 	}
 
@@ -235,6 +235,9 @@ func TestDuplicateNoteCopiesEditableContent(t *testing.T) {
 	if err := st.AddNoteFolder(ctx, owner.ID, orig.ID, folder.ID); err != nil {
 		t.Fatalf("add folder: %v", err)
 	}
+	if err := st.SetNoteStatus(ctx, orig.ID, model.NoteReady); err != nil {
+		t.Fatalf("mark original ready: %v", err)
+	}
 
 	copyNote, err := st.DuplicateNote(ctx, owner.ID, orig.ID)
 	if err != nil {
@@ -246,8 +249,8 @@ func TestDuplicateNoteCopiesEditableContent(t *testing.T) {
 	if copyNote.Title != "Copy of Original" {
 		t.Fatalf("title=%q, want %q", copyNote.Title, "Copy of Original")
 	}
-	if copyNote.Status != model.NoteRecording {
-		t.Fatalf("status=%q, want %q", copyNote.Status, model.NoteRecording)
+	if copyNote.Status != model.NoteDraft {
+		t.Fatalf("status=%q, want %q", copyNote.Status, model.NoteDraft)
 	}
 	if copyNote.OwnerID != owner.ID {
 		t.Fatalf("owner=%q, want %q", copyNote.OwnerID, owner.ID)
@@ -282,6 +285,33 @@ func TestDuplicateNoteCopiesEditableContent(t *testing.T) {
 	}
 	if got.AudioObjectKey != "" || got.AudioHash != nil || got.NormalizedAudioHash != nil {
 		t.Fatalf("copy should not inherit audio state: %+v", got)
+	}
+}
+
+func TestStartNoteCaptureIsGuarded(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	owner, _ := st.CreateUser(ctx, "capture@example.com", "h")
+	other, _ := st.CreateUser(ctx, "other-capture@example.com", "h")
+	n, err := st.CreateNote(ctx, owner.ID, "Capture")
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	started, err := st.StartNoteCapture(ctx, owner.ID, n.ID)
+	if err != nil || started.Status != model.NoteRecording {
+		t.Fatalf("start capture: note=%+v err=%v", started, err)
+	}
+	if err := st.SetNoteStatus(ctx, n.ID, model.NoteReady); err != nil {
+		t.Fatalf("mark ready: %v", err)
+	}
+	unchanged, err := st.StartNoteCapture(ctx, owner.ID, n.ID)
+	if err != nil || unchanged.Status != model.NoteReady {
+		t.Fatalf("guarded retry: note=%+v err=%v", unchanged, err)
+	}
+	if _, err := st.StartNoteCapture(ctx, other.ID, n.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("cross-owner start = %v, want ErrNotFound", err)
 	}
 }
 

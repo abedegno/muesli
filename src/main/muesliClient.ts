@@ -1,4 +1,4 @@
-import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, FullNote, Folder, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, Plugin, PluginHealth, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, Share, SmartList, SpeakerAlias, Template, TemplateSection, UploadGrant } from '../shared/types'
+import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, FullNote, Folder, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, Plugin, PluginHealth, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, SearchResult, Share, SmartList, SpeakerAlias, Template, TemplateSection, UploadGrant } from '../shared/types'
 import type { CreateConversationRequest, CreateConversationResponse, ListNoteActionItemsResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdateActionItemRequest, UpdatePersonRequest } from '../shared/ipc'
 import { buildNoteExportRequest, parseContentDispositionFilename, type ExportOptions } from '../shared/export'
 import { buildCalendarEventsPath } from '../shared/calendar'
@@ -72,6 +72,10 @@ export class MuesliClient {
   // --- Notes ---
   async createNote(title: string): Promise<Note> {
     return this.json<Note>('POST', '/api/notes', { title })
+  }
+
+  async startNoteCapture(id: string): Promise<Note> {
+    return this.json<Note>('POST', `/api/notes/${id}/start-capture`)
   }
 
   async listNotes(folderId?: string): Promise<Note[]> {
@@ -214,7 +218,7 @@ export class MuesliClient {
   // dedupes onto its already-loaded notes (no re-fetch). Degrades to
   // lexical-only server-side when embeddings are disabled. Optional filters are
   // omitted from the querystring when absent.
-  async search(q: string, opts?: SearchOptions): Promise<SearchMatch[]> {
+  async search(q: string, opts?: SearchOptions): Promise<SearchResult> {
     const params = new URLSearchParams()
     params.set('q', q)
     if (opts?.from) params.set('from', opts.from)
@@ -223,7 +227,21 @@ export class MuesliClient {
     if (opts?.folderId) params.set('folder_id', opts.folderId)
     if (opts?.tag) params.set('tag', opts.tag)
     const path = `/api/search?${params.toString()}`
-    return this.json<SearchMatch[]>('GET', path)
+    const headers: Record<string, string> = {}
+    if (this.token) headers.Authorization = `Bearer ${this.token}`
+    const res = await this.fetchImpl(`${this.baseUrl}${path}`, { method: 'GET', headers })
+    const text = await res.text()
+    const parsed = text ? safeParse(text) : undefined
+    if (!res.ok) {
+      const message = parsed && typeof parsed === 'object' && 'error' in parsed
+        ? String((parsed as { error: unknown }).error)
+        : `request failed: ${res.status}`
+      throw new ApiError(res.status, message, parsed)
+    }
+    return {
+      matches: parsed as SearchMatch[],
+      semanticSearchAvailable: res.headers.get('x-muesli-semantic-search') === 'available',
+    }
   }
 
   async getFull(id: string): Promise<FullNote> {

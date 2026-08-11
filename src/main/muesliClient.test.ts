@@ -741,16 +741,27 @@ describe('MuesliClient', () => {
       return new Response(JSON.stringify([
         { note_id: 'id1', match_type: 'title' },
         { note_id: 'id2', match_type: 'summary', snippet: 'a b in context' },
-      ]), { status: 200 })
+      ]), { status: 200, headers: { 'X-Muesli-Semantic-Search': 'available' } })
     }
     const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
     const matches = await client.search('a b')
-    expect(matches).toEqual([
-      { note_id: 'id1', match_type: 'title' },
-      { note_id: 'id2', match_type: 'summary', snippet: 'a b in context' },
-    ])
+    expect(matches).toEqual({
+      matches: [
+        { note_id: 'id1', match_type: 'title' },
+        { note_id: 'id2', match_type: 'summary', snippet: 'a b in context' },
+      ],
+      semanticSearchAvailable: true,
+    })
     expect(calls[0].method).toBe('GET')
     expect(calls[0].url).toBe('http://x/api/search?q=a+b')
+  })
+
+  it('surfaces unavailable semantic search response metadata', async () => {
+    const client = new MuesliClient({
+      baseUrl: 'http://x',
+      fetch: async () => new Response('[]', { status: 200, headers: { 'X-Muesli-Semantic-Search': 'unavailable' } }),
+    })
+    await expect(client.search('rare term')).resolves.toEqual({ matches: [], semanticSearchAvailable: false })
   })
 
   it('search appends from/to onto the querystring when present, encoded', async () => {

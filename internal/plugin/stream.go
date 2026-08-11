@@ -59,7 +59,7 @@ func NewStreaming(baseURL, token string) *StreamingClient {
 
 // Open establishes the websocket connection, sends the start frame, and waits
 // for the plugin's ready acknowledgement.
-func (c *StreamingClient) Open(ctx context.Context, req StreamingStartRequest) (*StreamingSession, error) {
+func (c *StreamingClient) Open(ctx context.Context, req StreamingStartRequest, onEvent ...func(StreamingEvent)) (*StreamingSession, error) {
 	if req.Type == "" {
 		req.Type = "start"
 	}
@@ -87,19 +87,29 @@ func (c *StreamingClient) Open(ctx context.Context, req StreamingStartRequest) (
 		_ = conn.Close()
 		return nil, err
 	}
-	ev, err := sess.Recv()
-	if err != nil {
-		_ = conn.Close()
-		return nil, err
-	}
-	if ev.Type != "ready" {
+	for {
+		ev, err := sess.Recv()
+		if err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+		if ev.Type == "loading" {
+			for _, notify := range onEvent {
+				if notify != nil {
+					notify(ev)
+				}
+			}
+			continue
+		}
+		if ev.Type == "ready" {
+			return sess, nil
+		}
 		_ = conn.Close()
 		if ev.Type == "error" {
 			return nil, fmt.Errorf("streaming plugin error: %s", ev.Message)
 		}
 		return nil, fmt.Errorf("unexpected streaming plugin event %q", ev.Type)
 	}
-	return sess, nil
 }
 
 // WriteAudio sends one raw PCM frame to the plugin.
@@ -126,7 +136,7 @@ func (s *StreamingSession) Recv() (StreamingEvent, error) {
 		return StreamingEvent{}, err
 	}
 	switch ev.Type {
-	case "ready", "segment", "error":
+	case "loading", "ready", "segment", "error":
 		return ev, nil
 	default:
 		return StreamingEvent{}, fmt.Errorf("unexpected streaming event type %q", ev.Type)

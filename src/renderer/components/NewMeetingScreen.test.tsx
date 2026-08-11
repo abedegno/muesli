@@ -14,7 +14,7 @@ function makeNote(id: string) {
   return {
     id,
     title: 'Meeting — Jun 28, 3:00 PM',
-    status: 'recording' as const,
+    status: 'draft' as const,
     created_at: '2026-07-16T00:00:00.000Z',
     updated_at: '2026-07-16T00:00:00.000Z',
     partial_transcript: false,
@@ -24,6 +24,7 @@ function makeNote(id: string) {
 vi.mock('@/api', () => ({
   muesli: {
     createNote: vi.fn(() => Promise.resolve(makeNote('note-123'))),
+    startNoteCapture: vi.fn(() => Promise.resolve({ ...makeNote('note-123'), status: 'recording' as const })),
   },
 }))
 
@@ -34,6 +35,7 @@ afterEach(() => {
   cleanup()
   navigate.mockClear()
   vi.mocked(muesli.createNote).mockClear()
+  vi.mocked(muesli.startNoteCapture).mockClear()
 })
 
 describe('NewMeetingScreen', () => {
@@ -48,6 +50,7 @@ describe('NewMeetingScreen', () => {
     render(<NewMeetingScreen />)
     await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1))
     expect(navigate).toHaveBeenCalledWith('/notes/note-123?capture=1', { replace: true })
+    expect(muesli.startNoteCapture).toHaveBeenCalledWith('note-123')
   })
 
   it('shows a retry option and does not navigate when createNote rejects', async () => {

@@ -163,6 +163,7 @@ func TestNoteStreamRelaysAndPersistsProvisionalSegments(t *testing.T) {
 			EndMS:       4000,
 		},
 	}, 0)
+	pluginSrv.emitLoading = true
 	pluginID := registerPlugin(t, srv, hdr, model.PluginStreamingTranscriber, "streaming-test", pluginSrv.URL(), "plugin-token")
 	if err := st.SetDefaultPlugin(context.Background(), pluginID); err != nil {
 		t.Fatalf("set default plugin: %v", err)
@@ -181,6 +182,22 @@ func TestNoteStreamRelaysAndPersistsProvisionalSegments(t *testing.T) {
 		t.Fatalf("dial: %v resp=%v", err, resp)
 	}
 	defer conn.Close()
+	_, loadingPayload, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read loading event: %v", err)
+	}
+	var loading map[string]any
+	if err := json.Unmarshal(loadingPayload, &loading); err != nil || loading["type"] != "loading" {
+		t.Fatalf("loading payload = %s, err = %v", loadingPayload, err)
+	}
+	_, readyPayload, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read ready event: %v", err)
+	}
+	var ready map[string]any
+	if err := json.Unmarshal(readyPayload, &ready); err != nil || ready["type"] != "ready" {
+		t.Fatalf("ready payload = %s, err = %v", readyPayload, err)
+	}
 
 	frames := pcmFixtureAllFrames(t)
 	if len(frames) != 2 {

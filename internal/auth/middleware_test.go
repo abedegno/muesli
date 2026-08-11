@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/abedegno/muesli/internal/store"
 )
 
 // testResolver implements UserResolver via a function field, making it easy to
@@ -141,7 +143,7 @@ func TestMiddleware_BearerSuccess(t *testing.T) {
 
 func TestMiddleware_ResolverError(t *testing.T) {
 	resolver := &testResolver{fn: func(_ context.Context, _ string) (string, error) {
-		return "", errors.New("db error")
+		return "", errors.New("connection refused")
 	}}
 	setter, _ := makeTestSetter()
 	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -154,8 +156,31 @@ func TestMiddleware_ResolverError(t *testing.T) {
 	rr := httptest.NewRecorder()
 	mw.ServeHTTP(rr, req)
 
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503 on resolver error", rr.Code)
+	}
+	if !strings.Contains(rr.Body.String(), "service unavailable") {
+		t.Errorf("body = %q, want to contain 'service unavailable'", rr.Body.String())
+	}
+}
+
+func TestMiddleware_TokenNotFound(t *testing.T) {
+	resolver := &testResolver{fn: func(_ context.Context, _ string) (string, error) {
+		return "", store.ErrNotFound
+	}}
+	setter, _ := makeTestSetter()
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mw := Middleware(resolver, setter)(next)
+	req, _ := http.NewRequest("GET", "/", nil)
+	req.Header.Set("Authorization", "Bearer revoked-token")
+	rr := httptest.NewRecorder()
+	mw.ServeHTTP(rr, req)
+
 	if rr.Code != http.StatusUnauthorized {
-		t.Errorf("status = %d, want 401 on resolver error", rr.Code)
+		t.Errorf("status = %d, want 401 when token is not found", rr.Code)
 	}
 }
 

@@ -1,4 +1,4 @@
-import type { ActionItem, ActionItemStatus, AudioUrlGrant, CalendarEvent, ChatSource, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, EmbeddedStartupStatus, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, Plugin, PluginHealth, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from './types'
+import type { ActionItem, ActionItemStatus, AudioUrlGrant, CalendarEvent, ChatSource, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, EmbeddedStartupStatus, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, Plugin, PluginHealth, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchResult, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from './types'
 import type { UploadProgress } from '../main/uploadMachine'
 import type { MicStatus } from '../main/micPermission'
 import type { SystemAudioFormat } from '../main/systemAudioHelper'
@@ -44,6 +44,7 @@ export const IPC = {
   getCompany: 'muesli:getCompany',
   getFull: 'muesli:getFull',
   createNote: 'muesli:createNote',
+  startNoteCapture: 'muesli:startNoteCapture',
   updateBody: 'muesli:updateBody',
   updateTitle: 'muesli:updateTitle',
   deleteNote: 'muesli:deleteNote',
@@ -196,7 +197,7 @@ export interface NoteStreamSegmentEvent {
  */
 export interface NoteStreamConnectionEvent {
   noteId: string
-  type: 'connecting' | 'live' | 'unavailable' | 'dropped'
+  type: 'connecting' | 'loading' | 'live' | 'unavailable' | 'dropped'
 }
 
 /**
@@ -350,6 +351,7 @@ export interface MuesliBridge {
   getCompany(id: string): Promise<CompanyWithPeople>
   getFull(id: string): Promise<FullNote>
   createNote(title: string): Promise<Note>
+  startNoteCapture(id: string): Promise<Note>
   updateBody(id: string, content: string): Promise<void>
   updateTitle(id: string, title: string): Promise<void>
   deleteNote(id: string): Promise<void>
@@ -410,7 +412,7 @@ export interface MuesliBridge {
   regenerateSummary(noteId: string, templateId: string): Promise<void>
   retryNote(id: string): Promise<void>
   processNextNote(id: string): Promise<void>
-  search(q: string, opts?: SearchOptions): Promise<SearchMatch[]>
+  search(q: string, opts?: SearchOptions): Promise<SearchResult>
   onUploadProgress(cb: (p: UploadProgress) => void): () => void
   onTrayNavigate?(cb: (target: TrayNavigationTarget) => void): () => void
   getDefaultTranscriberStatus(): Promise<PluginStatus>

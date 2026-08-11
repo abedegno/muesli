@@ -40,6 +40,7 @@ const bridge: MuesliBridge = {
   getCompany: (id) => ipcRenderer.invoke(IPC.getCompany, id),
   getFull: (id) => ipcRenderer.invoke(IPC.getFull, id),
   createNote: (title) => ipcRenderer.invoke(IPC.createNote, title),
+  startNoteCapture: (id) => ipcRenderer.invoke(IPC.startNoteCapture, id),
   updateBody: (id, content) => ipcRenderer.invoke(IPC.updateBody, id, content),
   updateTitle: (id, title) => ipcRenderer.invoke(IPC.updateTitle, id, title),
   deleteNote: (id) => ipcRenderer.invoke(IPC.deleteNote, id),

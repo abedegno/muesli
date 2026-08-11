@@ -20,6 +20,7 @@ const autoRecordListeners = new Set<(payload: { noteId: string }) => void>()
 const meetingDetectionRendererReady = vi.fn().mockResolvedValue(undefined)
 const meetingDetectionPromptAccept = vi.fn().mockResolvedValue(undefined)
 const meetingDetectionPromptDismiss = vi.fn().mockResolvedValue(undefined)
+const startNoteCapture = vi.fn().mockResolvedValue({ id: 'note-created', status: 'recording' })
 
 function emitPromptShow(payload: { event: import('../../../shared/types').CalendarEvent; occurrenceKey: string }) {
   for (const listener of promptShowListeners) listener(payload)
@@ -45,6 +46,7 @@ vi.mock('@/api', () => ({
     meetingDetectionRendererReady: () => meetingDetectionRendererReady(),
     meetingDetectionPromptAccept: (occurrenceKey: string) => meetingDetectionPromptAccept(occurrenceKey),
     meetingDetectionPromptDismiss: (occurrenceKey: string) => meetingDetectionPromptDismiss(occurrenceKey),
+    startNoteCapture: (noteId: string) => startNoteCapture(noteId),
     onMeetingDetectionPromptShow: (listener: (payload: { event: import('../../../shared/types').CalendarEvent; occurrenceKey: string }) => void) => {
       promptShowListeners.add(listener)
       return () => promptShowListeners.delete(listener)
@@ -101,6 +103,7 @@ afterEach(() => {
   meetingDetectionPromptAccept.mockResolvedValue(undefined)
   meetingDetectionPromptDismiss.mockReset()
   meetingDetectionPromptDismiss.mockResolvedValue(undefined)
+  startNoteCapture.mockClear()
   promptShowListeners.clear()
   promptClearListeners.clear()
   autoRecordListeners.clear()
@@ -368,6 +371,7 @@ describe('AppLayout meeting detection loop', () => {
     })
 
     expect(await screen.findByTestId('note-route')).toBeInTheDocument()
+    expect(startNoteCapture).toHaveBeenCalledWith('note-created')
     expect(meetingDetectionPromptAccept).not.toHaveBeenCalled()
   })
 })

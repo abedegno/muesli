@@ -36,7 +36,7 @@ func TestGetNoteFull(t *testing.T) {
 	var note struct{ ID string }
 	_ = json.Unmarshal(rec.Body.Bytes(), &note)
 
-	// Empty note: transcript null, summaries empty, status recording.
+	// Empty note: transcript null, summaries empty, status draft.
 	rec = doJSON(t, srv, http.MethodGet, "/api/notes/"+note.ID+"/full", nil, hdr)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("full status %d body %s", rec.Code, rec.Body)
@@ -48,7 +48,7 @@ func TestGetNoteFull(t *testing.T) {
 		Summaries    []map[string]any `json:"summaries"`
 	}
 	_ = json.Unmarshal(rec.Body.Bytes(), &full)
-	if full.Note["status"] != "recording" {
+	if full.Note["status"] != "draft" {
 		t.Fatalf("status = %v", full.Note["status"])
 	}
 	if full.Transcript != nil {

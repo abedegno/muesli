@@ -162,11 +162,16 @@ func (l *Local) PresignDownload(key string, ttl time.Duration) (string, error) {
 
 // Delete removes an object; a missing object is not an error.
 func (l *Local) Delete(key string) error {
-	err := os.Remove(l.path(key))
-	if os.IsNotExist(err) {
-		return nil
+	objectPath := l.path(key)
+	objectErr := os.Remove(objectPath)
+	if objectErr != nil && !os.IsNotExist(objectErr) {
+		return objectErr
 	}
-	return err
+	contentTypeErr := os.Remove(contentTypePath(objectPath))
+	if contentTypeErr != nil && !os.IsNotExist(contentTypeErr) {
+		return contentTypeErr
+	}
+	return nil
 }
 
 // UploadHandler serves the signed object endpoint (`/_storage/<key>`): PUT to
@@ -197,9 +202,18 @@ func (l *Local) UploadHandler() http.Handler {
 				return
 			}
 			defer f.Close()
-			w.Header().Set("Content-Type", "application/octet-stream")
-			w.WriteHeader(http.StatusOK)
-			_, _ = io.Copy(w, f)
+			info, err := f.Stat()
+			if err != nil {
+				http.Error(w, "internal", http.StatusInternalServerError)
+				return
+			}
+			contentType, err := l.objectContentType(f, key)
+			if err != nil {
+				http.Error(w, "internal", http.StatusInternalServerError)
+				return
+			}
+			w.Header().Set("Content-Type", contentType)
+			http.ServeContent(w, r, filepath.Base(key), info.ModTime(), f)
 		case http.MethodPut:
 			// Defense-in-depth: even a holder of a valid signed URL may only
 			// store an explicitly allowlisted audio type (see allowedContentTypes /
@@ -241,11 +255,46 @@ func (l *Local) UploadHandler() http.Handler {
 				http.Error(w, "write failed", http.StatusInternalServerError)
 				return
 			}
+			if err := os.WriteFile(contentTypePath(dst), []byte(mediaType), 0o644); err != nil {
+				_ = os.Remove(dst)
+				http.Error(w, "write failed", http.StatusInternalServerError)
+				return
+			}
 			w.WriteHeader(http.StatusOK)
 		default:
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		}
 	})
+}
+
+func contentTypePath(objectPath string) string {
+	return objectPath + ".contenttype"
+}
+
+func (l *Local) objectContentType(f *os.File, key string) (string, error) {
+	stored, err := os.ReadFile(contentTypePath(l.path(key)))
+	if err == nil {
+		if contentType := strings.TrimSpace(string(stored)); contentType != "" {
+			return contentType, nil
+		}
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+
+	leading := make([]byte, 512)
+	n, readErr := f.Read(leading)
+	if readErr != nil && !errors.Is(readErr, io.EOF) {
+		return "", readErr
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return "", err
+	}
+	if n > 0 {
+		if contentType := http.DetectContentType(leading[:n]); contentType != "" {
+			return contentType, nil
+		}
+	}
+	return "application/octet-stream", nil
 }
 
 // MaxUploadBytes returns the configured per-upload body cap.

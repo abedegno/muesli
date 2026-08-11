@@ -27,6 +27,7 @@ type fakeStreamingPlugin struct {
 	token           string
 	segments        []fakeStreamingSegment
 	dropAfterFrames int
+	emitLoading     bool
 
 	mu              sync.Mutex
 	binaryFrames    int
@@ -137,6 +138,11 @@ func (p *fakeStreamingPlugin) handleStream(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	if p.emitLoading {
+		if err := conn.WriteJSON(map[string]string{"type": "loading"}); err != nil {
+			return
+		}
+	}
 	if err := conn.WriteJSON(map[string]string{"type": "ready"}); err != nil {
 		return
 	}
