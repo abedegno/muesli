@@ -59,6 +59,9 @@ func StartPostgres(ctx context.Context, dataDir string, port int) (*PG, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
+	if !embeddedPostgresSupported {
+		return nil, errors.New("embedded postgres is not supported on this platform")
+	}
 	if err := os.MkdirAll(dataDir, 0o700); err != nil {
 		return nil, fmt.Errorf("create postgres data dir %q: %w", dataDir, err)
 	}
