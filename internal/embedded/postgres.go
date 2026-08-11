@@ -190,7 +190,11 @@ func (p *PG) stopOwnPostmaster(ctx context.Context) error {
 	}
 	killCtx, cancelKill := context.WithTimeout(ctx, killWait)
 	defer cancelKill()
-	waitForExit(killCtx, pid)
+	if !waitForExit(killCtx, pid) {
+		// Reporting success here would tell the caller the database is down when it
+		// is not -- the same shape of lie this whole change exists to remove.
+		return fmt.Errorf("embedded postgres: pid %d still alive after SIGKILL", pid)
+	}
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}

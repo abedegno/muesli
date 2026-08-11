@@ -106,7 +106,9 @@ func TestStopProceedsWhenOwned(t *testing.T) {
 	// A live stand-in whose argv satisfies the identity check, so Stop treats it as
 	// our postmaster and must actually signal it. Without a real process this test
 	// passes trivially via the "already gone" path and proves nothing.
-	owned := exec.Command("sh", "-c", "exec -a 'postgres -D "+dataDir+"' sleep 30")
+	// bash, and argv via $0: `exec -a` is a bashism and fails under dash, which is
+	// /bin/sh on the Ubuntu CI runners. Matches postgres_test.go's fixture.
+	owned := exec.Command("bash", "-c", `exec -a "$0" sleep 30`, "postgres -D "+dataDir)
 	if err := owned.Start(); err != nil {
 		t.Fatalf("start owned: %v", err)
 	}
