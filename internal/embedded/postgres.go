@@ -83,10 +83,15 @@ func StartPostgres(ctx context.Context, dataDir string, port int) (*PG, error) {
 	}
 
 	if err := pg.start(ctx); err != nil {
-		// start() leaves nothing running on its failure paths, but confirm rather
-		// than assume before handing the directory on.
-		if shouldReleaseOwnerLock(nil, pg.startedPID()) {
+		// A failed start can still have left a postmaster running -- the embedded
+		// library has failure paths after launch. Confirm it is gone before handing
+		// the directory on; passing a nil error here would short-circuit the check
+		// and release regardless.
+		if pid := pg.startedPID(); pid == 0 || !processAlive(pid) {
 			lock.release()
+		} else {
+			slog.Error("embedded postgres: start failed with a postmaster still running; keeping the data directory locked",
+				"pid", pid, "error", err)
 		}
 		return nil, err
 	}

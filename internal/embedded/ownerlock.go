@@ -8,9 +8,11 @@ import (
 	"time"
 )
 
-// ownerLockFile sits beside the data directory, not inside it: Postgres owns the
-// contents of the data directory and a stray file there invites trouble.
-const ownerLockFile = "owner.lock"
+// ownerLockSuffix names a lock that sits beside its data directory rather than
+// inside it: Postgres owns the contents of the data directory and a stray file
+// there invites trouble. The data directory's own name is part of the lock name,
+// so sibling data directories do not end up sharing one lock.
+const ownerLockSuffix = ".owner.lock"
 
 // ownerLock is an inter-process lock over one embedded Postgres data directory.
 //
@@ -29,7 +31,7 @@ type ownerLock struct {
 }
 
 func ownerLockPath(dataDir string) string {
-	return filepath.Join(filepath.Dir(dataDir), ownerLockFile)
+	return filepath.Join(filepath.Dir(dataDir), filepath.Base(dataDir)+ownerLockSuffix)
 }
 
 // acquireOwnerLock blocks until it holds the lock for dataDir or timeout elapses.
