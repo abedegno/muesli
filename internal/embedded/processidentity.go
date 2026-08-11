@@ -16,7 +16,9 @@ import (
 // argv rather than the pid file's recorded start time: `ps -o args=` behaves the
 // same on macOS and Linux, and Postgres records its data directory in its own
 // command line, so no platform-specific clock handling is needed.
-func processIsPostgresFor(pid int, dataDir string) bool {
+var processIsPostgresFor = processIsPostgresForPID
+
+func processIsPostgresForPID(pid int, dataDir string) bool {
 	if pid <= 0 || dataDir == "" {
 		return false
 	}
