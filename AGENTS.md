@@ -46,6 +46,22 @@ Assert on behaviour, not on the shape of a string. Testing that a command's argu
 
 This applies to throwaway verification at the terminal, not only to committed tests. `pgrep -f "some-task"` matches any command line containing that string — including the shell you just typed it into — so it reports the task as running whether or not it is. The same pattern given to `pkill -f` kills the invoking shell. Both happened here in a single command: the `pkill` stopped the work before it started, and the `pgrep` then confirmed it was running.
 
+## Do not trust what the code says about itself
+
+A constant named for a timeout, a comment promising a guarantee, a variable called `bound` — these are claims, not facts. Verify the mechanism before relying on one.
+
+Three instances surfaced while designing a single fix, each already shipped:
+
+- A shutdown path documented as ten seconds actually took about twenty-one. Two independent ten-second budgets ran in sequence, with a third delay before them.
+- A ten-second child-cleanup context was not a bound at all. Each child's stop performed a post-kill wait on a timer that ignored the context it had been handed, so four children stopped in sequence could exceed it by eight seconds.
+- A function whose comment read _"guarding against pid reuse"_ did no such thing. It compared a pid file's self-reported directory against the directory the file was read from — always true — and could then signal an unrelated process that had inherited the pid.
+
+Each claim was believable, well placed, and written by someone who understood the code. That is what makes them dangerous: they read as authoritative, so a design gets built on top of them and the error only appears at runtime.
+
+The tell is a design or plan quoting a number or a guarantee it has not traced. When you catch yourself writing "this inherits the existing N-second budget" or "that case is already handled", follow the call path to where the work actually happens. If you cannot trace it quickly, write that it is unverified rather than asserting it.
+
+This is the same failure as the fixture rule below, one level up: there you trust your own belief about the data's shape, here you trust the codebase's account of its own behaviour.
+
 ## Build fixtures from real data, not from its assumed shape
 
 A test is only as good as the sample it runs on. Hand-written fixtures encode what you _believe_ the data looks like, and that belief is exactly what the test was supposed to check — so a wrong one produces a test that passes, reads correctly in review, and asserts nothing.
