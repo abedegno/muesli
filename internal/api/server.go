@@ -48,6 +48,9 @@ type Deps struct {
 	// Prober is used by /readyz to probe external deps. If nil, the default
 	// HTTP HEAD prober (3-second timeout) is used.
 	Prober DepProber
+	// DBPing is used by /readyz to check database liveness. If nil and Store is
+	// non-nil, Store.Pool().Ping is used.
+	DBPing func(context.Context) error
 	// BackupRunner runs pg_dump for the admin backup endpoints and the
 	// scheduled backup worker (BAK01). If nil, the default implementation
 	// (backup.PgDumpRunner, which shells out to pg_dump) is used.

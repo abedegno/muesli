@@ -307,6 +307,7 @@ export function createHandlers(deps: HandlerDeps): Handlers {
         const headers = new Headers()
         if (cfg?.token) headers.set('Authorization', `Bearer ${cfg.token}`)
         const res = await fetchImpl(new URL('/readyz', baseUrl), { headers })
+        if (!res.ok) return null
         const body = (await res.json()) as { embedded?: { ollamaDetected?: boolean } }
         return { ollamaDetected: body.embedded?.ollamaDetected ?? false }
       } catch {

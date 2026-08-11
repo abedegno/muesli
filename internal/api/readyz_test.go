@@ -60,6 +60,33 @@ func TestReadyz_AllConfiguredAndReachable(t *testing.T) {
 	}
 }
 
+func TestReadyz_DatabaseUnreachable(t *testing.T) {
+	t.Parallel()
+
+	srv := NewServer(Deps{
+		DBPing: func(context.Context) error { return fmt.Errorf("database unavailable") },
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("want 503, got %d", rec.Code)
+	}
+
+	var resp readyzResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Status != "starting" {
+		t.Errorf("want status=starting, got %q", resp.Status)
+	}
+	if database := resp.Deps["database"]; database.Ok || database.Error == "" {
+		t.Errorf("database: want failed status with error, got %+v", database)
+	}
+}
+
 func TestReadyz_OneDepUnreachable(t *testing.T) {
 	t.Parallel()
 
