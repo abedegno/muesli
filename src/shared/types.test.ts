@@ -4,6 +4,7 @@ import { isReady, isTerminal, NOTE_STATUSES } from './types'
 describe('note status helpers', () => {
   it('exposes the server status progression', () => {
     expect(NOTE_STATUSES).toEqual([
+      'draft',
       'recording',
       'uploaded',
       'transcribing',

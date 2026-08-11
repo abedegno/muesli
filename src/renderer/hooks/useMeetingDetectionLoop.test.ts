@@ -11,6 +11,7 @@ const autoRecordListeners = new Set<(payload: { noteId: string }) => void>()
 const mocks = vi.hoisted(() => ({
   createNote: vi.fn(),
   linkNoteEvent: vi.fn(),
+  startNoteCapture: vi.fn(),
   meetingDetectionPromptAccept: vi.fn(),
   meetingDetectionPromptDismiss: vi.fn(),
   meetingDetectionRendererReady: vi.fn(),
@@ -32,6 +33,7 @@ vi.mock('@/api', () => ({
   muesli: {
     createNote: mocks.createNote,
     linkNoteEvent: mocks.linkNoteEvent,
+    startNoteCapture: mocks.startNoteCapture,
     meetingDetectionPromptAccept: mocks.meetingDetectionPromptAccept,
     meetingDetectionPromptDismiss: mocks.meetingDetectionPromptDismiss,
     meetingDetectionRendererReady: mocks.meetingDetectionRendererReady,
@@ -74,6 +76,7 @@ afterEach(() => {
 beforeEach(() => {
   mocks.createNote.mockResolvedValue({ id: 'note-created' })
   mocks.linkNoteEvent.mockResolvedValue(undefined)
+  mocks.startNoteCapture.mockResolvedValue({ id: 'note-created', status: 'recording' })
 })
 
 describe('useMeetingDetectionLoop', () => {
@@ -103,6 +106,7 @@ describe('useMeetingDetectionLoop', () => {
     expect(mocks.meetingDetectionPromptAccept).toHaveBeenCalledWith('event-1::2026-07-11T14:00:00.000Z')
     expect(mocks.createNote).toHaveBeenCalledWith('Weekly sync')
     expect(mocks.linkNoteEvent).toHaveBeenCalledWith('note-created', 'event-1')
+    expect(mocks.startNoteCapture).toHaveBeenCalledWith('note-created')
     expect(navigate).toHaveBeenCalledWith('/notes/note-created?capture=1&autostart=1', { replace: true })
     expect(result.current.promptEvent).toBeNull()
 

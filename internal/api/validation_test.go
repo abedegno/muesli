@@ -183,8 +183,9 @@ func TestListNotesStatusValidation(t *testing.T) {
 		status string
 		want   int
 	}{
-		// Valid values — all six statuses plus empty string.
+		// Valid values — all seven statuses plus empty string.
 		{"no status param", "", http.StatusOK},
+		{"status=draft", "draft", http.StatusOK},
 		{"status=recording", "recording", http.StatusOK},
 		{"status=uploaded", "uploaded", http.StatusOK},
 		{"status=transcribing", "transcribing", http.StatusOK},

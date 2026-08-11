@@ -87,7 +87,7 @@ func (s *Store) CreateNote(ctx context.Context, ownerID, title string) (model.No
 		`INSERT INTO notes (id, owner_id, title, status)
 		 VALUES ($1,$2,$3,$4)
 		 RETURNING id, owner_id, title, status, pinned, created_at, updated_at, event_id`,
-		id, ownerID, title, model.NoteRecording).
+		id, ownerID, title, model.NoteDraft).
 		Scan(&n.ID, &n.OwnerID, &n.Title, &n.Status, &n.Pinned, &n.CreatedAt, &n.UpdatedAt, &n.EventID)
 	if err != nil {
 		return model.Note{}, err
@@ -99,8 +99,8 @@ func (s *Store) CreateNote(ctx context.Context, ownerID, title string) (model.No
 }
 
 // DuplicateNote creates a fresh note owned by ownerID that copies the editable
-// content and organization of noteID. The new note starts in the same state as
-// CreateNote, with no audio/job/transcript/summary data carried over.
+// content and organization of noteID. The new note starts as a draft, with no
+// audio/job/transcript/summary data carried over.
 func (s *Store) DuplicateNote(ctx context.Context, ownerID, noteID string) (model.Note, error) {
 	orig, err := s.GetNote(ctx, ownerID, noteID)
 	if err != nil {
@@ -152,6 +152,36 @@ func (s *Store) DuplicateNote(ctx context.Context, ownerID, noteID string) (mode
 	copyNote.Tags = append([]string{}, tags...)
 	copyNote.FolderIDs = append([]string{}, folderIDs...)
 	return copyNote, nil
+}
+
+// StartNoteCapture advances a draft note to recording. Notes already beyond
+// the draft state are returned unchanged so retries cannot regress the pipeline.
+func (s *Store) StartNoteCapture(ctx context.Context, ownerID, noteID string) (*model.Note, error) {
+	var n model.Note
+	var audioKey, retention *string
+	err := s.pool.QueryRow(ctx,
+		`UPDATE notes SET status=$1, updated_at=now()
+		 WHERE id=$2 AND owner_id=$3 AND deleted_at IS NULL AND status=$4
+		 RETURNING id, owner_id, title, status, pinned, started_at, ended_at, partial_transcript, audio_object_key, retention_state, created_at, updated_at, event_id`,
+		model.NoteRecording, noteID, ownerID, model.NoteDraft).
+		Scan(&n.ID, &n.OwnerID, &n.Title, &n.Status, &n.Pinned, &n.StartedAt, &n.EndedAt, &n.PartialTranscript, &audioKey, &retention, &n.CreatedAt, &n.UpdatedAt, &n.EventID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		existing, getErr := s.GetNote(ctx, ownerID, noteID)
+		if getErr != nil {
+			return nil, getErr
+		}
+		return &existing, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if audioKey != nil {
+		n.AudioObjectKey = *audioKey
+	}
+	if retention != nil {
+		n.RetentionState = *retention
+	}
+	return &n, nil
 }
 
 func (s *Store) GetNote(ctx context.Context, ownerID, noteID string) (model.Note, error) {

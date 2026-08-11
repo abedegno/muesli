@@ -23,6 +23,7 @@ type rawRuleNode struct {
 }
 
 var validStatuses = map[string]bool{
+	"draft":     true,
 	"recording": true, "uploaded": true, "transcribing": true,
 	"summarizing": true, "ready": true, "failed": true,
 }

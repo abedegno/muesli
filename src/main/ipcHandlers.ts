@@ -61,6 +61,7 @@ interface Handlers {
   getCompany(id: string): Promise<CompanyWithPeople>
   getFull(id: string): Promise<FullNote>
   createNote(title: string): Promise<Note>
+  startNoteCapture(id: string): Promise<Note>
   updateBody(id: string, content: string): Promise<void>
   updateTitle(id: string, title: string): Promise<void>
   deleteNote(id: string): Promise<void>
@@ -474,6 +475,10 @@ export function createHandlers(deps: HandlerDeps): Handlers {
 
     async createNote(title) {
       return authedClient().createNote(title)
+    },
+
+    async startNoteCapture(id) {
+      return authedClient().startNoteCapture(id)
     },
 
     async updateBody(id, content) {

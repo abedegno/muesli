@@ -361,6 +361,7 @@ app.whenReady().then(async () => {
     ipcMain.handle(IPC.updateDigestConfig, (_e, cadence: DigestConfig['cadence']) => handlers.updateDigestConfig(cadence))
     ipcMain.handle(IPC.getFull, (_e, id: string) => handlers.getFull(id))
     ipcMain.handle(IPC.createNote, (_e, title: string) => handlers.createNote(title))
+    ipcMain.handle(IPC.startNoteCapture, (_e, id: string) => handlers.startNoteCapture(id))
     ipcMain.handle(IPC.updateBody, (_e, id: string, content: string) => handlers.updateBody(id, content))
     ipcMain.handle(IPC.updateTitle, (_e, id: string, title: string) => handlers.updateTitle(id, title))
     ipcMain.handle(IPC.deleteNote, (_e, id: string) => handlers.deleteNote(id))
