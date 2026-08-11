@@ -24,14 +24,21 @@ const (
 	embeddedPGPassFile  = "pgpass"
 	postmasterPIDFile   = "postmaster.pid"
 	pgStartTimeout      = 60 * time.Second
-	pgStopTimeout       = 5 * time.Second
-	killWait            = 2 * time.Second
 	passwordEntropy     = 32
 )
 
 // ownerLockTimeout bounds how long a launch waits for a previous instance to
 // release the data directory. A var, not a const, so tests need not spend it.
 var ownerLockTimeout = 30 * time.Second
+
+// Shutdown waits are vars so tests can exercise both timeout paths without
+// spending the production durations.
+var (
+	pgStopTimeout = 5 * time.Second
+	killWait      = 2 * time.Second
+
+	waitForPostmasterExit = waitForExit
+)
 
 // ErrPostmasterNotOwned reports that the postmaster recorded in the data
 // directory was started by a different instance, so this one refused to act on
@@ -281,7 +288,7 @@ func (p *PG) stopOwnPostmaster(ctx context.Context) error {
 
 	stopCtx, cancel := context.WithTimeout(ctx, pgStopTimeout)
 	defer cancel()
-	if waitForExit(stopCtx, pid) {
+	if waitForPostmasterExit(stopCtx, pid) {
 		return nil
 	}
 
@@ -290,7 +297,7 @@ func (p *PG) stopOwnPostmaster(ctx context.Context) error {
 	}
 	killCtx, cancelKill := context.WithTimeout(ctx, killWait)
 	defer cancelKill()
-	if !waitForExit(killCtx, pid) {
+	if !waitForPostmasterExit(killCtx, pid) {
 		// Reporting success here would tell the caller the database is down when it
 		// is not -- the same shape of lie this whole change exists to remove.
 		return fmt.Errorf("embedded postgres: pid %d still alive after SIGKILL", pid)
