@@ -157,24 +157,23 @@ func (p *PG) Stop(ctx context.Context) error {
 	// reap our postmaster and start its own in the same data directory. Stopping
 	// then kills the NEW instance's database, and the replacement server dies at
 	// startup with "connection refused" -- leaving the user with no server at all.
+	pid := p.startedPID()
+
+	// Both outcomes below share one release decision. Returning early from the
+	// not-owned branch used to release the lock without checking whether OUR
+	// postmaster was still alive -- and it can be, since losing ownership only
+	// means postmaster.pid no longer names us (it may be missing or unreadable).
+	var err error
 	if !p.stillOwnsPostmaster() {
 		slog.Warn("embedded postgres: data directory no longer owned by this instance; not stopping it",
-			"data_dir", p.dataDir, "started_pid", p.startedPID())
-		p.mu.Lock()
-		p.ep = nil
-		p.pid = 0
-		lock := p.lock
-		p.lock = nil
-		p.mu.Unlock()
-		lock.release()
-		// Deliberately NOT nil: the caller asked for a shutdown and did not get
+			"data_dir", p.dataDir, "started_pid", pid)
+		// Deliberately not nil: the caller asked for a shutdown and did not get
 		// one. Reporting success here would be the same class of lie that made
 		// this bug hard to see.
-		return ErrPostmasterNotOwned
+		err = ErrPostmasterNotOwned
+	} else {
+		err = p.stopOwnPostmaster(ctx)
 	}
-
-	pid := p.startedPID()
-	err := p.stopOwnPostmaster(ctx)
 
 	p.mu.Lock()
 	p.ep = nil

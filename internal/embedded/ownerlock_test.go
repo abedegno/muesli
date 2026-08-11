@@ -149,3 +149,42 @@ func TestPasswordFileIsNotCreatedWithoutTheLock(t *testing.T) {
 		t.Fatal("wrote the shared password file without holding the lock")
 	}
 }
+
+// Losing ownership does not mean our postmaster is gone: postmaster.pid may be
+// missing or unreadable while the process we started is still running. Stop must
+// keep the lock in that case, or another instance starts alongside a live
+// database -- the hazard this whole change exists to prevent.
+func TestStopKeepsLockWhenOwnershipIsLostButOurProcessLives(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+	if err := os.MkdirAll(dataDir, 0o700); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	ours := exec.Command("sleep", "30")
+	if err := ours.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	go func() { _ = ours.Wait() }() // reap: a zombie still answers signal 0
+	t.Cleanup(func() { _ = ours.Process.Kill() })
+
+	lock, err := acquireOwnerLock(dataDir, time.Second)
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+
+	// No postmaster.pid at all -> ownership cannot be established, while the
+	// process we started is very much alive.
+	p := &PG{
+		dataDir: dataDir,
+		pid:     ours.Process.Pid,
+		ep:      newEmbeddedPostgres(dataDir, 5999, "pw"),
+		lock:    lock,
+	}
+
+	if err := p.Stop(context.Background()); !errors.Is(err, ErrPostmasterNotOwned) {
+		t.Fatalf("Stop err = %v, want ErrPostmasterNotOwned", err)
+	}
+	if _, err := acquireOwnerLock(dataDir, 200*time.Millisecond); err == nil {
+		t.Fatal("released the data directory while our postmaster was still alive")
+	}
+}
