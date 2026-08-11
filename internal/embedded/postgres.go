@@ -25,10 +25,13 @@ const (
 	postmasterPIDFile   = "postmaster.pid"
 	pgStartTimeout      = 60 * time.Second
 	pgStopTimeout       = 5 * time.Second
-	ownerLockTimeout    = 30 * time.Second
 	killWait            = 2 * time.Second
 	passwordEntropy     = 32
 )
+
+// ownerLockTimeout bounds how long a launch waits for a previous instance to
+// release the data directory. A var, not a const, so tests need not spend it.
+var ownerLockTimeout = 30 * time.Second
 
 // ErrPostmasterNotOwned reports that the postmaster recorded in the data
 // directory was started by a different instance, so this one refused to act on
@@ -60,17 +63,22 @@ func StartPostgres(ctx context.Context, dataDir string, port int) (*PG, error) {
 		return nil, fmt.Errorf("create postgres data dir %q: %w", dataDir, err)
 	}
 
-	password, err := loadOrCreatePassword(dataDir)
+	// Serialize every instance that touches this directory (#585) BEFORE touching
+	// any shared state in it. The previous instance holds this until its shutdown
+	// completes, so our reap-and-start cannot interleave with its stop; if it was
+	// SIGKILLed the kernel has already released the lock for us.
+	//
+	// Ordering matters: the password file lives in this directory, so two cold
+	// starts racing here would each generate a password and overwrite the other's,
+	// leaving a cluster initialized with one and a file holding the other.
+	lock, err := acquireOwnerLock(dataDir, ownerLockTimeout)
 	if err != nil {
 		return nil, err
 	}
 
-	// Serialize every instance that touches this directory (#585). The previous
-	// instance holds this until its shutdown completes, so our reap-and-start
-	// cannot interleave with its stop. If it was SIGKILLed the kernel has already
-	// released the lock for us.
-	lock, err := acquireOwnerLock(dataDir, ownerLockTimeout)
+	password, err := loadOrCreatePassword(dataDir)
 	if err != nil {
+		lock.release()
 		return nil, err
 	}
 

@@ -1,7 +1,9 @@
 package embedded
 
 import (
+	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -118,5 +120,32 @@ func TestRetainedOwnerLockSurvivesCollection(t *testing.T) {
 
 	if _, err := acquireOwnerLock(dataDir, 200*time.Millisecond); err == nil {
 		t.Fatal("lock was released by the garbage collector while it was meant to be held")
+	}
+}
+
+// The password file lives in the locked directory, so it must not be created
+// before the lock is held: two cold starts racing there would each generate a
+// password and overwrite the other's, leaving a cluster initialized with one and
+// a file containing the other.
+func TestPasswordFileIsNotCreatedWithoutTheLock(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+
+	restore := ownerLockTimeout
+	ownerLockTimeout = 200 * time.Millisecond
+	t.Cleanup(func() { ownerLockTimeout = restore })
+
+	held, err := acquireOwnerLock(dataDir, time.Second)
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	t.Cleanup(held.release)
+
+	// A second starter must block on the lock and therefore never reach the
+	// password file.
+	if _, err := StartPostgres(context.Background(), dataDir, 5999); err == nil {
+		t.Fatal("started while another instance held the lock")
+	}
+	if _, statErr := os.Stat(passwordFilePath(dataDir)); statErr == nil {
+		t.Fatal("wrote the shared password file without holding the lock")
 	}
 }
