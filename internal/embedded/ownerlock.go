@@ -5,7 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -52,7 +51,7 @@ func acquireOwnerLock(dataDir string, timeout time.Duration) (*ownerLock, error)
 
 	deadline := time.Now().Add(timeout)
 	for {
-		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
+		err := tryLockFile(f)
 		if err == nil {
 			return &ownerLock{f: f}, nil
 		}
@@ -68,17 +67,13 @@ func acquireOwnerLock(dataDir string, timeout time.Duration) (*ownerLock, error)
 	}
 }
 
-func isLockBusy(err error) bool {
-	return err == syscall.EWOULDBLOCK || err == syscall.EAGAIN
-}
-
 // release drops the lock. Closing the file releases it too, so this is safe to
 // call more than once and safe to skip if the process dies.
 func (l *ownerLock) release() {
 	if l == nil || l.f == nil {
 		return
 	}
-	_ = syscall.Flock(int(l.f.Fd()), syscall.LOCK_UN)
+	unlockFile(l.f)
 	_ = l.f.Close()
 	l.f = nil
 }
