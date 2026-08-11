@@ -24,10 +24,10 @@ import (
 // from here without a cycle).
 // ---------------------------------------------------------------------------
 
-func newGuardTestServer(t *testing.T) (*Server, *store.Store) {
+func newGuardTestServer(t *testing.T, cr *crypto.Crypto) (*Server, *store.Store) {
 	t.Helper()
 	st := store.New(testutil.NewPool(t))
-	return NewServer(Deps{Store: st}), st
+	return NewServer(Deps{Store: st, Crypto: cr}), st
 }
 
 func doGuardJSON(t *testing.T, srv *Server, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {
@@ -66,7 +66,7 @@ func setupGuardTestUser(t *testing.T, srv *Server, email string) map[string]stri
 // rejected with 409 "already in progress" and never touches the store.
 func TestResummarizeGuardRejectsConcurrentCall(t *testing.T) {
 	t.Parallel()
-	srv, st := newGuardTestServer(t)
+	srv, st := newGuardTestServer(t, nil)
 	ctx := context.Background()
 	if err := st.SeedBuiltInTemplates(ctx); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -133,14 +133,14 @@ func TestResummarizeGuardRejectsConcurrentCall(t *testing.T) {
 // following call for the same note id is not rejected by the guard.
 func TestResummarizeGuardReleasedAfterSuccess(t *testing.T) {
 	t.Parallel()
-	srv, st := newGuardTestServer(t)
-	ctx := context.Background()
-	if err := st.SeedBuiltInTemplates(ctx); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
 	cr, err := crypto.New("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	if err != nil {
 		t.Fatal(err)
+	}
+	srv, st := newGuardTestServer(t, cr)
+	ctx := context.Background()
+	if err := st.SeedBuiltInTemplates(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
 	}
 	// The i591 no-agent guard correctly rejects an unconfigured fixture with
 	// 422. Configure an agent here because this test exercises guard release
@@ -190,7 +190,7 @@ func TestResummarizeGuardReleasedAfterSuccess(t *testing.T) {
 // rather than the guard's "already in progress" 409.
 func TestResummarizeGuardReleasedAfterFailure(t *testing.T) {
 	t.Parallel()
-	srv, _ := newGuardTestServer(t)
+	srv, _ := newGuardTestServer(t, nil)
 	hdr := setupGuardTestUser(t, srv, "guard-failure@example.com")
 
 	rec := doGuardJSON(t, srv, http.MethodPost, "/api/notes",
