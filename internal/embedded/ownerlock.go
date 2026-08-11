@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
 )
@@ -80,4 +81,27 @@ func (l *ownerLock) release() {
 	_ = syscall.Flock(int(l.f.Fd()), syscall.LOCK_UN)
 	_ = l.f.Close()
 	l.f = nil
+}
+
+// retainedLocks keeps deliberately-unreleased locks reachable for the life of the
+// process.
+//
+// os.File carries a finalizer that closes its descriptor, and closing the
+// descriptor releases the flock. So a lock we intend to hold -- because shutdown
+// could not confirm the postmaster is gone -- would be silently released by the
+// garbage collector once the last reference dropped, which is precisely the
+// invariant it exists to uphold. Holding a reference here is what makes "keep it
+// until this process dies" true rather than aspirational.
+var retainedLocks struct {
+	mu    sync.Mutex
+	locks []*ownerLock
+}
+
+func retainOwnerLock(l *ownerLock) {
+	if l == nil || l.f == nil {
+		return
+	}
+	retainedLocks.mu.Lock()
+	retainedLocks.locks = append(retainedLocks.locks, l)
+	retainedLocks.mu.Unlock()
 }

@@ -90,6 +90,9 @@ func StartPostgres(ctx context.Context, dataDir string, port int) (*PG, error) {
 		if !postmasterStillRunning(dataDir, pg.startedPID()) {
 			lock.release()
 		} else {
+			// pg is about to become unreachable; retain the lock explicitly or the
+			// finalizer will close its descriptor and release it.
+			retainOwnerLock(lock)
 			slog.Error("embedded postgres: start failed with a postmaster still running; keeping the data directory locked",
 				"data_dir", dataDir, "error", err)
 		}
@@ -181,6 +184,8 @@ func (p *PG) Stop(ctx context.Context) error {
 		p.mu.Unlock()
 		lock.release()
 	} else {
+		// The caller may drop this PG; retain so the finalizer cannot release it.
+		retainOwnerLock(lock)
 		slog.Error("embedded postgres: shutdown did not confirm exit; keeping the data directory locked",
 			"pid", pid, "error", err)
 	}

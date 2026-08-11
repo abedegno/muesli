@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -95,5 +96,27 @@ func TestPostmasterStillRunningWithoutACapturedPID(t *testing.T) {
 	// No pid file at all.
 	if postmasterStillRunning(t.TempDir(), 0) {
 		t.Fatal("claimed a postmaster with no pid file present")
+	}
+}
+
+// os.File's finalizer closes its descriptor, and closing it releases the flock.
+// A lock we deliberately keep must therefore be retained explicitly, or the
+// garbage collector quietly undoes the safety invariant.
+func TestRetainedOwnerLockSurvivesCollection(t *testing.T) {
+	dataDir := filepath.Join(t.TempDir(), "data")
+
+	func() {
+		l, err := acquireOwnerLock(dataDir, time.Second)
+		if err != nil {
+			t.Fatalf("acquire: %v", err)
+		}
+		retainOwnerLock(l) // the failed-shutdown / failed-start path
+	}() // l is now unreachable
+
+	runtime.GC()
+	runtime.GC()
+
+	if _, err := acquireOwnerLock(dataDir, 200*time.Millisecond); err == nil {
+		t.Fatal("lock was released by the garbage collector while it was meant to be held")
 	}
 }
