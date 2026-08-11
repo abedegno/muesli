@@ -21,10 +21,30 @@ type E2EMuesliBridge = {
 
 type MuesliWindow = Window & typeof globalThis & { muesli: E2EMuesliBridge }
 
+// On a cold start there is no saved session, so getConfig() only resolves once
+// the server is up and provisioning has completed -- which makes it a sound
+// readiness gate HERE. It is not one on a relaunch, where a token file alone
+// satisfies it.
+export async function waitForMuesliConnection(page: Page): Promise<void> {
+  await expect
+    .poll(
+      () =>
+        page.evaluate(async () => {
+          const cfg = await (
+            window as unknown as { muesli: { getConfig(): Promise<unknown> } }
+          ).muesli.getConfig()
+          return cfg !== null
+        }),
+      { timeout: 90_000 }
+    )
+    .toBe(true)
+}
+
 export async function seedNoteWithAudio(
   page: Page,
   opts: { title: string }
 ): Promise<{ noteId: string }> {
+  await waitForMuesliConnection(page)
   const audioBytes = Array.from(makeSilentWav(1))
   const noteId = await page.evaluate(
     async ({ title, bytes }) => {
