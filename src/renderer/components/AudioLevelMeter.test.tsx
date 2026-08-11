@@ -9,6 +9,11 @@ afterEach(() => {
 })
 
 describe('AudioLevelMeter', () => {
+  it('renders the inactive state', () => {
+    render(<AudioLevelMeter level={0.5} active={false} />)
+    expect(screen.getByText('Inactive')).toBeVisible()
+  })
+
   it('renders a visual level and visible state text', () => {
     render(<AudioLevelMeter level={0.5} />)
     expect(screen.getByRole('meter', { name: /microphone level/i })).toHaveAttribute(
@@ -30,4 +35,3 @@ describe('AudioLevelMeter', () => {
     expect(screen.getByText('No sound detected')).toBeVisible()
   })
 })
-

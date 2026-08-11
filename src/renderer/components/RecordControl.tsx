@@ -63,6 +63,7 @@ export function RecordControl({
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([])
   const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>(prefs.deviceId)
   const [gainPct, setGainPct] = useState<number>(Math.round(prefs.gain * 100))
+  const [previewGainPct, setPreviewGainPct] = useState(gainPct)
   const [systemAudioStatus, setSystemAudioStatus] = useState<SysAudioStatus | null>(null)
   const [previewLevel, setPreviewLevel] = useState(0)
   const previewRef = useRef<MicrophonePreview | null>(null)
@@ -96,13 +97,19 @@ export function RecordControl({
       micError.name === 'MicPermissionDeniedError')
 
   useEffect(() => {
+    const timer = window.setTimeout(() => setPreviewGainPct(gainPct), 200)
+    return () => window.clearTimeout(timer)
+  }, [gainPct])
+
+  useEffect(() => {
     const generation = ++previewGenerationRef.current
     const stopPreview = async () => {
       const preview = previewRef.current
       previewRef.current = null
       await preview?.stop()
     }
-    if (state !== 'idle' || isPermDenied || isDeviceInvalid) {
+    if (state !== 'idle' || disabledReason || isPermDenied || isDeviceInvalid) {
+      setPreviewLevel(0)
       void stopPreview()
       return
     }
@@ -111,7 +118,7 @@ export function RecordControl({
       try {
         const preview = await startMicrophonePreview({
           deviceId: selectedDeviceId,
-          gainLinear: gainPct / 100,
+          gainLinear: previewGainPct / 100,
           onLevel: (level) => {
             if (previewGenerationRef.current === generation) setPreviewLevel(level)
           },
@@ -126,7 +133,7 @@ export function RecordControl({
       previewGenerationRef.current = generation + 1
       void stopPreview()
     }
-  }, [gainPct, isDeviceInvalid, isPermDenied, selectedDeviceId, state])
+  }, [disabledReason, isDeviceInvalid, isPermDenied, previewGainPct, selectedDeviceId, state])
 
   async function enumerateDevices() {
     try {

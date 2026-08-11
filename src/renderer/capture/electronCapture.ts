@@ -1,5 +1,6 @@
 import type { AudioCapture, CaptureResult } from '../../main/capture/audioCapture'
 import { PcmFrameEncoder } from '../../shared/pcm'
+import { rmsLevel } from '../audio/microphonePreview'
 
 // ElectronCapture (v1): microphone via getUserMedia, optional system audio via
 // an injected provider. Both streams are mixed in a single AudioContext and
@@ -128,9 +129,7 @@ export class ElectronCapture implements AudioCapture {
         const readLevel = (timestamp: number) => {
           if (timestamp - lastReportedAt >= 100) {
             analyser.getFloatTimeDomainData(samples)
-            let sum = 0
-            for (const sample of samples) sum += sample * sample
-            this.onLevel?.(Math.min(1, Math.sqrt(sum / samples.length) * 4))
+            this.onLevel?.(rmsLevel(samples))
             lastReportedAt = timestamp
           }
           this.levelAnimationFrame = requestAnimationFrame(readLevel)
