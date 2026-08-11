@@ -242,8 +242,8 @@ func shouldReleaseOwnerLock(stopErr error, pid int) bool {
 // the target through postmaster.pid at the moment it acts, so an ownership check
 // beforehand is a TOCTOU: the check can pass, a replacement instance can take the
 // directory over, and pg_ctl then stops the NEW postmaster. Signalling a captured
-// pid cannot retarget -- if that process is already gone, the signal fails
-// harmlessly instead of hitting somebody else.
+// pid avoids following a changed pid file. Because the OS can reuse that pid,
+// identity must still be re-verified immediately before every signal below.
 //
 // SIGINT is Postgres's fast shutdown: disconnect clients, roll back in-flight
 // transactions, checkpoint, exit.
@@ -264,6 +264,16 @@ func (p *PG) stopOwnPostmaster(ctx context.Context) error {
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return err
+	}
+	// Re-verify immediately before signalling so pid reuse during the work above
+	// cannot direct SIGINT at a stranger. A residual TOCTOU remains between these
+	// two adjacent calls, but it is the minimum irreducible gap when using portable
+	// pid-based signals and is orders of magnitude smaller than the previous window.
+	if !processIsPostgresFor(pid, p.dataDir) {
+		if processAlive(pid) {
+			return ErrPostmasterNotOwned
+		}
+		return nil
 	}
 	if err := proc.Signal(syscall.SIGINT); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return err
@@ -644,6 +654,17 @@ func (p *PG) forceKill() error {
 	proc, err := os.FindProcess(pid)
 	if err != nil {
 		return err
+	}
+	// Re-verify immediately before signalling so pid reuse during the shutdown
+	// wait cannot direct SIGKILL at a stranger. A residual TOCTOU remains between
+	// these two adjacent calls, but it is the minimum irreducible gap when using
+	// portable pid-based signals and is orders of magnitude smaller than the
+	// previous seconds-wide window.
+	if !processIsPostgresFor(pid, p.dataDir) {
+		if processAlive(pid) {
+			return ErrPostmasterNotOwned
+		}
+		return nil
 	}
 	if err := proc.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		return err

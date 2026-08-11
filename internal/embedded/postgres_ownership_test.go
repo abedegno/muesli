@@ -126,6 +126,68 @@ func TestStopProceedsWhenOwned(t *testing.T) {
 	}
 }
 
+func TestStopOwnPostmasterRevalidatesImmediatelyBeforeSignal(t *testing.T) {
+	dataDir := t.TempDir()
+	owned := exec.Command("bash", "-c", `exec -a "$0" sleep 30`, "postgres -D "+dataDir)
+	if err := owned.Start(); err != nil {
+		t.Fatalf("start owned: %v", err)
+	}
+	go func() { _ = owned.Wait() }()
+	t.Cleanup(func() { _ = owned.Process.Kill() })
+
+	bystander := exec.Command("sleep", "30")
+	if err := bystander.Start(); err != nil {
+		t.Fatalf("start bystander: %v", err)
+	}
+	go func() { _ = bystander.Wait() }()
+	t.Cleanup(func() { _ = bystander.Process.Kill() })
+
+	originalIdentityCheck := processIsPostgresFor
+	t.Cleanup(func() { processIsPostgresFor = originalIdentityCheck })
+	checks := 0
+	processIsPostgresFor = func(pid int, checkedDataDir string) bool {
+		checks++
+		return checks == 1
+	}
+
+	p := &PG{dataDir: dataDir, pid: owned.Process.Pid}
+	err := p.stopOwnPostmaster(context.Background())
+	if !errors.Is(err, ErrPostmasterNotOwned) {
+		t.Fatalf("stopOwnPostmaster err = %v, want ErrPostmasterNotOwned", err)
+	}
+	if checks != 2 {
+		t.Fatalf("identity checks = %d, want initial and immediate pre-signal checks", checks)
+	}
+	if !processAlive(owned.Process.Pid) {
+		t.Fatal("stopOwnPostmaster signalled the former identity after pre-signal validation failed")
+	}
+	if !processAlive(bystander.Process.Pid) {
+		t.Fatal("stopOwnPostmaster signalled the replacement bystander")
+	}
+}
+
+func TestForceKillRevalidatesImmediatelyBeforeSignal(t *testing.T) {
+	dataDir := t.TempDir()
+	owned := exec.Command("bash", "-c", `exec -a "$0" sleep 30`, "postgres -D "+dataDir)
+	if err := owned.Start(); err != nil {
+		t.Fatalf("start owned: %v", err)
+	}
+	go func() { _ = owned.Wait() }()
+	t.Cleanup(func() { _ = owned.Process.Kill() })
+
+	originalIdentityCheck := processIsPostgresFor
+	t.Cleanup(func() { processIsPostgresFor = originalIdentityCheck })
+	processIsPostgresFor = func(pid int, checkedDataDir string) bool { return false }
+
+	p := &PG{dataDir: dataDir, pid: owned.Process.Pid}
+	if err := p.forceKill(); !errors.Is(err, ErrPostmasterNotOwned) {
+		t.Fatalf("forceKill err = %v, want ErrPostmasterNotOwned", err)
+	}
+	if !processAlive(owned.Process.Pid) {
+		t.Fatal("forceKill killed the process after pre-signal validation failed")
+	}
+}
+
 // forceKill must never fall back to the shared pid file.
 func TestForceKillRefusesWithoutCapturedPID(t *testing.T) {
 	dataDir := t.TempDir()
