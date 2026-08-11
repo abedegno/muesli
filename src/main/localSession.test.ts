@@ -62,7 +62,7 @@ describe('ensureLocalSession', () => {
       generatePassword: () => 'pw-1',
     })
 
-    expect(out).toBe('connected')
+    expect(out).toBe('unconfirmed')
     expect(client.setupNeeded).not.toHaveBeenCalled()
     expect(client.setup).not.toHaveBeenCalled()
     expect(client.login).not.toHaveBeenCalled()

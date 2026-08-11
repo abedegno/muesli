@@ -2,7 +2,7 @@ import type { MuesliClient } from './muesliClient'
 import type { SecretStore } from './secretStore'
 import type { TokenStore } from './tokenStore'
 
-export type LocalSessionResult = 'connected' | 'needs-setup' | 'manual' | 'skipped'
+export type LocalSessionResult = 'connected' | 'unconfirmed' | 'needs-setup' | 'manual' | 'skipped'
 
 export interface LocalSessionDeps {
   embedded: boolean
@@ -17,7 +17,7 @@ export interface LocalSessionDeps {
 export async function ensureLocalSession(deps: LocalSessionDeps): Promise<LocalSessionResult> {
   if (!deps.embedded) return 'skipped'
   if (deps.secretStore.getManualServer()) return 'manual'
-  if (deps.tokenStore.load()) return 'connected'
+  if (deps.tokenStore.load()) return 'unconfirmed'
 
   const client = deps.makeClient(deps.baseUrl)
   const needs = await client.setupNeeded()

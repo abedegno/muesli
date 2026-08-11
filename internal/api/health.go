@@ -76,8 +76,20 @@ func (s *Server) handleReadyz(w http.ResponseWriter, r *http.Request) {
 		{"embeddings", cfg.EmbeddingsURL},
 	}
 
-	deps := make(map[string]depStatus, len(specs))
+	deps := make(map[string]depStatus, len(specs)+1)
 	allOK := true
+	dbPing := s.deps.DBPing
+	if dbPing == nil && s.deps.Store != nil {
+		dbPing = s.deps.Store.Pool().Ping
+	}
+	if dbPing == nil {
+		deps["database"] = depStatus{Configured: false, Ok: true}
+	} else if err := dbPing(r.Context()); err != nil {
+		deps["database"] = depStatus{Configured: true, Ok: false, Error: err.Error()}
+		allOK = false
+	} else {
+		deps["database"] = depStatus{Configured: true, Ok: true}
+	}
 	for _, spec := range specs {
 		if spec.url == "" {
 			deps[spec.name] = depStatus{Configured: false, Ok: true}

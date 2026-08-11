@@ -296,6 +296,19 @@ describe('ipc handlers', () => {
     await expect(h.getReadyz()).resolves.toBeNull()
   })
 
+  it('getReadyz returns null when the response is not ok', async () => {
+    const h = createHandlers({
+      tokenStore: new TokenStore(dir, fakeSafe),
+      fetch: async () =>
+        new Response(JSON.stringify({ embedded: { ollamaDetected: true } }), { status: 500 }),
+      onProgress: () => {},
+      embedded: true,
+      embeddedBaseUrl: 'http://127.0.0.1:9000',
+    })
+
+    await expect(h.getReadyz()).resolves.toBeNull()
+  })
+
   it('getReadyz falls back to the global fetch when the caller does not inject one', async () => {
     vi.stubGlobal(
       'fetch',
