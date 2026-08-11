@@ -25,6 +25,7 @@ const (
 	postmasterPIDFile   = "postmaster.pid"
 	pgStartTimeout      = 60 * time.Second
 	pgStopTimeout       = 5 * time.Second
+	ownerLockTimeout    = 30 * time.Second
 	killWait            = 2 * time.Second
 	passwordEntropy     = 32
 )
@@ -43,6 +44,7 @@ type PG struct {
 	port       int
 	password   string
 	pid        int
+	lock       *ownerLock
 	mu         sync.Mutex
 }
 
@@ -63,14 +65,25 @@ func StartPostgres(ctx context.Context, dataDir string, port int) (*PG, error) {
 		return nil, err
 	}
 
+	// Serialize every instance that touches this directory (#585). The previous
+	// instance holds this until its shutdown completes, so our reap-and-start
+	// cannot interleave with its stop. If it was SIGKILLed the kernel has already
+	// released the lock for us.
+	lock, err := acquireOwnerLock(dataDir, ownerLockTimeout)
+	if err != nil {
+		return nil, err
+	}
+
 	pg := &PG{
 		dataDir:    dataDir,
 		runtimeDir: runtimePathForDataDir(dataDir),
 		port:       port,
 		password:   password,
+		lock:       lock,
 	}
 
 	if err := pg.start(ctx); err != nil {
+		lock.release()
 		return nil, err
 	}
 
@@ -130,7 +143,10 @@ func (p *PG) Stop(ctx context.Context) error {
 		p.mu.Lock()
 		p.ep = nil
 		p.pid = 0
+		lock := p.lock
+		p.lock = nil
 		p.mu.Unlock()
+		lock.release()
 		// Deliberately NOT nil: the caller asked for a shutdown and did not get
 		// one. Reporting success here would be the same class of lie that made
 		// this bug hard to see.
@@ -141,7 +157,12 @@ func (p *PG) Stop(ctx context.Context) error {
 	p.mu.Lock()
 	p.ep = nil
 	p.pid = 0
+	lock := p.lock
+	p.lock = nil
 	p.mu.Unlock()
+	// Released only once the postmaster is actually down, so the next instance
+	// cannot start until this one has finished.
+	lock.release()
 	return err
 }
 
