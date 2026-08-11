@@ -7,7 +7,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 )
 
 // writePostmasterPID writes a minimal postmaster.pid naming pid as the owner.
@@ -123,6 +125,89 @@ func TestStopProceedsWhenOwned(t *testing.T) {
 	}
 	if processAlive(owned.Process.Pid) {
 		t.Fatal("did not stop the postmaster this instance owns; a clean quit would leak it")
+	}
+}
+
+func TestStopOwnPostmasterExitsViaGracefulSignal(t *testing.T) {
+	dataDir := t.TempDir()
+	owned := exec.Command("bash", "-c", `exec -a "$0" sleep 30`, "postgres -D "+dataDir)
+	if err := owned.Start(); err != nil {
+		t.Fatalf("start owned: %v", err)
+	}
+	go func() { _ = owned.Wait() }()
+	t.Cleanup(func() { _ = owned.Process.Kill() })
+
+	p := &PG{dataDir: dataDir, pid: owned.Process.Pid}
+	started := time.Now()
+	if err := p.stopOwnPostmaster(context.Background()); err != nil {
+		t.Fatalf("stopOwnPostmaster err = %v, want nil", err)
+	}
+	if elapsed := time.Since(started); elapsed >= 2*time.Second {
+		t.Fatalf("graceful shutdown took %v, want under 2s (SIGKILL fallback starts after %v)", elapsed, pgStopTimeout)
+	}
+	if processAlive(owned.Process.Pid) {
+		t.Fatal("postmaster still alive after graceful shutdown")
+	}
+}
+
+func TestStopOwnPostmasterForceKillsAfterGracefulTimeout(t *testing.T) {
+	dataDir := t.TempDir()
+	ready := filepath.Join(t.TempDir(), "ready")
+	owned := exec.Command("bash", "-c", `trap "" INT; : > "$1"; exec -a "$0" sleep 30`, "postgres -D "+dataDir, ready)
+	if err := owned.Start(); err != nil {
+		t.Fatalf("start SIGINT-ignoring owned process: %v", err)
+	}
+	go func() { _ = owned.Wait() }()
+	t.Cleanup(func() { _ = owned.Process.Kill() })
+	for deadline := time.Now().Add(2 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if _, err := os.Stat(ready); err == nil {
+			break
+		} else if time.Now().After(deadline) {
+			t.Fatalf("wait for fixture readiness: %v", err)
+		}
+	}
+
+	originalStopTimeout, originalKillWait := pgStopTimeout, killWait
+	pgStopTimeout, killWait = 200*time.Millisecond, time.Second
+	t.Cleanup(func() { pgStopTimeout, killWait = originalStopTimeout, originalKillWait })
+
+	p := &PG{dataDir: dataDir, pid: owned.Process.Pid}
+	started := time.Now()
+	if err := p.stopOwnPostmaster(context.Background()); err != nil {
+		t.Fatalf("stopOwnPostmaster err = %v, want nil after SIGKILL fallback", err)
+	}
+	if elapsed := time.Since(started); elapsed < pgStopTimeout {
+		t.Fatalf("shutdown took %v, want at least graceful timeout %v before SIGKILL", elapsed, pgStopTimeout)
+	}
+	if processAlive(owned.Process.Pid) {
+		t.Fatal("postmaster still alive after SIGKILL fallback")
+	}
+}
+
+func TestStopOwnPostmasterErrorsWhenStillAliveAfterSIGKILL(t *testing.T) {
+	dataDir := t.TempDir()
+	owned := exec.Command("bash", "-c", `trap "" INT; exec -a "$0" sleep 30`, "postgres -D "+dataDir)
+	if err := owned.Start(); err != nil {
+		t.Fatalf("start owned: %v", err)
+	}
+	go func() { _ = owned.Wait() }()
+	t.Cleanup(func() { _ = owned.Process.Kill() })
+
+	originalWait := waitForPostmasterExit
+	waits := 0
+	waitForPostmasterExit = func(context.Context, int) bool {
+		waits++
+		return false
+	}
+	t.Cleanup(func() { waitForPostmasterExit = originalWait })
+
+	p := &PG{dataDir: dataDir, pid: owned.Process.Pid}
+	err := p.stopOwnPostmaster(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "still alive after SIGKILL") {
+		t.Fatalf("stopOwnPostmaster err = %v, want still-alive-after-SIGKILL error", err)
+	}
+	if waits != 2 {
+		t.Fatalf("exit waits = %d, want graceful and post-SIGKILL checks", waits)
 	}
 }
 
