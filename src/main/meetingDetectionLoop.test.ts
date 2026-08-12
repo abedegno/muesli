@@ -82,6 +82,21 @@ beforeEach(() => {
 })
 
 describe('MeetingDetectionManager', () => {
+  it('does not start a duplicate auto-record capture while a draft capture is pending', async () => {
+    const { manager, listNotes, ensureWindow, sendAutoRecord } = createManager(true, false)
+    listNotes.mockResolvedValue([{ ...notes[0], status: 'draft' }])
+
+    manager.start()
+    await flush()
+    await manager.rendererReadyForWindow()
+    await flush()
+
+    expect(ensureWindow).not.toHaveBeenCalled()
+    expect(sendAutoRecord).not.toHaveBeenCalled()
+
+    manager.stop()
+  })
+
   it('creates a window and triggers capture when auto-record is enabled without an open window', async () => {
     const { manager, ensureWindow, sendAutoRecord, sendPromptShow } = createManager(true, false)
 
