@@ -70,6 +70,13 @@ func TestEmbeddedSigkillGroupIntegration(t *testing.T) {
 		_ = server.Wait()
 		t.Fatalf("server %d did not expose postgres and both whisper children (pids %v)\noutput:\n%s", serverPID, childPIDs, readLog(serverLog))
 	}
+	postgresPGID, err := syscall.Getpgid(postgresPID)
+	if err != nil {
+		t.Fatalf("get Postgres process group: %v", err)
+	}
+	if postgresPGID == serverPID {
+		t.Fatalf("Postgres pid %d unexpectedly remained in embedded server process group %d", postgresPID, serverPID)
+	}
 
 	if err := syscall.Kill(serverPID, syscall.SIGKILL); err != nil {
 		_ = syscall.Kill(-serverPID, syscall.SIGKILL)
@@ -79,6 +86,15 @@ func TestEmbeddedSigkillGroupIntegration(t *testing.T) {
 	_ = server.Wait()
 	if err := syscall.Kill(-serverPID, syscall.SIGKILL); err != nil && err != syscall.ESRCH {
 		t.Fatalf("SIGKILL embedded process group: %v", err)
+	}
+	if err := waitForProcessesGone(5*time.Second, whisperPIDs); err != nil {
+		_ = syscall.Kill(postgresPID, syscall.SIGKILL)
+		t.Fatalf("whisper processes survived group sweep: %v", err)
+	}
+	// pg_ctl detaches the postmaster into a different process group. Mirror the
+	// supervisor's additional sweep using the PID recorded by Postgres itself.
+	if err := syscall.Kill(postgresPID, syscall.SIGKILL); err != nil && err != syscall.ESRCH {
+		t.Fatalf("SIGKILL embedded Postgres: %v", err)
 	}
 
 	if err := waitForProcessesGone(20*time.Second, append([]int{serverPID}, childPIDs...)); err != nil {

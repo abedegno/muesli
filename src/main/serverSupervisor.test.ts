@@ -1,8 +1,11 @@
 import { EventEmitter } from 'node:events'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { appMock, spawnMock } = vi.hoisted(() => {
+const { appMock, execFileSyncMock, spawnMock } = vi.hoisted(() => {
   const listeners = new Map<string, Set<(...args: any[]) => void>>()
   const app = {
     isPackaged: false,
@@ -32,6 +35,7 @@ const { appMock, spawnMock } = vi.hoisted(() => {
   }
   return {
     appMock: app,
+    execFileSyncMock: vi.fn(),
     spawnMock: vi.fn(),
   }
 })
@@ -41,6 +45,7 @@ vi.mock('electron', () => ({
 }))
 
 vi.mock('node:child_process', () => ({
+  execFileSync: execFileSyncMock,
   spawn: spawnMock,
 }))
 
@@ -100,6 +105,7 @@ describe('serverSupervisor', () => {
     appMock.getPath.mockClear()
     appMock.removeAllListeners()
     spawnMock.mockReset()
+    execFileSyncMock.mockReset()
   })
 
   afterEach(() => {
@@ -283,21 +289,33 @@ describe('serverSupervisor', () => {
     const child = createFakeChild()
     spawnMock.mockReturnValue(child)
     const processKill = vi.spyOn(process, 'kill').mockReturnValue(true)
+    const userDataPath = mkdtempSync(join(tmpdir(), 'muesli-supervisor-'))
+    const postgresDataPath = join(userDataPath, 'embedded-server', 'postgres', 'data')
+    mkdirSync(postgresDataPath, { recursive: true })
+    writeFileSync(join(postgresDataPath, 'postmaster.pid'), '5252\n/data/path\n')
+    execFileSyncMock.mockReturnValue(`postgres -D ${postgresDataPath}`)
 
-    const { startServerSupervisor } = await loadSupervisor()
-    await startServerSupervisor({
-      env: { MUESLI_SERVER_BIN: '/tmp/muesli', MUESLI_ADDR: '127.0.0.1:4567' },
-      waitForHealthy: false,
-    })
+    try {
+      const { startServerSupervisor } = await loadSupervisor()
+      await startServerSupervisor({
+        env: { MUESLI_SERVER_BIN: '/tmp/muesli', MUESLI_ADDR: '127.0.0.1:4567' },
+        userDataPath,
+        waitForHealthy: false,
+      })
 
-    child.emit('exit', null, 'SIGKILL')
+      child.emit('exit', null, 'SIGKILL')
 
-    if (process.platform === 'win32') {
-      expect(processKill).not.toHaveBeenCalled()
-    } else {
-      expect(processKill).toHaveBeenCalledWith(-child.pid, 'SIGKILL')
+      if (process.platform === 'win32') {
+        expect(processKill).not.toHaveBeenCalled()
+      } else {
+        expect(processKill).toHaveBeenCalledWith(-child.pid, 'SIGKILL')
+        expect(processKill).toHaveBeenCalledWith(5252, 'SIGKILL')
+      }
+    } finally {
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      processKill.mockRestore()
+      rmSync(userDataPath, { recursive: true, force: true })
     }
-    processKill.mockRestore()
   })
 
   it('resolves packaged server and resource paths from the app resources directory', async () => {
