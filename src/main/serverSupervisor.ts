@@ -150,6 +150,9 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
     this.child.once('exit', (code, signal) => {
       this.childExited = true
       this.logStream?.end()
+      if (!this.quitting && this.shutdownPromise == null) {
+        this.sweepUnexpectedProcessGroup()
+      }
       if (this.shouldReportUnexpectedExit()) {
         this.reportedUnexpectedExit = true
         this.onUnexpectedExit?.({ code, signal })
@@ -166,6 +169,17 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
 
   private shouldReportUnexpectedExit(): boolean {
     return this.hasBecomeHealthy && !this.quitting && this.shutdownPromise == null && !this.reportedUnexpectedExit
+  }
+
+  private sweepUnexpectedProcessGroup(): void {
+    if (process.platform === 'win32' || this.child.pid == null) return
+    try {
+      process.kill(-this.child.pid, 'SIGKILL')
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ESRCH') {
+        console.error('[muesli-server] failed to sweep unexpected server process group', err)
+      }
+    }
   }
 
   async waitUntilHealthy(fetchImpl: typeof fetch): Promise<void> {

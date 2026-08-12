@@ -138,6 +138,14 @@ func main() {
 // run owns the embedded child-process lifecycle so deferred cleanup always
 // executes before any fatal error escapes to main and can call os.Exit.
 func run(ctx context.Context, cfg config.Config) (err error) {
+	if cfg.Embedded {
+		// #651: isolate embedded processes so the desktop supervisor can sweep
+		// resource-leaking children after a server SIGKILL; the next launch's
+		// Postgres reaper already protects correctness if that sweep is missed.
+		if err := configureEmbeddedProcessGroup(); err != nil {
+			return fmt.Errorf("configure embedded process group: %w", err)
+		}
+	}
 	cr, err := crypto.New(cfg.MasterKey)
 	if err != nil {
 		slog.Error("master key", "error", err, "hint", "set MUESLI_MASTER_KEY to a base64 32-byte key")

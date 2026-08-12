@@ -277,6 +277,29 @@ describe('serverSupervisor', () => {
     expect(onUnexpectedExit).toHaveBeenCalledWith({ code: null, signal: 'SIGKILL' })
   })
 
+  it('sweeps the Unix process group after an unexpected child exit', async () => {
+    vi.useRealTimers()
+    appMock.requestSingleInstanceLock.mockReturnValue(true)
+    const child = createFakeChild()
+    spawnMock.mockReturnValue(child)
+    const processKill = vi.spyOn(process, 'kill').mockReturnValue(true)
+
+    const { startServerSupervisor } = await loadSupervisor()
+    await startServerSupervisor({
+      env: { MUESLI_SERVER_BIN: '/tmp/muesli', MUESLI_ADDR: '127.0.0.1:4567' },
+      waitForHealthy: false,
+    })
+
+    child.emit('exit', null, 'SIGKILL')
+
+    if (process.platform === 'win32') {
+      expect(processKill).not.toHaveBeenCalled()
+    } else {
+      expect(processKill).toHaveBeenCalledWith(-child.pid, 'SIGKILL')
+    }
+    processKill.mockRestore()
+  })
+
   it('resolves packaged server and resource paths from the app resources directory', async () => {
     vi.useRealTimers()
     appMock.isPackaged = true
