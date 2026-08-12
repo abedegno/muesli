@@ -1,6 +1,6 @@
-import { createWriteStream, type WriteStream } from 'node:fs'
+import { createWriteStream, readFileSync, type WriteStream } from 'node:fs'
 import { mkdir } from 'node:fs/promises'
-import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { app } from 'electron'
 import { resolveResourceEnv, resolveServerBin } from './resourcePaths'
@@ -125,6 +125,7 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
   private readonly healthPollIntervalMs: number
   private readonly healthTimeoutMs: number
   private readonly killTimeoutMs: number
+  private readonly embeddedAppDataPath?: string
   private readonly onSecondInstance?: () => void
   private readonly onUnexpectedExit?: (info: { code: number | null; signal: NodeJS.Signals | null }) => void
   private readonly logStream: WriteStream | null
@@ -135,7 +136,7 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
   private hasBecomeHealthy = false
   private reportedUnexpectedExit = false
 
-  constructor(child: ChildProcessWithoutNullStreams, baseUrl: string, logPath: string, logStream: WriteStream | null, opts: Required<Pick<ServerSupervisorOptions, 'healthPollIntervalMs' | 'healthTimeoutMs' | 'killTimeoutMs'>> & Pick<ServerSupervisorOptions, 'onSecondInstance' | 'onUnexpectedExit'>) {
+  constructor(child: ChildProcessWithoutNullStreams, baseUrl: string, logPath: string, logStream: WriteStream | null, opts: Required<Pick<ServerSupervisorOptions, 'healthPollIntervalMs' | 'healthTimeoutMs' | 'killTimeoutMs'>> & Pick<ServerSupervisorOptions, 'onSecondInstance' | 'onUnexpectedExit'> & { embeddedAppDataPath?: string }) {
     this.child = child
     this.baseUrl = baseUrl
     this.logPath = logPath
@@ -143,6 +144,7 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
     this.healthPollIntervalMs = opts.healthPollIntervalMs
     this.healthTimeoutMs = opts.healthTimeoutMs
     this.killTimeoutMs = opts.killTimeoutMs
+    this.embeddedAppDataPath = opts.embeddedAppDataPath
     this.onSecondInstance = opts.onSecondInstance
     this.onUnexpectedExit = opts.onUnexpectedExit
     this.logStream = logStream
@@ -150,6 +152,10 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
     this.child.once('exit', (code, signal) => {
       this.childExited = true
       this.logStream?.end()
+      if (!this.quitting && this.shutdownPromise == null) {
+        this.sweepUnexpectedProcessGroup()
+        this.killUnexpectedPostgres()
+      }
       if (this.shouldReportUnexpectedExit()) {
         this.reportedUnexpectedExit = true
         this.onUnexpectedExit?.({ code, signal })
@@ -166,6 +172,39 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
 
   private shouldReportUnexpectedExit(): boolean {
     return this.hasBecomeHealthy && !this.quitting && this.shutdownPromise == null && !this.reportedUnexpectedExit
+  }
+
+  private sweepUnexpectedProcessGroup(): void {
+    if (process.platform === 'win32' || this.child.pid == null) return
+    try {
+      process.kill(-this.child.pid, 'SIGKILL')
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ESRCH') {
+        console.error('[muesli-server] failed to sweep unexpected server process group', err)
+      }
+    }
+  }
+
+  private killUnexpectedPostgres(): void {
+    if (process.platform === 'win32' || !this.embeddedAppDataPath) return
+    let pid: number
+    const dataPath = join(this.embeddedAppDataPath, 'postgres', 'data')
+    try {
+      const pidLine = readFileSync(join(dataPath, 'postmaster.pid'), 'utf8').split('\n', 1)[0]
+      pid = Number.parseInt(pidLine, 10)
+      if (!Number.isSafeInteger(pid) || pid <= 0 || pid === this.child.pid) return
+      const args = execFileSync('ps', ['-o', 'args=', '-p', String(pid)], { encoding: 'utf8' }).trim()
+      if (!args.includes('postgres') || !args.includes(dataPath)) return
+    } catch {
+      return
+    }
+    try {
+      process.kill(pid, 'SIGKILL')
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ESRCH') {
+        console.error('[muesli-server] failed to kill unexpected embedded Postgres', err)
+      }
+    }
   }
 
   async waitUntilHealthy(fetchImpl: typeof fetch): Promise<void> {
@@ -293,6 +332,10 @@ export async function startServerSupervisor(opts: ServerSupervisorOptions = {}):
   const addr = parseLoopbackAddr(env.MUESLI_ADDR ?? DEFAULT_ADDR)
   const baseUrl = `http://${addr.host}:${addr.port}`
   const logPath = opts.logPath ?? makeServerLogPath(userDataPath)
+  const embeddedAppDataPath =
+    opts.env && Object.prototype.hasOwnProperty.call(opts.env, 'MUESLI_APPDATA')
+      ? opts.env.MUESLI_APPDATA
+      : join(userDataPath, 'embedded-server')
   await mkdir(dirname(logPath), { recursive: true })
   let logStream: WriteStream | null = null
   try {
@@ -325,6 +368,7 @@ export async function startServerSupervisor(opts: ServerSupervisorOptions = {}):
     killTimeoutMs: opts.killTimeoutMs ?? DEFAULT_KILL_TIMEOUT_MS,
     onSecondInstance: opts.onSecondInstance,
     onUnexpectedExit: opts.onUnexpectedExit,
+    embeddedAppDataPath,
   })
 
   supervisor.installLifecycleHooks()
