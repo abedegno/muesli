@@ -2,6 +2,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import type { MicStatus } from '../../main/micPermission'
 import { SetupWizard, nextStep, type SetupWizardBridge } from './SetupWizard'
 
 afterEach(cleanup)
@@ -21,6 +22,14 @@ function makeBridge(overrides: Partial<SetupWizardBridge> = {}): SetupWizardBrid
   } as SetupWizardBridge
 }
 
+const micStatuses: MicStatus[] = Object.keys({
+  granted: true,
+  denied: true,
+  'not-determined': true,
+  restricted: true,
+  unknown: true,
+} satisfies Record<MicStatus, true>) as MicStatus[]
+
 describe('nextStep', () => {
   it('advances through the wizard steps', () => {
     expect(nextStep('welcome')).toBe('microphone')
@@ -31,6 +40,30 @@ describe('nextStep', () => {
 })
 
 describe('SetupWizard', () => {
+  it.each(micStatuses)('enables Continue on the microphone step when status is %s', async (micStatus) => {
+    const bridge = makeBridge({
+      micStatus: vi.fn().mockResolvedValue(micStatus),
+    })
+
+    render(<SetupWizard onDone={() => {}} bridge={bridge} />)
+
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }))
+    await waitFor(() => expect(bridge.micStatus).toHaveBeenCalledOnce())
+    expect(screen.getByRole('button', { name: /continue/i })).toBeEnabled()
+  })
+
+  it('enables Continue while microphone status is unresolved', async () => {
+    const bridge = makeBridge({
+      micStatus: vi.fn().mockReturnValue(new Promise<MicStatus>(() => {})),
+    })
+
+    render(<SetupWizard onDone={() => {}} bridge={bridge} />)
+
+    await userEvent.click(screen.getByRole('button', { name: /continue/i }))
+    await waitFor(() => expect(bridge.micStatus).toHaveBeenCalledOnce())
+    expect(screen.getByRole('button', { name: /continue/i })).toBeEnabled()
+  })
+
   it('shows the granted microphone state and does not request permission', async () => {
     const bridge = makeBridge({
       micStatus: vi.fn().mockResolvedValue('granted'),
