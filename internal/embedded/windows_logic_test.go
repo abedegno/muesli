@@ -4,6 +4,7 @@ import (
 	"errors"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // These tests exercise the pure decision logic behind the Windows liveness and
@@ -115,5 +116,89 @@ func TestInstallRootForDataDirMatchesPGInstallRoot(t *testing.T) {
 	t.Setenv(embeddedPGBinaryEnv, "/tmp/binaries")
 	if got, want := installRootForDataDir(dataDir), pg.installRoot(); got != want {
 		t.Fatalf("installRootForDataDir(%q) = %q, want %q (PG.installRoot())", dataDir, got, want)
+	}
+}
+
+func TestPostmasterStartTimeMatches(t *testing.T) {
+	base := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	const tolerance = 5 * time.Second
+
+	cases := []struct {
+		name     string
+		recorded time.Time
+		actual   time.Time
+		want     bool
+	}{
+		{name: "exact match", recorded: base, actual: base, want: true},
+		{name: "within tolerance, actual after recorded", recorded: base, actual: base.Add(3 * time.Second), want: true},
+		{name: "within tolerance, actual before recorded", recorded: base, actual: base.Add(-3 * time.Second), want: true},
+		{name: "outside tolerance", recorded: base, actual: base.Add(30 * time.Second), want: false},
+		{name: "zero recorded", recorded: time.Time{}, actual: base, want: false},
+		{name: "zero actual", recorded: base, actual: time.Time{}, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := postmasterStartTimeMatches(tc.recorded, tc.actual, tolerance); got != tc.want {
+				t.Fatalf("postmasterStartTimeMatches(%v, %v, %v) = %v, want %v", tc.recorded, tc.actual, tolerance, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestWindowsForeignIdentityMatchesDiscriminatesSharedBinariesRoot is the
+// regression test for the cross-review finding on this PR: when
+// MUESLI_EMBEDDED_PG_BINARIES points two different data directories at one
+// shared binaries root, both resolve to the SAME expected postgres.exe path,
+// so postgresImagePathMatches alone returns true for both regardless of which
+// data directory a live process actually belongs to. This must not be treated
+// as "identity established" -- the start-time cross-check has to be the thing
+// that actually discriminates between the two data directories, not path
+// equality.
+func TestWindowsForeignIdentityMatchesDiscriminatesSharedBinariesRoot(t *testing.T) {
+	const tolerance = 5 * time.Second
+
+	dataDirAStart := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	dataDirBStart := time.Date(2026, 1, 1, 12, 30, 0, 0, time.UTC)
+
+	// A live process whose actual creation time lines up with data dir A's
+	// recorded start -- and, because both data directories share one
+	// MUESLI_EMBEDDED_PG_BINARIES root, pathMatches is true for BOTH (that is
+	// the scenario itself, not something under test here).
+	livePostgresCreatedAt := dataDirAStart.Add(1 * time.Second)
+	const pathMatches = true
+
+	if !windowsForeignIdentityMatches(pathMatches, dataDirAStart, livePostgresCreatedAt, tolerance) {
+		t.Fatal("expected a match for the data directory whose recorded start time lines up with the live process")
+	}
+	if windowsForeignIdentityMatches(pathMatches, dataDirBStart, livePostgresCreatedAt, tolerance) {
+		t.Fatal("expected NO match for a different data directory that merely shares the same binaries root (and so the same expected executable path) -- path equality must not be treated as identity on its own")
+	}
+}
+
+func TestWindowsForeignIdentityMatchesRequiresPathMatchToo(t *testing.T) {
+	sameInstant := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
+	if windowsForeignIdentityMatches(false, sameInstant, sameInstant, 5*time.Second) {
+		t.Fatal("expected no match when the executable path itself does not match, even though timestamps align exactly")
+	}
+}
+
+func TestWindowsOwnedIdentityMatches(t *testing.T) {
+	cases := []struct {
+		name             string
+		err              error
+		recordedCreation int64
+		currentCreation  int64
+		want             bool
+	}{
+		{name: "same creation time", err: nil, recordedCreation: 1000, currentCreation: 1000, want: true},
+		{name: "pid recycled to a process created at a different instant", err: nil, recordedCreation: 1000, currentCreation: 2000, want: false},
+		{name: "current creation time unavailable", err: errors.New("access denied"), recordedCreation: 1000, currentCreation: 1000, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := windowsOwnedIdentityMatches(tc.err, tc.recordedCreation, tc.currentCreation); got != tc.want {
+				t.Fatalf("windowsOwnedIdentityMatches(%v, %d, %d) = %v, want %v", tc.err, tc.recordedCreation, tc.currentCreation, got, tc.want)
+			}
+		})
 	}
 }

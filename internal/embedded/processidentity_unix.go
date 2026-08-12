@@ -28,3 +28,13 @@ func processIsPostgresForPID(pid int, dataDir string) bool {
 	}
 	return strings.Contains(args, "postgres") && strings.Contains(args, dataDir)
 }
+
+// recordWindowsOwnedProcess and forgetWindowsOwnedProcess are Windows-only
+// bookkeeping (see processidentity_windows.go) that let the Windows identity
+// check discriminate by data directory even when multiple data directories
+// share one MUESLI_EMBEDDED_PG_BINARIES binaries root. Unix's ps/argv check
+// already discriminates by data directory (argv contains it directly), so
+// these are no-ops here; they exist on this platform only so postgres.go can
+// call them unconditionally from shared code.
+func recordWindowsOwnedProcess(dataDir string, pid int) {}
+func forgetWindowsOwnedProcess(dataDir string)          {}

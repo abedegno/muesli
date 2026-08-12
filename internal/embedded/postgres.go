@@ -201,6 +201,10 @@ func (p *PG) Stop(ctx context.Context) error {
 	p.pid = 0
 	lock := p.lock
 	p.mu.Unlock()
+	// Windows-only bookkeeping (no-op on Unix): this instance no longer claims
+	// pid as its own for dataDir, regardless of whether the shutdown above
+	// actually succeeded -- p.pid is zeroed unconditionally above too.
+	forgetWindowsOwnedProcess(p.dataDir)
 
 	// Release ONLY once the postmaster is confirmed down. If the shutdown failed
 	// and the process is still alive, holding the lock is the point: letting the
@@ -369,6 +373,11 @@ func (p *PG) start(ctx context.Context) error {
 			p.ep = ep
 			p.pid = pid
 			p.mu.Unlock()
+			// Windows-only bookkeeping (no-op on Unix): record the pid/creation-time
+			// pair for this dataDir now, while we are certain it is ours, so later
+			// identity checks (stopOwnPostmaster/forceKill) do not have to fall back
+			// to comparing executable paths -- see processidentity_windows.go.
+			recordWindowsOwnedProcess(p.dataDir, pid)
 			return nil
 		} else {
 			if !staleRecovered && isStalePostmasterPIDError(err) {
