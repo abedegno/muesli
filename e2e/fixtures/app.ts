@@ -33,7 +33,8 @@ async function reservePort(): Promise<number> {
   return address.port
 }
 
-// Mirrors resolveBinary() in scripts/smoke-desktop.mjs: a packaged macOS .app
+// Mirrors resolveBinary(), formerly in the now-deleted scripts/smoke-desktop.mjs
+// (see #652): a packaged macOS .app
 // carries its single launchable executable under Contents/MacOS/<entry>. The
 // entry name is not hardcoded (electron-builder's productName can change) --
 // read whatever the one entry there is.

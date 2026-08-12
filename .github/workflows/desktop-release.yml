@@ -204,81 +204,6 @@ jobs:
           path: test-results/
           if-no-files-found: warn
 
-      - name: Smoke test packaged dmg (mounted app must mount)
-        run: |
-          DMG="$(find dist-desktop -maxdepth 1 -name '*.dmg' | head -1)"
-          MOUNT_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/muesli-dmg.XXXXXX")"
-          cleanup() {
-            hdiutil detach "$MOUNT_DIR" >/dev/null 2>&1 || true
-            rmdir "$MOUNT_DIR" >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
-
-          echo "mounting $DMG at $MOUNT_DIR"
-          hdiutil attach -nobrowse -readonly -mountpoint "$MOUNT_DIR" "$DMG" >/dev/null
-          APP="$(find "$MOUNT_DIR" -maxdepth 2 -name '*.app' -type d | head -1)"
-          if [ -z "$APP" ]; then
-            echo "no .app bundle found inside mounted dmg at $MOUNT_DIR" >&2
-            exit 1
-          fi
-          echo "smoking mounted app $APP"
-          if node -e 'process.exit(typeof WebSocket === "undefined" ? 1 : 0)'; then
-            node scripts/smoke-desktop.mjs "$APP" --port 9455
-          else
-            node --experimental-websocket scripts/smoke-desktop.mjs "$APP" --port 9455
-          fi
-
-      - name: Smoke test packaged dmg (user journey)
-        run: |
-          DMG="$(find dist-desktop -maxdepth 1 -name '*.dmg' | head -1)"
-          MOUNT_DIR="$(mktemp -d "${RUNNER_TEMP:-/tmp}/muesli-dmg.XXXXXX")"
-          cleanup() {
-            hdiutil detach "$MOUNT_DIR" >/dev/null 2>&1 || true
-            rmdir "$MOUNT_DIR" >/dev/null 2>&1 || true
-          }
-          trap cleanup EXIT
-
-          echo "mounting $DMG at $MOUNT_DIR"
-          hdiutil attach -nobrowse -readonly -mountpoint "$MOUNT_DIR" "$DMG" >/dev/null
-          APP="$(find "$MOUNT_DIR" -maxdepth 2 -name '*.app' -type d | head -1)"
-          if [ -z "$APP" ]; then
-            echo "no .app bundle found inside mounted dmg at $MOUNT_DIR" >&2
-            exit 1
-          fi
-          echo "smoking journey on mounted app $APP"
-          if node -e 'process.exit(typeof WebSocket === "undefined" ? 1 : 0)'; then
-            node scripts/smoke-desktop.mjs "$APP" --port 9455 --journey
-          else
-            node --experimental-websocket scripts/smoke-desktop.mjs "$APP" --port 9455 --journey
-          fi
-
-      # Launch the BUILT app and prove the renderer actually mounts. Unit tests
-      # stub `window.muesli` with a plain object, so they cannot catch a
-      # contextBridge-only failure — v0.1.10 shipped a blank window with a fully
-      # green suite. This gate runs before the artifact is uploaded or attached
-      # to a release, so a dead-on-arrival build fails the job instead.
-      - name: Smoke test packaged app (renderer must mount)
-        run: |
-          APP="$(find dist-desktop -maxdepth 3 -name '*.app' -type d | head -1)"
-          echo "smoking $APP"
-          # WebSocket is global on Node >=22 but flag-gated on Node 20.
-          if node -e 'process.exit(typeof WebSocket === "undefined" ? 1 : 0)'; then
-            node scripts/smoke-desktop.mjs "$APP"
-          else
-            node --experimental-websocket scripts/smoke-desktop.mjs "$APP"
-          fi
-
-      - name: Smoke test packaged app (user journey)
-        run: |
-          APP="$(find dist-desktop -maxdepth 3 -name '*.app' -type d | head -1)"
-          echo "smoking journey on $APP"
-          # WebSocket is global on Node >=22 but flag-gated on Node 20.
-          if node -e 'process.exit(typeof WebSocket === "undefined" ? 1 : 0)'; then
-            node scripts/smoke-desktop.mjs "$APP" --journey
-          else
-            node --experimental-websocket scripts/smoke-desktop.mjs "$APP" --journey
-          fi
-
       - name: Upload dmg artifact
         uses: actions/upload-artifact@v7
         with:
@@ -338,56 +263,12 @@ jobs:
           npx electron-vite build
           npx electron-builder --linux AppImage --publish never
 
-      - name: Smoke test AppImage (renderer must mount)
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: '1'
-        run: |
-          APPIMAGE="$(find dist-desktop -maxdepth 1 -name '*.AppImage' | head -1)"
-          if [ -z "$APPIMAGE" ]; then
-            echo "no AppImage found in dist-desktop" >&2
-            exit 1
-          fi
-          chmod +x "$APPIMAGE"
-          if ! command -v xvfb-run >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y xvfb
-          fi
-          if ! command -v dbus-run-session >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y dbus-x11
-          fi
-          echo "smoking $APPIMAGE"
-          if node -e 'process.exit(typeof WebSocket === "undefined" ? 1 : 0)'; then
-            xvfb-run -a dbus-run-session -- node scripts/smoke-desktop.mjs "$APPIMAGE" --port 9460 --no-sandbox
-          else
-            xvfb-run -a dbus-run-session -- node --experimental-websocket scripts/smoke-desktop.mjs "$APPIMAGE" --port 9460 --no-sandbox
-          fi
-
-      - name: Smoke test AppImage (user journey)
-        env:
-          APPIMAGE_EXTRACT_AND_RUN: '1'
-        run: |
-          APPIMAGE="$(find dist-desktop -maxdepth 1 -name '*.AppImage' | head -1)"
-          if [ -z "$APPIMAGE" ]; then
-            echo "no AppImage found in dist-desktop" >&2
-            exit 1
-          fi
-          chmod +x "$APPIMAGE"
-          if ! command -v xvfb-run >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y xvfb
-          fi
-          if ! command -v dbus-run-session >/dev/null 2>&1; then
-            sudo apt-get update -qq
-            sudo apt-get install -y dbus-x11
-          fi
-          echo "smoking journey on $APPIMAGE"
-          if node -e 'process.exit(typeof WebSocket === "undefined" ? 1 : 0)'; then
-            xvfb-run -a dbus-run-session -- node scripts/smoke-desktop.mjs "$APPIMAGE" --port 9460 --no-sandbox --journey
-          else
-            xvfb-run -a dbus-run-session -- node --experimental-websocket scripts/smoke-desktop.mjs "$APPIMAGE" --port 9460 --no-sandbox --journey
-          fi
-
+      # NOTE (#652): scripts/smoke-desktop.mjs, which drove these two steps, was
+      # deleted as part of retiring it repo-wide. No packaged-launch coverage
+      # (renderer-mount or --journey) replaces it for the Linux AppImage here
+      # -- tier-2 packaged-app E2E (see the `build` job above) is macOS-only
+      # per #652's scope. This is a real, named coverage gap, not dropped
+      # silently.
       - name: Upload AppImage artifact
         uses: actions/upload-artifact@v7
         with:
