@@ -11,6 +11,40 @@ Muesli is pre-1.0 and under active development; tagged desktop releases
 
 ## [Unreleased]
 
+## [0.1.17] - 2026-08-12
+
+### Added
+
+- **Live recording feedback.** Recordings now show the microphone input level
+  and indicate when silence is detected, making it clear that audio is being
+  captured. (#583)
+- **Visible model startup.** The app now streams a model-loading status during
+  the first recording after startup instead of appearing idle during the wait.
+  (#582)
+
+### Changed
+
+- **Transcript search.** Search now matches words in transcript text as well as
+  note titles. (#589)
+- **Clearer draft notes.** Draft notes are now visually distinct from recordings
+  that are currently active. (#590)
+
+### Fixed
+
+- **Notes recover after a force-quit.** Restarting after a crash or force-quit no
+  longer leaves existing notes unreachable behind the create-account screen.
+  (#585)
+- **Recorded audio plays back.** The desktop app's security policy now permits
+  playback of locally recorded audio. (#588, #628)
+- **Missing agent configuration is explained.** AI features now show a clear
+  message when the required agent plugin is missing or misconfigured instead of
+  failing silently. (#591)
+- **Blank-audio markers stay hidden.** The `[BLANK_AUDIO]` transcription
+  placeholder is no longer displayed in transcripts. (#581)
+- **Embedded processes exit with the app.** Force-quitting no longer leaves the
+  embedded Postgres database or Whisper transcriber plugin running in the
+  background. (#586, #624)
+
 ## [0.1.15] - 2026-08-01
 
 Same application as `0.1.14`, which did not publish a macOS build: a bug in the
