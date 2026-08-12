@@ -37,6 +37,7 @@ import { Skeleton } from './ui/Skeleton'
 import type { RecordState } from './RecordControl'
 import { DuplicateAudioDialog } from './DuplicateAudioDialog'
 import { ExportOptionsDialog, type ExportOptionsValue } from './ExportOptionsDialog'
+import { recordUnavailableReason } from '@/lib/recordAvailability'
 
 interface Ctx { notes: Note[]; allNotes: Note[]; folders: Folder[]; refresh: () => void }
 
@@ -1092,8 +1093,8 @@ export function NoteScreen() {
 
   const recordDisabledReason: string | undefined = loadError
     ? 'Server unreachable'
-    : full?.note.status !== 'recording'
-      ? 'Recording is unavailable for this note'
+    : full
+      ? recordUnavailableReason(full.note.status)
       : undefined
 
   const capture = params.get('capture') === '1'
