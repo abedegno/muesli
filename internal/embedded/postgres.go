@@ -144,6 +144,17 @@ func (p *PG) installRoot() string {
 	return p.runtimePath()
 }
 
+// installRootForDataDir mirrors (*PG).installRoot() without needing a PG
+// instance -- both resolve the same way from dataDir alone, since runtimeDir is
+// always runtimePathForDataDir(dataDir). Used by the Windows identity check
+// (processidentity_windows.go), which only has a dataDir to work with, not a PG.
+func installRootForDataDir(dataDir string) string {
+	if binaries := getenv(embeddedPGBinaryEnv); binaries != "" {
+		return binaries
+	}
+	return runtimePathForDataDir(dataDir)
+}
+
 // Stop shuts the server down gracefully, then force-kills it if needed.
 func (p *PG) Stop(ctx context.Context) error {
 	if ctx == nil {
@@ -190,6 +201,10 @@ func (p *PG) Stop(ctx context.Context) error {
 	p.pid = 0
 	lock := p.lock
 	p.mu.Unlock()
+	// Windows-only bookkeeping (no-op on Unix): this instance no longer claims
+	// pid as its own for dataDir, regardless of whether the shutdown above
+	// actually succeeded -- p.pid is zeroed unconditionally above too.
+	forgetWindowsOwnedProcess(p.dataDir)
 
 	// Release ONLY once the postmaster is confirmed down. If the shutdown failed
 	// and the process is still alive, holding the lock is the point: letting the
@@ -358,6 +373,11 @@ func (p *PG) start(ctx context.Context) error {
 			p.ep = ep
 			p.pid = pid
 			p.mu.Unlock()
+			// Windows-only bookkeeping (no-op on Unix): record the pid/creation-time
+			// pair for this dataDir now, while we are certain it is ours, so later
+			// identity checks (stopOwnPostmaster/forceKill) do not have to fall back
+			// to comparing executable paths -- see processidentity_windows.go.
+			recordWindowsOwnedProcess(p.dataDir, pid)
 			return nil
 		} else {
 			if !staleRecovered && isStalePostmasterPIDError(err) {
@@ -628,15 +648,23 @@ func removeStalePostmasterPID(dataDir string) (bool, error) {
 	return true, nil
 }
 
-func processAlive(pid int) bool {
-	proc, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	if err := proc.Signal(syscall.Signal(0)); err != nil {
-		return false
-	}
-	return true
+// processAlive reports whether pid names a live process. Implemented per
+// platform: processliveness_unix.go (signal 0) and processliveness_windows.go
+// (OpenProcess + GetExitCodeProcess), since a Windows liveness probe cannot use
+// signal 0.
+
+// windowsStillActive mirrors Win32's STILL_ACTIVE sentinel (also
+// STATUS_PENDING, 259): GetExitCodeProcess reports this value for a process
+// that has not exited yet. golang.org/x/sys/windows does not currently export
+// it, so it is named here.
+const windowsStillActive = 259
+
+// windowsProcessAlive is the pure decision behind Windows process liveness,
+// factored out of processliveness_windows.go so it is testable on any OS: the
+// OpenProcess/GetExitCodeProcess calls that produce its inputs only compile
+// under GOOS=windows.
+func windowsProcessAlive(err error, exitCode uint32) bool {
+	return err == nil && exitCode == windowsStillActive
 }
 
 func isStalePostmasterPIDError(err error) bool {
