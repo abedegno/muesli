@@ -2,6 +2,6 @@
 
 package embedded
 
-// embeddedPostgresSupported reports whether this platform can run the embedded
-// server. See platform_windows.go for why Windows is excluded.
+// embeddedPostgresSupported reports whether this platform can run the
+// embedded server. See platform_windows.go for the other side.
 const embeddedPostgresSupported = true

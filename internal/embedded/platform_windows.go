@@ -2,17 +2,13 @@
 
 package embedded
 
-// embeddedPostgresSupported is false on Windows, and StartPostgres refuses there.
+// embeddedPostgresSupported reports whether this platform can run the
+// embedded server. See platform_unix.go for the other side.
 //
-// The package now compiles for Windows, but compiling is not supporting: process
-// liveness (processAlive, signal 0) and identity (processIsPostgresFor, which
-// shells out to `ps`) are both Unix-only. On Windows they would report a live
-// postmaster as gone, so shutdown would claim success, release the ownership
-// lock, and leave PostgreSQL running -- a silent failure, which is worse than
-// the build error this replaced.
-//
-// Nothing ships embedded Postgres on Windows today: there is no binaries bundle
-// and no packaging target. Refusing explicitly states that, instead of leaving a
-// path that looks supported and misbehaves. Lift this together with Windows
-// implementations of liveness and identity.
-const embeddedPostgresSupported = false
+// Windows has real implementations of the two things the shutdown path
+// depends on -- process liveness (processliveness_windows.go) and postmaster
+// identity (processidentity_windows.go) -- so this no longer refuses. Nothing
+// packages embedded Postgres for Windows today: there is no binaries bundle
+// and no packaging target. This flag is about the code being correct if/when
+// there is one, not about Windows being a shipped deployment target.
+const embeddedPostgresSupported = true
