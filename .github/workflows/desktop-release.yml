@@ -159,6 +159,51 @@ jobs:
             spctl -a -t exec -vv "$APP" || echo "note: spctl app assessment non-zero (informational only)"
           fi
 
+      # Tier-2 packaged-app E2E (#652): the SAME e2e/specs/*.spec.ts Playwright
+      # suite ci.yml's e2e-desktop job runs against a dev build (out/main/main.js
+      # via bare Electron), run here against the just-built, signed .app itself
+      # via `MUESLI_E2E_APP_PATH` (e2e/fixtures/app.ts launches the binary
+      # inside Contents/MacOS directly, mirroring resolveBinary() from the old
+      # scripts/smoke-desktop.mjs). Packaging-specific defects -- bundled
+      # binary resolution, resource paths, the real subprocess tree -- only
+      # show up in a packaged app, which is what this catches that ci.yml's
+      # dev-build tier does not.
+      #
+      # Gated to schedule (nightly) and the desktop-v* tag push ONLY, per the
+      # header comment above: the pull_request path on packaging-file changes
+      # is deliberately fast build+sign-only validation and must not slow
+      # down or pick up flakiness risk from a full E2E run.
+      - name: Build fakeplugin/streaming binaries for packaged E2E
+        if: github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/desktop-v')
+        run: |
+          mkdir -p e2e/.bin
+          go build -o e2e/.bin/fakeplugin-transcriber ./internal/pluginkit/fakeplugin
+          cp e2e/.bin/fakeplugin-transcriber e2e/.bin/fakeplugin-agent
+          go build -o e2e/.bin/whisper-cpp-streaming ./cmd/whisper-cpp-streaming
+
+      - name: Packaged-app E2E (nightly / release tag only)
+        if: github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/desktop-v')
+        run: |
+          APP="$(find dist-desktop -maxdepth 3 -name '*.app' -type d | head -1)"
+          if [ -z "$APP" ]; then
+            echo "no .app bundle found under dist-desktop" >&2
+            exit 1
+          fi
+          echo "running packaged-app E2E against $APP"
+          MUESLI_E2E_APP_PATH="$APP" npm run test:e2e
+
+      # Mirrors ci.yml's e2e-desktop trace upload: traces land in test-results/
+      # at the repo root (Playwright's outputDir default relative to
+      # package.json, not e2e/playwright.config.ts), `warn` not `ignore` so a
+      # wrong path says so instead of looking healthy.
+      - name: Upload Playwright traces (packaged E2E)
+        if: failure() && (github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/desktop-v'))
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-traces-packaged-macos
+          path: test-results/
+          if-no-files-found: warn
+
       - name: Smoke test packaged dmg (mounted app must mount)
         run: |
           DMG="$(find dist-desktop -maxdepth 1 -name '*.dmg' | head -1)"

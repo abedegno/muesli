@@ -1,11 +1,14 @@
-import { join, resolve } from 'node:path'
 import { _electron } from '@playwright/test'
 import type { ElectronApplication } from '@playwright/test'
-import { expect, test } from '../fixtures/app'
+import { buildElectronLaunchOptions, expect, test } from '../fixtures/app'
 import { seedNoteWithAudio } from '../helpers/seed'
 
 test.setTimeout(180_000)
 
+// This spec launches the app more than once per test (kill + recover), so it
+// cannot use the shared `electronApp` fixture (one launch per test). It uses
+// the same launch-config builder as that fixture instead, so it picks up
+// packaged-app (MUESLI_E2E_APP_PATH) launches identically to every other spec.
 async function launchApp({
   fakeTranscript,
   serverAddr,
@@ -15,38 +18,7 @@ async function launchApp({
   serverAddr: string
   userDataDir: string
 }): Promise<ElectronApplication> {
-  const pgBinaries = process.env.MUESLI_EMBEDDED_PG_BINARIES ?? ''
-  const pgVector = process.env.MUESLI_EMBEDDED_PGVECTOR_DIR ?? ''
-  if (pgBinaries === '' || pgVector === '') {
-    throw new Error(
-      'MUESLI_EMBEDDED_PG_BINARIES and MUESLI_EMBEDDED_PGVECTOR_DIR must be set. CI ' +
-        'exports them in the embedded Postgres bundle step; locally, export them the ' +
-        'same way the embedded-integration job does.'
-    )
-  }
-
-  const binDir = resolve('e2e/.bin')
-  return _electron.launch({
-    args: [
-      'out/main/main.js',
-      `--user-data-dir=${userDataDir}`,
-      ...(process.env.CI ? ['--no-sandbox'] : []),
-    ],
-    env: {
-      ...process.env,
-      MUESLI_MODE: 'embedded',
-      MUESLI_EMBEDDED_PG_BINARIES: pgBinaries,
-      MUESLI_EMBEDDED_PGVECTOR_DIR: pgVector,
-      MUESLI_ADDR: serverAddr,
-      MUESLI_PUBLIC_URL: `http://${serverAddr}`,
-      MUESLI_INTERNAL_URL: `http://${serverAddr}`,
-      MUESLI_FAKE_TRANSCRIPT: fakeTranscript,
-      MUESLI_SERVER_BIN: join(binDir, 'muesli'),
-      MUESLI_WHISPER_CPP_TRANSCRIBER_BIN: join(binDir, 'fakeplugin-transcriber'),
-      MUESLI_OLLAMA_AGENT_BIN: join(binDir, 'fakeplugin-agent'),
-      MUESLI_WHISPER_CPP_STREAMING_BIN: join(binDir, 'whisper-cpp-streaming'),
-    },
-  })
+  return _electron.launch(buildElectronLaunchOptions({ fakeTranscript, serverAddr, userDataDir }))
 }
 
 test('recovers notes after an abnormal exit', async ({
