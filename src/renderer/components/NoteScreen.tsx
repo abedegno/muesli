@@ -947,6 +947,11 @@ export function NoteScreen() {
       if (micStatus === 'denied' || micStatus === 'restricted') {
         throw new MicPermissionDeniedError()
       }
+      if (full?.note.status === 'draft') {
+        const recordingNote = await muesli.startNoteCapture(id)
+        setFull((current) => current ? { ...current, note: recordingNote } : current)
+        refresh()
+      }
       void muesli.startNoteStream?.(id)?.catch(() => {})
       const session = new RecordingSession(
         new ElectronCapture({
@@ -996,7 +1001,7 @@ export function NoteScreen() {
         notify(err instanceof Error ? err.message : 'Could not start recording', 'error')
       }
     }
-  }, [gainLinear, id, notify, selectedDeviceId, stopSystemAudio])
+  }, [full?.note.status, gainLinear, id, notify, refresh, selectedDeviceId, stopSystemAudio])
 
   async function doUpload(audio: ArrayBuffer, mimeType: string) {
     setRecordState('processing')

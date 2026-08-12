@@ -50,7 +50,8 @@ describe('NewMeetingScreen', () => {
     render(<NewMeetingScreen />)
     await waitFor(() => expect(navigate).toHaveBeenCalledTimes(1))
     expect(navigate).toHaveBeenCalledWith('/notes/note-123?capture=1', { replace: true })
-    expect(muesli.startNoteCapture).toHaveBeenCalledWith('note-123')
+    expect(muesli.startNoteCapture).not.toHaveBeenCalled()
+    expect(await vi.mocked(muesli.createNote).mock.results[0].value).toMatchObject({ status: 'draft' })
   })
 
   it('shows a retry option and does not navigate when createNote rejects', async () => {
