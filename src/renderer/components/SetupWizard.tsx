@@ -94,12 +94,7 @@ export function SetupWizard({
     onDone()
   }, [onDone, step])
 
-  const canContinue =
-    step === 'welcome' ||
-    step === 'ai' ||
-    micStatus === 'granted' ||
-    micStatus === 'denied' ||
-    micStatus === 'restricted'
+  const canContinue = step === 'welcome' || step === 'microphone' || step === 'ai'
 
   async function refreshMic() {
     try {
