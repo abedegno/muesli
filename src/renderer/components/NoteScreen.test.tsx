@@ -214,7 +214,7 @@ describe('NoteScreen — upload AbortController micro-race', () => {
   it('disables microphone preview for an already-transcribed note', async () => {
     render(<NoteScreen />)
     expect(await screen.findByTestId('record-disabled-reason')).toHaveTextContent(
-      'This note already has a recording',
+      'Recording is unavailable for this note',
     )
   })
 
