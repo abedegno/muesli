@@ -160,7 +160,9 @@ instructions.
 - Branch off `main`. Rebase rather than merge `main` into your branch when you
   can keep history clean.
 - Before opening a PR: **tests pass** (`make test` and any relevant `npm test` /
-  `pytest`), and the build succeeds (`make build`).
+  `pytest`), the build succeeds (`make build`), and formatting is clean. Run
+  `npm run format` to auto-fix repo-wide formatting (including Markdown, YAML,
+  and code); CI enforces it with `npm run format:check`.
 - Open the PR against `main`, fill in the template, and link the issue it
   addresses. Describe how you tested it.
 - A maintainer will review. Expect a round or two of feedback — that's normal.
