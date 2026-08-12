@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"runtime/debug"
 	"sync"
-	"syscall"
 	"time"
 
 	"github.com/abedegno/muesli/internal/model"
@@ -248,22 +247,6 @@ type StorageDiskUsage struct {
 	TotalBytes uint64 `json:"totalBytes"`
 	FreeBytes  uint64 `json:"freeBytes"`
 	Error      string `json:"error,omitempty"`
-}
-
-// buildStorageDiskUsage stats the storage dir's filesystem via syscall.Statfs
-// (this repo only ever runs in Linux containers, so no cross-platform
-// fallback is needed). A stat error is captured on this section only.
-func buildStorageDiskUsage(path string) StorageDiskUsage {
-	out := StorageDiskUsage{Path: path}
-	var stat syscall.Statfs_t
-	if err := syscall.Statfs(path, &stat); err != nil {
-		out.Error = err.Error()
-		return out
-	}
-	bsize := uint64(stat.Bsize) //nolint:unconvert // Bsize's width varies by arch
-	out.TotalBytes = stat.Blocks * bsize
-	out.FreeBytes = stat.Bavail * bsize
-	return out
 }
 
 // AdminHealthResponse is the full body of GET /api/admin/health.
