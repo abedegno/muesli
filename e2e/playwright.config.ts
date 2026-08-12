@@ -7,5 +7,5 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   workers: 1,
   fullyParallel: false,
-  use: { trace: 'retain-on-failure' },
+  use: { trace: { mode: 'retain-on-failure', screenshots: true, snapshots: true } },
 })
