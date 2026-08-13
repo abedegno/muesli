@@ -977,6 +977,13 @@ export function NoteScreen() {
       const startedAt = Date.now()
       timerRef.current = setInterval(() => setElapsedMs(Date.now() - startedAt), 500)
     } catch (err) {
+      try {
+        await sessionRef.current?.stop()
+      } catch {
+        // Preserve the original recording-start error if cleanup also fails.
+      } finally {
+        sessionRef.current = null
+      }
       void muesli.stopNoteStream?.(id)?.catch(() => {})
       await stopSystemAudio()
       if (timerRef.current) clearInterval(timerRef.current)

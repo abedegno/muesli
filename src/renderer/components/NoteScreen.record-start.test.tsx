@@ -5,7 +5,10 @@ import type { FullNote, Note } from '../../shared/types'
 
 const mocks = vi.hoisted(() => ({
   sessionStart: vi.fn(async () => {}),
+  sessionStop: vi.fn(async () => ({ bytes: new Uint8Array(), mimeType: 'audio/webm' })),
   startNoteCapture: vi.fn(),
+  checkAudioDedup: vi.fn(async () => ({})),
+  uploadAudio: vi.fn(),
   refresh: vi.fn(),
   notify: vi.fn(),
 }))
@@ -42,14 +45,15 @@ vi.mock('@/api', () => ({
     listNoteLinks: vi.fn(async () => ({ outgoing: [], backlinks: [] })),
     listRelatedNotes: vi.fn(async () => []), updateActionItem: vi.fn(), deleteNote: vi.fn(),
     createShare: vi.fn(), listNoteShares: vi.fn(async () => []), revokeShare: vi.fn(),
-    exportFile: vi.fn(), exportNote: vi.fn(), uploadAudio: vi.fn(),
-    onUploadProgress: vi.fn(() => () => {}), checkAudioDedup: vi.fn(async () => ({})),
+    exportFile: vi.fn(), exportNote: vi.fn(), uploadAudio: mocks.uploadAudio,
+    onUploadProgress: vi.fn(() => () => {}), checkAudioDedup: mocks.checkAudioDedup,
   },
 }))
 
 vi.mock('../../main/recorder', () => ({
   RecordingSession: class {
     start = mocks.sessionStart
+    stop = mocks.sessionStop
   },
 }))
 vi.mock('../capture/electronCapture', () => ({ ElectronCapture: class {} }))
@@ -63,6 +67,9 @@ vi.mock('./TagBar', () => ({ TagBar: () => null }))
 vi.mock('./FolderBar', () => ({ FolderBar: () => null }))
 vi.mock('./NoteView', () => ({ NoteView: () => null }))
 vi.mock('./NoteEditor', () => ({ NoteEditor: () => null }))
+vi.mock('./DuplicateAudioDialog', () => ({
+  DuplicateAudioDialog: () => <div data-testid="pending-upload">Pending upload</div>,
+}))
 vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ notify: mocks.notify }) }))
 
 import { NoteScreen } from './NoteScreen'
@@ -101,5 +108,20 @@ describe('NoteScreen recording start', () => {
     )
     expect(mocks.startNoteCapture).not.toHaveBeenCalled()
     expect(screen.getByTestId('status-badge')).toHaveTextContent('Draft')
+  })
+
+  it('stops capture without uploading when the draft transition fails', async () => {
+    mocks.startNoteCapture.mockRejectedValueOnce(new Error('Could not start note capture'))
+    render(<NoteScreen />)
+
+    expect(await screen.findByTestId('status-badge')).toHaveTextContent('Draft')
+    fireEvent.click(screen.getByRole('button', { name: 'Record' }))
+
+    await waitFor(() => expect(mocks.sessionStop).toHaveBeenCalledTimes(1))
+    expect(mocks.checkAudioDedup).not.toHaveBeenCalled()
+    expect(mocks.uploadAudio).not.toHaveBeenCalled()
+    expect(screen.queryByTestId('pending-upload')).not.toBeInTheDocument()
+    expect(screen.getByTestId('status-badge')).toHaveTextContent('Draft')
+    expect(screen.queryByText('Recording')).not.toBeInTheDocument()
   })
 })
