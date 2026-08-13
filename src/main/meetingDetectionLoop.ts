@@ -141,7 +141,12 @@ export class MeetingDetectionManager {
         detectedEvent: active,
         dismissedOccurrences: this.dismissedOccurrences,
         surfacedOccurrences: this.surfacedOccurrences,
-        alreadyRecording: notes.some((n) => n.status === 'recording'),
+        // Recording is unambiguous capture activity. A draft only represents
+        // capture intent for the calendar event it was created for; unrelated
+        // drafts must not suppress detection indefinitely.
+        alreadyRecording: notes.some(
+          (n) => n.status === 'recording' || (n.status === 'draft' && n.event_id === active?.id),
+        ),
         autoRecordDetectedMeetings: prefs.autoRecordDetectedMeetings,
       })
 

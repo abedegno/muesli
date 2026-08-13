@@ -6,6 +6,7 @@ import type { FullNote } from '../../shared/types'
 const navigate = vi.fn()
 const refresh = vi.fn()
 const startSpy = vi.fn(async () => {})
+const { startNoteCapture } = vi.hoisted(() => ({ startNoteCapture: vi.fn() }))
 
 vi.mock('react-router-dom', () => {
   const searchParams: [URLSearchParams, () => void] = [new URLSearchParams('capture=1&autostart=1'), () => {}]
@@ -18,7 +19,7 @@ vi.mock('react-router-dom', () => {
 })
 
 const fullNote: FullNote = {
-  note: { id: 'n1', title: 'Standup', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
+  note: { id: 'n1', title: 'Standup', status: 'recording', created_at: '', updated_at: '', partial_transcript: false },
   body_markdown: '',
   transcript: null,
   summaries: [],
@@ -27,6 +28,7 @@ const fullNote: FullNote = {
 vi.mock('@/api', () => ({
   muesli: {
     getFull: vi.fn(async () => fullNote),
+    startNoteCapture,
     addTag: vi.fn(),
     removeTag: vi.fn(),
     addNoteFolder: vi.fn(),
@@ -78,6 +80,7 @@ beforeEach(() => {
   navigate.mockClear()
   refresh.mockClear()
   startSpy.mockClear()
+  startNoteCapture.mockClear()
 })
 
 afterEach(() => {
@@ -92,5 +95,6 @@ describe('NoteScreen autostart query flag', () => {
     await waitFor(() => expect(startSpy).toHaveBeenCalledTimes(1))
     expect(navigate).toHaveBeenCalledWith('/notes/n1?capture=1', { replace: true })
     expect(startSpy).toHaveBeenCalledTimes(1)
+    expect(startNoteCapture).not.toHaveBeenCalled()
   })
 })

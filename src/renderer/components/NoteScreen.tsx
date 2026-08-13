@@ -967,11 +967,23 @@ export function NoteScreen() {
       )
       sessionRef.current = session
       await session.start()
+      if (full?.note.status === 'draft') {
+        const recordingNote = await muesli.startNoteCapture(id)
+        setFull((current) => (current ? { ...current, note: recordingNote } : current))
+        refresh()
+      }
       setRecordState('recording')
       setElapsedMs(0)
       const startedAt = Date.now()
       timerRef.current = setInterval(() => setElapsedMs(Date.now() - startedAt), 500)
     } catch (err) {
+      try {
+        await sessionRef.current?.stop()
+      } catch {
+        // Preserve the original recording-start error if cleanup also fails.
+      } finally {
+        sessionRef.current = null
+      }
       void muesli.stopNoteStream?.(id)?.catch(() => {})
       await stopSystemAudio()
       if (timerRef.current) clearInterval(timerRef.current)
@@ -996,7 +1008,7 @@ export function NoteScreen() {
         notify(err instanceof Error ? err.message : 'Could not start recording', 'error')
       }
     }
-  }, [gainLinear, id, notify, selectedDeviceId, stopSystemAudio])
+  }, [full?.note.status, gainLinear, id, notify, refresh, selectedDeviceId, stopSystemAudio])
 
   async function doUpload(audio: ArrayBuffer, mimeType: string) {
     setRecordState('processing')
