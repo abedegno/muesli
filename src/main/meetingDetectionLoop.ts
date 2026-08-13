@@ -141,10 +141,12 @@ export class MeetingDetectionManager {
         detectedEvent: active,
         dismissedOccurrences: this.dismissedOccurrences,
         surfacedOccurrences: this.surfacedOccurrences,
-        // A draft can already be open in capture mode, waiting for the user or
-        // renderer autostart to open the microphone. Treat it as an active
-        // capture intent so another detection tick cannot create a duplicate.
-        alreadyRecording: notes.some((n) => n.status === 'draft' || n.status === 'recording'),
+        // Recording is unambiguous capture activity. A draft only represents
+        // capture intent for the calendar event it was created for; unrelated
+        // drafts must not suppress detection indefinitely.
+        alreadyRecording: notes.some(
+          (n) => n.status === 'recording' || (n.status === 'draft' && n.event_id === active?.id),
+        ),
         autoRecordDetectedMeetings: prefs.autoRecordDetectedMeetings,
       })
 

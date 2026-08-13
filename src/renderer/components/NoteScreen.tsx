@@ -947,11 +947,6 @@ export function NoteScreen() {
       if (micStatus === 'denied' || micStatus === 'restricted') {
         throw new MicPermissionDeniedError()
       }
-      if (full?.note.status === 'draft') {
-        const recordingNote = await muesli.startNoteCapture(id)
-        setFull((current) => current ? { ...current, note: recordingNote } : current)
-        refresh()
-      }
       void muesli.startNoteStream?.(id)?.catch(() => {})
       const session = new RecordingSession(
         new ElectronCapture({
@@ -972,6 +967,11 @@ export function NoteScreen() {
       )
       sessionRef.current = session
       await session.start()
+      if (full?.note.status === 'draft') {
+        const recordingNote = await muesli.startNoteCapture(id)
+        setFull((current) => (current ? { ...current, note: recordingNote } : current))
+        refresh()
+      }
       setRecordState('recording')
       setElapsedMs(0)
       const startedAt = Date.now()

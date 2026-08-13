@@ -82,9 +82,9 @@ beforeEach(() => {
 })
 
 describe('MeetingDetectionManager', () => {
-  it('does not start a duplicate auto-record capture while a draft capture is pending', async () => {
-    const { manager, listNotes, ensureWindow, sendAutoRecord } = createManager(true, false)
-    listNotes.mockResolvedValue([{ ...notes[0], status: 'draft' }])
+  it('does not start a duplicate auto-record capture while a correlated draft capture is pending', async () => {
+    const { manager, event, listNotes, ensureWindow, sendAutoRecord } = createManager(true, false)
+    listNotes.mockResolvedValue([{ ...notes[0], status: 'draft', event_id: event.id }])
 
     manager.start()
     await flush()
@@ -93,6 +93,24 @@ describe('MeetingDetectionManager', () => {
 
     expect(ensureWindow).not.toHaveBeenCalled()
     expect(sendAutoRecord).not.toHaveBeenCalled()
+
+    manager.stop()
+  })
+
+  it.each([
+    ['without an event id', undefined],
+    ['linked to a different event', 'event-2'],
+  ])('does not let a stale draft %s suppress auto-record', async (_description, eventId) => {
+    const { manager, listNotes, ensureWindow, sendAutoRecord } = createManager(true, false)
+    listNotes.mockResolvedValue([{ ...notes[0], status: 'draft', event_id: eventId }])
+
+    manager.start()
+    await flush()
+    await manager.rendererReadyForWindow()
+    await flush()
+
+    expect(ensureWindow).toHaveBeenCalledTimes(1)
+    expect(sendAutoRecord).toHaveBeenCalledWith({ noteId: 'note-created' })
 
     manager.stop()
   })

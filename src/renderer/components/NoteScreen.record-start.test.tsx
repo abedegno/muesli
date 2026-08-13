@@ -88,4 +88,18 @@ describe('NoteScreen recording start', () => {
     expect(screen.getByTestId('status-badge')).toHaveTextContent('Recording')
     expect(mocks.notify).not.toHaveBeenCalled()
   })
+
+  it('leaves a draft note unchanged when microphone acquisition fails', async () => {
+    mocks.sessionStart.mockRejectedValueOnce(new Error('Microphone unavailable'))
+    render(<NoteScreen />)
+
+    expect(await screen.findByTestId('status-badge')).toHaveTextContent('Draft')
+    fireEvent.click(screen.getByRole('button', { name: 'Record' }))
+
+    await waitFor(() =>
+      expect(mocks.notify).toHaveBeenCalledWith('Microphone unavailable', 'error'),
+    )
+    expect(mocks.startNoteCapture).not.toHaveBeenCalled()
+    expect(screen.getByTestId('status-badge')).toHaveTextContent('Draft')
+  })
 })
