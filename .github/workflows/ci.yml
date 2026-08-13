@@ -121,21 +121,28 @@ jobs:
   embedded-integration:
     name: embedded-integration
     runs-on: ubuntu-latest
+    env:
+      BUNDLE_URL: https://github.com/boomship/postgres-vector-embedded/releases/download/v0.2.2/postgres-full-linux-x64.tar.gz
+      BUNDLE_SHA256: 5b62bbc684d8d8fc813b42b88613c3ed631fbbe18440a6f68be873f406337a83
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
           go-version: '1.25.11'
+      - name: Cache embedded Postgres bundle
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/embedded-postgres/postgres-full-linux-x64.tar.gz
+          key: embedded-pg-bundle-${{ runner.os }}-x64-${{ env.BUNDLE_SHA256 }}
       - name: Download embedded Postgres bundle
-        env:
-          BUNDLE_URL: https://github.com/boomship/postgres-vector-embedded/releases/download/v0.2.2/postgres-full-linux-x64.tar.gz
-          BUNDLE_SHA256: 5b62bbc684d8d8fc813b42b88613c3ed631fbbe18440a6f68be873f406337a83
         run: |
           set -euo pipefail
           bundle_dir="$RUNNER_TEMP/embedded-postgres"
           mkdir -p "$bundle_dir"
           bundle_tar="$bundle_dir/postgres-full-linux-x64.tar.gz"
-          curl -fsSL -o "$bundle_tar" "$BUNDLE_URL"
+          if [ ! -f "$bundle_tar" ]; then
+            curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$bundle_tar" "$BUNDLE_URL"
+          fi
           echo "${BUNDLE_SHA256}  ${bundle_tar}" | sha256sum -c -
           tar -xzf "$bundle_tar" -C "$bundle_dir"
           echo "MUESLI_EMBEDDED_IT=1" >> "$GITHUB_ENV"
@@ -160,6 +167,9 @@ jobs:
   e2e-desktop:
     name: e2e-desktop
     runs-on: ubuntu-latest
+    env:
+      BUNDLE_URL: https://github.com/boomship/postgres-vector-embedded/releases/download/v0.2.2/postgres-full-linux-x64.tar.gz
+      BUNDLE_SHA256: 5b62bbc684d8d8fc813b42b88613c3ed631fbbe18440a6f68be873f406337a83
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -169,16 +179,20 @@ jobs:
         with:
           node-version: '22'
           cache: npm
+      - name: Cache embedded Postgres bundle
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/embedded-postgres/postgres-full-linux-x64.tar.gz
+          key: embedded-pg-bundle-${{ runner.os }}-x64-${{ env.BUNDLE_SHA256 }}
       - name: Download embedded Postgres bundle
-        env:
-          BUNDLE_URL: https://github.com/boomship/postgres-vector-embedded/releases/download/v0.2.2/postgres-full-linux-x64.tar.gz
-          BUNDLE_SHA256: 5b62bbc684d8d8fc813b42b88613c3ed631fbbe18440a6f68be873f406337a83
         run: |
           set -euo pipefail
           bundle_dir="$RUNNER_TEMP/embedded-postgres"
           mkdir -p "$bundle_dir"
           bundle_tar="$bundle_dir/postgres-full-linux-x64.tar.gz"
-          curl -fsSL -o "$bundle_tar" "$BUNDLE_URL"
+          if [ ! -f "$bundle_tar" ]; then
+            curl -fsSL --retry 5 --retry-all-errors --retry-delay 2 -o "$bundle_tar" "$BUNDLE_URL"
+          fi
           echo "${BUNDLE_SHA256}  ${bundle_tar}" | sha256sum -c -
           tar -xzf "$bundle_tar" -C "$bundle_dir"
           echo "MUESLI_EMBEDDED_IT=1" >> "$GITHUB_ENV"
