@@ -40,7 +40,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Build and load ${{ matrix.name }} for scan
         uses: docker/build-push-action@v7
@@ -219,9 +219,9 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-qemu-action@v4
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Log in to GHCR
         uses: docker/login-action@v3
@@ -232,7 +232,7 @@ jobs:
 
       - name: Extract metadata
         id: meta
-        uses: docker/metadata-action@v5
+        uses: docker/metadata-action@v6
         with:
           images: ${{ matrix.image }}
           tags: |
@@ -300,7 +300,7 @@ jobs:
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
 
       - name: Attest build provenance for ${{ matrix.name }}
-        uses: actions/attest-build-provenance@v2.4.0
+        uses: actions/attest-build-provenance@v4.2.2
         with:
           subject-name: ${{ matrix.image }}
           subject-digest: ${{ steps.push.outputs.digest }}
