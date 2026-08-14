@@ -92,6 +92,11 @@ updates:
       non-major:
         patterns: ['*']
         update-types: ['minor', 'patch']
+    ignore:
+      # webrtcvad 2.0.10 imports pkg_resources, which setuptools>=81 removes.
+      # Keep this aligned with the setuptools<81 pin in pyproject.toml; remove
+      # both only after webrtcvad no longer depends on pkg_resources.
+      - dependency-name: 'setuptools'
 
   - package-ecosystem: pip
     directory: /plugins/whisper-transcriber
