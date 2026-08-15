@@ -356,3 +356,89 @@ jobs:
           if [ "${{ needs.plugins.result }}" != "success" ]; then
             exit 1
           fi
+
+  ci-gate:
+    name: CI gate
+    runs-on: ubuntu-latest
+    needs: [server, client]
+    if: always()
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Evaluate CI results when relevant
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+          SERVER_RESULT: ${{ needs.server.result }}
+          CLIENT_RESULT: ${{ needs.client.result }}
+        run: |
+          set -euo pipefail
+
+          zero_sha=0000000000000000000000000000000000000000
+          diff_available=true
+          base_sha=
+          head_sha=
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base_sha=$PR_BASE_SHA
+            head_sha=$PR_HEAD_SHA
+          else
+            head_sha=$CURRENT_SHA
+            if [ -n "$PUSH_BEFORE_SHA" ] && [ "$PUSH_BEFORE_SHA" != "$zero_sha" ]; then
+              base_sha=$PUSH_BEFORE_SHA
+            elif base_sha=$(git rev-parse HEAD^ 2>/dev/null); then
+              :
+            else
+              diff_available=false
+            fi
+          fi
+
+          changed_files=()
+          if [ "$diff_available" = true ]; then
+            changed_file_list=$(mktemp)
+            trap 'rm -f "$changed_file_list"' EXIT
+            if git diff --name-only -z "$base_sha" "$head_sha" > "$changed_file_list"; then
+              mapfile -d '' changed_files < "$changed_file_list"
+            else
+              diff_available=false
+              changed_files=()
+            fi
+          fi
+
+          all_ignored=false
+          if [ "$diff_available" = true ] && [ "${#changed_files[@]}" -gt 0 ]; then
+            all_ignored=true
+            for file in "${changed_files[@]}"; do
+              case "$file" in
+                docs/*|*.md|.github/dependabot.yml|LICENSE) ;;
+                *) all_ignored=false ;;
+              esac
+            done
+          fi
+
+          if [ "$all_ignored" = true ]; then
+            {
+              echo "## CI gate: not applicable"
+              echo
+              echo "All changed files are exempt because they match the documentation or maintenance-file ignore list:"
+              printf -- '- `%s`\n' "${changed_files[@]}"
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          {
+            echo "## CI gate: evaluating server (go) / client (node)"
+            echo
+            echo "This change requires real CI (or its changed-file list could not be determined)."
+            echo
+            echo "- server (go): \`$SERVER_RESULT\`"
+            echo "- client (node): \`$CLIENT_RESULT\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$SERVER_RESULT" != "success" ] || [ "$CLIENT_RESULT" != "success" ]; then
+            exit 1
+          fi
