@@ -6,6 +6,88 @@ on:
     branches: [main]
 
 jobs:
+  classify-changes:
+    name: classify changes
+    runs-on: ubuntu-latest
+    outputs:
+      exempt: ${{ steps.classify.outputs.exempt }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Classify changed files
+        id: classify
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          CURRENT_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          zero_sha=0000000000000000000000000000000000000000
+          diff_available=true
+          base_sha=
+          head_sha=
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base_sha=$PR_BASE_SHA
+            head_sha=$PR_HEAD_SHA
+          else
+            head_sha=$CURRENT_SHA
+            if [ -n "$PUSH_BEFORE_SHA" ] && [ "$PUSH_BEFORE_SHA" != "$zero_sha" ]; then
+              base_sha=$PUSH_BEFORE_SHA
+            elif git rev-parse HEAD^2 >/dev/null 2>&1; then
+              # A first-parent diff would miss the merged side, so fail closed.
+              diff_available=false
+            elif base_sha=$(git rev-parse HEAD^ 2>/dev/null); then
+              :
+            else
+              diff_available=false
+            fi
+          fi
+
+          changed_files=()
+          if [ "$diff_available" = true ]; then
+            changed_file_list=$(mktemp)
+            trap 'rm -f "$changed_file_list"' EXIT
+            if git diff --name-only -z "$base_sha" "$head_sha" > "$changed_file_list"; then
+              mapfile -d '' changed_files < "$changed_file_list"
+            else
+              diff_available=false
+              changed_files=()
+            fi
+          fi
+
+          exempt=false
+          if [ "$diff_available" = true ] && [ "${#changed_files[@]}" -gt 0 ]; then
+            exempt=true
+            for file in "${changed_files[@]}"; do
+              case "$file" in
+                docs/*|.github/dependabot.yml|LICENSE) ;;
+                *.md)
+                  if [[ "$file" == */* ]]; then
+                    exempt=false
+                  fi
+                  ;;
+                *) exempt=false ;;
+              esac
+            done
+          fi
+
+          echo "exempt=$exempt" >> "$GITHUB_OUTPUT"
+          {
+            echo "## Change classification"
+            echo
+            if [ "$exempt" = true ]; then
+              echo "All changed files are exempt documentation or maintenance files:"
+              printf -- '- `%s`\n' "${changed_files[@]}"
+            else
+              echo "Full CI is required (or the changed-file list could not be determined safely)."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
   coverage-report:
     name: coverage report (informational)
     runs-on: ubuntu-latest
@@ -73,6 +155,8 @@ jobs:
   server:
     name: server (go)
     runs-on: ubuntu-latest
+    needs: [classify-changes]
+    if: needs.classify-changes.outputs.exempt != 'true'
     services:
       postgres:
         image: pgvector/pgvector:pg16
@@ -121,6 +205,8 @@ jobs:
   embedded-integration:
     name: embedded-integration
     runs-on: ubuntu-latest
+    needs: [classify-changes]
+    if: needs.classify-changes.outputs.exempt != 'true'
     env:
       BUNDLE_URL: https://github.com/boomship/postgres-vector-embedded/releases/download/v0.2.2/postgres-full-linux-x64.tar.gz
       BUNDLE_SHA256: 5b62bbc684d8d8fc813b42b88613c3ed631fbbe18440a6f68be873f406337a83
@@ -167,6 +253,8 @@ jobs:
   e2e-desktop:
     name: e2e-desktop
     runs-on: ubuntu-latest
+    needs: [classify-changes]
+    if: needs.classify-changes.outputs.exempt != 'true'
     env:
       BUNDLE_URL: https://github.com/boomship/postgres-vector-embedded/releases/download/v0.2.2/postgres-full-linux-x64.tar.gz
       BUNDLE_SHA256: 5b62bbc684d8d8fc813b42b88613c3ed631fbbe18440a6f68be873f406337a83
@@ -241,6 +329,8 @@ jobs:
   client:
     name: client (node)
     runs-on: ubuntu-latest
+    needs: [classify-changes]
+    if: needs.classify-changes.outputs.exempt != 'true'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
@@ -263,6 +353,8 @@ jobs:
   pluginkit-conformance:
     name: pluginkit-conformance
     runs-on: ubuntu-latest
+    needs: [classify-changes]
+    if: needs.classify-changes.outputs.exempt != 'true'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
@@ -311,6 +403,8 @@ jobs:
   plugins:
     name: plugins (python)
     runs-on: ubuntu-latest
+    needs: [classify-changes]
+    if: needs.classify-changes.outputs.exempt != 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -347,8 +441,8 @@ jobs:
   plugins-gate:
     name: plugins (python) gate
     runs-on: ubuntu-latest
-    needs: [plugins]
-    if: always()
+    needs: [classify-changes, plugins]
+    if: always() && needs.classify-changes.outputs.exempt != 'true'
     steps:
       - name: Check plugins matrix result
         run: |
@@ -360,85 +454,68 @@ jobs:
   ci-gate:
     name: CI gate
     runs-on: ubuntu-latest
-    needs: [server, client]
+    # coverage-report and lighthouse (a11y) are intentionally informational-only.
+    needs:
+      - classify-changes
+      - server
+      - client
+      - embedded-integration
+      - e2e-desktop
+      - pluginkit-conformance
+      - plugins-gate
     if: always()
     steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - name: Evaluate CI results when relevant
+      - name: Evaluate required CI results
         env:
-          EVENT_NAME: ${{ github.event_name }}
-          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-          PUSH_BEFORE_SHA: ${{ github.event.before }}
-          CURRENT_SHA: ${{ github.sha }}
+          CLASSIFY_RESULT: ${{ needs.classify-changes.result }}
+          EXEMPT: ${{ needs.classify-changes.outputs.exempt }}
           SERVER_RESULT: ${{ needs.server.result }}
           CLIENT_RESULT: ${{ needs.client.result }}
+          EMBEDDED_RESULT: ${{ needs.embedded-integration.result }}
+          E2E_RESULT: ${{ needs.e2e-desktop.result }}
+          PLUGINKIT_RESULT: ${{ needs.pluginkit-conformance.result }}
+          PLUGINS_RESULT: ${{ needs.plugins-gate.result }}
         run: |
           set -euo pipefail
 
-          zero_sha=0000000000000000000000000000000000000000
-          diff_available=true
-          base_sha=
-          head_sha=
-
-          if [ "$EVENT_NAME" = "pull_request" ]; then
-            base_sha=$PR_BASE_SHA
-            head_sha=$PR_HEAD_SHA
-          else
-            head_sha=$CURRENT_SHA
-            if [ -n "$PUSH_BEFORE_SHA" ] && [ "$PUSH_BEFORE_SHA" != "$zero_sha" ]; then
-              base_sha=$PUSH_BEFORE_SHA
-            elif base_sha=$(git rev-parse HEAD^ 2>/dev/null); then
-              :
-            else
-              diff_available=false
-            fi
-          fi
-
-          changed_files=()
-          if [ "$diff_available" = true ]; then
-            changed_file_list=$(mktemp)
-            trap 'rm -f "$changed_file_list"' EXIT
-            if git diff --name-only -z "$base_sha" "$head_sha" > "$changed_file_list"; then
-              mapfile -d '' changed_files < "$changed_file_list"
-            else
-              diff_available=false
-              changed_files=()
-            fi
-          fi
-
-          all_ignored=false
-          if [ "$diff_available" = true ] && [ "${#changed_files[@]}" -gt 0 ]; then
-            all_ignored=true
-            for file in "${changed_files[@]}"; do
-              case "$file" in
-                docs/*|*.md|.github/dependabot.yml|LICENSE) ;;
-                *) all_ignored=false ;;
-              esac
-            done
-          fi
-
-          if [ "$all_ignored" = true ]; then
-            {
-              echo "## CI gate: not applicable"
-              echo
-              echo "All changed files are exempt because they match the documentation or maintenance-file ignore list:"
-              printf -- '- `%s`\n' "${changed_files[@]}"
-            } >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-
           {
-            echo "## CI gate: evaluating server (go) / client (node)"
+            echo "## CI gate: required job results"
             echo
-            echo "This change requires real CI (or its changed-file list could not be determined)."
-            echo
+            echo "- change classification: \`$CLASSIFY_RESULT\` (exempt: \`$EXEMPT\`)"
             echo "- server (go): \`$SERVER_RESULT\`"
             echo "- client (node): \`$CLIENT_RESULT\`"
+            echo "- embedded-integration: \`$EMBEDDED_RESULT\`"
+            echo "- e2e-desktop: \`$E2E_RESULT\`"
+            echo "- pluginkit-conformance: \`$PLUGINKIT_RESULT\`"
+            echo "- plugins (python) gate: \`$PLUGINS_RESULT\`"
+            echo
           } >> "$GITHUB_STEP_SUMMARY"
 
-          if [ "$SERVER_RESULT" != "success" ] || [ "$CLIENT_RESULT" != "success" ]; then
+          results=(
+            "$SERVER_RESULT"
+            "$CLIENT_RESULT"
+            "$EMBEDDED_RESULT"
+            "$E2E_RESULT"
+            "$PLUGINKIT_RESULT"
+            "$PLUGINS_RESULT"
+          )
+
+          if [ "$CLASSIFY_RESULT" = "success" ] && [ "$EXEMPT" = "true" ]; then
+            expected=skipped
+            path="intentional exempt-path skips"
+          elif [ "$CLASSIFY_RESULT" = "success" ] && [ "$EXEMPT" = "false" ]; then
+            expected=success
+            path="full CI evaluation"
+          else
+            echo "Classification did not produce a valid result; failing closed." >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
+
+          for result in "${results[@]}"; do
+            if [ "$result" != "$expected" ]; then
+              echo "Gate failed during $path: every required job must be \`$expected\`." >> "$GITHUB_STEP_SUMMARY"
+              exit 1
+            fi
+          done
+
+          echo "Gate passed via $path." >> "$GITHUB_STEP_SUMMARY"
