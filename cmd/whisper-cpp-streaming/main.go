@@ -83,7 +83,7 @@ func loadConfig() (pluginkit.Config, engine.Config) {
 	language := flag.String("language", envOrDefault("MUESLI_WHISPER_LIVE_LANGUAGE", envOrDefault("MUESLI_WHISPER_LANGUAGE", engine.DefaultLanguage)), "language code")
 	flag.Parse()
 
-	return pluginkit.Config{Name: *name, Version: *version, Kind: model.PluginStreamingTranscriber, Token: *token, Addr: *addr, ModelDir: *modelDirFlag, ConfigSchema: engine.ConfigSchema}, engine.Config{ModelDir: *modelDirFlag, ModelURL: *modelURLFlag, Model: *modelFlag, Language: *language}
+	return pluginkit.Config{Name: *name, Version: *version, Kind: model.PluginStreamingTranscriber, Token: *token, Addr: *addr, ModelDir: *modelDirFlag, ConfigSchema: live.ConfigSchema(engine.ConfigSchema)}, engine.Config{ModelDir: *modelDirFlag, ModelURL: *modelURLFlag, Model: *modelFlag, Language: *language}
 }
 
 func selectLiveModel(batch string, lookup func(string) (string, bool)) (string, bool) {

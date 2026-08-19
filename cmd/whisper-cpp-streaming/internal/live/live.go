@@ -44,10 +44,21 @@ func (e *Engine) StartStream(_ context.Context, req pluginkit.StreamingStartRequ
 	if req.SampleRate <= 0 || req.Channels <= 0 {
 		return nil, errors.New("sample rate and channels must be positive")
 	}
-	s := &session{parent: e, inputRate: req.SampleRate, channels: req.Channels}
+	sessionCfg, err := parseSessionConfig(req.Config)
+	if err != nil {
+		return nil, err
+	}
 	cfg := pluginkit.DefaultStreamingConfig()
-	var err error
-	s.stream, err = pluginkit.NewStreamingSession(cfg, nil, s.transcribe, s.emit)
+	cfg.EnergyThreshold = sessionCfg.threshold
+	// Constructed per session: the adaptive detector carries per-session state,
+	// and StreamingSession serializes calls only within one session.
+	vad, err := newVAD(sessionCfg, cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	s := &session{parent: e, inputRate: req.SampleRate, channels: req.Channels}
+	s.stream, err = pluginkit.NewStreamingSession(cfg, vad, s.transcribe, s.emit)
 	if err != nil {
 		return nil, err
 	}
