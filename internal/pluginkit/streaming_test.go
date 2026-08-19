@@ -19,6 +19,10 @@ func testStreamingConfig() StreamingConfig {
 	// below keep their original, tightly timed expectations. Tests that
 	// exercise the hysteresis tolerance set it explicitly.
 	cfg.SilenceHysteresis = 0
+	// Likewise disabled: these tests feed deliberately sized frames (10, 15,
+	// 30, 70, 150 samples) and assert on their exact timing, so they pin the
+	// caller-framed behavior rather than the reframed default.
+	cfg.VADFrame = 0
 	return cfg
 }
 
