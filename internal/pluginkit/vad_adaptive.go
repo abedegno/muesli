@@ -245,7 +245,12 @@ func (v *AdaptiveEnergyVAD) recompute() {
 	// update, so a transient cannot swing the detector.
 	lo := v.threshold * (1 - v.cfg.MaxSlew)
 	hi := v.threshold * (1 + v.cfg.MaxSlew)
-	v.threshold = math.Min(math.Max(math.Max(t, v.cfg.MinThreshold), lo), hi)
+	// MinThreshold is applied *after* the slew clamp, not inside it. The clamp
+	// is multiplicative, so a threshold of zero has lo == hi == 0 and would pin
+	// itself at zero forever -- and a zero threshold classifies every frame as
+	// speech, so silence would never finalize. A configured fallback of zero is
+	// valid input, so the floor has to be able to bootstrap it.
+	v.threshold = math.Max(math.Min(math.Max(t, lo), hi), v.cfg.MinThreshold)
 }
 
 // quantile returns the q-th quantile of the histogram mass at or above `from`,

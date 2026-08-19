@@ -246,3 +246,33 @@ func TestAdaptiveVADUnderestimatesAtVeryLowOccupancy(t *testing.T) {
 			"the documented envelope was about 2.4x", ratio, atSparse, atNormal)
 	}
 }
+
+// TestAdaptiveVADBootstrapsFromAZeroFallback covers a configuration that the
+// schema and the session parser both accept: vad_threshold of 0. The slew limit
+// is multiplicative, so without a floor applied outside it a zero threshold
+// clamps itself to zero on every update, and a zero threshold makes every frame
+// speech -- so silence would never finalize and nothing would ever transcribe.
+func TestAdaptiveVADBootstrapsFromAZeroFallback(t *testing.T) {
+	cfg := DefaultAdaptiveVADConfig(testVADSampleRate, testVADFrame)
+	cfg.Fallback = 0
+	vad, err := NewAdaptiveEnergyVAD(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rng := lcg(3)
+	frames := 120 * int(time.Second/testVADFrame)
+	speech := 0
+	for i := range frames {
+		// A quiet room: stationary noise well below any sensible threshold.
+		if vad.IsSpeech(frameOf(0.0004*(0.7+0.6*rng.next()))) && i > frames/2 {
+			speech++
+		}
+	}
+	if vad.Threshold() < cfg.MinThreshold {
+		t.Errorf("threshold %v never rose off zero; MinThreshold is %v", vad.Threshold(), cfg.MinThreshold)
+	}
+	if ratio := float64(speech) / float64(frames/2); ratio > 0.05 {
+		t.Errorf("%.1f%% of a quiet room classified as speech; silence would never finalize", 100*ratio)
+	}
+}

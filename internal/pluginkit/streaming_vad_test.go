@@ -119,9 +119,20 @@ func TestStreamingSegmentationIsIndependentOfChunkSize(t *testing.T) {
 // whole call, and the transcription goroutine needs that same lock to clear
 // transcriptionInFlight, so at most one transcription can start per Feed call.
 // A caller that sends a chunk spanning several utterances therefore loses all
-// but the first. Production capture sends 200ms chunks while finalizing needs
-// SilenceHysteresis+SilenceDuration of silence, so this is not reachable there
-// today, but it is speech loss for any client that buffers more aggressively.
+// but the first.
+//
+// Dropping rather than queueing is deliberate here, not accidental: see
+// TestStreamingSessionDropsTriggersDuringTranscription, which asserts that
+// triggers must not queue. Queueing finals would bound memory by the backlog
+// instead, and reversing that decision belongs with the rest of the
+// end-of-stream work in muesli#711, not with reframing.
+//
+// Production capture sends 200ms chunks while finalizing needs
+// SilenceHysteresis+SilenceDuration (1s by default) of silence, so a single
+// production chunk cannot contain two finals and this is unreachable from the
+// desktop app. It is reachable for any client that buffers more aggressively --
+// which before reframing got one RMS decision per whole chunk, so its
+// segmentation was already unusable.
 func TestStreamingDropsAllButOneFinalPerFeedCall(t *testing.T) {
 	cfg := framingConfig()
 	subframe := int(cfg.VADFrame) * cfg.SampleRate / int(time.Second)
@@ -136,5 +147,69 @@ func TestStreamingDropsAllButOneFinalPerFeedCall(t *testing.T) {
 	if len(whole) != 1 {
 		t.Fatalf("expected exactly one final from a single chunk spanning %d utterances, got %d: %v",
 			len(perSubframe), len(whole), whole)
+	}
+}
+
+// TestStreamingPendingBufferDoesNotRetainLargeChunks covers a hosted-server
+// concern rather than a laptop one: compacting the reframing buffer in place
+// reuses its backing array, so one oversized chunk would otherwise pin that
+// allocation for the whole session, on every concurrent meeting.
+func TestStreamingPendingBufferDoesNotRetainLargeChunks(t *testing.T) {
+	cfg := framingConfig()
+	subframe := int(cfg.VADFrame) * cfg.SampleRate / int(time.Second)
+	session, err := NewStreamingSession(cfg, nil,
+		func([]float32) (string, error) { return "x", nil },
+		func(StreamingSegment, error) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// One large chunk, deliberately not a whole number of subframes so a
+	// remainder is carried.
+	session.Feed(make([]float32, 500*subframe+7))
+	session.Wait()
+
+	session.mu.Lock()
+	got := cap(session.pending)
+	session.mu.Unlock()
+	if got > 4*subframe {
+		t.Errorf("pending buffer retained capacity %d after a large chunk; want at most %d",
+			got, 4*subframe)
+	}
+}
+
+// TestStreamingLeavesASubframeRemainderUnclassified pins what happens to audio
+// shorter than one VAD frame at the end of a stream: it stays buffered and is
+// never classified, so up to VADFrame-1 samples contribute to no utterance and
+// no timestamp. The fixture in the chunk-independence test is an exact multiple
+// of the subframe, which would hide this.
+//
+// Fixing it needs an explicit end-of-stream flush, tracked in muesli#711
+// alongside the other paths that lose in-progress speech.
+func TestStreamingLeavesASubframeRemainderUnclassified(t *testing.T) {
+	cfg := framingConfig()
+	subframe := int(cfg.VADFrame) * cfg.SampleRate / int(time.Second)
+
+	for _, remainder := range []int{1, subframe / 2, subframe - 1} {
+		session, err := NewStreamingSession(cfg, nil,
+			func([]float32) (string, error) { return "x", nil },
+			func(StreamingSegment, error) {})
+		if err != nil {
+			t.Fatal(err)
+		}
+		session.Feed(make([]float32, 3*subframe+remainder))
+		session.Wait()
+
+		session.mu.Lock()
+		held, classified := len(session.pending), session.totalSamples
+		session.mu.Unlock()
+
+		if held != remainder {
+			t.Errorf("remainder %d: %d samples held, want %d", remainder, held, remainder)
+		}
+		if classified != int64(3*subframe) {
+			t.Errorf("remainder %d: accounted for %d samples, want %d",
+				remainder, classified, 3*subframe)
+		}
 	}
 }

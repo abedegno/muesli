@@ -177,9 +177,15 @@ func (s *StreamingSession) Feed(frame []float32) {
 		consumed += subframe
 	}
 	if consumed > 0 {
-		// Compact in place so the buffer never outgrows one subframe plus
-		// the largest chunk a caller has sent.
 		s.pending = s.pending[:copy(s.pending, s.pending[consumed:])]
+		// Compacting in place reuses the backing array, which would otherwise
+		// stay as large as the biggest chunk the caller ever sent for the rest
+		// of the session -- a single large upload would pin that allocation
+		// across every meeting on a hosted server. Release it once it is far
+		// larger than the remainder can ever need.
+		if cap(s.pending) > 4*subframe {
+			s.pending = append(make([]float32, 0, 2*subframe), s.pending...)
+		}
 	}
 }
 
