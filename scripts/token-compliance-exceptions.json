@@ -24,14 +24,6 @@
     "count": 2
   },
   {
-    "file": "src/renderer/components/shell/AppLayout.tsx",
-    "rule": "hex-literal",
-    "reason": "not a colour literal: '#221' is a GitHub PR reference number inside a code comment; the hex-literal regex matches any hex-shaped digit run after '#', which this comment incidentally triggers",
-    "owner": "abedegno",
-    "expires": "2027-08-20",
-    "count": 1
-  },
-  {
     "file": "src/renderer/components/ActionItemsScreen.tsx",
     "rule": "raw-palette-class",
     "reason": "done/open status badge awaiting semantic status tokens in Plating Stage 3",

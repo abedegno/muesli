@@ -131,6 +131,28 @@ describe('scanSource', () => {
     // by the "flags a stale baseline" test below.
     expect(rules(v)).toEqual(['invalid-var-composition', 'exception-count-stale'])
   })
+
+  it('does not flag an issue or PR reference in a comment as a hex colour', () => {
+    const source = '  // Stale-result guard (MUST-FIX from PR #221): the previous query'
+    expect(scanSource('src/renderer/components/shell/AppLayout.tsx', source, [], NOW)).toEqual([])
+  })
+
+  it('does not flag a four-digit issue reference either', () => {
+    const source = '/* see #1234 for the rationale */'
+    expect(scanSource('src/renderer/components/X.tsx', source, [], NOW)).toEqual([])
+  })
+
+  it('still flags a hex colour in real code on a line that also has a comment', () => {
+    const source = 'const border = "#e2e8f0" // the divider colour'
+    expect(rules(scanSource('src/renderer/components/X.tsx', source, [], NOW))).toEqual([
+      'hex-literal',
+    ])
+  })
+
+  it('does not flag a palette class mentioned only in a comment', () => {
+    const source = '  // was bg-amber-500 before the token migration'
+    expect(scanSource('src/renderer/components/X.tsx', source, [], NOW)).toEqual([])
+  })
 })
 
 describe('validateExceptions', () => {

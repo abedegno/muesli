@@ -54,6 +54,31 @@ function isScannable(file) {
   return !/\.(test|spec)\.[jt]sx?$/.test(file)
 }
 
+// Strips comment content so a colour or class token mentioned only in prose
+// -- or, worse, a `#1234`-shaped issue/PR reference -- never counts as
+// applied styling. This is a line-level heuristic, not a tokenizer: it does
+// not track state across lines, so a block comment that opens with `/*` but
+// does not close on the same line is left alone. It also does not know
+// about strings, so a `//` inside one (e.g. a URL like 'https://x') strips
+// everything after it too. Neither shape appears in this codebase today; a
+// config-file line scanner does not need a full lexer to get the common
+// cases right.
+function stripComments(line) {
+  const trimmed = line.trimStart()
+  // A block-comment continuation line, e.g. the `*` lines of a `/** ... */`
+  // JSDoc block, including its closing `*/`.
+  if (trimmed.startsWith('*')) return ''
+
+  // A full single-line block comment: `/* ... */` appearing on the line.
+  const withoutBlockComments = line.replace(/\/\*.*?\*\//g, '')
+
+  // A line comment: everything from `//` to the end of the line.
+  const lineCommentIndex = withoutBlockComments.indexOf('//')
+  return lineCommentIndex === -1
+    ? withoutBlockComments
+    : withoutBlockComments.slice(0, lineCommentIndex)
+}
+
 export function validateExceptions(exceptions, now = new Date()) {
   const violations = []
   if (!Array.isArray(exceptions)) {
@@ -111,6 +136,9 @@ export function scanSource(filePath, source, exceptions = [], now = new Date()) 
   if (!isScannable(file)) return []
 
   const lines = source.split('\n')
+  // Matching runs against the comment-stripped text; the reported snippet
+  // still shows the original line, since that's what a human needs to see.
+  const codeLines = lines.map(stripComments)
   const violations = []
 
   for (const rule of RULES) {
@@ -118,14 +146,14 @@ export function scanSource(filePath, source, exceptions = [], now = new Date()) 
     if (!rule.appliesTo(file)) continue
 
     const hits = []
-    lines.forEach((line, index) => {
+    codeLines.forEach((codeLine, index) => {
       // matchAll clones the regex internally, so it does not depend on --
       // and does not disturb -- rule.pattern.lastIndex. Each match on the
       // line is its own hit: a line carrying three matches is three
       // occurrences, not one, or a regression added to an already-violating
       // line would never move hits.length.
-      for (const _match of line.matchAll(rule.pattern)) {
-        hits.push({ line: index + 1, snippet: line.trim() })
+      for (const _match of codeLine.matchAll(rule.pattern)) {
+        hits.push({ line: index + 1, snippet: lines[index].trim() })
       }
     })
 
