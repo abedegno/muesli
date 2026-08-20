@@ -25,6 +25,14 @@ test('the notes list has no serious accessibility violations', async ({ page }) 
   await seedNoteWithAudio(page, { title: 'Accessibility fixture note' })
   await page.getByRole('link', { name: 'All notes' }).click()
   await expect(page.getByRole('link', { name: 'All notes' })).toBeVisible()
+  // Content-based wait, not just a nav-link visibility check: AppLayout only
+  // refetches notes when its `view` state changes identity (useCallback dep
+  // in AppLayout.tsx), which the "All notes" NavLink's onClick incidentally
+  // does by passing a fresh `{ type: 'all' }` object into setView on every
+  // click -- not because of the route change itself. Waiting for the note's
+  // own title, not just the link, is what actually proves the populated
+  // state rendered rather than the "No notes yet" empty state.
+  await expect(page.getByText('Accessibility fixture note')).toBeVisible()
   await expectNoAxeViolations(page, 'notes list', KNOWN_A11Y_EXCEPTIONS)
 })
 
