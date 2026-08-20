@@ -2,6 +2,15 @@ import { expect, test } from '../fixtures/app'
 import { expectNoAxeViolations, type A11yException } from '../helpers/a11y'
 import { seedNoteWithAudio } from '../helpers/seed'
 
+// seedNoteWithAudio polls for the connection for up to 90s and then for the
+// note to become ready for up to 30s: a 120s helper budget, which does not fit
+// inside playwright.config.ts's 60s default. Every sibling that seeds already
+// compensates (audio-playback and transcript-search 120s, crash-recovery and
+// transcript-geometry 180s). This file had no override at all -- and Playwright
+// orders spec files alphabetically, so `accessibility` runs FIRST, against the
+// coldest embedded-Postgres provision of the whole suite.
+test.setTimeout(120_000)
+
 // Recorded, owned debt -- not silenced, and not a blanket exemption.
 // --primary (src/renderer/styles/tokens.css) measures 3.19-3.74:1 against
 // white text and against its own 10%-opacity tint, short of the 4.5:1 AA
@@ -45,6 +54,10 @@ const SETTINGS_A11Y_EXCEPTIONS: A11yException[] = [
 ]
 
 test('the notes list has no serious accessibility violations', async ({ page }) => {
+  // The same readiness gate every sibling spec opens with: the first paint can
+  // be a long way behind a cold provision, and a seed issued before the app is
+  // up fails for a reason that has nothing to do with accessibility.
+  await expect(page.getByRole('link', { name: 'All notes' })).toBeVisible({ timeout: 60_000 })
   await seedNoteWithAudio(page, { title: 'Accessibility fixture note' })
   await page.getByRole('link', { name: 'All notes' }).click()
   await expect(page.getByRole('link', { name: 'All notes' })).toBeVisible()
@@ -60,6 +73,9 @@ test('the notes list has no serious accessibility violations', async ({ page }) 
 })
 
 test('the settings screen has no serious accessibility violations', async ({ page }) => {
+  // Each test gets its own Electron app from the fixture, so this one faces a
+  // cold start of its own even though it does not seed.
+  await expect(page.getByRole('link', { name: 'All notes' })).toBeVisible({ timeout: 60_000 })
   await page.getByRole('link', { name: 'Settings' }).click()
   await expect(page.getByRole('heading', { name: /settings/i })).toBeVisible()
   await expectNoAxeViolations(page, 'settings screen', SETTINGS_A11Y_EXCEPTIONS)
