@@ -50,6 +50,27 @@ async function readGeometry(viewport: Locator): Promise<Geometry> {
   })
 }
 
+type WindowState = {
+  scrollHeight: number
+  lastRenderedSegment: number
+}
+
+// The height AND the last row currently rendered, read in one evaluate so no
+// re-render can slip between them. The row number is what makes a wait on this
+// honest: a poll that can only see a number it cannot attribute to anything
+// cannot tell "the state has not changed yet" from "the state has settled",
+// and accessibility.spec.ts gates on rendered content for the same reason.
+async function readWindowState(viewport: Locator): Promise<WindowState> {
+  return viewport.evaluate((element) => {
+    const rendered = [...element.querySelectorAll('li')]
+    const label = rendered[rendered.length - 1]?.textContent?.match(/Segment (\d+)/)
+    return {
+      scrollHeight: element.scrollHeight,
+      lastRenderedSegment: label ? Number(label[1]) : -1,
+    }
+  })
+}
+
 test('a long transcript keeps rows ordered, non-overlapping and reachable', async ({ page }) => {
   const title = 'Long transcript geometry'
   await expect(page.getByRole('link', { name: 'All notes' })).toBeVisible({ timeout: 60_000 })
@@ -102,21 +123,38 @@ test('a long transcript keeps rows ordered, non-overlapping and reachable', asyn
   // slowly that reaching the end takes a dozen scrolls. This is measured before
   // the sweep below, while most rows are still unmeasured -- that is when the
   // estimator is under the most pressure.
+  const beforeScroll = await readWindowState(viewport)
   await viewport.evaluate((element) => {
     element.scrollTop = element.scrollHeight
   })
-  let previousScrollHeight = -1
+
+  // A settle only counts once the rendered window has moved PAST where it was
+  // before the gesture. Without that condition two samples taken before the
+  // scroll's re-render lands are equal to each other, the poll reports settled,
+  // and everything below then measures the pre-scroll state: scrollTop is still
+  // the old clamped maximum, so screensShort works out to exactly 0 whatever
+  // the estimator does, and the assertion passes without testing the one thing
+  // it guards. That is not a remote possibility -- Playwright's first poll
+  // interval is 100ms, while the growth needs a scroll event on a frame
+  // boundary, a re-render, a useLayoutEffect measure and a second render, which
+  // under xvfb-run with swiftshader can take longer than that.
+  //
+  // previousScrollHeight resets to null whenever a sample has not advanced, so
+  // a pair of pre-advance readings can never satisfy the equality either.
+  let previousScrollHeight: number | null = null
   await expect
     .poll(
       async () => {
-        const current = await viewport.evaluate((element) => element.scrollHeight)
-        const settled = current === previousScrollHeight
-        previousScrollHeight = current
+        const current = await readWindowState(viewport)
+        const advanced = current.lastRenderedSegment > beforeScroll.lastRenderedSegment
+        const settled =
+          advanced && previousScrollHeight !== null && current.scrollHeight === previousScrollHeight
+        previousScrollHeight = advanced ? current.scrollHeight : null
         return settled
       },
       {
         timeout: 15_000,
-        message: 'the transcript never stopped resizing after a single scroll to the end',
+        message: `one scroll to the end never both advanced the rendered window past Segment ${beforeScroll.lastRenderedSegment} and stopped resizing; a settle that never saw the window move would be a stale read of the pre-scroll state`,
       }
     )
     .toBe(true)
@@ -171,9 +209,24 @@ test('a long transcript keeps rows ordered, non-overlapping and reachable', asyn
           const box = last.getBoundingClientRect()
           return {
             lastRow: last.textContent?.match(/Segment \d+/)?.[0] ?? 'no rows rendered',
-            pixelsBelowTheLastRow: Math.round(
-              element.scrollHeight - element.clientHeight - element.scrollTop
-            ),
+            // TERMINATION, not drift. scrollTop = scrollHeight is clamped by
+            // the browser, so on any scrollable element this difference is 0
+            // by construction; it cannot catch layout drift and is not here to
+            // try. What it does catch is something fighting the assignment --
+            // a smooth scroll still in flight, or a scroll handler putting
+            // scrollTop back -- which would make every reading below a reading
+            // of somewhere other than the end.
+            //
+            // A tolerance rather than an equality because scrollHeight and
+            // clientHeight are rounded integers while scrollTop is fractional,
+            // so the difference lands in [-0.5, 0.5). The previous
+            // Math.round(...) === 0 form was a latent hard failure: Math.round
+            // of anything in (-0.5, 0) returns -0, and
+            // expect({ a: -0 }).toEqual({ a: 0 }) FAILS under Playwright's
+            // expect. Linux font metrics decide whether it lands there, and
+            // retries: 1 would not mask a deterministic failure.
+            settledAtTheBottom:
+              Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop) <= 1,
             lastRowInsideTheVisibleBand: box.top < band.bottom && box.bottom > band.top,
           }
         }),
@@ -184,7 +237,7 @@ test('a long transcript keeps rows ordered, non-overlapping and reachable', asyn
     )
     .toEqual({
       lastRow: `Segment ${SEGMENT_COUNT - 1}`,
-      pixelsBelowTheLastRow: 0,
+      settledAtTheBottom: true,
       lastRowInsideTheVisibleBand: true,
     })
 })
