@@ -39,6 +39,15 @@ const largeSegs: TranscriptSegment[] = Array.from({ length: 1000 }, (_, i) => ({
   source: 'mixed',
 }))
 
+// A second transcript of the same length as largeSegs, so every positional row
+// key collides with one from largeSegs.
+const otherLargeSegs: TranscriptSegment[] = Array.from({ length: 1000 }, (_, i) => ({
+  start_ms: i * 1000,
+  end_ms: (i + 1) * 1000,
+  text: `a completely different line ${i}`,
+  source: 'mixed',
+}))
+
 describe('TranscriptView', () => {
   it('shows empty state when no segments', () => {
     render(<TranscriptView segments={[]} />)
@@ -186,31 +195,58 @@ describe('TranscriptView', () => {
     expect(renderedSegments).toBeLessThan(100)
   })
 
+  const rectOfHeight = (height: number) =>
+    ({
+      height,
+      width: 0,
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: height,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }) as DOMRect
+
+  const declaredHeight = () =>
+    Number.parseFloat(
+      (screen.getByTestId('transcript-viewport').firstElementChild as HTMLElement).style.height
+    )
+
   it('sizes the virtualised transcript from measured rows, not the estimate', () => {
     // jsdom computes no layout, so every rect it reports is zero and the
     // component falls back to its estimates -- which is why the real guard for
     // this is a browser test (e2e/specs/transcript-geometry.spec.ts). Stubbing
     // the measurement still pins the arithmetic: a measured row height the
     // component could not have guessed has to reach the declared total height.
-    const MEASURED_ROW_HEIGHT = 137
-    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
-      height: MEASURED_ROW_HEIGHT,
-      width: 0,
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: MEASURED_ROW_HEIGHT,
-      x: 0,
-      y: 0,
-      toJSON: () => ({}),
-    } as DOMRect)
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(rectOfHeight(137))
 
     render(<TranscriptView segments={largeSegs} />)
-    const sizer = screen.getByTestId('transcript-viewport').firstElementChild as HTMLElement
-    const estimatedTotal = largeSegs.length * 44
 
     expect(document.querySelectorAll('li').length).toBeGreaterThan(0)
-    expect(Number.parseFloat(sizer.style.height)).toBeGreaterThan(estimatedTotal)
+    expect(declaredHeight()).toBeGreaterThan(largeSegs.length * 44)
+  })
+
+  it('forgets measured rows when the transcript changes, so one note cannot size another', () => {
+    // Row keys are positional, so every key in one transcript collides with a
+    // key in the next. The note screen reuses this component instance across
+    // notes (no `key` on the /notes/:id route, and the loader does not clear
+    // the previous note first), so a surviving measurement would size the new
+    // note from the old note's rows.
+    const rect = vi
+      .spyOn(Element.prototype, 'getBoundingClientRect')
+      .mockReturnValue(rectOfHeight(137))
+
+    const { rerender } = render(<TranscriptView segments={largeSegs} />)
+    expect(declaredHeight()).toBeGreaterThan(largeSegs.length * 44)
+
+    // A different transcript, same length. Nothing in it can be measured now,
+    // so every row must fall back to the estimate -- which it can only do if
+    // the previous note's measurements were dropped.
+    rect.mockReturnValue(rectOfHeight(0))
+    rerender(<TranscriptView segments={otherLargeSegs} />)
+
+    expect(declaredHeight()).toBe(otherLargeSegs.length * 44)
   })
 
   it('scrolls an off-window citation into view and highlights it', async () => {

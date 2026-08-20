@@ -95,6 +95,41 @@ test('a long transcript keeps rows ordered, non-overlapping and reachable', asyn
     ).toBeGreaterThanOrEqual(boxes[i - 1].bottom - 1)
   }
 
+  // Scrolling to the end mounts a new window and measures it, which changes the
+  // total height and so moves the end. That correction has to be small enough
+  // that one more gesture finishes the job: when unmeasured rows are estimated
+  // by a fixed constant far from their real height, the shortfall decays so
+  // slowly that reaching the end takes a dozen scrolls. This is measured before
+  // the sweep below, while most rows are still unmeasured -- that is when the
+  // estimator is under the most pressure.
+  await viewport.evaluate((element) => {
+    element.scrollTop = element.scrollHeight
+  })
+  let previousScrollHeight = -1
+  await expect
+    .poll(
+      async () => {
+        const current = await viewport.evaluate((element) => element.scrollHeight)
+        const settled = current === previousScrollHeight
+        previousScrollHeight = current
+        return settled
+      },
+      {
+        timeout: 15_000,
+        message: 'the transcript never stopped resizing after a single scroll to the end',
+      }
+    )
+    .toBe(true)
+
+  const afterOneScroll = await readGeometry(viewport)
+  const screensShort =
+    (afterOneScroll.scrollHeight - afterOneScroll.clientHeight - afterOneScroll.scrollTop) /
+    afterOneScroll.clientHeight
+  expect(
+    screensShort,
+    'one scroll to the end still leaves the last row screens away, so reaching the end means scrolling over and over'
+  ).toBeLessThan(1)
+
   // The height the transcript declares has to be the height its content really
   // occupies -- spacers plus rendered rows. When rows are taller than the
   // layout assumed, the content overflows the declared box, the scrollbar

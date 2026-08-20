@@ -32,7 +32,6 @@ type TranscriptRow =
       speaker: string
       displayName: string
       accentIdx: number
-      height: number
     }
   | {
       kind: 'segment'
@@ -40,7 +39,6 @@ type TranscriptRow =
       idx: number
       seg: TranscriptSegment
       speaker: string | null
-      height: number
     }
 
 type SearchMeta = { start: number; matchCount: number }
@@ -111,7 +109,6 @@ function buildTranscriptRows(
           speaker,
           displayName: speakerAliases?.[speaker] ?? speaker,
           accentIdx: speakerIndexMap[speaker] ?? 0,
-          height: SPEAKER_ROW_HEIGHT,
         })
       }
     }
@@ -123,7 +120,6 @@ function buildTranscriptRows(
       idx,
       seg,
       speaker,
-      height: SEGMENT_ROW_HEIGHT,
     })
   }
 
@@ -210,6 +206,25 @@ export function TranscriptView({
   // row key. Rows keep their measured height while they are scrolled out of the
   // window, so the totals stay stable instead of snapping back to an estimate.
   const [measured, setMeasured] = useState<Record<string, number>>({})
+
+  // Row keys are positional (`segment-<idx>`), so the same key means a
+  // different line once the transcript changes -- and the note screen reuses
+  // this component instance when you open another note: the route carries no
+  // `key` and the loader does not clear the previous note first. Without this
+  // reset, note B is laid out from note A's heights for every row it has not
+  // yet rendered.
+  //
+  // The basis is deliberately not the segments array: polling a processing note
+  // hands over a fresh array with identical content on every tick, and keying
+  // on identity would throw away every measurement each time.
+  const measurementBasis = `${segments.length}:${segments[0]?.text ?? ''}`
+  const [measuredBasis, setMeasuredBasis] = useState(measurementBasis)
+  if (measurementBasis !== measuredBasis) {
+    // Adjusting state during render, rather than in an effect: an effect would
+    // commit one frame laid out with the previous transcript's heights first.
+    setMeasuredBasis(measurementBasis)
+    setMeasured({})
+  }
   const rowRefs = useRef(new Map<string, HTMLElement>())
 
   const observeRow = useCallback((key: string, node: HTMLElement | null) => {
@@ -241,10 +256,36 @@ export function TranscriptView({
     if (changed) setMeasured((prev) => ({ ...prev, ...next }))
   })
 
+  // Rows that have never been rendered are estimated from the mean of the rows
+  // that have, per kind -- a speaker heading and a segment are not the same
+  // shape. The constants only seed that mean: once one row of a kind has been
+  // measured they stop influencing the layout. A fixed constant is a poor
+  // estimator, and the further it sits from the truth the more scrolling to the
+  // end becomes a treadmill, since every window measured on the way there grows
+  // the total and pushes the end further away.
   const rowLayout = useMemo(() => {
+    let segmentTotal = 0
+    let segmentCount = 0
+    let speakerTotal = 0
+    let speakerCount = 0
+    for (const row of rows) {
+      const height = measured[row.key]
+      if (height == null) continue
+      if (row.kind === 'segment') {
+        segmentTotal += height
+        segmentCount++
+      } else {
+        speakerTotal += height
+        speakerCount++
+      }
+    }
+    const segmentEstimate = segmentCount > 0 ? segmentTotal / segmentCount : SEGMENT_ROW_HEIGHT
+    const speakerEstimate = speakerCount > 0 ? speakerTotal / speakerCount : SPEAKER_ROW_HEIGHT
+
     let top = 0
     const positions = rows.map((row) => {
-      const height = measured[row.key] ?? row.height
+      const height =
+        measured[row.key] ?? (row.kind === 'segment' ? segmentEstimate : speakerEstimate)
       const item = { ...row, height, top }
       top += height
       return item
@@ -537,7 +578,6 @@ export function TranscriptView({
                     idx,
                     seg,
                     speaker: seg.speaker != null && seg.speaker !== '' ? seg.speaker : null,
-                    height: SEGMENT_ROW_HEIGHT,
                   }))}
                 </ul>
               </div>
@@ -552,7 +592,6 @@ export function TranscriptView({
             idx,
             seg,
             speaker: seg.speaker != null && seg.speaker !== '' ? seg.speaker : null,
-            height: SEGMENT_ROW_HEIGHT,
           }))}
         </ul>
       )}
