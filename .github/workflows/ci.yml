@@ -344,6 +344,8 @@ jobs:
         run: node scripts/check-admin-dist.mjs
       - name: Lint (ESLint)
         run: npm run lint
+      - name: Token compliance
+        run: npm run check:tokens
       - name: Format check (Prettier)
         run: npm run format:check
       - run: npm run typecheck
