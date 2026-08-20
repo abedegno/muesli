@@ -13,6 +13,21 @@ export type A11yException = {
   owner: string
   /** ISO date string. The exception stops applying at (and including) this date. */
   expires: string
+  /**
+   * How many violating nodes the exception covers, summed across every axe
+   * violation carrying this rule id. This is what makes the entry a ratchet
+   * rather than a blanket suppression: exempting the rule outright would hide
+   * every future regression of the highest-frequency rule axe has, and the
+   * floor would be decorative for as long as the exception lived. A
+   * non-integer or negative count is malformed, like any other missing field.
+   */
+  count: number
+}
+
+/** Observed violating-node counts for one axe run, one entry per rule id. */
+export type A11yNodeCount = {
+  rule: string
+  nodes: number
 }
 
 export type A11yExceptionProblem = {
@@ -45,12 +60,14 @@ export function checkA11yExceptions(
       exception.reason.trim() === '' ||
       typeof exception?.owner !== 'string' ||
       exception.owner.trim() === '' ||
+      !Number.isInteger(exception?.count) ||
+      exception.count < 0 ||
       Number.isNaN(expiry.getTime())
 
     if (malformed) {
       problems.push({
         exception,
-        message: `malformed a11y exception ${JSON.stringify(exception)}: needs a non-empty rule, reason and owner, and a parseable expires date`,
+        message: `malformed a11y exception ${JSON.stringify(exception)}: needs a non-empty rule, reason and owner, a non-negative integer count, and a parseable expires date`,
       })
       continue
     }
@@ -74,7 +91,50 @@ export function checkA11yExceptions(
  * problem itself.
  */
 export function exemptRuleIds(exceptions: A11yException[], now: Date): Set<string> {
-  const problems = checkA11yExceptions(exceptions, now)
-  const problematic = new Set(problems.map((p) => p.exception))
-  return new Set(exceptions.filter((e) => !problematic.has(e)).map((e) => e.rule))
+  return new Set(usableExceptions(exceptions, now).map((e) => e.rule))
+}
+
+/** The exceptions that are well-formed and unexpired, and so actually apply. */
+function usableExceptions(exceptions: A11yException[], now: Date): A11yException[] {
+  const problematic = new Set(checkA11yExceptions(exceptions, now).map((p) => p.exception))
+  return exceptions.filter((e) => !problematic.has(e))
+}
+
+/**
+ * Reports every exempted rule whose observed violating nodes outnumber the
+ * count its exception recorded.
+ *
+ * This is the direct port of the occurrence ratchet in
+ * scripts/check-token-compliance.mjs, and it exists for the same reason: an
+ * exception that merely names a rule suppresses every future regression of
+ * that rule as well as the debt it was written for. color-contrast is the
+ * highest-frequency rule axe has, so exempting it by name alone would remove
+ * most of the floor's value until the expiry date.
+ *
+ * Only the excess direction is enforced. The scanner also reports a baseline
+ * that has drifted ABOVE reality, because a file's occurrence count is exact;
+ * a rendered node count is not, since fonts, window size and platform
+ * rendering all move it. Failing on a count that came in under the baseline
+ * would make the floor flaky in the one direction that is an improvement.
+ */
+export function exceededA11yExceptions(
+  observed: A11yNodeCount[],
+  exceptions: A11yException[],
+  now: Date
+): A11yExceptionProblem[] {
+  const problems: A11yExceptionProblem[] = []
+
+  for (const exception of usableExceptions(exceptions, now)) {
+    const nodes = observed
+      .filter((o) => o.rule === exception.rule)
+      .reduce((total, o) => total + o.nodes, 0)
+    if (nodes > exception.count) {
+      problems.push({
+        exception,
+        message: `a11y exception for ${exception.rule} covers ${exception.count} node(s) but ${nodes} were found (owner: ${exception.owner}); fix the new ones or raise the recorded count with a reason`,
+      })
+    }
+  }
+
+  return problems
 }
