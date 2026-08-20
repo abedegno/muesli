@@ -3,6 +3,7 @@ import {
   checkA11yExceptions,
   exceededA11yExceptions,
   exemptRuleIds,
+  expiringA11yExceptions,
   type A11yException,
 } from './a11yExceptions'
 
@@ -197,5 +198,40 @@ describe('exceededA11yExceptions', () => {
 
   it('reports nothing when the rule was not observed at all', () => {
     expect(exceededA11yExceptions([], [exception()], NOW)).toEqual([])
+  })
+})
+
+// The token exceptions and this one all expire on 2026-11-20. Without notice
+// that is a cliff: client (node) and e2e-desktop both go red on every open PR
+// the same morning.
+describe('expiringA11yExceptions', () => {
+  it('says nothing about an exception that is still months away', () => {
+    expect(expiringA11yExceptions([exception({ expires: '2026-11-20' })], NOW)).toEqual([])
+  })
+
+  it('warns once an exception is inside the 30-day window', () => {
+    const problems = expiringA11yExceptions([exception({ expires: '2026-09-10' })], NOW)
+    expect(problems).toHaveLength(1)
+    expect(problems[0].message).toMatch(/expires in 21 day\(s\), on 2026-09-10/)
+    expect(problems[0].message).toContain('color-contrast')
+    expect(problems[0].message).toContain('abedegno')
+  })
+
+  it('warns on the day the window opens, and not the day before', () => {
+    expect(expiringA11yExceptions([exception({ expires: '2026-09-19' })], NOW)).toHaveLength(1)
+    expect(expiringA11yExceptions([exception({ expires: '2026-09-20' })], NOW)).toEqual([])
+  })
+
+  it('is a warning only -- it never adds to what checkA11yExceptions fails on', () => {
+    const soon = exception({ expires: '2026-09-10' })
+    expect(expiringA11yExceptions([soon], NOW)).toHaveLength(1)
+    expect(checkA11yExceptions([soon], NOW)).toEqual([])
+    expect(exemptRuleIds([soon], NOW)).toEqual(new Set(['color-contrast']))
+  })
+
+  it('does not warn about an already-expired or malformed entry, which fail outright', () => {
+    expect(expiringA11yExceptions([exception({ expires: '2020-01-01' })], NOW)).toEqual([])
+    expect(expiringA11yExceptions([exception({ expires: 'not-a-date' })], NOW)).toEqual([])
+    expect(expiringA11yExceptions([exception({ owner: '' })], NOW)).toEqual([])
   })
 })

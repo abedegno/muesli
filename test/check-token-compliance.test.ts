@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
-// @ts-expect-error The checker is intentionally a directly executable JavaScript module.
-import { scanSource, validateExceptions } from '../scripts/check-token-compliance.mjs'
+import {
+  expiringExceptions,
+  scanSource,
+  validateExceptions,
+  // @ts-expect-error The checker is intentionally a directly executable JavaScript module.
+} from '../scripts/check-token-compliance.mjs'
 
 const NOW = new Date('2026-08-20T00:00:00Z')
 
@@ -281,5 +285,61 @@ describe('validateExceptions', () => {
 
   it('accepts a well-formed unexpired exception', () => {
     expect(validateExceptions([except()], NOW)).toEqual([])
+  })
+})
+
+// Every Plating Stage 3 entry expires on 2026-11-20, and so does the a11y
+// floor's exception. Without notice that is a cliff: on that morning every open
+// PR fails client (node) AND e2e-desktop at once.
+describe('expiringExceptions', () => {
+  type Warning = { file: string; rule: string; expires: string; daysLeft: number; message: string }
+
+  it('says nothing about an exception that is still months away', () => {
+    expect(expiringExceptions([except({ expires: '2026-11-20' })], NOW)).toEqual([])
+  })
+
+  it('warns once an exception is inside the 30-day window', () => {
+    const w: Warning[] = expiringExceptions([except({ expires: '2026-09-10' })], NOW)
+    expect(w).toHaveLength(1)
+    expect(w[0].daysLeft).toBe(21)
+    expect(w[0].message).toContain('2026-09-10')
+    expect(w[0].message).toContain('raw-palette-class')
+    expect(w[0].message).toContain('abedegno')
+  })
+
+  it('warns on the day the window opens, and not the day before', () => {
+    expect(expiringExceptions([except({ expires: '2026-09-19' })], NOW)).toHaveLength(1)
+    expect(expiringExceptions([except({ expires: '2026-09-20' })], NOW)).toEqual([])
+  })
+
+  it('is a warning only -- it never adds to what validateExceptions fails on', () => {
+    const soon = except({ expires: '2026-09-10' })
+    expect(expiringExceptions([soon], NOW)).toHaveLength(1)
+    expect(validateExceptions([soon], NOW)).toEqual([])
+  })
+
+  it('does not warn about an already-expired or malformed entry, which fail outright', () => {
+    expect(expiringExceptions([except({ expires: '2026-01-01' })], NOW)).toEqual([])
+    expect(expiringExceptions([except({ expires: 'soon' })], NOW)).toEqual([])
+    expect(expiringExceptions([except({ owner: '' })], NOW)).toEqual([])
+  })
+
+  it('warns per entry across a mixed list', () => {
+    const w: Warning[] = expiringExceptions(
+      [
+        except({ file: 'src/renderer/components/A.tsx', expires: '2026-09-01' }),
+        except({ file: 'src/renderer/components/B.tsx', expires: '2027-08-20' }),
+        except({ file: 'src/renderer/components/C.tsx', expires: '2026-08-30' }),
+      ],
+      NOW
+    )
+    expect(w.map((x) => x.file)).toEqual([
+      'src/renderer/components/A.tsx',
+      'src/renderer/components/C.tsx',
+    ])
+  })
+
+  it('tolerates a non-array, like every other entry point', () => {
+    expect(expiringExceptions(null, NOW)).toEqual([])
   })
 })

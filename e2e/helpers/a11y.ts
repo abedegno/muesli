@@ -4,6 +4,7 @@ import {
   checkA11yExceptions,
   exceededA11yExceptions,
   exemptRuleIds,
+  expiringA11yExceptions,
   type A11yException,
 } from '../../src/shared/a11yExceptions'
 
@@ -40,6 +41,13 @@ export async function expectNoAxeViolations(
 ): Promise<void> {
   const exceptionProblems = checkA11yExceptions(exceptions, now)
   const exemptRules = exemptRuleIds(exceptions, now)
+
+  // Warned about, never failed on. Every exception on this branch expires on
+  // one date, so without notice that date arrives as a cliff: `e2e-desktop`
+  // and `client (node)` both go red on every open PR the same morning.
+  for (const warning of expiringA11yExceptions(exceptions, now)) {
+    console.warn(`[a11y] ${context} warning: ${warning.message}`)
+  }
 
   const results = await new AxeBuilder({ page })
     .withTags(['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa'])

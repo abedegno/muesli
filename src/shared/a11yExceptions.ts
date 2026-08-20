@@ -35,6 +35,20 @@ export type A11yExceptionProblem = {
   message: string
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/**
+ * How long before an exception expires the floor starts saying so.
+ *
+ * This exception and the Plating Stage 3 entries in
+ * scripts/token-compliance-exceptions.json all expire on one date. Without a
+ * warning window that is a cliff: on that morning every open PR fails both
+ * `client (node)` and `e2e-desktop` at once with no notice. The dating is
+ * deliberate and is NOT moved by this -- the warning opens a month in which to
+ * renew the entry or pay the debt down.
+ */
+export const A11Y_EXPIRY_WARNING_DAYS = 30
+
 /**
  * Validates a list of accessibility exceptions against a clock, returning one
  * problem per malformed or expired entry. Every exception is checked
@@ -134,6 +148,35 @@ export function exceededA11yExceptions(
         message: `a11y exception for ${exception.rule} covers ${exception.count} node(s) but ${nodes} were found (owner: ${exception.owner}); fix the new ones or raise the recorded count with a reason`,
       })
     }
+  }
+
+  return problems
+}
+
+/**
+ * Exceptions that are still valid but expire within `withinDays`.
+ *
+ * Deliberately separate from checkA11yExceptions: these are warnings the
+ * caller surfaces WITHOUT failing the test, or the cliff would just move 30
+ * days earlier. Malformed and already-expired entries are skipped -- those are
+ * hard failures already, and naming the same debt twice helps nobody.
+ */
+export function expiringA11yExceptions(
+  exceptions: A11yException[],
+  now: Date,
+  withinDays: number = A11Y_EXPIRY_WARNING_DAYS
+): A11yExceptionProblem[] {
+  const problems: A11yExceptionProblem[] = []
+
+  for (const exception of usableExceptions(exceptions, now)) {
+    const remainingMs = new Date(exception.expires).getTime() - now.getTime()
+    if (remainingMs > withinDays * DAY_MS) continue
+
+    const daysLeft = Math.ceil(remainingMs / DAY_MS)
+    problems.push({
+      exception,
+      message: `a11y exception for ${exception.rule} expires in ${daysLeft} day(s), on ${exception.expires} (owner: ${exception.owner}); renew it or clear the debt before it starts failing e2e-desktop`,
+    })
   }
 
   return problems

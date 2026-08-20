@@ -174,6 +174,51 @@ export function validateExceptions(exceptions, now = new Date()) {
   return violations
 }
 
+const DAY_MS = 24 * 60 * 60 * 1000
+
+/**
+ * How long before an exception expires the scanner starts saying so.
+ *
+ * Every Plating Stage 3 entry in the exception file expires on one date, and
+ * the a11y floor's exception expires on the same one. Without a warning
+ * window, that is a cliff: on that morning every open PR fails `client (node)`
+ * and `e2e-desktop` at once, with no notice that it was coming. The dating is
+ * deliberate and is NOT moved by this -- the warning just opens a month in
+ * which to renew the entry or pay the debt down.
+ */
+export const EXPIRY_WARNING_DAYS = 30
+
+/**
+ * Exceptions that are still valid but expire within `withinDays`.
+ *
+ * Deliberately NOT part of validateExceptions: these are warnings and must
+ * never fail the build, or the cliff would simply move 30 days earlier.
+ * Malformed and already-expired entries are skipped, because those are hard
+ * failures from validateExceptions and naming them twice helps nobody.
+ */
+export function expiringExceptions(exceptions, now = new Date(), withinDays = EXPIRY_WARNING_DAYS) {
+  if (!Array.isArray(exceptions)) return []
+
+  const warnings = []
+  for (const e of exceptions) {
+    if (validateExceptions([e], now).length > 0) continue
+
+    const remainingMs = new Date(e.expires).getTime() - now.getTime()
+    if (remainingMs > withinDays * DAY_MS) continue
+
+    const daysLeft = Math.ceil(remainingMs / DAY_MS)
+    warnings.push({
+      file: e.file,
+      rule: e.rule,
+      owner: e.owner,
+      expires: e.expires,
+      daysLeft,
+      message: `${e.file} [${e.rule}] expires in ${daysLeft} day(s), on ${e.expires} (owner: ${e.owner}); renew it or clear the debt before it starts failing the build`,
+    })
+  }
+  return warnings
+}
+
 // A pixel constant is only dangerous when layout arithmetic derives from it:
 // styling can change the rendered height without changing the maths, so rows
 // drift, overlap, or become unreachable. Declaration and use are on different
@@ -320,6 +365,11 @@ async function main() {
   const violations = validateExceptions(exceptions, now)
   for (const file of await collectFiles('src/renderer')) {
     violations.push(...scanSource(file, await readFile(file, 'utf8'), exceptions, now))
+  }
+
+  // Printed whatever the outcome, and never contributing to the exit code.
+  for (const warning of expiringExceptions(exceptions, now)) {
+    console.warn(`token compliance warning: ${warning.message}`)
   }
 
   if (violations.length === 0) {
