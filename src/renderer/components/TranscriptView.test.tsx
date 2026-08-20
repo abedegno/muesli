@@ -186,6 +186,33 @@ describe('TranscriptView', () => {
     expect(renderedSegments).toBeLessThan(100)
   })
 
+  it('sizes the virtualised transcript from measured rows, not the estimate', () => {
+    // jsdom computes no layout, so every rect it reports is zero and the
+    // component falls back to its estimates -- which is why the real guard for
+    // this is a browser test (e2e/specs/transcript-geometry.spec.ts). Stubbing
+    // the measurement still pins the arithmetic: a measured row height the
+    // component could not have guessed has to reach the declared total height.
+    const MEASURED_ROW_HEIGHT = 137
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
+      height: MEASURED_ROW_HEIGHT,
+      width: 0,
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: MEASURED_ROW_HEIGHT,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    } as DOMRect)
+
+    render(<TranscriptView segments={largeSegs} />)
+    const sizer = screen.getByTestId('transcript-viewport').firstElementChild as HTMLElement
+    const estimatedTotal = largeSegs.length * 44
+
+    expect(document.querySelectorAll('li').length).toBeGreaterThan(0)
+    expect(Number.parseFloat(sizer.style.height)).toBeGreaterThan(estimatedTotal)
+  })
+
   it('scrolls an off-window citation into view and highlights it', async () => {
     const { rerender } = render(<TranscriptView segments={largeSegs} highlightIndex={null} />)
     const viewport = screen.getByTestId('transcript-viewport')

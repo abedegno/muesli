@@ -18,17 +18,20 @@ import (
 	"github.com/abedegno/muesli/internal/pluginkit"
 )
 
+// segmentMS is the nominal duration the fake transcriber gives every segment.
+// Nothing decodes the audio, so the timings only have to be monotonic.
+const segmentMS = 1000
+
 type fakeTranscriber struct{}
 
 func (fakeTranscriber) Transcribe(_ context.Context, pcm []float32, _ pluginkit.TranscribeRequest) (pluginkit.TranscribeResult, error) {
 	_ = pcm
+	segments := scriptedSegments()
 	return pluginkit.TranscribeResult{
-		Segments: []model.Segment{
-			{StartMS: 0, EndMS: 1000, Text: scriptedTranscript(), Source: "mic"},
-		},
+		Segments:   segments,
 		Language:   "en",
 		Model:      "fake-transcriber",
-		DurationMS: 1000,
+		DurationMS: segments[len(segments)-1].EndMS,
 	}, nil
 }
 
@@ -48,6 +51,33 @@ func scriptedTranscript() string {
 		return transcript
 	}
 	return "hello from fakeplugin"
+}
+
+// scriptedSegments turns the scripted transcript into one segment per non-empty
+// line. A single-line script -- the only shape callers used before this -- still
+// yields exactly one segment, so this is a superset of the previous behaviour.
+// Multi-line scripts let an E2E test ask for a transcript long enough to
+// exercise renderer paths that only appear on real meeting-length transcripts,
+// such as virtualisation.
+func scriptedSegments() []model.Segment {
+	lines := make([]string, 0, 1)
+	for _, line := range strings.Split(scriptedTranscript(), "\n") {
+		if trimmed := strings.TrimSpace(line); trimmed != "" {
+			lines = append(lines, trimmed)
+		}
+	}
+	// scriptedTranscript() never returns a blank string, so there is always at
+	// least one line here.
+	segments := make([]model.Segment, 0, len(lines))
+	for i, line := range lines {
+		segments = append(segments, model.Segment{
+			StartMS: i * segmentMS,
+			EndMS:   (i + 1) * segmentMS,
+			Text:    line,
+			Source:  "mic",
+		})
+	}
+	return segments
 }
 
 type fakeAgent struct{}

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Search } from 'lucide-react'
 import type { CSSProperties } from 'react'
 import { cn } from '@/lib/cn'
@@ -46,11 +46,18 @@ type TranscriptRow =
 type SearchMeta = { start: number; matchCount: number }
 
 const VIRTUALIZE_AFTER_SEGMENTS = 200
+// Initial estimates ONLY. A row's real height is whatever its text, its
+// wrapping and its spacing produce, so every rendered row is measured after
+// layout and the measurement replaces the estimate (see `measured` below).
+// These decide where rows that have never been rendered are assumed to be, and
+// nothing else. Do not derive layout arithmetic from them.
 const SEGMENT_ROW_HEIGHT = 44
 const SPEAKER_ROW_HEIGHT = 24
 const FALLBACK_VIEWPORT_HEIGHT = 320
 const OVERSCAN_ROWS = 6
-const OVERSCAN_PX = SEGMENT_ROW_HEIGHT * 8
+// The repeated speaker heading rendered when the window opens mid-group is
+// extra content with no row of its own, so it is measured under its own key.
+const SYNTHETIC_HEADING_KEY = 'synthetic-speaker-heading'
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
@@ -198,15 +205,52 @@ export function TranscriptView({
     [filtered, speakerAliases, speakerIndexMap],
   )
   const virtualized = rows.length > VIRTUALIZE_AFTER_SEGMENTS
+
+  // Measured height of every row that has been rendered at least once, keyed by
+  // row key. Rows keep their measured height while they are scrolled out of the
+  // window, so the totals stay stable instead of snapping back to an estimate.
+  const [measured, setMeasured] = useState<Record<string, number>>({})
+  const rowRefs = useRef(new Map<string, HTMLElement>())
+
+  const observeRow = useCallback((key: string, node: HTMLElement | null) => {
+    if (node) rowRefs.current.set(key, node)
+    else rowRefs.current.delete(key)
+  }, [])
+
+  // Measure after layout and before paint. The measured element is the row's
+  // whole slot -- its spacing is padding inside it, not a gap between siblings
+  // -- so the heights here add up to exactly what the rows occupy on screen.
+  // Environments without layout (jsdom) report 0 and are skipped, which leaves
+  // the estimates standing rather than collapsing every row to nothing.
+  //
+  // Deliberately unconditional: any render can mount a row that has never been
+  // measured, so there is no dependency list that means "after every render".
+  // It converges rather than looping -- a re-measurement that agrees with the
+  // stored height sets no state.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => {
+    if (!virtualized) return
+    const next: Record<string, number> = {}
+    let changed = false
+    for (const [key, node] of rowRefs.current) {
+      const height = node.getBoundingClientRect().height
+      if (height <= 0) continue
+      next[key] = height
+      if (Math.abs((measured[key] ?? 0) - height) > 0.5) changed = true
+    }
+    if (changed) setMeasured((prev) => ({ ...prev, ...next }))
+  })
+
   const rowLayout = useMemo(() => {
     let top = 0
     const positions = rows.map((row) => {
-      const item = { ...row, top }
-      top += row.height
+      const height = measured[row.key] ?? row.height
+      const item = { ...row, height, top }
+      top += height
       return item
     })
     return { positions, totalHeight: top }
-  }, [rows])
+  }, [measured, rows])
 
   const citedRef = useRef<HTMLLIElement | null>(null)
   const pendingScroll = useRef(false)
@@ -272,11 +316,18 @@ export function TranscriptView({
   }, [hasHighlight, highlightIndex, rowLayout, segmentRowIndexByRawIdx, virtualized, viewportHeight, scrollTop])
 
   const virtualWindow = useMemo(() => {
-    if (!virtualized) return { start: 0, end: rows.length, topSpacer: 0, bottomSpacer: 0 }
+    if (!virtualized) {
+      return { start: 0, end: rows.length, topSpacer: 0, bottomSpacer: 0, syntheticHeading: false }
+    }
 
     const totalHeight = rowLayout.totalHeight
-    const startPx = Math.max(scrollTop - OVERSCAN_PX, 0)
-    const endPx = scrollTop + viewportHeight + OVERSCAN_PX
+    // A scroll buffer, not a row measurement: how far outside the visible band
+    // rows stay mounted so a fast scroll does not reveal blank space. It is
+    // sized from the viewport — the thing actually being scrolled — rather than
+    // from any assumption about how tall a row is.
+    const overscanPx = viewportHeight
+    const startPx = Math.max(scrollTop - overscanPx, 0)
+    const endPx = scrollTop + viewportHeight + overscanPx
 
     let start = 0
     while (start < rowLayout.positions.length && rowLayout.positions[start].top + rowLayout.positions[start].height < startPx) {
@@ -291,13 +342,26 @@ export function TranscriptView({
     start = Math.max(0, start - OVERSCAN_ROWS)
     end = Math.min(rowLayout.positions.length, end + OVERSCAN_ROWS)
 
+    const first = rowLayout.positions[start]
+    const syntheticHeading =
+      first?.kind === 'segment' &&
+      first.speaker != null &&
+      (start === 0 || rowLayout.positions[start - 1]?.kind !== 'speaker')
+
+    // The repeated heading is content the row layout knows nothing about, so
+    // take its height out of the spacer above it. Without that the rendered
+    // block is taller than totalHeight claims and every offset below it is off
+    // by one heading.
+    const headingHeight = syntheticHeading ? (measured[SYNTHETIC_HEADING_KEY] ?? 0) : 0
+
     return {
       start,
       end,
-      topSpacer: rowLayout.positions[start]?.top ?? 0,
+      syntheticHeading,
+      topSpacer: Math.max((rowLayout.positions[start]?.top ?? 0) - headingHeight, 0),
       bottomSpacer: Math.max(totalHeight - (rowLayout.positions[end - 1]?.top ?? 0) - (rowLayout.positions[end - 1]?.height ?? 0), 0),
     }
-  }, [rowLayout, rows.length, scrollTop, virtualized, viewportHeight])
+  }, [measured, rowLayout, rows.length, scrollTop, virtualized, viewportHeight])
 
   const renderSegmentRow = (row: Extract<TranscriptRow, { kind: 'segment' }>) => {
     const search = searchMeta.get(row.idx) ?? { start: searchStartIndex, matchCount: 0 }
@@ -376,26 +440,34 @@ export function TranscriptView({
         >
           <div style={{ height: rowLayout.totalHeight, position: 'relative' }}>
             <div style={{ height: virtualWindow.topSpacer }} />
-            <div className="flex flex-col gap-2">
+            {/*
+              No `gap` here: a gap is space between siblings that belongs to no
+              element, so nothing can measure it. Each row carries its own
+              trailing space as padding instead, which keeps the measured height
+              equal to the height the row occupies.
+            */}
+            <div className="flex flex-col">
               {(() => {
                 const slice = rowLayout.positions.slice(virtualWindow.start, virtualWindow.end)
                 const first = slice[0]
-                const needsSyntheticHeading =
-                  first?.kind === 'segment' &&
-                  (virtualWindow.start === 0 || rowLayout.positions[virtualWindow.start - 1]?.kind !== 'speaker')
                 const nodes = []
-                if (needsSyntheticHeading) {
+                if (virtualWindow.syntheticHeading && first?.kind === 'segment') {
                   const speaker = first.speaker
                   if (speaker != null) {
                     nodes.push(
                       <div
                         key={`synthetic-speaker-${first.idx}`}
-                        className="mb-1 border-l-2 pl-2 text-xs font-semibold uppercase tracking-wide"
-                        style={speakerStyle((speakerIndexMap[speaker] ?? 0))}
-                        data-speaker={speaker}
-                        data-speaker-accent={speakerIndexMap[speaker] ?? 0}
+                        ref={(node) => observeRow(SYNTHETIC_HEADING_KEY, node)}
+                        className="pb-3"
                       >
-                        {speakerAliases?.[speaker] ?? speaker}
+                        <div
+                          className="border-l-2 pl-2 text-xs font-semibold uppercase tracking-wide"
+                          style={speakerStyle((speakerIndexMap[speaker] ?? 0))}
+                          data-speaker={speaker}
+                          data-speaker-accent={speakerIndexMap[speaker] ?? 0}
+                        >
+                          {speakerAliases?.[speaker] ?? speaker}
+                        </div>
                       </div>,
                     )
                   }
@@ -406,17 +478,26 @@ export function TranscriptView({
                     nodes.push(
                       <div
                         key={row.key}
-                        className="mb-1 border-l-2 pl-2 text-xs font-semibold uppercase tracking-wide"
-                        style={speakerStyle(row.accentIdx)}
-                        data-speaker={row.speaker}
-                        data-speaker-accent={row.accentIdx}
+                        ref={(node) => observeRow(row.key, node)}
+                        className="pb-3"
                       >
-                        {row.displayName}
+                        <div
+                          className="border-l-2 pl-2 text-xs font-semibold uppercase tracking-wide"
+                          style={speakerStyle(row.accentIdx)}
+                          data-speaker={row.speaker}
+                          data-speaker-accent={row.accentIdx}
+                        >
+                          {row.displayName}
+                        </div>
                       </div>,
                     )
                   } else {
                     nodes.push(
-                      <ul key={row.key} className="flex flex-col gap-2">
+                      <ul
+                        key={row.key}
+                        ref={(node) => observeRow(row.key, node)}
+                        className="flex flex-col pb-2"
+                      >
                         {renderSegmentRow(row)}
                       </ul>,
                     )
