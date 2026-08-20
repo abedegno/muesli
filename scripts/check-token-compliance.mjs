@@ -178,6 +178,31 @@ export function validateExceptions(exceptions, now = new Date()) {
 // styling can change the rendered height without changing the maths, so rows
 // drift, overlap, or become unreachable. Declaration and use are on different
 // lines, so this is evaluated across the whole file.
+//
+// WHAT THIS RULE ACTUALLY DETECTS, precisely, so nobody trusts it further than
+// it goes. It fires only on: a SCREAMING_SNAKE_CASE `const` whose name matches
+// HEIGHT_DECL below, assigned a bare integer literal, where some LATER line
+// puts an arithmetic operator directly adjacent to that same identifier.
+//
+// It does NOT detect, all verified rather than assumed:
+//   - camelCase or lowercase names (`const rowHeight = 44`);
+//   - object or prop forms (`{ rowHeight: 44 }`, react-window's `itemSize={44}`);
+//   - a declaration and its use on the same line;
+//   - indirection through any other binding, which is the common shape:
+//     `const h = measured[key] ?? ROW_HEIGHT; top += h` reads clean;
+//   - and, most importantly, the mechanism TranscriptView.tsx ships TODAY. Its
+//     SEGMENT_ROW_HEIGHT / SPEAKER_ROW_HEIGHT constants still seed accumulating
+//     layout offsets, but they reach the arithmetic through a ternary
+//     (`... : SEGMENT_ROW_HEIGHT`) with no adjacent operator, so this rule
+//     returns [] for that file.
+//
+// So passing this rule is NOT evidence that a component measures its rows. It
+// is evidence that one syntactic shape is absent. The real defect in
+// TranscriptView was fixed by measurement (see its useLayoutEffect), not by
+// this rule going green -- the rule went green on a rewrite that removed
+// operator adjacency. Widening it to detect the mechanism rather than the
+// syntax is its own piece of work; until then, read it as a lint for one
+// obvious spelling of the bug.
 const HEIGHT_DECL = /const\s+([A-Z0-9_]*(?:ROW|ITEM|SEGMENT|SPEAKER)[A-Z0-9_]*HEIGHT)\s*=\s*\d+/g
 
 export function scanFixedHeightVirtualisation(file, source) {
