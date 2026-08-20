@@ -497,6 +497,8 @@ export function Sidebar({
 
       {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- focusable separator widget (ARIA 1.2 §6.24) */}
       <div role="separator" tabIndex={0} aria-label="Resize sidebar" aria-orientation="vertical"
+        aria-valuenow={width} aria-valuemin={SIDEBAR_MIN_WIDTH} aria-valuemax={SIDEBAR_MAX_WIDTH}
+        aria-valuetext={`${width} pixels`}
         onMouseDown={startResize}
         onKeyDown={(e) => {
           if (e.key === 'ArrowRight') { e.preventDefault(); onResize(Math.min(SIDEBAR_MAX_WIDTH, width + 16)) }
