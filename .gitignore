@@ -37,3 +37,4 @@ playwright-report/
 # Generated coverage reports.
 coverage/
 coverage.out
+.lighthouseci/
