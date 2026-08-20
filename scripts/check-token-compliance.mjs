@@ -311,4 +311,8 @@ async function main() {
   process.exitCode = 1
 }
 
-if (import.meta.url === pathToFileURL(process.argv[1]).href) await main()
+// process.argv[1] is undefined when this module is imported from `node -e`,
+// a REPL, or any other entry point that has no script path -- pathToFileURL
+// throws ERR_INVALID_ARG_TYPE on it, so the guard has to check before it
+// converts.
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main()
