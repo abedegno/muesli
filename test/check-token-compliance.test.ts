@@ -33,6 +33,12 @@ describe('scanSource', () => {
     expect(v.map((x) => x.line)).toEqual([1, 2])
   })
 
+  it('counts every occurrence on a line, not just the line, or a regression on an existing line is invisible', () => {
+    const source = "  blue: 'bg-blue-500/15 text-blue-600 dark:text-blue-300',"
+    const v: Violation[] = scanSource('src/renderer/components/NoteListItem.tsx', source, [], NOW)
+    expect(rules(v)).toEqual(['raw-palette-class', 'raw-palette-class', 'raw-palette-class'])
+  })
+
   it('flags bg-black and bg-white overlays, which are palette colours too', () => {
     const v: Violation[] = scanSource(
       'src/renderer/x.tsx',
@@ -89,6 +95,15 @@ describe('scanSource', () => {
       NOW
     )
     expect(rules(v)).toEqual(['exception-count-exceeded'])
+  })
+
+  it('a recorded baseline still catches a second occurrence added to an already-counted line', () => {
+    const one = '<a className="bg-amber-500" />'
+    const two = '<a className="bg-amber-500 text-rose-600" />'
+    expect(scanSource('src/renderer/components/NoteScreen.tsx', one, [except()], NOW)).toEqual([])
+    expect(
+      rules(scanSource('src/renderer/components/NoteScreen.tsx', two, [except()], NOW))
+    ).toEqual(['exception-count-exceeded'])
   })
 
   it('flags a stale baseline so the ratchet tightens as offenders are fixed', () => {

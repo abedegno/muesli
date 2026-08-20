@@ -119,8 +119,14 @@ export function scanSource(filePath, source, exceptions = [], now = new Date()) 
 
     const hits = []
     lines.forEach((line, index) => {
-      rule.pattern.lastIndex = 0
-      if (rule.pattern.test(line)) hits.push({ line: index + 1, snippet: line.trim() })
+      // matchAll clones the regex internally, so it does not depend on --
+      // and does not disturb -- rule.pattern.lastIndex. Each match on the
+      // line is its own hit: a line carrying three matches is three
+      // occurrences, not one, or a regression added to an already-violating
+      // line would never move hits.length.
+      for (const _match of line.matchAll(rule.pattern)) {
+        hits.push({ line: index + 1, snippet: line.trim() })
+      }
     })
 
     const exception = exceptions.find((e) => normalise(e.file) === file && e.rule === rule.id)
