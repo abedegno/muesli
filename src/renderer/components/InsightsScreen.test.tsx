@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -246,5 +247,11 @@ describe('InsightsScreen', () => {
     expect(within(hoursCard).getByText('3')).toBeInTheDocument()
     expect(within(peopleCard).getByText('1')).toBeInTheDocument()
     expect(screen.getByText('Morgan Roe')).toBeInTheDocument()
+  })
+
+  it('fills chart bars with the primary token directly, not wrapped in hsl()', () => {
+    const source = readFileSync('src/renderer/components/InsightsScreen.tsx', 'utf8')
+    expect(source).not.toContain('hsl(var(--primary))')
+    expect(source).toContain('fill="var(--primary)"')
   })
 })
