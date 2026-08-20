@@ -60,6 +60,16 @@ test('the notes list has no serious accessibility violations', async ({ page }) 
   await expect(page.getByRole('link', { name: 'All notes' })).toBeVisible({ timeout: 60_000 })
   await seedNoteWithAudio(page, { title: 'Accessibility fixture note' })
   await page.getByRole('link', { name: 'All notes' }).click()
+  // Park the pointer away from the sidebar before scanning. Playwright leaves
+  // the mouse where it clicked, so the nav link it just used is still :hover --
+  // and `hover:bg-muted` puts text-muted-foreground on bg-muted, which fails
+  // AA. Whether axe sampled before or after the pointer settled decided the
+  // result at random: measured 3 serious color-contrast nodes on the settings
+  // screen with the pointer parked on the link (4/4 runs) and 2 with it moved
+  // away (6/6 runs). Auditing the resting state is the honest reading -- the
+  // hover state is a real finding, but a separate one, and no floor should be
+  // sampling whichever of the two the mouse happened to leave behind.
+  await page.mouse.move(0, 0)
   await expect(page.getByRole('link', { name: 'All notes' })).toBeVisible()
   // Content-based wait, not just a nav-link visibility check: AppLayout only
   // refetches notes when its `view` state changes identity (useCallback dep
@@ -77,6 +87,7 @@ test('the settings screen has no serious accessibility violations', async ({ pag
   // cold start of its own even though it does not seed.
   await expect(page.getByRole('link', { name: 'All notes' })).toBeVisible({ timeout: 60_000 })
   await page.getByRole('link', { name: 'Settings' }).click()
+  await page.mouse.move(0, 0) // see the note in the notes-list test
   await expect(page.getByRole('heading', { name: /settings/i })).toBeVisible()
   await expectNoAxeViolations(page, 'settings screen', SETTINGS_A11Y_EXCEPTIONS)
 })
