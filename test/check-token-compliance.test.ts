@@ -155,6 +155,41 @@ describe('scanSource', () => {
   })
 })
 
+describe('fixed-height virtualisation', () => {
+  it('flags a pixel row-height constant consumed by layout arithmetic', () => {
+    const source = [
+      'const SEGMENT_ROW_HEIGHT = 44',
+      'const OVERSCAN_PX = SEGMENT_ROW_HEIGHT * 8',
+    ].join('\n')
+    expect(
+      rules(scanSource('src/renderer/components/TranscriptView.tsx', source, [], NOW))
+    ).toContain('fixed-height-virtualisation')
+  })
+
+  it('flags a height constant accumulated into an offset', () => {
+    const source = ['const ITEM_HEIGHT = 32', 'top += ITEM_HEIGHT'].join('\n')
+    expect(rules(scanSource('src/renderer/components/List.tsx', source, [], NOW))).toContain(
+      'fixed-height-virtualisation'
+    )
+  })
+
+  it('does not flag a pixel constant that never enters layout arithmetic', () => {
+    const source = ['const ICON_SIZE = 16', 'return <Icon size={ICON_SIZE} />'].join('\n')
+    expect(rules(scanSource('src/renderer/components/Toolbar.tsx', source, [], NOW))).not.toContain(
+      'fixed-height-virtualisation'
+    )
+  })
+
+  it('does not flag a height constant used only as a CSS value', () => {
+    const source = ['const BAR_HEIGHT = 8', 'return <div style={{ height: BAR_HEIGHT }} />'].join(
+      '\n'
+    )
+    expect(rules(scanSource('src/renderer/components/Bar.tsx', source, [], NOW))).not.toContain(
+      'fixed-height-virtualisation'
+    )
+  })
+})
+
 describe('validateExceptions', () => {
   it('rejects an expired exception rather than letting the list rot', () => {
     expect(rules(validateExceptions([except({ expires: '2026-01-01' })], NOW))).toEqual([

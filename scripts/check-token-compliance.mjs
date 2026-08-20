@@ -131,6 +131,35 @@ export function validateExceptions(exceptions, now = new Date()) {
   return violations
 }
 
+// A pixel constant is only dangerous when layout arithmetic derives from it:
+// styling can change the rendered height without changing the maths, so rows
+// drift, overlap, or become unreachable. Declaration and use are on different
+// lines, so this is evaluated across the whole file.
+const HEIGHT_DECL = /const\s+([A-Z0-9_]*(?:ROW|ITEM|SEGMENT|SPEAKER)[A-Z0-9_]*HEIGHT)\s*=\s*\d+/g
+
+export function scanFixedHeightVirtualisation(file, source) {
+  if (!/\.tsx?$/.test(file)) return []
+  const violations = []
+  const lines = source.split('\n')
+
+  HEIGHT_DECL.lastIndex = 0
+  for (const match of source.matchAll(HEIGHT_DECL)) {
+    const name = match[1]
+    const arithmetic = new RegExp(`(?:\\+=\\s*|[-+*/]\\s*)${name}\\b|\\b${name}\\s*[-+*/]`)
+    const useLine = lines.findIndex((l) => arithmetic.test(l) && !l.includes(`const ${name}`))
+    if (useLine === -1) continue
+    const declLine = lines.findIndex((l) => l.includes(`const ${name}`))
+    violations.push({
+      file,
+      line: declLine + 1,
+      rule: 'fixed-height-virtualisation',
+      message: `${name} is a fixed pixel height consumed by layout arithmetic on line ${useLine + 1}; styling can change the rendered height without changing the maths, so rows drift or become unreachable. Measure row geometry at runtime instead`,
+      snippet: lines[declLine].trim(),
+    })
+  }
+  return violations
+}
+
 export function scanSource(filePath, source, exceptions = [], now = new Date()) {
   const file = normalise(filePath)
   if (!isScannable(file)) return []
@@ -190,6 +219,8 @@ export function scanSource(filePath, source, exceptions = [], now = new Date()) 
       })
     }
   }
+
+  violations.push(...scanFixedHeightVirtualisation(file, codeLines.join('\n')))
 
   return violations
 }
