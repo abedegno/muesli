@@ -49,6 +49,16 @@ type StreamingConfig struct {
 	// counting toward SilenceDuration. Zero disables the tolerance and
 	// reproduces the original single-frame threshold behavior.
 	SilenceHysteresis time.Duration
+
+	// VADFrame is the fixed duration of audio the detector classifies at a
+	// time. Feed buffers input and hands the detector whole VADFrame-sized
+	// subframes, so segmentation depends on the audio rather than on however
+	// the caller happened to chunk it: desktop capture sends 200ms frames
+	// while other clients may send anything, and one RMS decision spanning
+	// 200ms discards quiet speech wholesale. Zero disables reframing and
+	// classifies each Feed call as one indivisible frame, which is the
+	// original behavior and leaves framing to the caller.
+	VADFrame time.Duration
 }
 
 // DefaultStreamingConfig returns the recommended live-transcription defaults.
@@ -60,6 +70,7 @@ func DefaultStreamingConfig() StreamingConfig {
 		SilenceDuration:   700 * time.Millisecond,
 		EnergyThreshold:   0.01,
 		SilenceHysteresis: 300 * time.Millisecond,
+		VADFrame:          20 * time.Millisecond,
 	}
 }
 
@@ -87,6 +98,7 @@ type StreamingSession struct {
 	emit       SegmentHandler
 
 	mu                    sync.Mutex
+	pending               []float32
 	window                []float32
 	totalSamples          int64
 	windowStartSample     int64
@@ -119,6 +131,12 @@ func NewStreamingSession(cfg StreamingConfig, vad VAD, transcribe TranscribeFunc
 	if cfg.SilenceHysteresis < 0 {
 		return nil, errors.New("streaming silence hysteresis must not be negative")
 	}
+	if cfg.VADFrame < 0 {
+		return nil, errors.New("streaming vad frame must not be negative")
+	}
+	if cfg.VADFrame > 0 && durationSamples(cfg.VADFrame, cfg.SampleRate) == 0 {
+		return nil, errors.New("streaming vad frame must span at least one sample")
+	}
 	if durationSamples(cfg.MaxWindow, cfg.SampleRate) == 0 ||
 		durationSamples(cfg.PartialInterval, cfg.SampleRate) == 0 ||
 		durationSamples(cfg.SilenceDuration, cfg.SampleRate) == 0 {
@@ -133,7 +151,11 @@ func NewStreamingSession(cfg StreamingConfig, vad VAD, transcribe TranscribeFunc
 	return &StreamingSession{cfg: cfg, vad: vad, transcribe: transcribe, emit: emit}, nil
 }
 
-// Feed processes one PCM frame. Frame duration is derived from its sample count.
+// Feed accepts PCM from the caller in whatever chunk size it arrives. With
+// cfg.VADFrame set, the audio is buffered and classified in fixed-duration
+// subframes so that identical audio segments identically however it was
+// chunked; any remainder shorter than one subframe is held until the next
+// call completes it. With cfg.VADFrame zero, each call is classified whole.
 func (s *StreamingSession) Feed(frame []float32) {
 	if len(frame) == 0 {
 		return
@@ -142,6 +164,34 @@ func (s *StreamingSession) Feed(frame []float32) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	subframe := int(s.durationSamples(s.cfg.VADFrame))
+	if subframe <= 0 {
+		s.classifyLocked(frameCopy)
+		return
+	}
+	s.pending = append(s.pending, frameCopy...)
+	consumed := 0
+	for len(s.pending)-consumed >= subframe {
+		s.classifyLocked(s.pending[consumed : consumed+subframe])
+		consumed += subframe
+	}
+	if consumed > 0 {
+		s.pending = s.pending[:copy(s.pending, s.pending[consumed:])]
+		// Compacting in place reuses the backing array, which would otherwise
+		// stay as large as the biggest chunk the caller ever sent for the rest
+		// of the session -- a single large upload would pin that allocation
+		// across every meeting on a hosted server. Release it once it is far
+		// larger than the remainder can ever need.
+		if cap(s.pending) > 4*subframe {
+			s.pending = append(make([]float32, 0, 2*subframe), s.pending...)
+		}
+	}
+}
+
+// classifyLocked runs the detector over exactly one frame and advances the
+// utterance state machine. Callers must hold s.mu.
+func (s *StreamingSession) classifyLocked(frameCopy []float32) {
 	isSpeech := s.vad.IsSpeech(frameCopy)
 	frameStart := s.totalSamples
 	s.totalSamples += int64(len(frameCopy))
