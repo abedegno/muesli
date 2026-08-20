@@ -188,6 +188,16 @@ describe('fixed-height virtualisation', () => {
       'fixed-height-virtualisation'
     )
   })
+
+  it('does not flag a matching name whose value never enters layout arithmetic', () => {
+    const source = [
+      'const SEGMENT_ROW_HEIGHT = 44',
+      'return <div style={{ height: SEGMENT_ROW_HEIGHT }} />',
+    ].join('\n')
+    expect(rules(scanSource('src/renderer/components/X.tsx', source, [], NOW))).not.toContain(
+      'fixed-height-virtualisation'
+    )
+  })
 })
 
 describe('validateExceptions', () => {
