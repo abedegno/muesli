@@ -56,27 +56,70 @@ function isScannable(file) {
 
 // Strips comment content so a colour or class token mentioned only in prose
 // -- or, worse, a `#1234`-shaped issue/PR reference -- never counts as
-// applied styling. This is a line-level heuristic, not a tokenizer: it does
-// not track state across lines, so a block comment that opens with `/*` but
-// does not close on the same line is left alone. It also does not know
-// about strings, so a `//` inside one (e.g. a URL like 'https://x') strips
-// everything after it too. Neither shape appears in this codebase today; a
-// config-file line scanner does not need a full lexer to get the common
-// cases right.
+// applied styling.
+//
+// A single left-to-right pass that tracks quote state, because `//` inside a
+// string is not a comment. Treating it as one is a FALSE NEGATIVE, and a false
+// negative here is worse than a missed finding: it silently lowers the
+// occurrence count an exception's baseline is ratcheted against, so a real
+// regression can be added to an excepted file on the same line as a URL and
+// the count never moves.
+//
+// Still line-level, not a tokenizer: it carries no state between lines, so a
+// block comment opened with `/*` that closes on a LATER line has only its
+// first line stripped. JSDoc continuation lines are handled by the `*` prefix
+// test below, which covers the shape that actually occurs. An unbalanced quote
+// (an apostrophe in JSX prose, say) leaves the rest of the line treated as a
+// string, so a trailing comment there is scanned rather than stripped -- a
+// false positive, which fails loudly, rather than a false negative, which does
+// not.
 function stripComments(line) {
   const trimmed = line.trimStart()
   // A block-comment continuation line, e.g. the `*` lines of a `/** ... */`
   // JSDoc block, including its closing `*/`.
   if (trimmed.startsWith('*')) return ''
 
-  // A full single-line block comment: `/* ... */` appearing on the line.
-  const withoutBlockComments = line.replace(/\/\*.*?\*\//g, '')
+  let code = ''
+  // The quote character that opened the string we are inside, or null.
+  let quote = null
 
-  // A line comment: everything from `//` to the end of the line.
-  const lineCommentIndex = withoutBlockComments.indexOf('//')
-  return lineCommentIndex === -1
-    ? withoutBlockComments
-    : withoutBlockComments.slice(0, lineCommentIndex)
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i]
+
+    if (quote !== null) {
+      code += char
+      if (char === '\\') {
+        // An escape consumes the next character, so a \" does not close.
+        i++
+        if (i < line.length) code += line[i]
+      } else if (char === quote) {
+        quote = null
+      }
+      continue
+    }
+
+    if (char === "'" || char === '"' || char === '`') {
+      quote = char
+      code += char
+      continue
+    }
+
+    // A line comment: everything from `//` to the end of the line.
+    if (char === '/' && line[i + 1] === '/') return code
+
+    // A block comment. Unterminated on this line means the rest of the line is
+    // comment; the continuation lines are handled by the `*` prefix test.
+    if (char === '/' && line[i + 1] === '*') {
+      const close = line.indexOf('*/', i + 2)
+      if (close === -1) return code
+      i = close + 1
+      continue
+    }
+
+    code += char
+  }
+
+  return code
 }
 
 export function validateExceptions(exceptions, now = new Date()) {

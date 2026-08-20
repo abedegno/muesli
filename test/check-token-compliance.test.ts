@@ -153,6 +153,59 @@ describe('scanSource', () => {
     const source = '  // was bg-amber-500 before the token migration'
     expect(scanSource('src/renderer/components/X.tsx', source, [], NOW)).toEqual([])
   })
+
+  it('does not flag a palette class on a JSDoc continuation line', () => {
+    const source = ' * bg-amber-500 was the old warning surface'
+    expect(scanSource('src/renderer/components/X.tsx', source, [], NOW)).toEqual([])
+  })
+
+  // The `//` of a URL is not a comment. Treating it as one is a false
+  // NEGATIVE, and this one is worse than a missed finding: it lowers the
+  // occurrence count an exception's baseline is ratcheted against, so a
+  // regression can be added to an already-excepted file and the count never
+  // moves. The counted baseline is the single property the whole gate rests
+  // on, so these cases guard it directly.
+  it('flags a palette class sharing a line with a URL, whose // is not a comment', () => {
+    const source = '<a href="https://example.com" className="bg-emerald-500" />'
+    expect(rules(scanSource('src/renderer/components/X.tsx', source, [], NOW))).toEqual([
+      'raw-palette-class',
+    ])
+  })
+
+  it('flags a hex literal that follows a URL on the same line', () => {
+    const source = 'const u = "https://example.com"; const c = "#ff0000"'
+    expect(rules(scanSource('src/renderer/components/X.tsx', source, [], NOW))).toEqual([
+      'hex-literal',
+    ])
+  })
+
+  it('flags a palette class following a protocol-relative URL', () => {
+    const source = '<img src="//cdn.example.com/a.png" className="bg-rose-600" />'
+    expect(rules(scanSource('src/renderer/components/X.tsx', source, [], NOW))).toEqual([
+      'raw-palette-class',
+    ])
+  })
+
+  it('tracks single quotes and backticks too, not just double quotes', () => {
+    const single = "const u = 'https://example.com'; const c = '#ff0000'"
+    const template = 'const u = `https://example.com`; const c = `#ff0000`'
+    expect(rules(scanSource('src/renderer/components/X.tsx', single, [], NOW))).toEqual([
+      'hex-literal',
+    ])
+    expect(rules(scanSource('src/renderer/components/X.tsx', template, [], NOW))).toEqual([
+      'hex-literal',
+    ])
+  })
+
+  it('a URL in an excepted file cannot hide a regression from the counted baseline', () => {
+    const source = [
+      '<a className="bg-amber-500" />',
+      '<a href="https://example.com" className="bg-emerald-500" />',
+    ].join('\n')
+    expect(
+      rules(scanSource('src/renderer/components/NoteScreen.tsx', source, [except()], NOW))
+    ).toEqual(['exception-count-exceeded'])
+  })
 })
 
 describe('fixed-height virtualisation', () => {
