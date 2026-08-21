@@ -248,7 +248,14 @@ export function TranscriptView({
     const next: Record<string, number> = {}
     let changed = false
     for (const [key, node] of rowRefs.current) {
-      const height = node.getBoundingClientRect().height
+      // Rounded to whole pixels. A row's height is line boxes of a fixed
+      // 1.25rem plus fixed padding, so it is a whole number already and this
+      // changes nothing today -- it removes the class of risk where a
+      // sub-pixel difference between two measurements of the same row keeps
+      // clearing the threshold below and the measure/setState cycle never
+      // settles. Whole pixels also keep totalHeight an integer, which is what
+      // scrollHeight reports it as.
+      const height = Math.round(node.getBoundingClientRect().height)
       if (height <= 0) continue
       next[key] = height
       if (Math.abs((measured[key] ?? 0) - height) > 0.5) changed = true
