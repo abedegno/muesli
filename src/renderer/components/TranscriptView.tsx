@@ -216,8 +216,39 @@ export function TranscriptView({
   //
   // The basis is deliberately not the segments array: polling a processing note
   // hands over a fresh array with identical content on every tick, and keying
-  // on identity would throw away every measurement each time.
-  const measurementBasis = `${segments.length}:${segments[0]?.text ?? ''}`
+  // on identity would throw away every measurement each time. It is instead a
+  // digest of every part of a segment that can change the height of its row:
+  //
+  //   - text, in full. A row's height is its line count, and line count is
+  //     where the text wraps -- which depends on the characters, not just how
+  //     many of them there are. Two lines of equal length wrap differently when
+  //     their spaces fall in different places, so a digest of lengths alone
+  //     would still let one transcript be laid out from another's heights.
+  //   - speaker, which decides where heading rows appear and what they say.
+  //   - start_ms, rendered as the timestamp column: `100:00` is wider than
+  //     `9:59`, leaves the text less room, and can move the wrap.
+  //
+  // Every field is length-prefixed, so no text can impersonate a separator and
+  // make two different transcripts digest the same.
+  //
+  // Memoised on the segments reference so the walk happens only when a new
+  // array arrives -- a poll tick every few seconds, or another note -- and
+  // never on the scroll and playback re-renders, which are the frequent ones.
+  // The comparison below is then a pointer compare on every render except the
+  // first after a new array. The digest is about as large as the transcript
+  // text, which is already in memory and larger.
+  const measurementBasis = useMemo(() => {
+    const parts: string[] = [`${segments.length}`]
+    for (const seg of segments) {
+      const speaker = seg.speaker ?? ''
+      parts.push(
+        `${seg.start_ms}`,
+        `${speaker.length}:${speaker}`,
+        `${seg.text.length}:${seg.text}`,
+      )
+    }
+    return parts.join('|')
+  }, [segments])
   const [measuredBasis, setMeasuredBasis] = useState(measurementBasis)
   if (measurementBasis !== measuredBasis) {
     // Adjusting state during render, rather than in an effect: an effect would

@@ -48,6 +48,15 @@ const otherLargeSegs: TranscriptSegment[] = Array.from({ length: 1000 }, (_, i) 
   source: 'mixed',
 }))
 
+// A third transcript that is indistinguishable from largeSegs by length and
+// first line -- only the lines after the first differ, and they differ in
+// length, so the rows they produce are not the heights largeSegs' rows were
+// measured at.
+const laterLinesDifferSegs: TranscriptSegment[] = largeSegs.map((seg, i) => ({
+  ...seg,
+  text: i === 0 ? seg.text : `a completely different and rather longer line ${i}`,
+}))
+
 describe('TranscriptView', () => {
   it('shows empty state when no segments', () => {
     render(<TranscriptView segments={[]} />)
@@ -247,6 +256,53 @@ describe('TranscriptView', () => {
     rerender(<TranscriptView segments={otherLargeSegs} />)
 
     expect(declaredHeight()).toBe(otherLargeSegs.length * 44)
+  })
+
+  it('forgets measured rows when a line after the first changes', () => {
+    // The guard above changes the first line, so a basis sampled from
+    // `segments.length` + `segments[0].text` still passes it. These two
+    // transcripts agree on both: same length, same first line, every later line
+    // different. Positional keys still collide, so without a basis that covers
+    // the whole segment list the previous transcript's heights survive and size
+    // this one -- wrong offsets, wrong spacers, rows that overlap or cannot be
+    // reached.
+    const rect = vi
+      .spyOn(Element.prototype, 'getBoundingClientRect')
+      .mockReturnValue(rectOfHeight(137))
+
+    const { rerender } = render(<TranscriptView segments={largeSegs} />)
+    expect(declaredHeight()).toBeGreaterThan(largeSegs.length * 44)
+
+    expect(laterLinesDifferSegs).toHaveLength(largeSegs.length)
+    expect(laterLinesDifferSegs[0].text).toBe(largeSegs[0].text)
+
+    rect.mockReturnValue(rectOfHeight(0))
+    rerender(<TranscriptView segments={laterLinesDifferSegs} />)
+
+    expect(declaredHeight()).toBe(laterLinesDifferSegs.length * 44)
+  })
+
+  it('keeps measured rows when polling redelivers the same transcript in a new array', () => {
+    // A processing note is re-fetched every few seconds and each response is
+    // parsed into a brand-new array of brand-new objects with identical
+    // contents. Invalidating on array identity would drop every measurement on
+    // every tick, so the transcript would resize under the reader while it
+    // processes. This is the property the sampled basis was protecting, and it
+    // has to survive the fix.
+    const rect = vi
+      .spyOn(Element.prototype, 'getBoundingClientRect')
+      .mockReturnValue(rectOfHeight(137))
+
+    const { rerender } = render(<TranscriptView segments={largeSegs} />)
+    const measuredTotal = declaredHeight()
+    expect(measuredTotal).toBeGreaterThan(largeSegs.length * 44)
+
+    // Nothing measurable from here on: if the cache were dropped the total
+    // would collapse to the per-row estimate instead of holding.
+    rect.mockReturnValue(rectOfHeight(0))
+    rerender(<TranscriptView segments={largeSegs.map((seg) => ({ ...seg }))} />)
+
+    expect(declaredHeight()).toBe(measuredTotal)
   })
 
   it('scrolls an off-window citation into view and highlights it', async () => {
