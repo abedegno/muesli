@@ -1,0 +1,138 @@
+[
+  {
+    "file": "src/renderer/components/NoteListItem.tsx",
+    "rule": "raw-palette-class",
+    "reason": "note tile colour is derived from a hash of the note id to visually distinguish items; it encodes identity, not theme",
+    "owner": "abedegno",
+    "expires": "2027-08-20",
+    "count": 15
+  },
+  {
+    "file": "src/renderer/components/MonogramAvatar.tsx",
+    "rule": "raw-palette-class",
+    "reason": "monogram colour is derived from the name to distinguish people; it encodes identity, not theme",
+    "owner": "abedegno",
+    "expires": "2027-08-20",
+    "count": 15
+  },
+  {
+    "file": "src/renderer/lib/monogram.ts",
+    "rule": "hex-literal",
+    "reason": "generated monogram foreground colours, chosen for contrast against a generated background",
+    "owner": "abedegno",
+    "expires": "2027-08-20",
+    "count": 2
+  },
+  {
+    "file": "src/renderer/components/ActionItemsScreen.tsx",
+    "rule": "raw-palette-class",
+    "reason": "done/open status badge awaiting semantic status tokens in Plating Stage 3",
+    "owner": "abedegno",
+    "expires": "2026-11-20",
+    "count": 3
+  },
+  {
+    "file": "src/renderer/components/AgentUnavailableNotice.tsx",
+    "rule": "raw-palette-class",
+    "reason": "warning surface awaiting semantic status tokens in Plating Stage 3",
+    "owner": "abedegno",
+    "expires": "2026-11-20",
+    "count": 4
+  },
+  {
+    "file": "src/renderer/components/CommandPalette.tsx",
+    "rule": "raw-palette-class",
+    "reason": "modal backdrop scrim uses a raw black opacity utility instead of a semantic overlay token, awaiting Plating Stage 3",
+    "owner": "abedegno",
+    "expires": "2026-11-20",
+    "count": 1
+  },
+  {
+    "file": "src/renderer/components/ConnectScreen.tsx",
+    "rule": "raw-palette-class",
+    "reason": "connection warning banner awaiting semantic status tokens in Plating Stage 3",
+    "owner": "abedegno",
+    "expires": "2026-11-20",
+    "count": 3
+  },
+  {
+    "file": "src/renderer/components/DiarizationReviewPanel.tsx",
+    "rule": "raw-palette-class",
+    "reason": "modal backdrop scrim uses a raw black opacity utility instead of a semantic overlay token, awaiting Plating Stage 3",
+    "owner": "abedegno",
+    "expires": "2026-11-20",
+    "count": 1
+  },
+  {
+    "file": "src/renderer/components/KeyboardShortcutsOverlay.tsx",
+    "rule": "raw-palette-class",
+    "reason": "modal backdrop scrim uses a raw black opacity utility instead of a semantic overlay token, awaiting Plating Stage 3",
+    "owner": "abedegno",
+    "expires": "2026-11-20",
+    "count": 1
+  },
+  {
+    "file": "src/renderer/components/LiveTranscriptPanel.tsx",
+    "rule": "raw-palette-class",
+    "reason": "loading/live status indicator awaiting semantic status tokens in Plating Stage 3",
+    "owner": "abedegno",
+    "expires": "2026-11-20",
+    "count": 4
+  },
+  {
+    "file": "src/renderer/components/NoteScreen.tsx",
+    "rule": "raw-palette-class",
+    "reason": "warning banner awaiting semantic status tokens in Plating Stage 3",
+    "owner": "abedegno",
+    "expires": "2026-11-20",
+    "count": 2
+  },
+  {
+    "file": "src/renderer/components/RecordControl.tsx",
+    "rule": "raw-palette-class",
+    "reason": "system audio capture warning surface awaiting semantic status tokens in Plating Stage 3",
+    "owner": "abedegno",
+    "expires": "2026-11-20",
+    "count": 4
+  },
+  {
+    "file": "src/renderer/components/SettingsScreen.tsx",
+    "rule": "raw-palette-class",
+    "reason": "connection health badge (unreachable / sign-in-required / connected) awaiting semantic status tokens in Plating Stage 3",
+    "owner": "abedegno",
+    "expires": "2026-11-20",
+    "count": 6
+  },
+  {
+    "file": "src/renderer/components/SetupWizard.tsx",
+    "rule": "raw-palette-class",
+    "reason": "setup step success/warning surface awaiting semantic status tokens in Plating Stage 3",
+    "owner": "abedegno",
+    "expires": "2026-11-20",
+    "count": 4
+  },
+  {
+    "file": "src/renderer/components/StartupScreen.tsx",
+    "rule": "raw-palette-class",
+    "reason": "AI-unavailable startup banner awaiting semantic status tokens in Plating Stage 3",
+    "owner": "abedegno",
+    "expires": "2026-11-20",
+    "count": 7
+  },
+  {
+    "file": "src/renderer/components/TranscriptView.tsx",
+    "rule": "raw-palette-class",
+    "reason": "'currently playing' row highlight awaiting semantic status tokens in Plating Stage 3",
+    "owner": "abedegno",
+    "expires": "2026-11-20",
+    "count": 2
+  },
+  {
+    "file": "src/renderer/components/ui/Dialog.tsx",
+    "rule": "raw-palette-class",
+    "reason": "modal backdrop scrim uses a raw black opacity utility instead of a semantic overlay token, awaiting Plating Stage 3",
+    "owner": "abedegno",
+    "expires": "2026-11-20",
+    "count": 1
+  }
+]

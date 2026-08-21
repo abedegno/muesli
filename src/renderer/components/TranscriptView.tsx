@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Search } from 'lucide-react'
 import type { CSSProperties } from 'react'
 import { cn } from '@/lib/cn'
@@ -32,7 +32,6 @@ type TranscriptRow =
       speaker: string
       displayName: string
       accentIdx: number
-      height: number
     }
   | {
       kind: 'segment'
@@ -40,17 +39,35 @@ type TranscriptRow =
       idx: number
       seg: TranscriptSegment
       speaker: string | null
-      height: number
     }
 
 type SearchMeta = { start: number; matchCount: number }
 
 const VIRTUALIZE_AFTER_SEGMENTS = 200
+// Initial estimates ONLY. A row's real height is whatever its text, its
+// wrapping and its spacing produce, so every rendered row is measured after
+// layout and the measurement replaces the estimate (see `measured` below).
+// These decide where rows that have never been rendered are assumed to be, and
+// nothing else. Do not derive layout arithmetic from them.
 const SEGMENT_ROW_HEIGHT = 44
 const SPEAKER_ROW_HEIGHT = 24
 const FALLBACK_VIEWPORT_HEIGHT = 320
 const OVERSCAN_ROWS = 6
-const OVERSCAN_PX = SEGMENT_ROW_HEIGHT * 8
+// The repeated speaker heading rendered when the window opens mid-group is
+// extra content with no row of its own, so it is measured under its own key.
+//
+// One shared key for every speaker, deliberately, and NOT keyed by display name
+// the way the real heading rows are. Those need it because a heading that is
+// scrolled out of the window keeps its stored height and still feeds
+// totalHeight and every offset below it. This one cannot go stale that way:
+// there is at most one of it, its height is only ever read while it is on
+// screen (`syntheticHeading` gates both the read below and the node that
+// registers it), and the layout pass re-measures every registered node and
+// re-renders before paint. So a height left over from another name survives
+// one un-painted render at most -- and a per-name key would make that render
+// worse, not better, substituting 0 for a close approximation of a heading
+// height that is the same for every speaker in practice.
+const SYNTHETIC_HEADING_KEY = 'synthetic-speaker-heading'
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max)
@@ -98,13 +115,32 @@ function buildTranscriptRows(
     if (speaker !== currentSpeaker) {
       currentSpeaker = speaker
       if (speaker != null) {
+        const displayName = speakerAliases?.[speaker] ?? speaker
         rows.push({
           kind: 'speaker',
-          key: `speaker-${idx}-${speaker}`,
+          // The key carries the DISPLAY name, not the raw speaker. The
+          // measurement cache is keyed by row key, so a key has to determine
+          // what the row renders -- and a heading renders the alias. Rename a
+          // speaker to something long enough to wrap and every heading outside
+          // the window would otherwise keep the height the old name measured
+          // at, which is the same stale-height failure a colliding segment key
+          // produces.
+          //
+          // Keyed here rather than folded into measurementBasis on purpose: a
+          // basis change discards every measurement in the transcript, so a
+          // rename would throw away hundreds of segment heights -- none of
+          // which the rename touched -- to correct a handful of headings, and
+          // resize the transcript under the reader as a side effect of an
+          // unrelated edit. A key change invalidates exactly the rows whose
+          // content changed.
+          //
+          // Derived from the resolved name, never from the identity of the
+          // alias map: a parent that hands over a fresh object with equivalent
+          // contents produces identical keys and changes nothing.
+          key: `speaker-${idx}-${displayName}`,
           speaker,
-          displayName: speakerAliases?.[speaker] ?? speaker,
+          displayName,
           accentIdx: speakerIndexMap[speaker] ?? 0,
-          height: SPEAKER_ROW_HEIGHT,
         })
       }
     }
@@ -116,7 +152,6 @@ function buildTranscriptRows(
       idx,
       seg,
       speaker,
-      height: SEGMENT_ROW_HEIGHT,
     })
   }
 
@@ -198,15 +233,135 @@ export function TranscriptView({
     [filtered, speakerAliases, speakerIndexMap],
   )
   const virtualized = rows.length > VIRTUALIZE_AFTER_SEGMENTS
+
+  // Measured height of every row that has been rendered at least once, keyed by
+  // row key. Rows keep their measured height while they are scrolled out of the
+  // window, so the totals stay stable instead of snapping back to an estimate.
+  const [measured, setMeasured] = useState<Record<string, number>>({})
+
+  // Row keys are positional (`segment-<idx>`), so the same key means a
+  // different line once the transcript changes -- and the note screen reuses
+  // this component instance when you open another note: the route carries no
+  // `key` and the loader does not clear the previous note first. Without this
+  // reset, note B is laid out from note A's heights for every row it has not
+  // yet rendered.
+  //
+  // The basis is deliberately not the segments array: polling a processing note
+  // hands over a fresh array with identical content on every tick, and keying
+  // on identity would throw away every measurement each time. It is instead a
+  // digest of every part of a segment that can change the height of its row:
+  //
+  //   - text, in full. A row's height is its line count, and line count is
+  //     where the text wraps -- which depends on the characters, not just how
+  //     many of them there are. Two lines of equal length wrap differently when
+  //     their spaces fall in different places, so a digest of lengths alone
+  //     would still let one transcript be laid out from another's heights.
+  //   - speaker, which decides where heading rows appear and what they say.
+  //   - start_ms, rendered as the timestamp column: `100:00` is wider than
+  //     `9:59`, leaves the text less room, and can move the wrap.
+  //
+  // Every field is length-prefixed, so no text can impersonate a separator and
+  // make two different transcripts digest the same.
+  //
+  // Memoised on the segments reference so the walk happens only when a new
+  // array arrives -- a poll tick every few seconds, or another note -- and
+  // never on the scroll and playback re-renders, which are the frequent ones.
+  // The comparison below is then a pointer compare on every render except the
+  // first after a new array. The digest is about as large as the transcript
+  // text, which is already in memory and larger.
+  const measurementBasis = useMemo(() => {
+    const parts: string[] = [`${segments.length}`]
+    for (const seg of segments) {
+      const speaker = seg.speaker ?? ''
+      parts.push(
+        `${seg.start_ms}`,
+        `${speaker.length}:${speaker}`,
+        `${seg.text.length}:${seg.text}`,
+      )
+    }
+    return parts.join('|')
+  }, [segments])
+  const [measuredBasis, setMeasuredBasis] = useState(measurementBasis)
+  if (measurementBasis !== measuredBasis) {
+    // Adjusting state during render, rather than in an effect: an effect would
+    // commit one frame laid out with the previous transcript's heights first.
+    setMeasuredBasis(measurementBasis)
+    setMeasured({})
+  }
+  const rowRefs = useRef(new Map<string, HTMLElement>())
+
+  const observeRow = useCallback((key: string, node: HTMLElement | null) => {
+    if (node) rowRefs.current.set(key, node)
+    else rowRefs.current.delete(key)
+  }, [])
+
+  // Measure after layout and before paint. The measured element is the row's
+  // whole slot -- its spacing is padding inside it, not a gap between siblings
+  // -- so the heights here add up to exactly what the rows occupy on screen.
+  // Environments without layout (jsdom) report 0 and are skipped, which leaves
+  // the estimates standing rather than collapsing every row to nothing.
+  //
+  // Deliberately unconditional: any render can mount a row that has never been
+  // measured, so there is no dependency list that means "after every render".
+  // It converges rather than looping -- a re-measurement that agrees with the
+  // stored height sets no state.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useLayoutEffect(() => {
+    if (!virtualized) return
+    const next: Record<string, number> = {}
+    let changed = false
+    for (const [key, node] of rowRefs.current) {
+      // Rounded to whole pixels. A row's height is line boxes of a fixed
+      // 1.25rem plus fixed padding, so it is a whole number already and this
+      // changes nothing today -- it removes the class of risk where a
+      // sub-pixel difference between two measurements of the same row keeps
+      // clearing the threshold below and the measure/setState cycle never
+      // settles. Whole pixels also keep totalHeight an integer, which is what
+      // scrollHeight reports it as.
+      const height = Math.round(node.getBoundingClientRect().height)
+      if (height <= 0) continue
+      next[key] = height
+      if (Math.abs((measured[key] ?? 0) - height) > 0.5) changed = true
+    }
+    if (changed) setMeasured((prev) => ({ ...prev, ...next }))
+  })
+
+  // Rows that have never been rendered are estimated from the mean of the rows
+  // that have, per kind -- a speaker heading and a segment are not the same
+  // shape. The constants only seed that mean: once one row of a kind has been
+  // measured they stop influencing the layout. A fixed constant is a poor
+  // estimator, and the further it sits from the truth the more scrolling to the
+  // end becomes a treadmill, since every window measured on the way there grows
+  // the total and pushes the end further away.
   const rowLayout = useMemo(() => {
+    let segmentTotal = 0
+    let segmentCount = 0
+    let speakerTotal = 0
+    let speakerCount = 0
+    for (const row of rows) {
+      const height = measured[row.key]
+      if (height == null) continue
+      if (row.kind === 'segment') {
+        segmentTotal += height
+        segmentCount++
+      } else {
+        speakerTotal += height
+        speakerCount++
+      }
+    }
+    const segmentEstimate = segmentCount > 0 ? segmentTotal / segmentCount : SEGMENT_ROW_HEIGHT
+    const speakerEstimate = speakerCount > 0 ? speakerTotal / speakerCount : SPEAKER_ROW_HEIGHT
+
     let top = 0
     const positions = rows.map((row) => {
-      const item = { ...row, top }
-      top += row.height
+      const height =
+        measured[row.key] ?? (row.kind === 'segment' ? segmentEstimate : speakerEstimate)
+      const item = { ...row, height, top }
+      top += height
       return item
     })
     return { positions, totalHeight: top }
-  }, [rows])
+  }, [measured, rows])
 
   const citedRef = useRef<HTMLLIElement | null>(null)
   const pendingScroll = useRef(false)
@@ -272,11 +427,18 @@ export function TranscriptView({
   }, [hasHighlight, highlightIndex, rowLayout, segmentRowIndexByRawIdx, virtualized, viewportHeight, scrollTop])
 
   const virtualWindow = useMemo(() => {
-    if (!virtualized) return { start: 0, end: rows.length, topSpacer: 0, bottomSpacer: 0 }
+    if (!virtualized) {
+      return { start: 0, end: rows.length, topSpacer: 0, bottomSpacer: 0, syntheticHeading: false }
+    }
 
     const totalHeight = rowLayout.totalHeight
-    const startPx = Math.max(scrollTop - OVERSCAN_PX, 0)
-    const endPx = scrollTop + viewportHeight + OVERSCAN_PX
+    // A scroll buffer, not a row measurement: how far outside the visible band
+    // rows stay mounted so a fast scroll does not reveal blank space. It is
+    // sized from the viewport — the thing actually being scrolled — rather than
+    // from any assumption about how tall a row is.
+    const overscanPx = viewportHeight
+    const startPx = Math.max(scrollTop - overscanPx, 0)
+    const endPx = scrollTop + viewportHeight + overscanPx
 
     let start = 0
     while (start < rowLayout.positions.length && rowLayout.positions[start].top + rowLayout.positions[start].height < startPx) {
@@ -291,13 +453,26 @@ export function TranscriptView({
     start = Math.max(0, start - OVERSCAN_ROWS)
     end = Math.min(rowLayout.positions.length, end + OVERSCAN_ROWS)
 
+    const first = rowLayout.positions[start]
+    const syntheticHeading =
+      first?.kind === 'segment' &&
+      first.speaker != null &&
+      (start === 0 || rowLayout.positions[start - 1]?.kind !== 'speaker')
+
+    // The repeated heading is content the row layout knows nothing about, so
+    // take its height out of the spacer above it. Without that the rendered
+    // block is taller than totalHeight claims and every offset below it is off
+    // by one heading.
+    const headingHeight = syntheticHeading ? (measured[SYNTHETIC_HEADING_KEY] ?? 0) : 0
+
     return {
       start,
       end,
-      topSpacer: rowLayout.positions[start]?.top ?? 0,
+      syntheticHeading,
+      topSpacer: Math.max((rowLayout.positions[start]?.top ?? 0) - headingHeight, 0),
       bottomSpacer: Math.max(totalHeight - (rowLayout.positions[end - 1]?.top ?? 0) - (rowLayout.positions[end - 1]?.height ?? 0), 0),
     }
-  }, [rowLayout, rows.length, scrollTop, virtualized, viewportHeight])
+  }, [measured, rowLayout, rows.length, scrollTop, virtualized, viewportHeight])
 
   const renderSegmentRow = (row: Extract<TranscriptRow, { kind: 'segment' }>) => {
     const search = searchMeta.get(row.idx) ?? { start: searchStartIndex, matchCount: 0 }
@@ -376,26 +551,34 @@ export function TranscriptView({
         >
           <div style={{ height: rowLayout.totalHeight, position: 'relative' }}>
             <div style={{ height: virtualWindow.topSpacer }} />
-            <div className="flex flex-col gap-2">
+            {/*
+              No `gap` here: a gap is space between siblings that belongs to no
+              element, so nothing can measure it. Each row carries its own
+              trailing space as padding instead, which keeps the measured height
+              equal to the height the row occupies.
+            */}
+            <div className="flex flex-col">
               {(() => {
                 const slice = rowLayout.positions.slice(virtualWindow.start, virtualWindow.end)
                 const first = slice[0]
-                const needsSyntheticHeading =
-                  first?.kind === 'segment' &&
-                  (virtualWindow.start === 0 || rowLayout.positions[virtualWindow.start - 1]?.kind !== 'speaker')
                 const nodes = []
-                if (needsSyntheticHeading) {
+                if (virtualWindow.syntheticHeading && first?.kind === 'segment') {
                   const speaker = first.speaker
                   if (speaker != null) {
                     nodes.push(
                       <div
                         key={`synthetic-speaker-${first.idx}`}
-                        className="mb-1 border-l-2 pl-2 text-xs font-semibold uppercase tracking-wide"
-                        style={speakerStyle((speakerIndexMap[speaker] ?? 0))}
-                        data-speaker={speaker}
-                        data-speaker-accent={speakerIndexMap[speaker] ?? 0}
+                        ref={(node) => observeRow(SYNTHETIC_HEADING_KEY, node)}
+                        className="pb-3"
                       >
-                        {speakerAliases?.[speaker] ?? speaker}
+                        <div
+                          className="border-l-2 pl-2 text-xs font-semibold uppercase tracking-wide"
+                          style={speakerStyle((speakerIndexMap[speaker] ?? 0))}
+                          data-speaker={speaker}
+                          data-speaker-accent={speakerIndexMap[speaker] ?? 0}
+                        >
+                          {speakerAliases?.[speaker] ?? speaker}
+                        </div>
                       </div>,
                     )
                   }
@@ -406,17 +589,26 @@ export function TranscriptView({
                     nodes.push(
                       <div
                         key={row.key}
-                        className="mb-1 border-l-2 pl-2 text-xs font-semibold uppercase tracking-wide"
-                        style={speakerStyle(row.accentIdx)}
-                        data-speaker={row.speaker}
-                        data-speaker-accent={row.accentIdx}
+                        ref={(node) => observeRow(row.key, node)}
+                        className="pb-3"
                       >
-                        {row.displayName}
+                        <div
+                          className="border-l-2 pl-2 text-xs font-semibold uppercase tracking-wide"
+                          style={speakerStyle(row.accentIdx)}
+                          data-speaker={row.speaker}
+                          data-speaker-accent={row.accentIdx}
+                        >
+                          {row.displayName}
+                        </div>
                       </div>,
                     )
                   } else {
                     nodes.push(
-                      <ul key={row.key} className="flex flex-col gap-2">
+                      <ul
+                        key={row.key}
+                        ref={(node) => observeRow(row.key, node)}
+                        className="flex flex-col pb-2"
+                      >
                         {renderSegmentRow(row)}
                       </ul>,
                     )
@@ -456,7 +648,6 @@ export function TranscriptView({
                     idx,
                     seg,
                     speaker: seg.speaker != null && seg.speaker !== '' ? seg.speaker : null,
-                    height: SEGMENT_ROW_HEIGHT,
                   }))}
                 </ul>
               </div>
@@ -471,7 +662,6 @@ export function TranscriptView({
             idx,
             seg,
             speaker: seg.speaker != null && seg.speaker !== '' ? seg.speaker : null,
-            height: SEGMENT_ROW_HEIGHT,
           }))}
         </ul>
       )}

@@ -39,6 +39,37 @@ const largeSegs: TranscriptSegment[] = Array.from({ length: 1000 }, (_, i) => ({
   source: 'mixed',
 }))
 
+// A second transcript of the same length as largeSegs, so every positional row
+// key collides with one from largeSegs.
+const otherLargeSegs: TranscriptSegment[] = Array.from({ length: 1000 }, (_, i) => ({
+  start_ms: i * 1000,
+  end_ms: (i + 1) * 1000,
+  text: `a completely different line ${i}`,
+  source: 'mixed',
+}))
+
+// A third transcript that is indistinguishable from largeSegs by length and
+// first line -- only the lines after the first differ, and they differ in
+// length, so the rows they produce are not the heights largeSegs' rows were
+// measured at.
+const laterLinesDifferSegs: TranscriptSegment[] = largeSegs.map((seg, i) => ({
+  ...seg,
+  text: i === 0 ? seg.text : `a completely different and rather longer line ${i}`,
+}))
+
+// One speaker over a transcript long enough to virtualise: 210 segments plus
+// the single heading they share is 211 rows, past the 200-row threshold. One
+// speaker rather than several on purpose -- renaming it leaves no measured
+// heading anywhere for the per-kind mean to fall back on, so the estimate the
+// renamed heading drops to is visible in the declared total.
+const oneSpeakerLargeSegs: TranscriptSegment[] = Array.from({ length: 210 }, (_, i) => ({
+  start_ms: i * 1000,
+  end_ms: (i + 1) * 1000,
+  text: `segment ${i}`,
+  source: 'mixed',
+  speaker: 'Speaker 1',
+}))
+
 describe('TranscriptView', () => {
   it('shows empty state when no segments', () => {
     render(<TranscriptView segments={[]} />)
@@ -184,6 +215,169 @@ describe('TranscriptView', () => {
     const renderedSegments = document.querySelectorAll('li[data-cited], li[data-playing], li').length
     expect(renderedSegments).toBeLessThan(1000)
     expect(renderedSegments).toBeLessThan(100)
+  })
+
+  const rectOfHeight = (height: number) =>
+    ({
+      height,
+      width: 0,
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: height,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    }) as DOMRect
+
+  const declaredHeight = () =>
+    Number.parseFloat(
+      (screen.getByTestId('transcript-viewport').firstElementChild as HTMLElement).style.height
+    )
+
+  it('sizes the virtualised transcript from measured rows, not the estimate', () => {
+    // jsdom computes no layout, so every rect it reports is zero and the
+    // component falls back to its estimates -- which is why the real guard for
+    // this is a browser test (e2e/specs/transcript-geometry.spec.ts). Stubbing
+    // the measurement still pins the arithmetic: a measured row height the
+    // component could not have guessed has to reach the declared total height.
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue(rectOfHeight(137))
+
+    render(<TranscriptView segments={largeSegs} />)
+
+    expect(document.querySelectorAll('li').length).toBeGreaterThan(0)
+    expect(declaredHeight()).toBeGreaterThan(largeSegs.length * 44)
+  })
+
+  it('forgets measured rows when the transcript changes, so one note cannot size another', () => {
+    // Row keys are positional, so every key in one transcript collides with a
+    // key in the next. The note screen reuses this component instance across
+    // notes (no `key` on the /notes/:id route, and the loader does not clear
+    // the previous note first), so a surviving measurement would size the new
+    // note from the old note's rows.
+    const rect = vi
+      .spyOn(Element.prototype, 'getBoundingClientRect')
+      .mockReturnValue(rectOfHeight(137))
+
+    const { rerender } = render(<TranscriptView segments={largeSegs} />)
+    expect(declaredHeight()).toBeGreaterThan(largeSegs.length * 44)
+
+    // A different transcript, same length. Nothing in it can be measured now,
+    // so every row must fall back to the estimate -- which it can only do if
+    // the previous note's measurements were dropped.
+    rect.mockReturnValue(rectOfHeight(0))
+    rerender(<TranscriptView segments={otherLargeSegs} />)
+
+    expect(declaredHeight()).toBe(otherLargeSegs.length * 44)
+  })
+
+  it('forgets measured rows when a line after the first changes', () => {
+    // The guard above changes the first line, so a basis sampled from
+    // `segments.length` + `segments[0].text` still passes it. These two
+    // transcripts agree on both: same length, same first line, every later line
+    // different. Positional keys still collide, so without a basis that covers
+    // the whole segment list the previous transcript's heights survive and size
+    // this one -- wrong offsets, wrong spacers, rows that overlap or cannot be
+    // reached.
+    const rect = vi
+      .spyOn(Element.prototype, 'getBoundingClientRect')
+      .mockReturnValue(rectOfHeight(137))
+
+    const { rerender } = render(<TranscriptView segments={largeSegs} />)
+    expect(declaredHeight()).toBeGreaterThan(largeSegs.length * 44)
+
+    expect(laterLinesDifferSegs).toHaveLength(largeSegs.length)
+    expect(laterLinesDifferSegs[0].text).toBe(largeSegs[0].text)
+
+    rect.mockReturnValue(rectOfHeight(0))
+    rerender(<TranscriptView segments={laterLinesDifferSegs} />)
+
+    expect(declaredHeight()).toBe(laterLinesDifferSegs.length * 44)
+  })
+
+  it('keeps measured rows when polling redelivers the same transcript in a new array', () => {
+    // A processing note is re-fetched every few seconds and each response is
+    // parsed into a brand-new array of brand-new objects with identical
+    // contents. Invalidating on array identity would drop every measurement on
+    // every tick, so the transcript would resize under the reader while it
+    // processes. This is the property the sampled basis was protecting, and it
+    // has to survive the fix.
+    const rect = vi
+      .spyOn(Element.prototype, 'getBoundingClientRect')
+      .mockReturnValue(rectOfHeight(137))
+
+    const { rerender } = render(<TranscriptView segments={largeSegs} />)
+    const measuredTotal = declaredHeight()
+    expect(measuredTotal).toBeGreaterThan(largeSegs.length * 44)
+
+    // Nothing measurable from here on: if the cache were dropped the total
+    // would collapse to the per-row estimate instead of holding.
+    rect.mockReturnValue(rectOfHeight(0))
+    rerender(<TranscriptView segments={largeSegs.map((seg) => ({ ...seg }))} />)
+
+    expect(declaredHeight()).toBe(measuredTotal)
+  })
+
+  it('does not lay out a renamed speaker heading from the old name', () => {
+    // A heading row renders `speakerAliases?.[speaker] ?? speaker`, so renaming
+    // a speaker changes what the row displays -- and a longer name that wraps
+    // onto another line changes how tall it is. Nothing about the segments
+    // changes, so the measurement basis cannot see this; the row's identity has
+    // to. Otherwise every heading outside the window keeps the height the old
+    // name measured at, which is the same wrong-totals, wrong-spacers failure a
+    // colliding segment key produces.
+    //
+    // Asserted on the layout the component computes, not on whether some cache
+    // was emptied: what matters is that the renamed heading is no longer sized
+    // from a measurement of the old name.
+    const rect = vi
+      .spyOn(Element.prototype, 'getBoundingClientRect')
+      .mockReturnValue(rectOfHeight(137))
+
+    const { rerender } = render(<TranscriptView segments={oneSpeakerLargeSegs} />)
+    // 210 segment rows and one heading row, every one of them measured at the
+    // stub or estimated from the mean of rows that were.
+    expect(declaredHeight()).toBe(211 * 137)
+
+    // The same segments, a substantially longer name, and nothing measurable
+    // from here on.
+    rect.mockReturnValue(rectOfHeight(0))
+    rerender(
+      <TranscriptView
+        segments={oneSpeakerLargeSegs}
+        speakerAliases={{ 'Speaker 1': 'a considerably longer speaker name than the original' }}
+      />
+    )
+
+    // The 210 segment rows keep their measurements -- the rename did not touch
+    // them, and throwing them away to fix one heading would resize the
+    // transcript under the reader. The heading falls back to the estimate for a
+    // row that has never been measured.
+    expect(declaredHeight()).toBe(210 * 137 + 24)
+  })
+
+  it('keeps measured rows when an equivalent alias map arrives as a fresh object', () => {
+    // The rename fix derives heading identity from the RESOLVED display name,
+    // never from the identity of the alias map. Keying on the map itself would
+    // reinstate the thrash the measurement basis avoids: a parent rebuilding an
+    // equivalent object -- an inline literal in a caller, say -- would discard
+    // every measurement in the transcript for a rename that never happened.
+    const rect = vi
+      .spyOn(Element.prototype, 'getBoundingClientRect')
+      .mockReturnValue(rectOfHeight(137))
+
+    const { rerender } = render(
+      <TranscriptView segments={oneSpeakerLargeSegs} speakerAliases={{ 'Speaker 1': 'Alice' }} />
+    )
+    const measuredTotal = declaredHeight()
+    expect(measuredTotal).toBe(211 * 137)
+
+    rect.mockReturnValue(rectOfHeight(0))
+    rerender(
+      <TranscriptView segments={oneSpeakerLargeSegs} speakerAliases={{ 'Speaker 1': 'Alice' }} />
+    )
+
+    expect(declaredHeight()).toBe(measuredTotal)
   })
 
   it('scrolls an off-window citation into view and highlights it', async () => {

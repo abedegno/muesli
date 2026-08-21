@@ -161,7 +161,7 @@ function MeetingChart({
                 width={Math.max(2, barWidth * 0.64)}
                 height={heightPx}
                 rx={4}
-                fill="hsl(var(--primary))"
+                fill="var(--primary)"
               />
               <text
                 x={x + Math.max(2, barWidth * 0.32)}
