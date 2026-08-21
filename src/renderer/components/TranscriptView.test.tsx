@@ -57,6 +57,19 @@ const laterLinesDifferSegs: TranscriptSegment[] = largeSegs.map((seg, i) => ({
   text: i === 0 ? seg.text : `a completely different and rather longer line ${i}`,
 }))
 
+// One speaker over a transcript long enough to virtualise: 210 segments plus
+// the single heading they share is 211 rows, past the 200-row threshold. One
+// speaker rather than several on purpose -- renaming it leaves no measured
+// heading anywhere for the per-kind mean to fall back on, so the estimate the
+// renamed heading drops to is visible in the declared total.
+const oneSpeakerLargeSegs: TranscriptSegment[] = Array.from({ length: 210 }, (_, i) => ({
+  start_ms: i * 1000,
+  end_ms: (i + 1) * 1000,
+  text: `segment ${i}`,
+  source: 'mixed',
+  speaker: 'Speaker 1',
+}))
+
 describe('TranscriptView', () => {
   it('shows empty state when no segments', () => {
     render(<TranscriptView segments={[]} />)
@@ -301,6 +314,68 @@ describe('TranscriptView', () => {
     // would collapse to the per-row estimate instead of holding.
     rect.mockReturnValue(rectOfHeight(0))
     rerender(<TranscriptView segments={largeSegs.map((seg) => ({ ...seg }))} />)
+
+    expect(declaredHeight()).toBe(measuredTotal)
+  })
+
+  it('does not lay out a renamed speaker heading from the old name', () => {
+    // A heading row renders `speakerAliases?.[speaker] ?? speaker`, so renaming
+    // a speaker changes what the row displays -- and a longer name that wraps
+    // onto another line changes how tall it is. Nothing about the segments
+    // changes, so the measurement basis cannot see this; the row's identity has
+    // to. Otherwise every heading outside the window keeps the height the old
+    // name measured at, which is the same wrong-totals, wrong-spacers failure a
+    // colliding segment key produces.
+    //
+    // Asserted on the layout the component computes, not on whether some cache
+    // was emptied: what matters is that the renamed heading is no longer sized
+    // from a measurement of the old name.
+    const rect = vi
+      .spyOn(Element.prototype, 'getBoundingClientRect')
+      .mockReturnValue(rectOfHeight(137))
+
+    const { rerender } = render(<TranscriptView segments={oneSpeakerLargeSegs} />)
+    // 210 segment rows and one heading row, every one of them measured at the
+    // stub or estimated from the mean of rows that were.
+    expect(declaredHeight()).toBe(211 * 137)
+
+    // The same segments, a substantially longer name, and nothing measurable
+    // from here on.
+    rect.mockReturnValue(rectOfHeight(0))
+    rerender(
+      <TranscriptView
+        segments={oneSpeakerLargeSegs}
+        speakerAliases={{ 'Speaker 1': 'a considerably longer speaker name than the original' }}
+      />
+    )
+
+    // The 210 segment rows keep their measurements -- the rename did not touch
+    // them, and throwing them away to fix one heading would resize the
+    // transcript under the reader. The heading falls back to the estimate for a
+    // row that has never been measured.
+    expect(declaredHeight()).toBe(210 * 137 + 24)
+  })
+
+  it('keeps measured rows when an equivalent alias map arrives as a fresh object', () => {
+    // The rename fix derives heading identity from the RESOLVED display name,
+    // never from the identity of the alias map. Keying on the map itself would
+    // reinstate the thrash the measurement basis avoids: a parent rebuilding an
+    // equivalent object -- an inline literal in a caller, say -- would discard
+    // every measurement in the transcript for a rename that never happened.
+    const rect = vi
+      .spyOn(Element.prototype, 'getBoundingClientRect')
+      .mockReturnValue(rectOfHeight(137))
+
+    const { rerender } = render(
+      <TranscriptView segments={oneSpeakerLargeSegs} speakerAliases={{ 'Speaker 1': 'Alice' }} />
+    )
+    const measuredTotal = declaredHeight()
+    expect(measuredTotal).toBe(211 * 137)
+
+    rect.mockReturnValue(rectOfHeight(0))
+    rerender(
+      <TranscriptView segments={oneSpeakerLargeSegs} speakerAliases={{ 'Speaker 1': 'Alice' }} />
+    )
 
     expect(declaredHeight()).toBe(measuredTotal)
   })

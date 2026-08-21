@@ -55,6 +55,18 @@ const FALLBACK_VIEWPORT_HEIGHT = 320
 const OVERSCAN_ROWS = 6
 // The repeated speaker heading rendered when the window opens mid-group is
 // extra content with no row of its own, so it is measured under its own key.
+//
+// One shared key for every speaker, deliberately, and NOT keyed by display name
+// the way the real heading rows are. Those need it because a heading that is
+// scrolled out of the window keeps its stored height and still feeds
+// totalHeight and every offset below it. This one cannot go stale that way:
+// there is at most one of it, its height is only ever read while it is on
+// screen (`syntheticHeading` gates both the read below and the node that
+// registers it), and the layout pass re-measures every registered node and
+// re-renders before paint. So a height left over from another name survives
+// one un-painted render at most -- and a per-name key would make that render
+// worse, not better, substituting 0 for a close approximation of a heading
+// height that is the same for every speaker in practice.
 const SYNTHETIC_HEADING_KEY = 'synthetic-speaker-heading'
 
 function clamp(value: number, min: number, max: number): number {
@@ -103,11 +115,31 @@ function buildTranscriptRows(
     if (speaker !== currentSpeaker) {
       currentSpeaker = speaker
       if (speaker != null) {
+        const displayName = speakerAliases?.[speaker] ?? speaker
         rows.push({
           kind: 'speaker',
-          key: `speaker-${idx}-${speaker}`,
+          // The key carries the DISPLAY name, not the raw speaker. The
+          // measurement cache is keyed by row key, so a key has to determine
+          // what the row renders -- and a heading renders the alias. Rename a
+          // speaker to something long enough to wrap and every heading outside
+          // the window would otherwise keep the height the old name measured
+          // at, which is the same stale-height failure a colliding segment key
+          // produces.
+          //
+          // Keyed here rather than folded into measurementBasis on purpose: a
+          // basis change discards every measurement in the transcript, so a
+          // rename would throw away hundreds of segment heights -- none of
+          // which the rename touched -- to correct a handful of headings, and
+          // resize the transcript under the reader as a side effect of an
+          // unrelated edit. A key change invalidates exactly the rows whose
+          // content changed.
+          //
+          // Derived from the resolved name, never from the identity of the
+          // alias map: a parent that hands over a fresh object with equivalent
+          // contents produces identical keys and changes nothing.
+          key: `speaker-${idx}-${displayName}`,
           speaker,
-          displayName: speakerAliases?.[speaker] ?? speaker,
+          displayName,
           accentIdx: speakerIndexMap[speaker] ?? 0,
         })
       }
