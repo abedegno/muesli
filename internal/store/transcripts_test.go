@@ -451,7 +451,7 @@ func TestConfirmSegmentSpeaker(t *testing.T) {
 	segID := saved.Segments[0].ID
 
 	// Confirm the speaker.
-	if err := st.ConfirmSegmentSpeaker(ctx, ownerID, noteID, segID, "Alice"); err != nil {
+	if err := st.ConfirmSegmentSpeaker(ctx, ownerID, noteID, segID, "Alice", saved.Generation); err != nil {
 		t.Fatalf("confirm: %v", err)
 	}
 
@@ -465,13 +465,42 @@ func TestConfirmSegmentSpeaker(t *testing.T) {
 	}
 
 	// Wrong owner returns ErrNotFound.
-	if err := st.ConfirmSegmentSpeaker(ctx, "00000000-0000-0000-0000-000000000001", noteID, segID, "Hack"); err != store.ErrNotFound {
+	if err := st.ConfirmSegmentSpeaker(ctx, "00000000-0000-0000-0000-000000000001", noteID, segID, "Hack", saved.Generation); err != store.ErrNotFound {
 		t.Errorf("wrong owner: want ErrNotFound, got %v", err)
 	}
 
 	// Wrong segment ID returns ErrNotFound.
-	if err := st.ConfirmSegmentSpeaker(ctx, ownerID, noteID, "00000000-0000-0000-0000-000000000002", "Alice"); err != store.ErrNotFound {
+	if err := st.ConfirmSegmentSpeaker(ctx, ownerID, noteID, "00000000-0000-0000-0000-000000000002", "Alice", saved.Generation); err != store.ErrNotFound {
 		t.Errorf("bad segment id: want ErrNotFound, got %v", err)
+	}
+}
+
+// TestConfirmSegmentSpeaker_wrongOwnerPrecedesGeneration verifies that a
+// wrong owner is still reported as ErrNotFound even when the caller's
+// generation is also stale, so a wrong owner never surfaces as a version
+// conflict.
+func TestConfirmSegmentSpeaker_wrongOwnerPrecedesGeneration(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+
+	_, noteID := seedNoteWithOwner(t, st)
+	tr := model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Model:             "base",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 1000, Text: "hello", Source: "mic", Speaker: "SPEAKER_00"}},
+	}
+	saved, err := st.SaveTranscript(ctx, tr, 0)
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// Wrong owner AND a generation that does not match (0, one below the
+	// transcript's actual generation of 1): must still be ErrNotFound.
+	err = st.ConfirmSegmentSpeaker(ctx, "00000000-0000-0000-0000-000000000001", noteID, saved.Segments[0].ID, "Hack", 0)
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("wrong owner + stale generation: want ErrNotFound, got %v", err)
 	}
 }
 
@@ -503,18 +532,19 @@ func TestUpdateReviewState_valid(t *testing.T) {
 				Model:             "base",
 				Segments:          []model.Segment{{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic", Speaker: "SPEAKER_00"}},
 			}
-			if _, err := st.SaveTranscript(ctx, tr, 0); err != nil {
+			saved, err := st.SaveTranscript(ctx, tr, 0)
+			if err != nil {
 				t.Fatalf("save: %v", err)
 			}
 
 			// Drive to the `from` state if it isn't already "pending".
 			if tc.from != model.ReviewStatePending {
-				if err := forceReviewState(ctx, st, ownerID, noteID, tc.from); err != nil {
+				if err := forceReviewState(ctx, st, ownerID, noteID, tc.from, saved.Generation); err != nil {
 					t.Fatalf("force state %q: %v", tc.from, err)
 				}
 			}
 
-			if err := st.UpdateReviewState(ctx, ownerID, noteID, tc.to); err != nil {
+			if err := st.UpdateReviewState(ctx, ownerID, noteID, tc.to, saved.Generation); err != nil {
 				t.Errorf("%s→%s: unexpected error: %v", tc.from, tc.to, err)
 				return
 			}
@@ -531,18 +561,20 @@ func TestUpdateReviewState_valid(t *testing.T) {
 }
 
 // forceReviewState drives the review state by applying legal transitions
-// from "pending" to the desired state, used only in tests.
-func forceReviewState(ctx context.Context, st *store.Store, ownerID, noteID, target string) error {
+// from "pending" to the desired state, used only in tests. generation is the
+// transcript's current generation, unaffected by review_state transitions, so
+// the same value is valid across the whole sequence.
+func forceReviewState(ctx context.Context, st *store.Store, ownerID, noteID, target string, generation int) error {
 	switch target {
 	case model.ReviewStatePending:
 		return nil
 	case model.ReviewStateInReview:
-		return st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateInReview)
+		return st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateInReview, generation)
 	case model.ReviewStateCompleted:
-		if err := st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateInReview); err != nil {
+		if err := st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateInReview, generation); err != nil {
 			return err
 		}
-		return st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateCompleted)
+		return st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateCompleted, generation)
 	}
 	return nil
 }
@@ -575,20 +607,48 @@ func TestUpdateReviewState_illegal(t *testing.T) {
 				Model:             "base",
 				Segments:          []model.Segment{{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic", Speaker: "SPEAKER_00"}},
 			}
-			if _, err := st.SaveTranscript(ctx, tr, 0); err != nil {
+			saved, err := st.SaveTranscript(ctx, tr, 0)
+			if err != nil {
 				t.Fatalf("save: %v", err)
 			}
 
 			// Drive to `from` state.
-			if err := forceReviewState(ctx, st, ownerID, noteID, tc.from); err != nil {
+			if err := forceReviewState(ctx, st, ownerID, noteID, tc.from, saved.Generation); err != nil {
 				t.Fatalf("force state %q: %v", tc.from, err)
 			}
 
-			err := st.UpdateReviewState(ctx, ownerID, noteID, tc.to)
+			err = st.UpdateReviewState(ctx, ownerID, noteID, tc.to, saved.Generation)
 			if err != store.ErrInvalidTransition {
 				t.Errorf("%s→%s: want ErrInvalidTransition, got %v", tc.from, tc.to, err)
 			}
 		})
+	}
+}
+
+// TestUpdateReviewState_wrongOwnerPrecedesGeneration verifies that a wrong
+// owner is still reported as ErrNotFound even when the caller's generation is
+// also stale, so a wrong owner never surfaces as a version conflict.
+func TestUpdateReviewState_wrongOwnerPrecedesGeneration(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+
+	_, noteID := seedNoteWithOwner(t, st)
+	tr := model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Model:             "base",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic", Speaker: "SPEAKER_00"}},
+	}
+	if _, err := st.SaveTranscript(ctx, tr, 0); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// Wrong owner AND a generation that does not match (0, one below the
+	// transcript's actual generation of 1): must still be ErrNotFound.
+	err := st.UpdateReviewState(ctx, "00000000-0000-0000-0000-000000000001", noteID, model.ReviewStateInReview, 0)
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("wrong owner + stale generation: want ErrNotFound, got %v", err)
 	}
 }
 
@@ -1185,5 +1245,57 @@ func TestAppendTranscriptGapRejectsSupersededStream(t *testing.T) {
 	}
 	if len(got.Gaps) != 0 {
 		t.Fatalf("gaps = %+v, want none — the batch transcript carries no gaps", got.Gaps)
+	}
+}
+
+// TestReviewMutatorsRejectStaleGeneration binds each of the three review
+// mutators' generation predicate independently: a review begun against one
+// transcript must not be able to mutate the transcript that replaced it.
+func TestReviewMutatorsRejectStaleGeneration(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	ownerID, noteID := seedNoteWithOwner(t, st)
+
+	first, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "one", Source: "mic", Speaker: "SPEAKER_00"}},
+	}, 0)
+	if err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	staleSegmentID := first.Segments[0].ID
+
+	// The transcript the reviewer was looking at is replaced underneath them.
+	second, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "two", Source: "mic", Speaker: "SPEAKER_00"}},
+	}, first.Generation)
+	if err != nil {
+		t.Fatalf("second save: %v", err)
+	}
+
+	if err := st.SetReviewState(ctx, noteID, model.ReviewStateCompleted, first.Generation); !errors.Is(err, store.ErrGenerationMismatch) {
+		t.Fatalf("SetReviewState stale = %v, want ErrGenerationMismatch", err)
+	}
+	if err := st.ConfirmSegmentSpeaker(ctx, ownerID, noteID, staleSegmentID, "Alice", first.Generation); !errors.Is(err, store.ErrGenerationMismatch) {
+		t.Fatalf("ConfirmSegmentSpeaker stale = %v, want ErrGenerationMismatch", err)
+	}
+	// UpdateReviewState needs its own case: without one, its generation
+	// predicate could be deleted with the suite green.
+	// Both transcripts carry SPEAKER_00, so their review state is "pending",
+	// whose only legal transition is to in_review. Using an otherwise-legal
+	// transition is what makes this bind the generation predicate rather than
+	// the transition rules.
+	if err := st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateInReview, first.Generation); !errors.Is(err, store.ErrGenerationMismatch) {
+		t.Fatalf("UpdateReviewState stale = %v, want ErrGenerationMismatch", err)
+	}
+	if err := st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateInReview, second.Generation); err != nil {
+		t.Fatalf("UpdateReviewState current: %v", err)
+	}
+	if err := st.SetReviewState(ctx, noteID, model.ReviewStateCompleted, second.Generation); err != nil {
+		t.Fatalf("SetReviewState current: %v", err)
 	}
 }

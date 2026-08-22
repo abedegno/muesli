@@ -401,13 +401,14 @@ func (s *Store) GetTranscript(ctx context.Context, noteID string) (model.Transcr
 func (s *Store) GetDiarizationReview(ctx context.Context, ownerID, noteID string) (*model.DiarizationReview, error) {
 	var transcriptID string
 	var reviewState string
+	var generation int
 	err := s.pool.QueryRow(ctx,
-		`SELECT t.id, t.review_state
+		`SELECT t.id, t.review_state, t.generation
 		 FROM transcripts t
 		 JOIN notes n ON n.id = t.note_id
 		 WHERE t.note_id = $1 AND n.owner_id = $2`,
 		noteID, ownerID).
-		Scan(&transcriptID, &reviewState)
+		Scan(&transcriptID, &reviewState, &generation)
 	if errors.Is(err, pgx.ErrNoRows) || isUUIDSyntaxError(err) {
 		return nil, ErrNotFound
 	}
@@ -450,22 +451,39 @@ func (s *Store) GetDiarizationReview(ctx context.Context, ownerID, noteID string
 		NoteID:      noteID,
 		ReviewState: reviewState,
 		Turns:       turns,
+		Generation:  generation,
 	}, nil
 }
 
 // ConfirmSegmentSpeaker sets the speaker label on a segment, enforcing that
-// the segment belongs to the transcript of a note owned by ownerID. Returns
-// ErrNotFound if the segment doesn't exist or ownership check fails.
-func (s *Store) ConfirmSegmentSpeaker(ctx context.Context, ownerID, noteID, segmentID, speaker string) error {
+// the segment belongs to the transcript of a note owned by ownerID and that
+// the transcript is still at expectedGeneration — the generation the caller
+// last rendered. Ownership and existence are checked first and always report
+// ErrNotFound, so a wrong owner never surfaces as a version conflict; only a
+// transcript that exists, is owned, and sits at the wrong generation returns
+// ErrGenerationMismatch.
+func (s *Store) ConfirmSegmentSpeaker(ctx context.Context, ownerID, noteID, segmentID, speaker string, expectedGeneration int) error {
+	var transcriptID string
+	var generation int
+	err := s.pool.QueryRow(ctx,
+		`SELECT t.id, t.generation FROM transcripts t
+		 JOIN notes n ON n.id = t.note_id
+		 WHERE t.note_id = $1 AND n.owner_id = $2`,
+		noteID, ownerID).Scan(&transcriptID, &generation)
+	if errors.Is(err, pgx.ErrNoRows) || isUUIDSyntaxError(err) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if generation != expectedGeneration {
+		return ErrGenerationMismatch
+	}
+
 	tag, err := s.pool.Exec(ctx,
 		`UPDATE transcript_segments SET speaker = $1
-		 WHERE id = $2
-		   AND transcript_id = (
-		     SELECT t.id FROM transcripts t
-		     JOIN notes n ON n.id = t.note_id
-		     WHERE t.note_id = $3 AND n.owner_id = $4
-		   )`,
-		speaker, segmentID, noteID, ownerID)
+		 WHERE id = $2 AND transcript_id = $3`,
+		speaker, segmentID, transcriptID)
 	if isUUIDSyntaxError(err) {
 		return ErrNotFound
 	}
@@ -486,17 +504,22 @@ func (s *Store) ConfirmSegmentSpeaker(ctx context.Context, ownerID, noteID, segm
 //	completed  → in_review
 //
 // Any other transition (including same→same) returns ErrInvalidTransition.
-// Returns ErrNotFound if the transcript doesn't exist or isn't owned by ownerID.
-func (s *Store) UpdateReviewState(ctx context.Context, ownerID, noteID, newState string) error {
-	// Fetch current state with ownership check.
+// Returns ErrNotFound if the transcript doesn't exist or isn't owned by
+// ownerID — checked first, so a wrong owner never surfaces as a version
+// conflict. expectedGeneration must match the transcript's current generation
+// or the update is rejected with ErrGenerationMismatch: the transcript this
+// caller was reviewing has since been replaced.
+func (s *Store) UpdateReviewState(ctx context.Context, ownerID, noteID, newState string, expectedGeneration int) error {
+	// Fetch current state + generation with ownership check.
 	var currentState string
+	var generation int
 	err := s.pool.QueryRow(ctx,
-		`SELECT t.review_state
+		`SELECT t.review_state, t.generation
 		 FROM transcripts t
 		 JOIN notes n ON n.id = t.note_id
 		 WHERE t.note_id = $1 AND n.owner_id = $2`,
 		noteID, ownerID).
-		Scan(&currentState)
+		Scan(&currentState, &generation)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -509,21 +532,35 @@ func (s *Store) UpdateReviewState(ctx context.Context, ownerID, noteID, newState
 		return ErrInvalidTransition
 	}
 
-	_, err = s.pool.Exec(ctx,
+	tag, err := s.pool.Exec(ctx,
 		`UPDATE transcripts SET review_state = $1
-		 WHERE note_id = $2`,
-		newState, noteID)
-	return err
+		 WHERE note_id = $2 AND generation = $3`,
+		newState, noteID, expectedGeneration)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrGenerationMismatch
+	}
+	return nil
 }
 
 // SetReviewState updates a transcript's review_state without ownership or
 // transition checks. It is reserved for trusted in-process pipeline code.
-func (s *Store) SetReviewState(ctx context.Context, noteID, state string) error {
-	_, err := s.pool.Exec(ctx,
-		`UPDATE transcripts SET review_state = $1
-		 WHERE note_id = $2`,
-		state, noteID)
-	return err
+// expectedGeneration must match the transcript's current generation or the
+// update is rejected with ErrGenerationMismatch.
+func (s *Store) SetReviewState(ctx context.Context, noteID, state string, expectedGeneration int) error {
+	tag, err := s.pool.Exec(ctx,
+		`UPDATE transcripts SET review_state=$1
+		  WHERE note_id=$2 AND generation=$3`,
+		state, noteID, expectedGeneration)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrGenerationMismatch
+	}
+	return nil
 }
 
 // isLegalTransition reports whether transitioning from `from` to `to` is

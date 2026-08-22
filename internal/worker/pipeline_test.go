@@ -477,10 +477,14 @@ func TestPipelineDiarizationReviewReleaseAllowsSummaryFanout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NoteOwnerID: %v", err)
 	}
-	if err := st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateInReview); err != nil {
+	generation, err := st.CurrentTranscriptGeneration(ctx, noteID)
+	if err != nil {
+		t.Fatalf("CurrentTranscriptGeneration: %v", err)
+	}
+	if err := st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateInReview, generation); err != nil {
 		t.Fatalf("UpdateReviewState(in_review): %v", err)
 	}
-	if err := st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateCompleted); err != nil {
+	if err := st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateCompleted, generation); err != nil {
 		t.Fatalf("UpdateReviewState(completed): %v", err)
 	}
 	if err := st.EnqueueSummarizeJobs(ctx, ownerID, noteID); err != nil {

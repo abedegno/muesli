@@ -404,6 +404,10 @@ type DiarizationReview struct {
 	NoteID      string    `json:"note_id"`
 	ReviewState string    `json:"review_state"`
 	Turns       []Segment `json:"turns"`
+	// Generation is the transcript generation this review payload was rendered
+	// from. Clients return it on submission so an edit cannot mutate the
+	// transcript that replaced the one they were shown.
+	Generation int `json:"generation"`
 }
 
 // Conversation is an owner-scoped chat thread, optionally attached to a note

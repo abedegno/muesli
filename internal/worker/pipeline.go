@@ -386,7 +386,10 @@ func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, err
 	if saved.ReviewState != model.ReviewStateCompleted {
 		slog.InfoContext(ctx, "summarize held pending diarization review", "job_id", job.ID, "note_id", job.NoteID, "review_state", saved.ReviewState)
 		if p.cfg.Embedded {
-			if err := p.store.SetReviewState(ctx, job.NoteID, model.ReviewStateCompleted); err != nil {
+			// saved.Generation is this job's own just-persisted save (see the
+			// comment above pl.ExpectedGeneration): the only generation this
+			// auto-complete can legitimately be racing against.
+			if err := p.store.SetReviewState(ctx, job.NoteID, model.ReviewStateCompleted, saved.Generation); err != nil {
 				slog.ErrorContext(ctx, "embedded diarization review auto-complete failed", "error", err, "job_id", job.ID, "note_id", job.NoteID)
 				return true, err
 			}
