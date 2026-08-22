@@ -1389,3 +1389,109 @@ func TestCreateStreamTranscriptRefusesBatchOwnedTranscript(t *testing.T) {
 		t.Fatalf("superseding generation = %d, want %d", second.Generation, first.Generation+1)
 	}
 }
+
+// TestAppendTranscriptGapRejectsWrongStreamID binds the stream_id predicate in
+// AppendTranscriptGap's guard on its own: the transcript is present and
+// unsealed, so only a stream identity mismatch can reject the write. The
+// sibling AppendStreamSegment has had this since Task 5;
+// AppendTranscriptGap arrived in Task 6 with the same code and none of the
+// coverage, so reducing its guard to `WHERE id=$1` left the package green.
+func TestAppendTranscriptGapRejectsWrongStreamID(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	live, err := st.CreateStreamTranscript(ctx, noteID, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := st.AppendTranscriptGap(ctx, live.ID, "stream-b", model.TranscriptGap{
+		StartSample: 16000, Origin: "server",
+	}); !errors.Is(err, store.ErrStreamSuperseded) {
+		t.Fatalf("error = %v, want ErrStreamSuperseded", err)
+	}
+
+	got, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Gaps) != 0 {
+		t.Fatalf("gaps = %+v, want none written", got.Gaps)
+	}
+}
+
+// TestAppendTranscriptGapRejectsSealedTranscript binds the sealed predicate on
+// its own. As with the segment sibling, a committed sealed row is never
+// observable through SaveTranscript (its UPDATE and DELETE commit together), so
+// the fixture seals directly.
+func TestAppendTranscriptGapRejectsSealedTranscript(t *testing.T) {
+	t.Parallel()
+	pool := testutil.NewPool(t)
+	st := store.New(pool)
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	live, err := st.CreateStreamTranscript(ctx, noteID, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE transcripts SET sealed=TRUE WHERE id=$1`, live.ID); err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	// The transcript is present and the stream id matches. Only sealed can
+	// reject this.
+	if err := st.AppendTranscriptGap(ctx, live.ID, "stream-a", model.TranscriptGap{
+		StartSample: 16000, Origin: "server",
+	}); !errors.Is(err, store.ErrStreamSuperseded) {
+		t.Fatalf("error = %v, want ErrStreamSuperseded", err)
+	}
+
+	got, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Gaps) != 0 {
+		t.Fatalf("gaps = %+v, want none written", got.Gaps)
+	}
+}
+
+// TestAppendTranscriptGapRejectsWrongTranscriptID binds the id=$1 predicate on
+// its own, completing the trio the segment sibling already has. Neither test
+// above catches dropping id=$1: with only stream_id and sealed matching, a
+// different live transcript carrying the same stream id satisfies the lookup
+// while the insert still targets the original. Two notes are needed, because
+// transcripts(note_id) is unique.
+func TestAppendTranscriptGapRejectsWrongTranscriptID(t *testing.T) {
+	t.Parallel()
+	pool := testutil.NewPool(t)
+	st := store.New(pool)
+	ctx := context.Background()
+	noteA := seedNote(t, st)
+	noteB := seedNote(t, st)
+
+	liveA, err := st.CreateStreamTranscript(ctx, noteA, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create A: %v", err)
+	}
+	if _, err := st.CreateStreamTranscript(ctx, noteB, "stream-a", "whisper-live", "tiny", 0); err != nil {
+		t.Fatalf("create B: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE transcripts SET sealed=TRUE WHERE id=$1`, liveA.ID); err != nil {
+		t.Fatalf("seal A: %v", err)
+	}
+
+	if err := st.AppendTranscriptGap(ctx, liveA.ID, "stream-a", model.TranscriptGap{
+		StartSample: 16000, Origin: "server",
+	}); !errors.Is(err, store.ErrStreamSuperseded) {
+		t.Fatalf("error = %v, want ErrStreamSuperseded", err)
+	}
+
+	got, err := st.GetTranscript(ctx, noteA)
+	if err != nil {
+		t.Fatalf("get A: %v", err)
+	}
+	if len(got.Gaps) != 0 {
+		t.Fatalf("gaps on A = %+v, want none", got.Gaps)
+	}
+}
