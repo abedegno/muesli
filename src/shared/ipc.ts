@@ -210,12 +210,16 @@ export type NoteStreamEvent = NoteStreamSegmentEvent | NoteStreamConnectionEvent
 /**
  * Renderer-to-main `postDiarizationReview` payload handled by
  * `postDiarizationReview` in `src/main/ipcHandlers.ts`. At least one of
- * `segmentId` or `reviewState` is required server-side.
+ * `segmentId` or `reviewState` is required server-side. `generation` is
+ * always required: the transcript generation the submitted
+ * `DiarizationReview` was rendered from, so the server can detect and reject
+ * a submission against a transcript that has since been replaced.
  */
 export interface DiarizationReviewUpdate {
   segmentId?: string
   speaker?: string
   reviewState?: string
+  generation: number
 }
 
 /**

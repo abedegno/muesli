@@ -83,7 +83,9 @@ export function DiarizationReviewPanel({
     if (review.review_state === 'pending') {
       // Best-effort lifecycle transition — proceed regardless of outcome; a
       // 422 (e.g. a race with another client) just leaves review_state as-is.
-      muesli.postDiarizationReview(noteId, { reviewState: 'in_review' })
+      // generation is the one this panel was just rendered from (review_state
+      // transitions never change it), not a refetched value.
+      muesli.postDiarizationReview(noteId, { reviewState: 'in_review', generation: review.generation })
         .then((r) => setReview(r))
         .catch(() => undefined)
     }
@@ -120,10 +122,13 @@ export function DiarizationReviewPanel({
 
   const confirmTurn = useCallback(async (idx: number) => {
     const t = turns[idx]
-    if (!t) return
+    if (!t || !review) return
     setBusy(true)
     try {
-      await muesli.postDiarizationReview(noteId, { segmentId: t.id, speaker: t.selectedSpeaker })
+      // generation is the one this panel was rendered from, not refetched —
+      // a refetch here would defeat the point of the check, which is to
+      // detect that the transcript moved under the user mid-review.
+      await muesli.postDiarizationReview(noteId, { segmentId: t.id, speaker: t.selectedSpeaker, generation: review.generation })
       setTurns((ts) => ts.map((tt, i) => (i === idx ? { ...tt, confirmed: true } : tt)))
       announce(`Confirmed speaker ${t.selectedSpeaker || 'unknown'} for turn ${idx + 1}`)
     } catch {
@@ -131,9 +136,10 @@ export function DiarizationReviewPanel({
     } finally {
       setBusy(false)
     }
-  }, [turns, noteId, announce])
+  }, [turns, review, noteId, announce])
 
   const acceptAllRemaining = useCallback(async () => {
+    if (!review) return
     const remaining = turns.filter((t) => !t.confirmed)
     if (remaining.length === 0) return
     setBusy(true)
@@ -142,7 +148,9 @@ export function DiarizationReviewPanel({
       try {
         // Confirmations are sent sequentially (not Promise.all) so a consistent
         // server-side state is reached even if one request in the batch fails.
-        await muesli.postDiarizationReview(noteId, { segmentId: t.id, speaker: t.selectedSpeaker })
+        // generation is the panel's rendered-from value, held constant across
+        // the whole batch — not refetched between confirmations.
+        await muesli.postDiarizationReview(noteId, { segmentId: t.id, speaker: t.selectedSpeaker, generation: review.generation })
         count++
         setTurns((ts) => ts.map((tt) => (tt.id === t.id ? { ...tt, confirmed: true } : tt)))
       } catch {
@@ -151,12 +159,13 @@ export function DiarizationReviewPanel({
     }
     setBusy(false)
     announce(`Confirmed ${count} of ${remaining.length} remaining turn${remaining.length === 1 ? '' : 's'}`)
-  }, [turns, noteId, announce])
+  }, [turns, review, noteId, announce])
 
   const completeReview = useCallback(async () => {
+    if (!review) return
     setBusy(true)
     try {
-      await muesli.postDiarizationReview(noteId, { reviewState: 'completed' })
+      await muesli.postDiarizationReview(noteId, { reviewState: 'completed', generation: review.generation })
       announce('Diarization review completed')
       setReview(null) // hides the entry point
       setOpen(false)
@@ -165,7 +174,7 @@ export function DiarizationReviewPanel({
     } finally {
       setBusy(false)
     }
-  }, [noteId, announce])
+  }, [review, noteId, announce])
 
   const onItemKeyDown = (e: ReactKeyboardEvent<HTMLLIElement>, idx: number) => {
     switch (e.key) {

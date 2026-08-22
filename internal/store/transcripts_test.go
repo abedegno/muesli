@@ -393,7 +393,7 @@ func TestGetDiarizationReview(t *testing.T) {
 			{StartMS: 2000, EndMS: 3000, Text: "no confidence", Source: "mic", Speaker: "SPEAKER_00"},
 		},
 	}
-	_, err := st.SaveTranscript(ctx, tr, 0)
+	saved, err := st.SaveTranscript(ctx, tr, 0)
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -407,6 +407,17 @@ func TestGetDiarizationReview(t *testing.T) {
 	}
 	if review.ReviewState != model.ReviewStatePending {
 		t.Errorf("review_state: want %q, got %q", model.ReviewStatePending, review.ReviewState)
+	}
+	// This is the one value a client can submit back to bind a review
+	// mutation to the transcript it was rendered from (see
+	// TestReviewMutatorsRejectStaleGeneration). If GetDiarizationReview ever
+	// dropped or misscanned this field, every response would carry
+	// generation 0, every real submission would 400 as "unversioned", and no
+	// other test would catch it — every other generation-path test supplies
+	// saved.Generation directly rather than reading it back off a decoded
+	// review.
+	if review.Generation != saved.Generation {
+		t.Errorf("generation: want %d (from SaveTranscript), got %d", saved.Generation, review.Generation)
 	}
 	if len(review.Turns) != 3 {
 		t.Fatalf("want 3 turns, got %d", len(review.Turns))
@@ -1265,7 +1276,6 @@ func TestReviewMutatorsRejectStaleGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("first save: %v", err)
 	}
-	staleSegmentID := first.Segments[0].ID
 
 	// The transcript the reviewer was looking at is replaced underneath them.
 	second, err := st.SaveTranscript(ctx, model.Transcript{
@@ -1276,12 +1286,30 @@ func TestReviewMutatorsRejectStaleGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second save: %v", err)
 	}
+	// Deliberately the CURRENT (second) transcript's segment id, not the
+	// deleted first-generation one: ConfirmSegmentSpeaker is called with a
+	// stale expectedGeneration (first.Generation) against a segment that
+	// really does exist under the current transcript. If a segment id from
+	// the deleted transcript were used instead, disabling the generation
+	// check would still error — just with ErrNotFound instead of
+	// ErrGenerationMismatch, because the UPDATE's WHERE clause would match no
+	// row — which proves only that one error replaced another, not that the
+	// check prevents a real mutation. Using the current segment id means
+	// disabling the check produces a silent, successful write to a live row.
+	currentSegmentID := second.Segments[0].ID
 
 	if err := st.SetReviewState(ctx, noteID, model.ReviewStateCompleted, first.Generation); !errors.Is(err, store.ErrGenerationMismatch) {
 		t.Fatalf("SetReviewState stale = %v, want ErrGenerationMismatch", err)
 	}
-	if err := st.ConfirmSegmentSpeaker(ctx, ownerID, noteID, staleSegmentID, "Alice", first.Generation); !errors.Is(err, store.ErrGenerationMismatch) {
+	if err := st.ConfirmSegmentSpeaker(ctx, ownerID, noteID, currentSegmentID, "Alice", first.Generation); !errors.Is(err, store.ErrGenerationMismatch) {
 		t.Fatalf("ConfirmSegmentSpeaker stale = %v, want ErrGenerationMismatch", err)
+	}
+	// The rejected call must not have touched the live row — otherwise the
+	// error return is theater over a real mutation.
+	if got, err := st.GetTranscript(ctx, noteID); err != nil {
+		t.Fatalf("get after rejected stale confirm: %v", err)
+	} else if got.Segments[0].Speaker != "SPEAKER_00" {
+		t.Fatalf("stale ConfirmSegmentSpeaker mutated the current segment: speaker = %q, want unchanged %q", got.Segments[0].Speaker, "SPEAKER_00")
 	}
 	// UpdateReviewState needs its own case: without one, its generation
 	// predicate could be deleted with the suite green.

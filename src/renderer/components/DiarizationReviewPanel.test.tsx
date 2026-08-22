@@ -18,7 +18,11 @@ vi.mock('@/api', () => ({
 
 import { DiarizationReviewPanel } from './DiarizationReviewPanel'
 
-function makeReview(reviewState = 'pending'): DiarizationReview {
+// generation 5 is an arbitrary, distinctive fixture value — distinct from the
+// zero the server treats as "absent" — so an assertion that checks it is
+// actually checking the panel echoed back the value it was rendered from,
+// not merely that some truthy number was sent.
+function makeReview(reviewState = 'pending', generation = 5): DiarizationReview {
   return {
     note_id: 'n1',
     review_state: reviewState,
@@ -27,13 +31,14 @@ function makeReview(reviewState = 'pending'): DiarizationReview {
       { id: 't2', start_ms: 1000, end_ms: 2000, text: 'turn two text', source: 'mixed', speaker: 'SPEAKER_01', confidence: 0.4 },
       { id: 't3', start_ms: 2000, end_ms: 3000, text: 'turn three text', source: 'mixed', speaker: 'SPEAKER_00', confidence: 0.6 },
     ],
+    generation,
   }
 }
 
 beforeEach(() => {
   getDiarizationReviewMock.mockReset().mockResolvedValue(makeReview())
-  postDiarizationReviewMock.mockReset().mockImplementation(async (_noteId: string, body: { reviewState?: string }) =>
-    makeReview(body.reviewState ?? 'in_review'))
+  postDiarizationReviewMock.mockReset().mockImplementation(async (_noteId: string, body: { reviewState?: string; generation: number }) =>
+    makeReview(body.reviewState ?? 'in_review', body.generation))
 })
 
 afterEach(cleanup)
@@ -79,7 +84,7 @@ describe('DiarizationReviewPanel', () => {
     render(<DiarizationReviewPanel noteId="n1" hasTranscript />)
     await openPanel()
     await waitFor(() =>
-      expect(postDiarizationReviewMock).toHaveBeenCalledWith('n1', { reviewState: 'in_review' }),
+      expect(postDiarizationReviewMock).toHaveBeenCalledWith('n1', { reviewState: 'in_review', generation: 5 }),
     )
   })
 
@@ -116,7 +121,7 @@ describe('DiarizationReviewPanel', () => {
 
     fireEvent.keyDown(options[0], { key: 'Enter' })
     await waitFor(() =>
-      expect(postDiarizationReviewMock).toHaveBeenCalledWith('n1', { segmentId: 't1', speaker: 'SPEAKER_00' }),
+      expect(postDiarizationReviewMock).toHaveBeenCalledWith('n1', { segmentId: 't1', speaker: 'SPEAKER_00', generation: 5 }),
     )
     expect(await within(options[0]).findByText('Confirmed')).toBeInTheDocument()
   })
@@ -134,7 +139,7 @@ describe('DiarizationReviewPanel', () => {
 
     fireEvent.keyDown(options[1], { key: 'Enter' })
     await waitFor(() =>
-      expect(postDiarizationReviewMock).toHaveBeenCalledWith('n1', { segmentId: 't2', speaker: 'SPEAKER_00' }),
+      expect(postDiarizationReviewMock).toHaveBeenCalledWith('n1', { segmentId: 't2', speaker: 'SPEAKER_00', generation: 5 }),
     )
   })
 
@@ -150,7 +155,7 @@ describe('DiarizationReviewPanel', () => {
 
     fireEvent.keyDown(options[0], { key: 'Enter' })
     await waitFor(() =>
-      expect(postDiarizationReviewMock).toHaveBeenCalledWith('n1', { segmentId: 't1', speaker: 'SPEAKER_01' }),
+      expect(postDiarizationReviewMock).toHaveBeenCalledWith('n1', { segmentId: 't1', speaker: 'SPEAKER_01', generation: 5 }),
     )
   })
 
@@ -162,18 +167,18 @@ describe('DiarizationReviewPanel', () => {
     // Confirm the first turn individually first.
     fireEvent.keyDown(options[0], { key: 'Enter' })
     await waitFor(() =>
-      expect(postDiarizationReviewMock).toHaveBeenCalledWith('n1', { segmentId: 't1', speaker: 'SPEAKER_00' }),
+      expect(postDiarizationReviewMock).toHaveBeenCalledWith('n1', { segmentId: 't1', speaker: 'SPEAKER_00', generation: 5 }),
     )
     postDiarizationReviewMock.mockClear()
 
     await userEvent.click(screen.getByRole('button', { name: /accept all remaining/i }))
 
     await waitFor(() => {
-      expect(postDiarizationReviewMock).toHaveBeenCalledWith('n1', { segmentId: 't2', speaker: 'SPEAKER_01' })
-      expect(postDiarizationReviewMock).toHaveBeenCalledWith('n1', { segmentId: 't3', speaker: 'SPEAKER_00' })
+      expect(postDiarizationReviewMock).toHaveBeenCalledWith('n1', { segmentId: 't2', speaker: 'SPEAKER_01', generation: 5 })
+      expect(postDiarizationReviewMock).toHaveBeenCalledWith('n1', { segmentId: 't3', speaker: 'SPEAKER_00', generation: 5 })
     })
     // The already-confirmed turn must NOT be re-posted by the bulk action.
-    expect(postDiarizationReviewMock).not.toHaveBeenCalledWith('n1', { segmentId: 't1', speaker: 'SPEAKER_00' })
+    expect(postDiarizationReviewMock).not.toHaveBeenCalledWith('n1', { segmentId: 't1', speaker: 'SPEAKER_00', generation: 5 })
     expect(postDiarizationReviewMock).toHaveBeenCalledTimes(2)
   })
 
@@ -184,7 +189,7 @@ describe('DiarizationReviewPanel', () => {
     await userEvent.click(screen.getByRole('button', { name: /mark review complete/i }))
 
     await waitFor(() =>
-      expect(postDiarizationReviewMock).toHaveBeenCalledWith('n1', { reviewState: 'completed' }),
+      expect(postDiarizationReviewMock).toHaveBeenCalledWith('n1', { reviewState: 'completed', generation: 5 }),
     )
     await waitFor(() => expect(screen.queryByRole('button', { name: /review speakers/i })).not.toBeInTheDocument())
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()

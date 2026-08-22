@@ -370,6 +370,11 @@ export interface DiarizationReview {
   note_id: string
   review_state: string
   turns: TranscriptSegment[]
+  // Generation is the transcript generation this review was rendered from.
+  // The renderer must echo it back unchanged on every mutation submitted
+  // against this snapshot — see DiarizationReviewUpdate — so the server can
+  // reject a submission against a transcript that has since been replaced.
+  generation: number
 }
 
 /** Server conversation snapshot; null/absent `note_id` denotes a global conversation. */

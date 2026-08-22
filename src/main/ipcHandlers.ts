@@ -740,6 +740,7 @@ export function createHandlers(deps: HandlerDeps): Handlers {
         segment_id: body.segmentId,
         speaker: body.speaker,
         review_state: body.reviewState,
+        generation: body.generation,
       })
     },
 
