@@ -69,6 +69,17 @@ func noteClaimState(t *testing.T, st *store.Store, noteID string) (status string
 // past is discarded before it claims the note: no status change, no claim, no
 // summarize fan-out, and the job itself completes (it is a no-op, not a
 // failure).
+//
+// The final-state assertions alone (job done, note untouched, transcript
+// unchanged) would ALL still pass even with the early check deleted: the late
+// check inside SaveTranscript would reject the same job, and its claim/release
+// would put the note back exactly where it started. That would only prove
+// "touched then correctly reverted", not "touched nothing" — the thing the
+// early check exists to guarantee (skip the network round-trip and the
+// claim/release pair entirely). LastBody() is nil only if /transcribe was
+// never called, which is the one assertion the late-check path cannot also
+// satisfy (it always calls the plugin before SaveTranscript can reject it) —
+// see the mutation check recorded in task-3-report.md.
 func TestRunTranscribeStaleJobDetectedEarlyTouchesNothing(t *testing.T) {
 	tr := plugintest.NewTranscriber()
 	t.Cleanup(tr.Close)
@@ -123,6 +134,15 @@ func TestRunTranscribeStaleJobDetectedEarlyTouchesNothing(t *testing.T) {
 	}
 	if len(got.Segments) != 1 || got.Segments[0].Text != "hi" {
 		t.Fatalf("transcript changed: %+v", got.Segments)
+	}
+
+	// The decisive assertion: the transcribe plugin's HTTP endpoint was never
+	// hit at all. LastBody() is nil only if /transcribe was never called — the
+	// late (post-plugin-call) mismatch path always calls it before rejecting,
+	// so this is what actually distinguishes "discarded before claim" from
+	// "claimed, called the plugin, then discarded and reverted".
+	if body := tr.LastBody(); body != nil {
+		t.Fatalf("transcribe plugin was called (body=%s); a stale job detected early must never reach it", body)
 	}
 
 	if _, ok, _ := st.ClaimJob(ctx, 30*time.Second); ok {
@@ -298,5 +318,138 @@ func TestRunTranscribeStaleJobLateMismatchDoesNotClobberNewerClaim(t *testing.T)
 	}
 	if claimedBy == nil || *claimedBy != winnerJobID {
 		t.Fatalf("transcribing_job_id = %v, want %q (winner's claim must survive)", claimedBy, winnerJobID)
+	}
+}
+
+// TestRunTranscribeRetriedClaimPreservesOriginalPriorStatus is the regression
+// test for H1: a job's FIRST attempt claims the note (displacing "ready"),
+// then fails before ever reaching SaveTranscript (a plain retryable plugin
+// error) — leaving the claim in place, since nothing released it. Process
+// reclaims and retries the SAME job. Without persisting what the ORIGINAL
+// claim displaced, that retry's own re-claim would read the note's CURRENT
+// status ("transcribing", set by the first attempt) as its "prior" — so if
+// the retry then hits a late generation mismatch and releases, it would
+// restore "transcribing" over the note's real prior status ("ready"),
+// permanently losing it. Persisting the original prior status onto the job's
+// own payload at first-claim time, and reusing it on the re-claim, is what
+// keeps "ready" recoverable.
+func TestRunTranscribeRetriedClaimPreservesOriginalPriorStatus(t *testing.T) {
+	ctx := context.Background()
+
+	var calls int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("/info", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(plugin.Info{Name: "stub-retry-transcriber", Version: "0", PluginAPI: 1, Kind: "transcriber"})
+	})
+	trSrv := httptest.NewServer(mux)
+	t.Cleanup(trSrv.Close)
+
+	proc, st, noteID, key := staleTranscribeFixture(t, trSrv.URL)
+
+	// Registered now that st/noteID exist: attempt 1 fails before
+	// SaveTranscript ever runs, leaving the claim it just made in place
+	// (nothing releases it on a plain retryable error). Attempt 2 (the retry)
+	// simulates a concurrent writer bumping the transcript generation while
+	// it's mid-flight, the same way
+	// TestRunTranscribeStaleJobDetectedLateRestoresDisplacedStatus does, so
+	// this attempt's own SaveTranscript hits a late mismatch and must
+	// release — the observable moment H1 is about.
+	mux.HandleFunc("/transcribe", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		if calls == 1 {
+			http.Error(w, "injected failure", http.StatusInternalServerError)
+			return
+		}
+		if _, err := st.Pool().Exec(context.Background(),
+			`UPDATE transcripts SET generation = generation + 1 WHERE note_id = $1`, noteID); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(plugin.TranscribeResponse{
+			Segments: []model.Segment{{StartMS: 0, EndMS: 1000, Text: "retry result", Source: "mic"}},
+			Model:    "stub-retry",
+		})
+	})
+
+	// Establish generation 1 and park the note at "ready" — this is the status
+	// the job's claim will displace, and the value that must survive both
+	// attempts.
+	if _, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "hi", Source: "mic"}},
+	}, 0); err != nil {
+		t.Fatalf("seed transcript: %v", err)
+	}
+	if err := st.SetNoteStatus(ctx, noteID, model.NoteReady); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+
+	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe,
+		json.RawMessage(`{"audio_key":"`+key+`","expected_generation":1}`))
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	// Attempt 1: claims (ready -> transcribing), plugin call fails retryably.
+	job, ok, err := st.ClaimJob(ctx, 30*time.Second)
+	if err != nil || !ok {
+		t.Fatalf("claim job (attempt 1): ok=%v err=%v", ok, err)
+	}
+	proc.Process(ctx, job)
+
+	gotJob, err := st.GetJob(ctx, jobID)
+	if err != nil {
+		t.Fatalf("GetJob after attempt 1: %v", err)
+	}
+	if gotJob.Status != model.JobPending {
+		t.Fatalf("job status after attempt 1 = %q, want %q (retryable failure)", gotJob.Status, model.JobPending)
+	}
+	statusAfterAttempt1, claimedByAfterAttempt1 := noteClaimState(t, st, noteID)
+	if statusAfterAttempt1 != model.NoteTranscribing {
+		t.Fatalf("note status after attempt 1 = %q, want %q (claim still in place)", statusAfterAttempt1, model.NoteTranscribing)
+	}
+	if claimedByAfterAttempt1 == nil || *claimedByAfterAttempt1 != jobID {
+		t.Fatalf("transcribing_job_id after attempt 1 = %v, want %q", claimedByAfterAttempt1, jobID)
+	}
+
+	// Clear the retry lease so ClaimJob can pick it straight back up, the way
+	// the shared drain() helper does.
+	if _, err := st.Pool().Exec(ctx, "UPDATE jobs SET lease_expires_at = NULL WHERE id=$1", jobID); err != nil {
+		t.Fatalf("clear retry lease: %v", err)
+	}
+
+	// Attempt 2 (the retry, same job id): re-claims, then hits a late
+	// generation mismatch and must release.
+	job2, ok, err := st.ClaimJob(ctx, 30*time.Second)
+	if err != nil || !ok {
+		t.Fatalf("claim job (attempt 2): ok=%v err=%v", ok, err)
+	}
+	if job2.ID != jobID {
+		t.Fatalf("attempt 2 claimed a different job: %s, want %s", job2.ID, jobID)
+	}
+	proc.Process(ctx, job2)
+
+	gotJob2, err := st.GetJob(ctx, jobID)
+	if err != nil {
+		t.Fatalf("GetJob after attempt 2: %v", err)
+	}
+	if gotJob2.Status != model.JobDone {
+		t.Fatalf("job status after attempt 2 = %q, want %q (stale-detected-late is a successful no-op)", gotJob2.Status, model.JobDone)
+	}
+
+	// The core assertion: the note must be back at "ready" — the status BEFORE
+	// attempt 1's claim — not "transcribing" (what attempt 2's re-claim would
+	// have wrongly captured as "prior" without the fix).
+	finalStatus, finalClaimedBy := noteClaimState(t, st, noteID)
+	if finalStatus != model.NoteReady {
+		t.Fatalf("note status after retry's release = %q, want %q (original prior status lost)", finalStatus, model.NoteReady)
+	}
+	if finalClaimedBy != nil {
+		t.Fatalf("transcribing_job_id after release = %v, want nil", finalClaimedBy)
+	}
+	if calls != 2 {
+		t.Fatalf("transcribe plugin calls = %d, want 2 (one per attempt)", calls)
 	}
 }

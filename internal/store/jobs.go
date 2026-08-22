@@ -98,11 +98,19 @@ func (s *Store) ClaimJob(ctx context.Context, lease time.Duration) (model.Job, b
 // payload from scratch, so without this update it would keep carrying its
 // original, now-superseded expected_generation and reject its own retry as
 // stale forever. Callers update the payload to the generation their own
-// successful save just produced.
+// successful save just produced. Returns ErrNotFound if no row matched
+// (jobID doesn't exist), so a caller can't mistake a silent no-op for the
+// write actually landing.
 func (s *Store) UpdateJobPayload(ctx context.Context, jobID string, payload json.RawMessage) error {
-	_, err := s.pool.Exec(ctx,
+	ct, err := s.pool.Exec(ctx,
 		`UPDATE jobs SET payload=$2::jsonb, updated_at=now() WHERE id=$1`, jobID, string(payload))
-	return err
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // CompleteJob marks a job done and clears its lease.

@@ -139,12 +139,12 @@ func TestSegmentCoreJSONRoundTrip(t *testing.T) {
 				},
 				Confidence: float64Ptr(0.98),
 			},
-			wantKeys: []string{"id", "start_ms", "end_ms", "text", "source", "speaker", "words", "confidence"},
+			wantKeys: []string{"id", "start_ms", "end_ms", "text", "source", "speaker", "words", "confidence", "provisional"},
 		},
 		{
 			name:     "zero omitted optional",
 			value:    Segment{},
-			wantKeys: []string{"start_ms", "end_ms", "text", "source"},
+			wantKeys: []string{"start_ms", "end_ms", "text", "source", "provisional"},
 		},
 	}
 
@@ -190,12 +190,16 @@ func TestTranscriptCoreJSONRoundTrip(t *testing.T) {
 				},
 				ReviewState: "reviewed",
 			},
-			wantKeys: []string{"id", "note_id", "transcriber_plugin", "model", "segments", "review_state"},
+			// sealed and generation are always on the wire (no omitempty) — the
+			// live-continuity design deliberately exposes them, not internal-only.
+			wantKeys: []string{"id", "note_id", "transcriber_plugin", "model", "segments", "review_state", "sealed", "generation"},
 		},
 		{
 			name:     "zero omitted optional",
 			value:    Transcript{},
-			wantKeys: []string{"id", "note_id", "transcriber_plugin", "model", "segments", "review_state"},
+			// sealed and generation are always on the wire (no omitempty) — the
+			// live-continuity design deliberately exposes them, not internal-only.
+			wantKeys: []string{"id", "note_id", "transcriber_plugin", "model", "segments", "review_state", "sealed", "generation"},
 		},
 	}
 

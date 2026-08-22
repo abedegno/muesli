@@ -123,7 +123,7 @@ func TestTranscriptJSONRoundTrip(t *testing.T) {
 		ReviewState: "reviewed",
 	}
 
-	assertJSONRoundTrip(t, value, []string{"id", "note_id", "transcriber_plugin", "model", "segments", "review_state"})
+	assertJSONRoundTrip(t, value, []string{"id", "note_id", "transcriber_plugin", "model", "segments", "review_state", "sealed", "generation"})
 }
 
 func TestCalendarZeroValues(t *testing.T) {
@@ -215,7 +215,7 @@ func TestCalendarZeroValues(t *testing.T) {
 	t.Run("transcript nil segments", func(t *testing.T) {
 		t.Parallel()
 
-		got := assertJSONRoundTrip(t, Transcript{}, []string{"id", "note_id", "transcriber_plugin", "model", "segments", "review_state"})
+		got := assertJSONRoundTrip(t, Transcript{}, []string{"id", "note_id", "transcriber_plugin", "model", "segments", "review_state", "sealed", "generation"})
 
 		if got.Segments != nil {
 			t.Fatalf("Segments = %#v, want nil", got.Segments)

@@ -52,7 +52,24 @@ func (s *Server) handleRetryJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err = s.deps.Store.EnqueueJob(r.Context(), job.NoteID, job.Type, job.Payload); err != nil {
+	payload := job.Payload
+	if job.Type == model.JobTranscribe {
+		// This re-enqueues a failed job's OWN payload verbatim by default, which
+		// can carry a stale expected_generation the same way handleRetryNote's
+		// did (e.g. the failed run itself partially saved a transcript before
+		// failing on a later step). Refresh it to the note's current transcript
+		// generation, the same way every other transcribe enqueue site does, so
+		// the retry isn't rejected as stale against its own — or someone else's
+		// newer — prior work.
+		refreshed, rerr := refreshTranscribeExpectedGeneration(r.Context(), s.deps.Store, job.NoteID, job.Payload)
+		if rerr != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		payload = refreshed
+	}
+
+	if _, err = s.deps.Store.EnqueueJob(r.Context(), job.NoteID, job.Type, payload); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}

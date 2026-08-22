@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -77,6 +78,27 @@ func buildTranscribeJobPayload(audioKey, modelOverride, languageOverride string,
 		payload["language"] = languageOverride
 	}
 	return json.Marshal(payload)
+}
+
+// refreshTranscribeExpectedGeneration rebuilds a transcribe job's payload with
+// the note's CURRENT transcript generation, overwriting whatever
+// expected_generation the payload already carried. Used by every site that
+// re-enqueues an EXISTING job's own stored payload rather than building a
+// fresh one (handleRetryNote, handleRetryJob) — that stored payload can be
+// stale, since the failed run it came from may have partially saved a
+// transcript before failing on a later step, bumping the generation past
+// what it originally observed at enqueue time.
+func refreshTranscribeExpectedGeneration(ctx context.Context, st *store.Store, noteID string, payload json.RawMessage) (json.RawMessage, error) {
+	expectedGeneration, err := st.CurrentTranscriptGeneration(ctx, noteID)
+	if err != nil {
+		return nil, err
+	}
+	fields := map[string]any{}
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return nil, err
+	}
+	fields["expected_generation"] = expectedGeneration
+	return json.Marshal(fields)
 }
 
 func retranscribeConflictReason(note model.Note) (string, bool) {
@@ -594,19 +616,8 @@ func (s *Server) handleRetryNote(w http.ResponseWriter, r *http.Request) {
 		// Refresh it to what the note's transcript generation actually is now,
 		// the same way every other transcribe enqueue site does, so the retry
 		// isn't rejected as stale against its own prior work.
-		expectedGeneration, err := s.deps.Store.CurrentTranscriptGeneration(r.Context(), id)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-		fields := map[string]any{}
-		if err := json.Unmarshal(job.Payload, &fields); err != nil {
-			writeError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-		fields["expected_generation"] = expectedGeneration
-		refreshed, err := json.Marshal(fields)
-		if err != nil {
+		refreshed, rerr := refreshTranscribeExpectedGeneration(r.Context(), s.deps.Store, id, job.Payload)
+		if rerr != nil {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}

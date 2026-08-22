@@ -32,6 +32,9 @@ func TestWireTypesJSON(t *testing.T) {
 		t.Fatalf("transcribe request json = %s", gotTRReq)
 	}
 
+	// model.Segment.Provisional has no `omitempty` — it is deliberately always
+	// on the wire (live-streamed segments vs. batch ones), so every expected
+	// JSON literal below that embeds a bare Segment carries "provisional":false.
 	genReq := GenerateRequest{
 		Transcript:    []model.Segment{{StartMS: 0, EndMS: 1, Text: "hi", Source: "mic"}},
 		NotesMarkdown: "- note",
@@ -43,7 +46,7 @@ func TestWireTypesJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal generate request: %v", err)
 	}
-	if string(gotGenReq) != `{"transcript":[{"start_ms":0,"end_ms":1,"text":"hi","source":"mic"}],"notes_markdown":"- note","template":{"sections":[{"heading":"Overview","instruction":"Summarise."}]},"options":{"temperature":0},"config":{"cfg":true}}` {
+	if string(gotGenReq) != `{"transcript":[{"start_ms":0,"end_ms":1,"text":"hi","source":"mic","provisional":false}],"notes_markdown":"- note","template":{"sections":[{"heading":"Overview","instruction":"Summarise."}]},"options":{"temperature":0},"config":{"cfg":true}}` {
 		t.Fatalf("generate request json = %s", gotGenReq)
 	}
 
@@ -57,7 +60,7 @@ func TestWireTypesJSON(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal transcribe result: %v", err)
 	}
-	if string(gotTRRes) != `{"segments":[{"start_ms":0,"end_ms":1,"text":"hi","source":"mic"}],"language":"en","model":"m","duration_ms":1}` {
+	if string(gotTRRes) != `{"segments":[{"start_ms":0,"end_ms":1,"text":"hi","source":"mic","provisional":false}],"language":"en","model":"m","duration_ms":1}` {
 		t.Fatalf("transcribe result json = %s", gotTRRes)
 	}
 

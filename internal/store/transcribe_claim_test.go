@@ -48,6 +48,65 @@ func TestClaimNoteForTranscriptionSetsStateAndReturnsPrior(t *testing.T) {
 	}
 }
 
+// TestClaimNoteForTranscriptionReClaimBySameJobReturnsEmptyAndDoesNotOverwrite
+// is the store-level regression test for H1: a second claim call by the SAME
+// job id (simulating a retry after an earlier attempt claimed but failed
+// before saving) must not report the note's now-current "transcribing" status
+// as a fresh "prior" — that would let a caller mistake it for what the
+// ORIGINAL claim displaced (e.g. "ready") and later restore the wrong value.
+// It returns "" instead (no note status is ever the empty string), and the
+// note's own status column is left untouched by the re-claim.
+func TestClaimNoteForTranscriptionReClaimBySameJobReturnsEmptyAndDoesNotOverwrite(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+	if err := st.SetNoteStatus(ctx, noteID, model.NoteReady); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+	jobID1 := uuid.NewString()
+
+	first, err := st.ClaimNoteForTranscription(ctx, noteID, jobID1)
+	if err != nil {
+		t.Fatalf("first claim: %v", err)
+	}
+	if first != model.NoteReady {
+		t.Fatalf("first claim prior = %q, want %q", first, model.NoteReady)
+	}
+
+	// Re-claim by the SAME job id (the retry path).
+	second, err := st.ClaimNoteForTranscription(ctx, noteID, jobID1)
+	if err != nil {
+		t.Fatalf("re-claim: %v", err)
+	}
+	if second != "" {
+		t.Fatalf("re-claim prior = %q, want \"\" (re-claim must not report a fresh prior)", second)
+	}
+
+	// The note's status must still read "transcribing" — the re-claim must not
+	// have touched it (not reverted to "ready", not corrupted to anything else).
+	status, claimedBy := getNoteStatusAndClaim(t, st, noteID)
+	if status != model.NoteTranscribing {
+		t.Fatalf("status after re-claim = %q, want %q", status, model.NoteTranscribing)
+	}
+	if claimedBy == nil || *claimedBy != jobID1 {
+		t.Fatalf("transcribing_job_id after re-claim = %v, want %q", claimedBy, jobID1)
+	}
+
+	// A THIRD claim by a genuinely different job must still get a fresh prior
+	// ("transcribing" — the value the two claims above legitimately produced),
+	// proving the "" sentinel is specific to same-job re-claims, not a general
+	// "never report a prior after the first claim" rule.
+	otherJobID := uuid.NewString()
+	third, err := st.ClaimNoteForTranscription(ctx, noteID, otherJobID)
+	if err != nil {
+		t.Fatalf("third claim (different job): %v", err)
+	}
+	if third != model.NoteTranscribing {
+		t.Fatalf("third claim prior = %q, want %q", third, model.NoteTranscribing)
+	}
+}
+
 // TestReleaseNoteTranscriptionClaimRestoresWhenTokenMatches verifies the
 // straight-line case: nothing else has touched the note since the claim, so
 // release restores exactly the status the claim displaced.
