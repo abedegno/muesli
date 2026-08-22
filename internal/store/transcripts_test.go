@@ -1495,3 +1495,59 @@ func TestAppendTranscriptGapRejectsWrongTranscriptID(t *testing.T) {
 		t.Fatalf("gaps on A = %+v, want none", got.Gaps)
 	}
 }
+
+// TestCreateStreamTranscriptLeavesTranscribeClaimIntact binds the asymmetry the
+// plan's watch-item 1 called for and no test ever covered: SaveTranscript
+// clears notes.transcribing_job_id because a completed transcript is
+// authoritative over the claim it displaced, and CreateStreamTranscript
+// deliberately does NOT, because a stream start is not. Clearing it there would
+// strand a legitimate batch job — its release would match nothing after the
+// generation mismatch that follows, leaving the note stuck at "transcribing"
+// forever. Making the two symmetric left the WHOLE REPO green.
+func TestCreateStreamTranscriptLeavesTranscribeClaimIntact(t *testing.T) {
+	t.Parallel()
+	pool := testutil.NewPool(t)
+	st := store.New(pool)
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	// A stream already owns the note's transcript, so the second start below
+	// supersedes it rather than being refused as batch-owned.
+	first, err := st.CreateStreamTranscript(ctx, noteID, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create first stream transcript: %v", err)
+	}
+
+	jobID := "11111111-1111-1111-1111-111111111111"
+	if _, err := st.ClaimNoteForTranscription(ctx, noteID, jobID); err != nil {
+		t.Fatalf("claim note: %v", err)
+	}
+
+	second, err := st.CreateStreamTranscript(ctx, noteID, "stream-b", "whisper-live", "tiny", first.Generation)
+	if err != nil {
+		t.Fatalf("supersede: %v", err)
+	}
+
+	var claimedBy *string
+	if err := pool.QueryRow(ctx, `SELECT transcribing_job_id FROM notes WHERE id=$1`, noteID).Scan(&claimedBy); err != nil {
+		t.Fatalf("read claim after stream start: %v", err)
+	}
+	if claimedBy == nil || *claimedBy != jobID {
+		t.Fatalf("transcribing_job_id = %v after a stream start, want %q left intact", claimedBy, jobID)
+	}
+
+	// The other half of the asymmetry: a completed batch save DOES clear it.
+	if _, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "batch", Source: "mic"}},
+	}, second.Generation); err != nil {
+		t.Fatalf("batch save: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT transcribing_job_id FROM notes WHERE id=$1`, noteID).Scan(&claimedBy); err != nil {
+		t.Fatalf("read claim after save: %v", err)
+	}
+	if claimedBy != nil {
+		t.Fatalf("transcribing_job_id = %v after SaveTranscript, want nil (cleared)", *claimedBy)
+	}
+}

@@ -172,12 +172,13 @@ func TestRunTranscribeStaleJobDetectedEarlyTouchesNothing(t *testing.T) {
 
 // TestRunTranscribeStaleJobDetectedLateRestoresDisplacedStatus covers the
 // TOCTOU window the early check cannot close: the job's own claim succeeds
-// (matching the generation it observed), but by the time it tries to save,
-// another writer has published a newer transcript. This simulates that other
-// writer directly via SQL rather than through SaveTranscript, standing in for
-// Task 4's CreateStreamTranscript, which is documented to leave the claim
-// column alone (unlike SaveTranscript's unconditional clear) — the one
-// property this test needs and Task 4 hasn't landed yet to provide.
+// (matching the generation it observed), but by the time it tries to save, a
+// live stream has published a newer transcript. The competing writer is the
+// real CreateStreamTranscript, which is what makes this test bind the
+// deliberate asymmetry it depends on — that a stream start leaves
+// notes.transcribing_job_id alone, unlike SaveTranscript's unconditional
+// clear. Make the two symmetric and this test fails: the losing batch job's
+// release matches nothing and the note stays stuck at "transcribing".
 func TestRunTranscribeStaleJobDetectedLateRestoresDisplacedStatus(t *testing.T) {
 	ctx := context.Background()
 
@@ -194,10 +195,10 @@ func TestRunTranscribeStaleJobDetectedLateRestoresDisplacedStatus(t *testing.T) 
 	// The handler needs the store, so wire it up now that staleTranscribeFixture
 	// has built one; register it after the fact by replacing the mux handler.
 	mux.HandleFunc("/transcribe", func(w http.ResponseWriter, r *http.Request) {
-		// Simulate a concurrent writer publishing a newer transcript generation
-		// without touching notes.transcribing_job_id.
-		if _, err := st.Pool().Exec(context.Background(),
-			`UPDATE transcripts SET generation = generation + 1 WHERE note_id = $1`, noteID); err != nil {
+		// A live stream starts while this batch job is mid-flight, superseding
+		// the note's stream-owned transcript (generation 1 -> 2) and leaving
+		// notes.transcribing_job_id alone.
+		if _, err := st.CreateStreamTranscript(context.Background(), noteID, "stream-late", "streaming", "", 1); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
@@ -207,20 +208,24 @@ func TestRunTranscribeStaleJobDetectedLateRestoresDisplacedStatus(t *testing.T) 
 		})
 	})
 
-	// Establish generation 1 and park the note at "ready".
-	if _, err := st.SaveTranscript(ctx, model.Transcript{
-		NoteID:            noteID,
-		TranscriberPlugin: "whisper",
-		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "hi", Source: "mic"}},
-	}, 0); err != nil {
-		t.Fatalf("seed transcript: %v", err)
+	// Establish generation 1 as a STREAM-owned transcript and park the note at
+	// "ready". Stream-owned, because a stream start supersedes a stream-owned
+	// transcript and is refused on a batch-owned one.
+	live, err := st.CreateStreamTranscript(ctx, noteID, "stream-early", "streaming", "", 0)
+	if err != nil {
+		t.Fatalf("seed stream transcript: %v", err)
+	}
+	if err := st.AppendStreamSegment(ctx, live.ID, "stream-early", model.Segment{
+		StartMS: 0, EndMS: 10, Text: "hi", Source: "mic",
+	}); err != nil {
+		t.Fatalf("seed live segment: %v", err)
 	}
 	if err := st.SetNoteStatus(ctx, noteID, model.NoteReady); err != nil {
 		t.Fatalf("set status: %v", err)
 	}
 
 	// Correct at enqueue time (generation is 1); by the time this job reaches
-	// SaveTranscript, the /transcribe handler above has already bumped it to 2.
+	// SaveTranscript, the /transcribe handler above has already moved it to 2.
 	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe,
 		json.RawMessage(`{"audio_key":"`+key+`","expected_generation":1}`))
 	if err != nil {
@@ -248,13 +253,17 @@ func TestRunTranscribeStaleJobDetectedLateRestoresDisplacedStatus(t *testing.T) 
 		t.Fatalf("transcribing_job_id = %v, want nil (released)", claimedBy)
 	}
 
-	// The stale job's own segments must never have been published.
+	// The winner is the live stream's transcript, and the stale batch job's own
+	// segments were never published.
 	got, err := st.GetTranscript(ctx, noteID)
 	if err != nil {
 		t.Fatalf("GetTranscript: %v", err)
 	}
-	if len(got.Segments) != 1 || got.Segments[0].Text != "hi" {
-		t.Fatalf("transcript changed by the stale job: %+v", got.Segments)
+	if got.Generation != 2 || got.StreamID == nil || *got.StreamID != "stream-late" {
+		t.Fatalf("transcript = generation %d stream %v, want generation 2 owned by stream-late", got.Generation, got.StreamID)
+	}
+	if len(got.Segments) != 0 {
+		t.Fatalf("stale job published segments into the live transcript: %+v", got.Segments)
 	}
 
 	// No summarize jobs fanned out from the discarded stale job.
@@ -371,10 +380,11 @@ func TestRunTranscribeRetriedClaimPreservesOriginalPriorStatus(t *testing.T) {
 	// SaveTranscript ever runs, leaving the claim it just made in place
 	// (nothing releases it on a plain retryable error). Attempt 2 (the retry)
 	// simulates a concurrent writer bumping the transcript generation while
-	// it's mid-flight, the same way
-	// TestRunTranscribeStaleJobDetectedLateRestoresDisplacedStatus does, so
-	// this attempt's own SaveTranscript hits a late mismatch and must
-	// release — the observable moment H1 is about.
+	// it's mid-flight (raw SQL here, standing for any competing writer — the
+	// live-stream path specifically is covered by
+	// TestRunTranscribeStaleJobDetectedLateRestoresDisplacedStatus), so this
+	// attempt's own SaveTranscript hits a late mismatch and must release — the
+	// observable moment H1 is about.
 	mux.HandleFunc("/transcribe", func(w http.ResponseWriter, r *http.Request) {
 		calls++
 		if calls == 1 {
