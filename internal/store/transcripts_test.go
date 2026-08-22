@@ -590,7 +590,8 @@ func TestUpdateReviewState_illegal(t *testing.T) {
 
 func TestTranscriptGenerationDefaultsToOne(t *testing.T) {
 	t.Parallel()
-	st := store.New(testutil.NewPool(t))
+	pool := testutil.NewPool(t)
+	st := store.New(pool)
 	ctx := context.Background()
 	noteID := seedNote(t, st)
 
@@ -607,5 +608,23 @@ func TestTranscriptGenerationDefaultsToOne(t *testing.T) {
 	}
 	if saved.Sealed {
 		t.Fatal("new transcript should not be sealed")
+	}
+
+	// Verify the actual database defaults by reading back the row.
+	var generation int
+	var sealed bool
+	var streamID *string
+	if err := pool.QueryRow(ctx, `SELECT generation, sealed, stream_id FROM transcripts WHERE id = $1`, saved.ID).
+		Scan(&generation, &sealed, &streamID); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if generation != 1 {
+		t.Fatalf("database generation = %d, want 1", generation)
+	}
+	if sealed {
+		t.Fatal("database sealed should be false")
+	}
+	if streamID != nil {
+		t.Fatalf("database stream_id should be NULL for batch transcript, got %v", streamID)
 	}
 }
