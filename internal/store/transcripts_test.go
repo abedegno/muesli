@@ -11,6 +11,7 @@ import (
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/store"
 	"github.com/abedegno/muesli/internal/testutil"
+	"github.com/google/uuid"
 )
 
 func TestTranscriptStore(t *testing.T) {
@@ -1087,13 +1088,102 @@ func TestGetTranscriptExposesContinuityMetadata(t *testing.T) {
 	if got.StreamID == nil || *got.StreamID != "stream-a" {
 		t.Fatalf("StreamID = %v, want stream-a", got.StreamID)
 	}
+	if got.Sealed {
+		t.Fatal("Sealed = true, want false: this stream was never replaced")
+	}
+	if got.Generation != 1 {
+		t.Fatalf("Generation = %d, want 1", got.Generation)
+	}
 	if len(got.Gaps) != 2 {
 		t.Fatalf("len(Gaps) = %d, want 2", len(got.Gaps))
 	}
-	if got.Gaps[0].DroppedSamples == nil || *got.Gaps[0].DroppedSamples != 3200 {
-		t.Fatalf("Gaps[0].DroppedSamples = %v, want 3200", got.Gaps[0].DroppedSamples)
+
+	// Field values below are chosen to be mutually distinguishable within a
+	// gap row (a UUID, "stream-a", "server"/"relay" are never equal to one
+	// another), so a scan-target permutation among the row's three string
+	// columns (id, stream_id, origin) lands a wrong value somewhere an
+	// assertion below checks, rather than silently swapping two equal values.
+	g0 := got.Gaps[0]
+	if _, err := uuid.Parse(g0.ID); err != nil {
+		t.Fatalf("Gaps[0].ID = %q, not a valid UUID: %v", g0.ID, err)
 	}
-	if got.Gaps[1].DroppedSamples != nil {
-		t.Fatalf("Gaps[1].DroppedSamples = %v, want nil (open-ended)", got.Gaps[1].DroppedSamples)
+	if g0.TranscriptID != live.ID {
+		t.Fatalf("Gaps[0].TranscriptID = %q, want %q", g0.TranscriptID, live.ID)
+	}
+	if g0.StreamID != "stream-a" {
+		t.Fatalf("Gaps[0].StreamID = %q, want \"stream-a\"", g0.StreamID)
+	}
+	if g0.StartSample != 16000 {
+		t.Fatalf("Gaps[0].StartSample = %d, want 16000", g0.StartSample)
+	}
+	if g0.Origin != "server" {
+		t.Fatalf("Gaps[0].Origin = %q, want \"server\"", g0.Origin)
+	}
+	if g0.DroppedSamples == nil || *g0.DroppedSamples != 3200 {
+		t.Fatalf("Gaps[0].DroppedSamples = %v, want 3200", g0.DroppedSamples)
+	}
+
+	g1 := got.Gaps[1]
+	if _, err := uuid.Parse(g1.ID); err != nil {
+		t.Fatalf("Gaps[1].ID = %q, not a valid UUID: %v", g1.ID, err)
+	}
+	if g1.TranscriptID != live.ID {
+		t.Fatalf("Gaps[1].TranscriptID = %q, want %q", g1.TranscriptID, live.ID)
+	}
+	if g1.StreamID != "stream-a" {
+		t.Fatalf("Gaps[1].StreamID = %q, want \"stream-a\"", g1.StreamID)
+	}
+	if g1.StartSample != 48000 {
+		t.Fatalf("Gaps[1].StartSample = %d, want 48000", g1.StartSample)
+	}
+	if g1.Origin != "relay" {
+		t.Fatalf("Gaps[1].Origin = %q, want \"relay\"", g1.Origin)
+	}
+	if g1.DroppedSamples != nil {
+		t.Fatalf("Gaps[1].DroppedSamples = %v, want nil (open-ended)", g1.DroppedSamples)
+	}
+}
+
+// TestAppendTranscriptGapRejectsSupersededStream binds the prose in
+// AppendTranscriptGap's doc comment — "a superseded stream cannot annotate
+// the transcript that replaced it" — to runtime behavior. Mirrors
+// TestAppendStreamSegmentRejectsSupersededStream.
+func TestAppendTranscriptGapRejectsSupersededStream(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	live, err := st.CreateStreamTranscript(ctx, noteID, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create stream transcript: %v", err)
+	}
+	if err := st.AppendTranscriptGap(ctx, live.ID, "stream-a", model.TranscriptGap{
+		StartSample: 16000, Origin: "server",
+	}); err != nil {
+		t.Fatalf("append gap before replacement: %v", err)
+	}
+
+	if _, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 500, Text: "batch text", Source: "mic"}},
+	}, live.Generation); err != nil {
+		t.Fatalf("batch save: %v", err)
+	}
+
+	// A final gap still in flight now arrives. It must not land anywhere.
+	if err := st.AppendTranscriptGap(ctx, live.ID, "stream-a", model.TranscriptGap{
+		StartSample: 48000, Origin: "relay",
+	}); !errors.Is(err, store.ErrStreamSuperseded) {
+		t.Fatalf("late append gap error = %v, want ErrStreamSuperseded", err)
+	}
+
+	got, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Gaps) != 0 {
+		t.Fatalf("gaps = %+v, want none — the batch transcript carries no gaps", got.Gaps)
 	}
 }
