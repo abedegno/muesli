@@ -14,6 +14,11 @@ import (
 
 var deterministicChannelSpeakerRe = regexp.MustCompile(`^Speaker \d+$`)
 
+// ErrStreamSuperseded is returned when a live write targets a transcript that
+// has been sealed or replaced. It is expected during normal shutdown races: the
+// write should be dropped, never retried.
+var ErrStreamSuperseded = errors.New("stream superseded")
+
 // isDeterministicChannelSpeaker stays coupled to pluginkit.channelSpeaker in
 // internal/pluginkit/multitrack.go so both packages agree on channel labels.
 func isDeterministicChannelSpeaker(speaker string) bool {
@@ -162,53 +167,117 @@ func (s *Store) CurrentTranscriptGeneration(ctx context.Context, noteID string) 
 	return generation, nil
 }
 
-// AppendProvisionalTranscriptSegment ensures a transcript row exists for the
-// note and appends one provisional segment. It is used by the live streaming
-// transcription path; the batch SaveTranscript path still replaces the whole
-// transcript atomically later.
-func (s *Store) AppendProvisionalTranscriptSegment(ctx context.Context, noteID string, tr model.Transcript, seg model.Segment) error {
+// CreateStreamTranscript creates the transcript a live stream owns. It runs at
+// the start handshake, before any audio is accepted, because a gap can occur
+// before the first segment and needs somewhere to live. It replaces whatever
+// was there, carrying the generation forward, so a re-recorded note never mixes
+// two streams' segments under one identity.
+func (s *Store) CreateStreamTranscript(ctx context.Context, noteID, streamID, plugin, modelName string, expectedGeneration int) (model.Transcript, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return model.Transcript{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	// Lock the note row, but deliberately do NOT clear transcribing_job_id here.
+	// SaveTranscript clears it because a completed transcript is authoritative
+	// over any claim it displaced. A stream start is not: if a legitimate batch
+	// job holds the claim, clearing it would strand that job — its release would
+	// match nothing on the generation mismatch that follows, and the note would
+	// stay stuck at 'transcribing' forever. Leaving the claim intact lets the
+	// losing job restore the status it displaced.
+	if _, err := tx.Exec(ctx, `SELECT id FROM notes WHERE id=$1 FOR UPDATE`, noteID); err != nil {
+		return model.Transcript{}, err
+	}
+
+	var priorID string
+	var priorGeneration int
+	err = tx.QueryRow(ctx, `SELECT id, generation FROM transcripts WHERE note_id=$1`, noteID).
+		Scan(&priorID, &priorGeneration)
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return model.Transcript{}, err
+	}
+	if priorGeneration != expectedGeneration {
+		return model.Transcript{}, ErrGenerationMismatch
+	}
+	if priorID != "" {
+		if _, err := tx.Exec(ctx, `UPDATE transcripts SET sealed=TRUE WHERE id=$1`, priorID); err != nil {
+			return model.Transcript{}, err
+		}
+		if _, err := tx.Exec(ctx, `DELETE FROM transcripts WHERE note_id=$1`, noteID); err != nil {
+			return model.Transcript{}, err
+		}
+	}
+
+	tr := model.Transcript{
+		ID:                uuid.NewString(),
+		NoteID:            noteID,
+		StreamID:          &streamID,
+		TranscriberPlugin: plugin,
+		Model:             modelName,
+		ReviewState:       model.ReviewStateCompleted,
+		Generation:        priorGeneration + 1,
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO transcripts (id, note_id, transcriber_plugin, model, review_state, stream_id, generation)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+		tr.ID, tr.NoteID, tr.TranscriberPlugin, tr.Model, tr.ReviewState, streamID, tr.Generation); err != nil {
+		return model.Transcript{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return model.Transcript{}, err
+	}
+	return tr, nil
+}
+
+// AppendStreamSegment appends one provisional segment to the transcript this
+// stream owns. The SELECT ... FOR UPDATE is the guard: it takes the same row
+// lock replacement takes, so this either observes a live parent it now holds,
+// or finds none and reports ErrStreamSuperseded. Without the lock the insert
+// could instead fail with a foreign-key violation whose timing depends on the
+// scheduler.
+func (s *Store) AppendStreamSegment(ctx context.Context, transcriptID, streamID string, seg model.Segment) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 
-	// Create the transcript row on first live segment, but never overwrite an
-	// existing row for the note.
-	_, err = tx.Exec(ctx,
-		`INSERT INTO transcripts (id, note_id, transcriber_plugin, model, review_state)
-		 VALUES ($1,$2,$3,$4,$5)
-		 ON CONFLICT (note_id) DO NOTHING`,
-		uuid.NewString(), noteID, tr.TranscriberPlugin, tr.Model, model.ReviewStateCompleted)
-	if err != nil {
+	var found string
+	err = tx.QueryRow(ctx,
+		`SELECT id FROM transcripts
+		  WHERE id=$1 AND stream_id=$2 AND sealed=FALSE
+		  FOR UPDATE`,
+		transcriptID, streamID).Scan(&found)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrStreamSuperseded
+	} else if err != nil {
 		return err
 	}
 
-	var transcriptID string
-	if err := tx.QueryRow(ctx, `SELECT id FROM transcripts WHERE note_id=$1`, noteID).Scan(&transcriptID); err != nil {
-		return err
-	}
-
-	segID := uuid.NewString()
 	var speaker *string
 	if seg.Speaker != "" {
 		speaker = &seg.Speaker
 	}
 	var wordsJSON []byte
 	if len(seg.Words) > 0 {
-		wordsJSON, err = json.Marshal(seg.Words)
-		if err != nil {
+		if wordsJSON, err = json.Marshal(seg.Words); err != nil {
 			return err
 		}
 	}
-	_, err = tx.Exec(ctx,
-		`INSERT INTO transcript_segments (id, transcript_id, start_ms, end_ms, text, source, speaker, words, confidence, provisional)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
-		segID, transcriptID, seg.StartMS, seg.EndMS, seg.Text, seg.Source, speaker, wordsJSON, seg.Confidence, true)
-	if err != nil {
-		return err
+	var boundary *string
+	if seg.Boundary != "" {
+		boundary = &seg.Boundary
 	}
 
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO transcript_segments
+		   (id, transcript_id, start_ms, end_ms, text, source, speaker, words, confidence, provisional, boundary)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,TRUE,$10)`,
+		uuid.NewString(), transcriptID, seg.StartMS, seg.EndMS, seg.Text, seg.Source,
+		speaker, wordsJSON, seg.Confidence, boundary); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 

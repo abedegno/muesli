@@ -697,3 +697,46 @@ func TestSaveTranscriptRejectsStaleExpectedGeneration(t *testing.T) {
 		t.Fatalf("Generation = %d, want 2", generation)
 	}
 }
+
+// TestAppendStreamSegmentRejectsSupersededStream verifies the bug #724 fixes:
+// a live final that arrives after batch transcription has replaced the
+// transcript must not land in the batch transcript it no longer owns.
+func TestAppendStreamSegmentRejectsSupersededStream(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	live, err := st.CreateStreamTranscript(ctx, noteID, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create stream transcript: %v", err)
+	}
+	if err := st.AppendStreamSegment(ctx, live.ID, "stream-a", model.Segment{
+		StartMS: 0, EndMS: 500, Text: "live text", Source: "mic",
+	}); err != nil {
+		t.Fatalf("append before replacement: %v", err)
+	}
+
+	if _, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 500, Text: "batch text", Source: "mic"}},
+	}, live.Generation); err != nil {
+		t.Fatalf("batch save: %v", err)
+	}
+
+	// A final still in flight now arrives. It must not land anywhere.
+	if err := st.AppendStreamSegment(ctx, live.ID, "stream-a", model.Segment{
+		StartMS: 500, EndMS: 900, Text: "late live text", Source: "mic",
+	}); !errors.Is(err, store.ErrStreamSuperseded) {
+		t.Fatalf("late append error = %v, want ErrStreamSuperseded", err)
+	}
+
+	got, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Segments) != 1 || got.Segments[0].Text != "batch text" {
+		t.Fatalf("segments = %+v, want exactly the batch segment", got.Segments)
+	}
+}

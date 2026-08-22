@@ -201,17 +201,17 @@ func drain(t *testing.T, proc *worker.Processor, st *store.Store) {
 func seedProvisionalTranscript(t *testing.T, st *store.Store, noteID string) {
 	t.Helper()
 	ctx := context.Background()
-	if err := st.AppendProvisionalTranscriptSegment(ctx, noteID, model.Transcript{
-		NoteID:            noteID,
-		TranscriberPlugin: "live-stub",
-		Model:             "stream",
-	}, model.Segment{
+	live, err := st.CreateStreamTranscript(ctx, noteID, "test-stream", "live-stub", "stream", 0)
+	if err != nil {
+		t.Fatalf("CreateStreamTranscript: %v", err)
+	}
+	if err := st.AppendStreamSegment(ctx, live.ID, "test-stream", model.Segment{
 		StartMS: 0,
 		EndMS:   1000,
 		Text:    "provisional segment",
 		Source:  "mic",
 	}); err != nil {
-		t.Fatalf("AppendProvisionalTranscriptSegment: %v", err)
+		t.Fatalf("AppendStreamSegment: %v", err)
 	}
 	if err := st.SetNotePartialTranscript(ctx, noteID, true); err != nil {
 		t.Fatalf("SetNotePartialTranscript: %v", err)

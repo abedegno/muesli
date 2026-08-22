@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"net/http"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/abedegno/muesli/internal/plugin"
 	"github.com/abedegno/muesli/internal/store"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
@@ -46,6 +48,25 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 		return
 	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	// Interim stream identity. Plan 2 replaces this with the client-supplied
+	// stream_id from the start handshake; the mechanism below is unchanged by
+	// that swap.
+	streamID := uuid.NewString()
+
+	expectedGeneration, err := s.deps.Store.CurrentTranscriptGeneration(r.Context(), noteID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	liveTranscript, err := s.deps.Store.CreateStreamTranscript(
+		r.Context(), noteID, streamID, "streaming", "", expectedGeneration)
+	if err != nil {
+		// Creating the owner must precede accepting audio: a gap can occur
+		// before the first segment and needs a transcript to attach to.
+		writeError(w, http.StatusConflict, "note is being transcribed")
 		return
 	}
 
@@ -195,9 +216,16 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 					seg.Speaker = *ev.Speaker
 				}
 				if ev.Final {
-					if err := s.deps.Store.AppendProvisionalTranscriptSegment(r.Context(), noteID, model.Transcript{
-						TranscriberPlugin: plug.Name,
-					}, seg); err != nil {
+					if err := s.deps.Store.AppendStreamSegment(r.Context(), liveTranscript.ID, streamID, seg); err != nil {
+						if errors.Is(err, store.ErrStreamSuperseded) {
+							// Batch transcription replaced this transcript while a
+							// final was in flight. Dropping it is correct — the
+							// batch result supersedes it.
+							slog.InfoContext(r.Context(), "dropping final for superseded stream",
+								"note_id", noteID, "stream_id", streamID)
+							closeAll()
+							return
+						}
 						closeAll()
 						return
 					}
