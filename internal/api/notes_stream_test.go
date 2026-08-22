@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -446,5 +447,190 @@ func TestNoteStreamHandlesPluginDropWithoutFailingNote(t *testing.T) {
 	}
 	if got.Status == model.NoteFailed {
 		t.Fatal("plugin drop should not fail the note")
+	}
+}
+
+// TestNoteStreamWithoutPluginPreservesExistingBatchTranscript is the regression
+// test for the start handshake destroying the note's existing transcript before
+// the server knew whether it could transcribe anything at all.
+//
+// The stream endpoint used to create (and therefore seal, delete and CASCADE
+// the segments of) the note's transcript before upgrading the socket and before
+// looking for a streaming plugin, so this exact request — no streaming plugin
+// registered — replied "unavailable" to a note it had just emptied. The loss
+// could be permanent: retranscribe refuses a note whose retention_state is
+// "discarded", for which the transcript is the only surviving record.
+func TestNoteStreamWithoutPluginPreservesExistingBatchTranscript(t *testing.T) {
+	srv, st, _, hdr := streamTestServer(t)
+	httpSrv := httptest.NewServer(srv.Handler())
+	defer httpSrv.Close()
+	ctx := context.Background()
+
+	noteRec := doJSON(t, srv, http.MethodPost, "/api/notes", map[string]string{"title": "Batch"}, hdr)
+	if noteRec.Code != http.StatusCreated {
+		t.Fatalf("create note: %d %s", noteRec.Code, noteRec.Body)
+	}
+	var note struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(noteRec.Body.Bytes(), &note)
+
+	saved, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            note.ID,
+		TranscriberPlugin: "whisper",
+		Model:             "tiny",
+		Segments: []model.Segment{
+			{StartMS: 0, EndMS: 500, Text: "batch one", Source: "mic"},
+			{StartMS: 500, EndMS: 900, Text: "batch two", Source: "mic"},
+		},
+	}, 0)
+	if err != nil {
+		t.Fatalf("seed batch transcript: %v", err)
+	}
+
+	conn, resp, err := websocket.DefaultDialer.Dial(wsURLFromHTTP(httpSrv.URL)+"/api/notes/"+note.ID+"/stream", http.Header{
+		"Authorization": []string{hdr["Authorization"]},
+	})
+	if err != nil {
+		t.Fatalf("dial: %v resp=%v", err, resp)
+	}
+	defer conn.Close()
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+
+	_, payload, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read unavailable: %v", err)
+	}
+	var msg map[string]any
+	if err := json.Unmarshal(payload, &msg); err != nil {
+		t.Fatalf("decode control message: %v", err)
+	}
+	if msg["type"] != "unavailable" {
+		t.Fatalf("message = %v, want type=unavailable", msg)
+	}
+
+	got, err := st.GetTranscript(ctx, note.ID)
+	if err != nil {
+		t.Fatalf("get transcript after stream attempt: %v", err)
+	}
+	if got.ID != saved.ID {
+		t.Fatalf("transcript id = %q, want the original %q — the stream attempt replaced it", got.ID, saved.ID)
+	}
+	if got.Generation != saved.Generation {
+		t.Fatalf("generation = %d, want %d (untouched)", got.Generation, saved.Generation)
+	}
+	if got.StreamID != nil {
+		t.Fatalf("stream_id = %v, want nil (still batch-owned)", *got.StreamID)
+	}
+	if len(got.Segments) != 2 {
+		t.Fatalf("segments = %d (%+v), want the 2 seeded batch segments", len(got.Segments), got.Segments)
+	}
+}
+
+// TestNoteStreamOnBatchTranscriptIsRefusedWithReason covers the same note with
+// a streaming plugin that IS available: the handshake gets as far as an open
+// plugin session and is then refused by the store, because spec §7 scopes
+// supersession to a stream-owned transcript. The batch transcript survives and
+// the client is told why.
+func TestNoteStreamOnBatchTranscriptIsRefusedWithReason(t *testing.T) {
+	srv, st, _, hdr := streamTestServer(t)
+	ctx := context.Background()
+
+	fake := newFakeStreamingPlugin(t, "plugin-token", []fakeStreamingSegment{{AfterFrames: 1, Text: "ok", StartMS: 0, EndMS: 1}}, 0)
+	pluginID := registerPlugin(t, srv, hdr, model.PluginStreamingTranscriber, "batch-refusal-test", fake.URL(), "plugin-token")
+	if err := st.SetDefaultPlugin(ctx, pluginID); err != nil {
+		t.Fatalf("set default plugin: %v", err)
+	}
+	httpSrv := httptest.NewServer(srv.Handler())
+	defer httpSrv.Close()
+
+	noteID := createStreamingNote(t, srv, hdr, "Batch owned")
+	saved, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Model:             "tiny",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 500, Text: "batch one", Source: "mic"}},
+	}, 0)
+	if err != nil {
+		t.Fatalf("seed batch transcript: %v", err)
+	}
+
+	conn := openStream(t, httpSrv.URL, noteID, strings.TrimPrefix(hdr["Authorization"], "Bearer "))
+	// Bounded: a regression here leaves the stream open and healthy, so an
+	// unbounded read would hang until the package test timeout instead of
+	// failing.
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+
+	_, payload, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read control message: %v", err)
+	}
+	var msg map[string]any
+	if err := json.Unmarshal(payload, &msg); err != nil {
+		t.Fatalf("decode control message: %v", err)
+	}
+	if msg["type"] != "unavailable" || msg["reason"] != "batch_transcript_exists" {
+		t.Fatalf("message = %v, want type=unavailable reason=batch_transcript_exists", msg)
+	}
+
+	got, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("get transcript: %v", err)
+	}
+	if got.ID != saved.ID || len(got.Segments) != 1 {
+		t.Fatalf("transcript = %+v, want the seeded batch transcript intact", got)
+	}
+}
+
+// TestNoteStreamWithoutPluginPreservesExistingStreamTranscript binds the
+// ORDERING half of the fix on its own. The batch-transcript test above cannot:
+// with supersession scoped to stream-owned transcripts, a batch transcript
+// survives an early create too. Here the note's existing transcript is
+// stream-owned, so the store would happily supersede it — the only thing
+// standing between a note with no streaming plugin and an emptied transcript is
+// that creation now happens after the plugin session opens.
+func TestNoteStreamWithoutPluginPreservesExistingStreamTranscript(t *testing.T) {
+	srv, st, _, hdr := streamTestServer(t)
+	httpSrv := httptest.NewServer(srv.Handler())
+	defer httpSrv.Close()
+	ctx := context.Background()
+
+	noteID := createStreamingNote(t, srv, hdr, "Previous live")
+	prior, err := st.CreateStreamTranscript(ctx, noteID, "stream-earlier", "streaming", "", 0)
+	if err != nil {
+		t.Fatalf("seed stream transcript: %v", err)
+	}
+	if err := st.AppendStreamSegment(ctx, prior.ID, "stream-earlier", model.Segment{
+		StartMS: 0, EndMS: 500, Text: "earlier live text", Source: "mic",
+	}); err != nil {
+		t.Fatalf("seed live segment: %v", err)
+	}
+
+	conn := openStream(t, httpSrv.URL, noteID, strings.TrimPrefix(hdr["Authorization"], "Bearer "))
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
+	_, payload, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("read unavailable: %v", err)
+	}
+	var msg map[string]any
+	if err := json.Unmarshal(payload, &msg); err != nil {
+		t.Fatalf("decode control message: %v", err)
+	}
+	if msg["type"] != "unavailable" {
+		t.Fatalf("message = %v, want type=unavailable", msg)
+	}
+
+	got, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("get transcript after stream attempt: %v", err)
+	}
+	if got.ID != prior.ID {
+		t.Fatalf("transcript id = %q, want the prior stream transcript %q — a failed start superseded it", got.ID, prior.ID)
+	}
+	if got.Generation != prior.Generation {
+		t.Fatalf("generation = %d, want %d (untouched)", got.Generation, prior.Generation)
+	}
+	if len(got.Segments) != 1 {
+		t.Fatalf("segments = %d (%+v), want the 1 seeded live segment", len(got.Segments), got.Segments)
 	}
 }

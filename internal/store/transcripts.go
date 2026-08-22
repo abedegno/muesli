@@ -19,6 +19,14 @@ var deterministicChannelSpeakerRe = regexp.MustCompile(`^Speaker \d+$`)
 // write should be dropped, never retried.
 var ErrStreamSuperseded = errors.New("stream superseded")
 
+// ErrBatchTranscriptExists is returned by CreateStreamTranscript when the note
+// already holds a batch-authored transcript (stream_id IS NULL). Spec §7 scopes
+// supersession to a note that already has a STREAM-owned transcript, so this is
+// a permanent refusal rather than a race: no expected generation makes it
+// succeed and a caller must never retry it. It is deliberately distinct from
+// ErrGenerationMismatch, which does mean "re-read the generation and retry".
+var ErrBatchTranscriptExists = errors.New("note already has a batch transcript")
+
 // testHookAfterPriorTranscriptRead runs between reading the prior transcript
 // row and writing the replacement. It is nil in production and exists so tests
 // can hold one writer in the window the note-row lock is there to close.
@@ -176,11 +184,18 @@ func (s *Store) CurrentTranscriptGeneration(ctx context.Context, noteID string) 
 	return generation, nil
 }
 
-// CreateStreamTranscript creates the transcript a live stream owns. It runs at
-// the start handshake, before any audio is accepted, because a gap can occur
-// before the first segment and needs somewhere to live. It replaces whatever
-// was there, carrying the generation forward, so a re-recorded note never mixes
-// two streams' segments under one identity.
+// CreateStreamTranscript creates the transcript a live stream owns. It runs
+// once the plugin session is open and before any audio is accepted, because a
+// gap can occur before the first segment and needs somewhere to live.
+//
+// It supersedes a STREAM-owned transcript — sealing it and publishing a fresh
+// row at generation+1, rather than reusing the old row, so a re-recorded note
+// never mixes two streams' segments under one identity. It refuses a
+// BATCH-owned one with ErrBatchTranscriptExists: spec §7 scopes supersession to
+// "a new start for a note that already has a stream-owned transcript", and a
+// batch transcript can be a note's only surviving record of what was said
+// (retranscribe is refused once retention_state is "discarded"), so replacing
+// it here would be an unrecoverable loss.
 func (s *Store) CreateStreamTranscript(ctx context.Context, noteID, streamID, plugin, modelName string, expectedGeneration int) (model.Transcript, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -201,8 +216,9 @@ func (s *Store) CreateStreamTranscript(ctx context.Context, noteID, streamID, pl
 
 	var priorID string
 	var priorGeneration int
-	err = tx.QueryRow(ctx, `SELECT id, generation FROM transcripts WHERE note_id=$1`, noteID).
-		Scan(&priorID, &priorGeneration)
+	var priorStreamID *string
+	err = tx.QueryRow(ctx, `SELECT id, generation, stream_id FROM transcripts WHERE note_id=$1`, noteID).
+		Scan(&priorID, &priorGeneration, &priorStreamID)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return model.Transcript{}, err
 	}
@@ -211,6 +227,13 @@ func (s *Store) CreateStreamTranscript(ctx context.Context, noteID, streamID, pl
 		testHookAfterPriorTranscriptRead()
 	}
 
+	// Ownership is checked before the generation, because it is the permanent
+	// condition of the two: reporting a generation mismatch for a batch-owned
+	// transcript would invite a caller to re-read and retry a call that can
+	// never succeed.
+	if priorID != "" && priorStreamID == nil {
+		return model.Transcript{}, ErrBatchTranscriptExists
+	}
 	if priorGeneration != expectedGeneration {
 		return model.Transcript{}, ErrGenerationMismatch
 	}

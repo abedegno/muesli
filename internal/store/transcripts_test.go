@@ -1327,3 +1327,65 @@ func TestReviewMutatorsRejectStaleGeneration(t *testing.T) {
 		t.Fatalf("SetReviewState current: %v", err)
 	}
 }
+
+// TestCreateStreamTranscriptRefusesBatchOwnedTranscript binds the ownership
+// scope spec §7 defines: a new stream start supersedes a STREAM-owned
+// transcript and refuses a BATCH-owned one. Both halves are asserted here, so
+// removing the refusal shows up as a batch transcript and its segments being
+// deleted rather than merely as a missing error.
+func TestCreateStreamTranscriptRefusesBatchOwnedTranscript(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	batch, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments: []model.Segment{
+			{StartMS: 0, EndMS: 500, Text: "batch one", Source: "mic"},
+			{StartMS: 500, EndMS: 900, Text: "batch two", Source: "mic"},
+		},
+	}, 0)
+	if err != nil {
+		t.Fatalf("seed batch transcript: %v", err)
+	}
+
+	// The generation is correct, so nothing but the ownership rule can reject
+	// this call.
+	if _, err := st.CreateStreamTranscript(ctx, noteID, "stream-a", "whisper-live", "tiny", batch.Generation); !errors.Is(err, store.ErrBatchTranscriptExists) {
+		t.Fatalf("create over batch transcript = %v, want ErrBatchTranscriptExists", err)
+	}
+
+	got, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.ID != batch.ID {
+		t.Fatalf("transcript id = %q, want the batch transcript %q", got.ID, batch.ID)
+	}
+	if got.Generation != batch.Generation {
+		t.Fatalf("generation = %d, want %d (untouched)", got.Generation, batch.Generation)
+	}
+	if got.StreamID != nil {
+		t.Fatalf("stream_id = %v, want nil (still batch-owned)", *got.StreamID)
+	}
+	if len(got.Segments) != 2 {
+		t.Fatalf("segments = %d (%+v), want the 2 batch segments — CASCADE deleted them", len(got.Segments), got.Segments)
+	}
+
+	// The other half of §7: a stream-owned transcript IS superseded, so the
+	// refusal above is scoped to ownership and not a blanket ban on replacement.
+	other := seedNote(t, st)
+	first, err := st.CreateStreamTranscript(ctx, other, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create first stream transcript: %v", err)
+	}
+	second, err := st.CreateStreamTranscript(ctx, other, "stream-b", "whisper-live", "tiny", first.Generation)
+	if err != nil {
+		t.Fatalf("supersede stream transcript: %v", err)
+	}
+	if second.Generation != first.Generation+1 {
+		t.Fatalf("superseding generation = %d, want %d", second.Generation, first.Generation+1)
+	}
+}
