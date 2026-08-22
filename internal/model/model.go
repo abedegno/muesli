@@ -216,6 +216,13 @@ type Segment struct {
 	Speaker    string   `json:"speaker,omitempty"`
 	Words      []Word   `json:"words,omitempty"`
 	Confidence *float64 `json:"confidence,omitempty"`
+	// Boundary is why this segment ended: "" natural, "forced" when a full
+	// window forced a commit. No consumer joins segments across a forced
+	// boundary — a forced commit can bisect a word.
+	Boundary string `json:"boundary,omitempty"`
+	// Provisional marks a segment written by a live stream, which batch
+	// transcription replaces wholesale.
+	Provisional bool `json:"provisional"`
 }
 
 // Transcript is one transcription run plus its segments.
@@ -226,6 +233,30 @@ type Transcript struct {
 	Model             string    `json:"model"`
 	Segments          []Segment `json:"segments"`
 	ReviewState       string    `json:"review_state"`
+	// StreamID is set when a live stream authored this transcript, nil for a
+	// batch-authored one. Live writes assert it, so a superseded stream cannot
+	// write into the transcript that replaced it.
+	StreamID *string `json:"stream_id,omitempty"`
+	// Sealed marks a transcript no live stream may write to.
+	Sealed bool `json:"sealed"`
+	// Generation increments on every replacement. Mutators carry the value they
+	// were rendered from and fail on mismatch. 0 means "no transcript".
+	Generation int `json:"generation"`
+	// Gaps are intervals of audio that never reached a transcriber, ordered by
+	// StartSample. Nil DroppedSamples means open-ended.
+	Gaps []TranscriptGap `json:"gaps,omitempty"`
+}
+
+// TranscriptGap is an interval of audio that never reached a transcriber.
+// DroppedSamples is nil for an open-ended interval — one whose end is unknown
+// because the participant that would have closed it died.
+type TranscriptGap struct {
+	ID             string `json:"id,omitempty"`
+	TranscriptID   string `json:"transcript_id,omitempty"`
+	StreamID       string `json:"stream_id"`
+	StartSample    int64  `json:"start_sample"`
+	DroppedSamples *int64 `json:"dropped_samples,omitempty"`
+	Origin         string `json:"origin"`
 }
 
 // SummarySection is one rendered section of a summary.

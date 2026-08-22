@@ -57,11 +57,11 @@ func (s *Store) SaveTranscript(ctx context.Context, tr model.Transcript) (model.
 	tr.ReviewState = reviewState
 
 	tr.ID = uuid.NewString()
-	_, err = tx.Exec(ctx,
-		`INSERT INTO transcripts (id, note_id, transcriber_plugin, model, review_state)
-		 VALUES ($1,$2,$3,$4,$5)`,
-		tr.ID, tr.NoteID, tr.TranscriberPlugin, tr.Model, tr.ReviewState)
-	if err != nil {
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO transcripts (id, note_id, transcriber_plugin, model, review_state, generation)
+		 VALUES ($1,$2,$3,$4,$5,1)
+		 RETURNING generation`,
+		tr.ID, tr.NoteID, tr.TranscriberPlugin, tr.Model, tr.ReviewState).Scan(&tr.Generation); err != nil {
 		return model.Transcript{}, err
 	}
 	for i := range tr.Segments {

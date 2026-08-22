@@ -587,3 +587,25 @@ func TestUpdateReviewState_illegal(t *testing.T) {
 		})
 	}
 }
+
+func TestTranscriptGenerationDefaultsToOne(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	saved, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "hi", Source: "mic"}},
+	})
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if saved.Generation != 1 {
+		t.Fatalf("Generation = %d, want 1", saved.Generation)
+	}
+	if saved.Sealed {
+		t.Fatal("new transcript should not be sealed")
+	}
+}
