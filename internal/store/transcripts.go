@@ -37,8 +37,45 @@ func (s *Store) SaveTranscript(ctx context.Context, tr model.Transcript) (model.
 	}
 	defer tx.Rollback(ctx)
 
-	// Idempotency: drop any existing transcript for this note (cascades segments).
-	// The unique index on note_id keeps this to a single row.
+	// Serialise every writer for this note on a row that always exists, and
+	// clear any outstanding transcribe claim in the same statement. Two things
+	// are happening here and both are load-bearing:
+	//
+	//   - UPDATE takes the note's row lock. A FOR UPDATE on transcripts cannot
+	//     lock a row that is not there yet, so two concurrent first-writers
+	//     would both see no transcript and then race the unique note_id index.
+	//   - Clearing transcribing_job_id means a losing job's release can no
+	//     longer match its own token, so it cannot undo this save's outcome.
+	//     Nothing else clears it: runTranscribe has no status advance after a
+	//     successful save, and may leave the note transcribing while awaiting
+	//     review or summarization.
+	if _, err := tx.Exec(ctx,
+		`UPDATE notes SET transcribing_job_id=NULL WHERE id=$1`, tr.NoteID); err != nil {
+		return model.Transcript{}, err
+	}
+
+	nextGeneration := 1
+	var priorID string
+	var priorGeneration int
+	err = tx.QueryRow(ctx,
+		`SELECT id, generation FROM transcripts WHERE note_id=$1`,
+		tr.NoteID).Scan(&priorID, &priorGeneration)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		nextGeneration = 1
+	case err != nil:
+		return model.Transcript{}, err
+	default:
+		nextGeneration = priorGeneration + 1
+		// Seal as part of the locked replacement protocol. This does not publish
+		// a visible sealed state — the UPDATE and DELETE commit together, so no
+		// other transaction ever observes a committed sealed version of this
+		// row. It protects rows that remain present, and documents intent.
+		if _, err := tx.Exec(ctx, `UPDATE transcripts SET sealed=TRUE WHERE id=$1`, priorID); err != nil {
+			return model.Transcript{}, err
+		}
+	}
+
 	if _, err := tx.Exec(ctx, `DELETE FROM transcripts WHERE note_id=$1`, tr.NoteID); err != nil {
 		return model.Transcript{}, err
 	}
@@ -59,9 +96,9 @@ func (s *Store) SaveTranscript(ctx context.Context, tr model.Transcript) (model.
 	tr.ID = uuid.NewString()
 	if err := tx.QueryRow(ctx,
 		`INSERT INTO transcripts (id, note_id, transcriber_plugin, model, review_state, generation)
-		 VALUES ($1,$2,$3,$4,$5,1)
+		 VALUES ($1,$2,$3,$4,$5,$6)
 		 RETURNING generation`,
-		tr.ID, tr.NoteID, tr.TranscriberPlugin, tr.Model, tr.ReviewState).Scan(&tr.Generation); err != nil {
+		tr.ID, tr.NoteID, tr.TranscriberPlugin, tr.Model, tr.ReviewState, nextGeneration).Scan(&tr.Generation); err != nil {
 		return model.Transcript{}, err
 	}
 	for i := range tr.Segments {

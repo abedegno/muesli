@@ -628,3 +628,30 @@ func TestTranscriptGenerationDefaultsToOne(t *testing.T) {
 		t.Fatalf("database stream_id should be NULL for batch transcript, got %v", streamID)
 	}
 }
+
+func TestTranscriptGenerationIncrementsOnReplacement(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	base := model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "one", Source: "mic"}},
+	}
+	first, err := st.SaveTranscript(ctx, base)
+	if err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	second, err := st.SaveTranscript(ctx, base)
+	if err != nil {
+		t.Fatalf("second save: %v", err)
+	}
+	if first.Generation != 1 || second.Generation != 2 {
+		t.Fatalf("generations = %d, %d; want 1, 2", first.Generation, second.Generation)
+	}
+	if second.ID == first.ID {
+		t.Fatal("replacement should be a new transcript row")
+	}
+}
