@@ -46,7 +46,7 @@ func buildSharedNoteFixture(t *testing.T, srv *api.Server, st *store.Store, owne
 			Text:    transcriptText,
 			Source:  "mic",
 		}},
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatalf("save transcript: %v", err)
 	}
 	tmpls, err := st.BuiltInTemplates(context.Background())
@@ -163,7 +163,7 @@ func TestSharedNoteSiblingContentNeverLeaks(t *testing.T) {
 		TranscriberPlugin: "test-transcriber",
 		Model:             "test-model",
 		Segments:          []model.Segment{{StartMS: 0, EndMS: 1000, Text: "Alpha transcript", Source: "mic"}},
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatalf("save transcript a: %v", err)
 	}
 	if _, err := st.SaveTranscript(ctx, model.Transcript{
@@ -171,7 +171,7 @@ func TestSharedNoteSiblingContentNeverLeaks(t *testing.T) {
 		TranscriberPlugin: "test-transcriber",
 		Model:             "test-model",
 		Segments:          []model.Segment{{StartMS: 0, EndMS: 1000, Text: "Beta transcript", Source: "mic"}},
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatalf("save transcript b: %v", err)
 	}
 	tmpls, err := st.BuiltInTemplates(ctx)

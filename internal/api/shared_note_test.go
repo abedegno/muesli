@@ -52,7 +52,7 @@ func TestGetSharedNote(t *testing.T) {
 			Text:    "Shared transcript content",
 			Source:  "mic",
 		}},
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatalf("save transcript: %v", err)
 	}
 	readySummaryID, err := st.CreatePendingSummary(ctx, sharedNote.ID, tmpls[0].ID)
@@ -87,7 +87,7 @@ func TestGetSharedNote(t *testing.T) {
 			Text:    "Foreign transcript content",
 			Source:  "mic",
 		}},
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatalf("save foreign transcript: %v", err)
 	}
 	foreignSummaryID, err := st.CreatePendingSummary(ctx, foreignNote.ID, tmpls[0].ID)

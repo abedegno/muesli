@@ -376,6 +376,39 @@ func (s *Store) SetNoteStatus(ctx context.Context, noteID, status string) error 
 	return nil
 }
 
+// ClaimNoteForTranscription marks the note transcribing, records which job did
+// so, and returns the status it displaced — all in one statement, so no other
+// writer can slip between the read and the write.
+//
+// The prior status comes from a FOR UPDATE row lock in the UPDATE's own FROM
+// clause, not a "WITH prev AS (... FOR UPDATE) UPDATE ... RETURNING (SELECT
+// status FROM prev)" CTE. That form looks equivalent but is not: verified
+// against Postgres 16, RETURNING (SELECT status FROM prev) comes back NULL
+// even though prev's FOR UPDATE lock succeeds and the UPDATE itself affects
+// the row. The FROM-subquery form gives the same atomic before/after read and
+// returns the correct value.
+func (s *Store) ClaimNoteForTranscription(ctx context.Context, noteID, jobID string) (string, error) {
+	var prior string
+	err := s.pool.QueryRow(ctx,
+		`UPDATE notes n SET status=$2, transcribing_job_id=$3, updated_at=now()
+		 FROM (SELECT status FROM notes WHERE id=$1 FOR UPDATE) AS prev
+		 WHERE n.id=$1
+		 RETURNING prev.status`,
+		noteID, model.NoteTranscribing, jobID).Scan(&prior)
+	return prior, err
+}
+
+// ReleaseNoteTranscriptionClaim undoes ClaimNoteForTranscription, but only while
+// this job's own claim still stands. If any other writer has moved the note or
+// claimed it since, the newer state wins and this is a no-op.
+func (s *Store) ReleaseNoteTranscriptionClaim(ctx context.Context, noteID, jobID, prior string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE notes SET status=$1, transcribing_job_id=NULL, updated_at=now()
+		  WHERE id=$2 AND status=$3 AND transcribing_job_id=$4`,
+		prior, noteID, model.NoteTranscribing, jobID)
+	return err
+}
+
 // MarkNoteReady atomically transitions a note to ready and reports whether
 // THIS call performed the transition (won=true) via a single
 // UPDATE ... WHERE status <> 'ready' RowsAffected check. This is the only

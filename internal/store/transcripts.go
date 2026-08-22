@@ -25,12 +25,18 @@ func isDeterministicChannelSpeaker(speaker string) bool {
 // transcripts(note_id) unique index (migration 0003) guarantees at most one
 // transcript row per note even under concurrent/retried transcribe jobs.
 //
+// expectedGeneration must match the note's current transcript generation (0
+// meaning "no transcript yet") or the call fails with ErrGenerationMismatch
+// and nothing is written. This is what stops a stale transcribe job — one
+// enqueued against an older generation — from overwriting a newer
+// retranscription that has since completed.
+//
 // review_state is set automatically:
 //   - Acoustic diarization guesses speaker labels ("SPEAKER_00", ...) and needs
 //     confirming before summarizing → "pending".
 //   - Channel-based multitrack ("You"/"Them") is deterministic, and no-speaker
 //     transcripts have nothing to review → "completed".
-func (s *Store) SaveTranscript(ctx context.Context, tr model.Transcript) (model.Transcript, error) {
+func (s *Store) SaveTranscript(ctx context.Context, tr model.Transcript, expectedGeneration int) (model.Transcript, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return model.Transcript{}, err
@@ -67,6 +73,17 @@ func (s *Store) SaveTranscript(ctx context.Context, tr model.Transcript) (model.
 		return model.Transcript{}, err
 	default:
 		nextGeneration = priorGeneration + 1
+	}
+
+	// In the pgx.ErrNoRows branch priorGeneration is 0, so this one comparison
+	// also covers "expected none, found none". Checked before the seal write
+	// below so a stale caller's mismatch is caught without touching anything;
+	// the transaction rolls back on return either way.
+	if priorGeneration != expectedGeneration {
+		return model.Transcript{}, ErrGenerationMismatch
+	}
+
+	if priorID != "" {
 		// Seal as part of the locked replacement protocol. This does not publish
 		// a visible sealed state — the UPDATE and DELETE commit together, so no
 		// other transaction ever observes a committed sealed version of this
@@ -127,6 +144,22 @@ func (s *Store) SaveTranscript(ctx context.Context, tr model.Transcript) (model.
 		return model.Transcript{}, err
 	}
 	return tr, nil
+}
+
+// CurrentTranscriptGeneration returns the note's current transcript generation,
+// or 0 when the note has no transcript. Callers pass the result as an expected
+// generation, so 0 correctly means "expect none". Reads the generation
+// directly rather than through GetTranscript, which does not select it.
+func (s *Store) CurrentTranscriptGeneration(ctx context.Context, noteID string) (int, error) {
+	var generation int
+	err := s.pool.QueryRow(ctx, `SELECT generation FROM transcripts WHERE note_id=$1`, noteID).Scan(&generation)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	return generation, nil
 }
 
 // AppendProvisionalTranscriptSegment ensures a transcript row exists for the

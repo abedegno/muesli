@@ -662,7 +662,7 @@ func TestResummarizeAPI(t *testing.T) {
 		TranscriberPlugin: "test",
 		Model:             "m",
 		Segments:          []model.Segment{{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic"}},
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatalf("SaveTranscript: %v", err)
 	}
 	tmpls, _ := st.BuiltInTemplates(ctx)

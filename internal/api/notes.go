@@ -64,8 +64,12 @@ func decodeOptionalJSONBody(r *http.Request, dst any) error {
 	return nil
 }
 
-func buildTranscribeJobPayload(audioKey, modelOverride, languageOverride string) (json.RawMessage, error) {
-	payload := map[string]string{"audio_key": audioKey}
+// buildTranscribeJobPayload builds a transcribe job payload. expectedGeneration
+// is the transcript generation observed at enqueue time (0 when the note had
+// no transcript yet) — SaveTranscript rejects the job once the transcript has
+// moved on, so a stale retranscribe cannot overwrite a newer result.
+func buildTranscribeJobPayload(audioKey, modelOverride, languageOverride string, expectedGeneration int) (json.RawMessage, error) {
+	payload := map[string]any{"audio_key": audioKey, "expected_generation": expectedGeneration}
 	if modelOverride != "" {
 		payload["model"] = modelOverride
 	}
@@ -462,7 +466,15 @@ func (s *Server) handleRetranscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	payload, err := buildTranscribeJobPayload(note.AudioObjectKey, req.Model, req.Language)
+	// Carry the transcript generation this retranscribe was requested against, so
+	// a job that loses a race against a newer one (e.g. a concurrent retranscribe,
+	// or a live-stream finalize) is rejected instead of overwriting the winner.
+	expectedGeneration, err := s.deps.Store.CurrentTranscriptGeneration(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	payload, err := buildTranscribeJobPayload(note.AudioObjectKey, req.Model, req.Language, expectedGeneration)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -574,7 +586,33 @@ func (s *Server) handleRetryNote(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if err := s.deps.Store.RetryNote(r.Context(), id, job.Type, job.Payload); err != nil {
+	payload := job.Payload
+	if job.Type == model.JobTranscribe {
+		// The failed job's own payload carries the expected_generation observed
+		// when IT was enqueued, which may since be stale (e.g. the failed run
+		// itself partially saved a transcript before failing on a later step).
+		// Refresh it to what the note's transcript generation actually is now,
+		// the same way every other transcribe enqueue site does, so the retry
+		// isn't rejected as stale against its own prior work.
+		expectedGeneration, err := s.deps.Store.CurrentTranscriptGeneration(r.Context(), id)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		fields := map[string]any{}
+		if err := json.Unmarshal(job.Payload, &fields); err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		fields["expected_generation"] = expectedGeneration
+		refreshed, err := json.Marshal(fields)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		payload = refreshed
+	}
+	if err := s.deps.Store.RetryNote(r.Context(), id, job.Type, payload); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}

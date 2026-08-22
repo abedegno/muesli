@@ -44,7 +44,7 @@ func TestHandleGetDiarizationReview(t *testing.T) {
 			{StartMS: 1000, EndMS: 2000, Text: "world", Source: "mic", Speaker: "SPEAKER_01"},
 		},
 	}
-	if _, err := st.SaveTranscript(ctx, tr); err != nil {
+	if _, err := st.SaveTranscript(ctx, tr, 0); err != nil {
 		t.Fatalf("save transcript: %v", err)
 	}
 
@@ -107,7 +107,7 @@ func TestHandlePostDiarizationReview_confirmSpeaker(t *testing.T) {
 			{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic", Speaker: "SPEAKER_00"},
 		},
 	}
-	saved, err := st.SaveTranscript(ctx, tr)
+	saved, err := st.SaveTranscript(ctx, tr, 0)
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -163,7 +163,7 @@ func TestHandlePostDiarizationReview_advanceState(t *testing.T) {
 			{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic", Speaker: "SPEAKER_00"},
 		},
 	}
-	if _, err := st.SaveTranscript(ctx, tr); err != nil {
+	if _, err := st.SaveTranscript(ctx, tr, 0); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
@@ -221,7 +221,7 @@ func TestHandlePostDiarizationReview_completionEnqueuesSummaries(t *testing.T) {
 			{StartMS: 1000, EndMS: 2000, Text: "there", Source: "mic", Speaker: "SPEAKER_01"},
 		},
 	}
-	if _, err := st.SaveTranscript(ctx, tr); err != nil {
+	if _, err := st.SaveTranscript(ctx, tr, 0); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
@@ -294,7 +294,7 @@ func TestHandlePostDiarizationReview_segmentOnlyDoesNotEnqueueSummaries(t *testi
 			{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic", Speaker: "SPEAKER_00"},
 		},
 	}
-	saved, err := st.SaveTranscript(ctx, tr)
+	saved, err := st.SaveTranscript(ctx, tr, 0)
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -350,7 +350,7 @@ func TestHandlePostDiarizationReview_emptyBody(t *testing.T) {
 			{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic", Speaker: "SPEAKER_00"},
 		},
 	}
-	if _, err := st.SaveTranscript(ctx, tr); err != nil {
+	if _, err := st.SaveTranscript(ctx, tr, 0); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 

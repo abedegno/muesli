@@ -2,6 +2,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 
@@ -25,7 +26,7 @@ func TestTranscriptStore(t *testing.T) {
 			{StartMS: 1000, EndMS: 2000, Text: "world", Source: "system", Speaker: "spk1"},
 		},
 	}
-	saved, err := st.SaveTranscript(ctx, tr)
+	saved, err := st.SaveTranscript(ctx, tr, 0)
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -96,7 +97,7 @@ func TestTranscriptWordsRoundTrip(t *testing.T) {
 				},
 			},
 		}
-		saved, err := st.SaveTranscript(ctx, tr)
+		saved, err := st.SaveTranscript(ctx, tr, 0)
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -134,7 +135,7 @@ func TestTranscriptWordsRoundTrip(t *testing.T) {
 				{StartMS: 0, EndMS: 1000, Text: "hello", Source: "mic"},
 			},
 		}
-		saved, err := st.SaveTranscript(ctx, tr)
+		saved, err := st.SaveTranscript(ctx, tr, 0)
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -174,7 +175,7 @@ func TestTranscriptConfidenceRoundTrip(t *testing.T) {
 				{StartMS: 0, EndMS: 1000, Text: "hello", Source: "mixed", Confidence: floatPtr(0.87)},
 			},
 		}
-		_, err := st.SaveTranscript(ctx, tr)
+		_, err := st.SaveTranscript(ctx, tr, 0)
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -201,7 +202,7 @@ func TestTranscriptConfidenceRoundTrip(t *testing.T) {
 				{StartMS: 0, EndMS: 1000, Text: "hello", Source: "mixed"},
 			},
 		}
-		_, err := st.SaveTranscript(ctx, tr)
+		_, err := st.SaveTranscript(ctx, tr, 0)
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -225,7 +226,7 @@ func TestTranscriptConfidenceRoundTrip(t *testing.T) {
 				{StartMS: 0, EndMS: 1000, Text: "hello", Source: "mixed", Confidence: floatPtr(0.0)},
 			},
 		}
-		_, err := st.SaveTranscript(ctx, tr)
+		_, err := st.SaveTranscript(ctx, tr, 0)
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -277,7 +278,7 @@ func TestSaveTranscript_reviewState(t *testing.T) {
 				{StartMS: 1000, EndMS: 2000, Text: "world", Source: "mic"},
 			},
 		}
-		saved, err := st.SaveTranscript(ctx, tr)
+		saved, err := st.SaveTranscript(ctx, tr, 0)
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -304,7 +305,7 @@ func TestSaveTranscript_reviewState(t *testing.T) {
 				{StartMS: 1000, EndMS: 2000, Text: "world", Source: "mic"},
 			},
 		}
-		saved, err := st.SaveTranscript(ctx, tr)
+		saved, err := st.SaveTranscript(ctx, tr, 0)
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -331,7 +332,7 @@ func TestSaveTranscript_reviewState(t *testing.T) {
 				{StartMS: 1000, EndMS: 2000, Text: "hello", Source: "system", Speaker: model.SpeakerThem},
 			},
 		}
-		saved, err := st.SaveTranscript(ctx, tr)
+		saved, err := st.SaveTranscript(ctx, tr, 0)
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -352,7 +353,7 @@ func TestSaveTranscript_reviewState(t *testing.T) {
 				{StartMS: 2000, EndMS: 3000, Text: "third", Source: "channel 2", Speaker: "Speaker 3"},
 			},
 		}
-		saved, err := st.SaveTranscript(ctx, tr)
+		saved, err := st.SaveTranscript(ctx, tr, 0)
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -389,7 +390,7 @@ func TestGetDiarizationReview(t *testing.T) {
 			{StartMS: 2000, EndMS: 3000, Text: "no confidence", Source: "mic", Speaker: "SPEAKER_00"},
 		},
 	}
-	_, err := st.SaveTranscript(ctx, tr)
+	_, err := st.SaveTranscript(ctx, tr, 0)
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -440,7 +441,7 @@ func TestConfirmSegmentSpeaker(t *testing.T) {
 			{StartMS: 0, EndMS: 1000, Text: "hello", Source: "mic", Speaker: "SPEAKER_00"},
 		},
 	}
-	saved, err := st.SaveTranscript(ctx, tr)
+	saved, err := st.SaveTranscript(ctx, tr, 0)
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -499,7 +500,7 @@ func TestUpdateReviewState_valid(t *testing.T) {
 				Model:             "base",
 				Segments:          []model.Segment{{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic", Speaker: "SPEAKER_00"}},
 			}
-			if _, err := st.SaveTranscript(ctx, tr); err != nil {
+			if _, err := st.SaveTranscript(ctx, tr, 0); err != nil {
 				t.Fatalf("save: %v", err)
 			}
 
@@ -571,7 +572,7 @@ func TestUpdateReviewState_illegal(t *testing.T) {
 				Model:             "base",
 				Segments:          []model.Segment{{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic", Speaker: "SPEAKER_00"}},
 			}
-			if _, err := st.SaveTranscript(ctx, tr); err != nil {
+			if _, err := st.SaveTranscript(ctx, tr, 0); err != nil {
 				t.Fatalf("save: %v", err)
 			}
 
@@ -599,7 +600,7 @@ func TestTranscriptGenerationDefaultsToOne(t *testing.T) {
 		NoteID:            noteID,
 		TranscriberPlugin: "whisper",
 		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "hi", Source: "mic"}},
-	})
+	}, 0)
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -640,11 +641,11 @@ func TestTranscriptGenerationIncrementsOnReplacement(t *testing.T) {
 		TranscriberPlugin: "whisper",
 		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "one", Source: "mic"}},
 	}
-	first, err := st.SaveTranscript(ctx, base)
+	first, err := st.SaveTranscript(ctx, base, 0)
 	if err != nil {
 		t.Fatalf("first save: %v", err)
 	}
-	second, err := st.SaveTranscript(ctx, base)
+	second, err := st.SaveTranscript(ctx, base, first.Generation)
 	if err != nil {
 		t.Fatalf("second save: %v", err)
 	}
@@ -653,5 +654,46 @@ func TestTranscriptGenerationIncrementsOnReplacement(t *testing.T) {
 	}
 	if second.ID == first.ID {
 		t.Fatal("replacement should be a new transcript row")
+	}
+}
+
+// TestSaveTranscriptRejectsStaleExpectedGeneration verifies that SaveTranscript
+// rejects a caller carrying a transcript generation the note has since moved
+// past — the mechanism that stops an older transcribe job from overwriting a
+// newer retranscription (spec §7).
+func TestSaveTranscriptRejectsStaleExpectedGeneration(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	base := model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "one", Source: "mic"}},
+	}
+	// First job: expects no transcript.
+	first, err := st.SaveTranscript(ctx, base, 0)
+	if err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	// A retranscribe enqueued against generation 1 publishes generation 2.
+	if _, err := st.SaveTranscript(ctx, base, first.Generation); err != nil {
+		t.Fatalf("retranscribe save: %v", err)
+	}
+	// An older job, enqueued when no transcript existed, must not publish.
+	if _, err := st.SaveTranscript(ctx, base, 0); !errors.Is(err, store.ErrGenerationMismatch) {
+		t.Fatalf("stale job error = %v, want ErrGenerationMismatch", err)
+	}
+
+	// GetTranscript does not select generation until Task 6, so confirm the
+	// stale save left the note on generation 2 via CurrentTranscriptGeneration
+	// (the same read path production callers use), not GetTranscript.
+	generation, err := st.CurrentTranscriptGeneration(ctx, noteID)
+	if err != nil {
+		t.Fatalf("current generation: %v", err)
+	}
+	if generation != 2 {
+		t.Fatalf("Generation = %d, want 2", generation)
 	}
 }

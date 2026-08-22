@@ -72,7 +72,7 @@ func addTranscript(t *testing.T, st *store.Store, noteID string, segs []model.Se
 		TranscriberPlugin: "whisper",
 		Model:             "base",
 		Segments:          segs,
-	})
+	}, 0)
 	if err != nil {
 		t.Fatalf("SaveTranscript: %v", err)
 	}

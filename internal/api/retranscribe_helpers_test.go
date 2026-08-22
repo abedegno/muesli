@@ -108,7 +108,7 @@ func TestRetranscribeConflictReason(t *testing.T) {
 func TestBuildTranscribeJobPayload(t *testing.T) {
 	t.Parallel()
 
-	payload, err := buildTranscribeJobPayload("notes/1/audio/a.webm", "", "")
+	payload, err := buildTranscribeJobPayload("notes/1/audio/a.webm", "", "", 0)
 	if err != nil {
 		t.Fatalf("buildTranscribeJobPayload: %v", err)
 	}
@@ -116,11 +116,11 @@ func TestBuildTranscribeJobPayload(t *testing.T) {
 	if err := json.Unmarshal(payload, &got); err != nil {
 		t.Fatalf("unmarshal payload: %v", err)
 	}
-	if len(got) != 1 || got["audio_key"] != "notes/1/audio/a.webm" {
-		t.Fatalf("payload = %#v, want only audio_key", got)
+	if len(got) != 2 || got["audio_key"] != "notes/1/audio/a.webm" || got["expected_generation"] != float64(0) {
+		t.Fatalf("payload = %#v, want only audio_key and expected_generation", got)
 	}
 
-	payload, err = buildTranscribeJobPayload("notes/1/audio/a.webm", "large-v3", "fr")
+	payload, err = buildTranscribeJobPayload("notes/1/audio/a.webm", "large-v3", "fr", 3)
 	if err != nil {
 		t.Fatalf("buildTranscribeJobPayload: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestBuildTranscribeJobPayload(t *testing.T) {
 	if err := json.Unmarshal(payload, &got); err != nil {
 		t.Fatalf("unmarshal payload: %v", err)
 	}
-	if got["audio_key"] != "notes/1/audio/a.webm" || got["model"] != "large-v3" || got["language"] != "fr" {
-		t.Fatalf("payload = %#v, want audio_key/model/language", got)
+	if got["audio_key"] != "notes/1/audio/a.webm" || got["model"] != "large-v3" || got["language"] != "fr" || got["expected_generation"] != float64(3) {
+		t.Fatalf("payload = %#v, want audio_key/model/language/expected_generation", got)
 	}
 }

@@ -100,7 +100,7 @@ func createNoteWithTranscript(t *testing.T, srv *Server, st *store.Store, hdr ma
 		TranscriberPlugin: "test",
 		Model:             "m",
 		Segments:          []model.Segment{{StartMS: 1000, EndMS: 2000, Text: text, Source: "mic"}},
-	}); err != nil {
+	}, 0); err != nil {
 		t.Fatalf("SaveTranscript: %v", err)
 	}
 	return note.ID

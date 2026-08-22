@@ -208,7 +208,15 @@ haveFile:
 		return
 	}
 
-	payload, _ := json.Marshal(map[string]string{"audio_key": grant.Key})
+	// The note was just created above, so it has no transcript yet — but read the
+	// generation the same way every enqueue site does rather than assuming 0, so
+	// this stays correct if note creation ever starts a transcript some other way.
+	expectedGeneration, err := s.deps.Store.CurrentTranscriptGeneration(r.Context(), note.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	payload, _ := json.Marshal(map[string]any{"audio_key": grant.Key, "expected_generation": expectedGeneration})
 	if _, err := s.deps.Store.EnqueueJob(r.Context(), note.ID, model.JobTranscribe, payload); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

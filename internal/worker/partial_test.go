@@ -132,7 +132,17 @@ func TestFullSuccessAfterPartialRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetNoteByID for audio key: %v", err)
 	}
-	payload := json.RawMessage(`{"audio_key":"` + n.AudioObjectKey + `"}`)
+	// The failed run's own transcribe job already partially saved a transcript
+	// (generation 1) before failing, so the retry must carry the generation
+	// observed now, not 0 — mirroring what handleRetryNote does in production.
+	expectedGeneration, err := st.CurrentTranscriptGeneration(ctx, noteID)
+	if err != nil {
+		t.Fatalf("CurrentTranscriptGeneration: %v", err)
+	}
+	payload, err := json.Marshal(map[string]any{"audio_key": n.AudioObjectKey, "expected_generation": expectedGeneration})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
 	if err := st.RetryNote(ctx, noteID, model.JobTranscribe, payload); err != nil {
 		t.Fatalf("RetryNote: %v", err)
 	}

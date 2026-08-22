@@ -151,6 +151,11 @@ type transcribePayload struct {
 	AudioKey string `json:"audio_key"`
 	Model    string `json:"model,omitempty"`
 	Language string `json:"language,omitempty"`
+	// ExpectedGeneration is the transcript generation observed when this job was
+	// enqueued; 0 when the note had no transcript. SaveTranscript rejects the
+	// job if the transcript has moved on, so a stale job cannot overwrite a
+	// newer result.
+	ExpectedGeneration int `json:"expected_generation"`
 }
 
 // mergeModelOverride returns a per-call copy of baseConfig with its "model"
@@ -195,7 +200,27 @@ func buildTranscribeRequest(signedURL string, plug model.Plugin, cfg config.Conf
 // runTranscribe returns (retryable, error). On success it stores the transcript,
 // applies retention, fans out summarize jobs, and advances the note.
 func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, error) {
-	if err := p.store.SetNoteStatus(ctx, job.NoteID, model.NoteTranscribing); err != nil {
+	// Decode the payload and check the expected generation BEFORE anything is
+	// mutated, so a stale job (enqueued against a generation a newer job has
+	// since replaced) touches nothing. This must happen ahead of the claim
+	// below, not just ahead of SaveTranscript.
+	var pl transcribePayload
+	_ = json.Unmarshal(job.Payload, &pl)
+	currentGeneration, err := p.store.CurrentTranscriptGeneration(ctx, job.NoteID)
+	if err != nil {
+		return true, err
+	}
+	if currentGeneration != pl.ExpectedGeneration {
+		slog.InfoContext(ctx, "stale transcribe job discarded before claim: transcript generation has moved on",
+			"job_id", job.ID, "note_id", job.NoteID, "expected_generation", pl.ExpectedGeneration, "current_generation", currentGeneration)
+		return false, nil
+	}
+
+	// Claim the note (recording this job's id) rather than a bare status write,
+	// so a late mismatch — detected only after SaveTranscript, below — can
+	// restore precisely what this job displaced instead of guessing.
+	priorStatus, err := p.store.ClaimNoteForTranscription(ctx, job.NoteID, job.ID)
+	if err != nil {
 		return true, err
 	}
 	note, err := p.store.GetNoteByID(ctx, job.NoteID)
@@ -203,8 +228,7 @@ func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, err
 		return false, err
 	}
 	audioKey := note.AudioObjectKey
-	var pl transcribePayload
-	if json.Unmarshal(job.Payload, &pl) == nil && pl.AudioKey != "" {
+	if pl.AudioKey != "" {
 		audioKey = pl.AudioKey
 	}
 	if audioKey == "" {
@@ -247,9 +271,39 @@ func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, err
 		TranscriberPlugin: plug.Name,
 		Model:             resp.Model,
 		Segments:          resp.Segments,
-	})
+	}, pl.ExpectedGeneration)
+	if errors.Is(err, store.ErrGenerationMismatch) {
+		// Detected late: a newer job won while this one was mid-transcription.
+		// Restore whatever status this job's claim displaced. If the winner has
+		// already saved, its own SaveTranscript cleared transcribing_job_id, so
+		// this release matches nothing and is a harmless no-op.
+		if rerr := p.store.ReleaseNoteTranscriptionClaim(ctx, job.NoteID, job.ID, priorStatus); rerr != nil {
+			slog.WarnContext(ctx, "stale transcribe: failed to release claim", "error", rerr, "job_id", job.ID, "note_id", job.NoteID)
+		}
+		slog.InfoContext(ctx, "stale transcribe job discarded after claim: transcript generation moved on while running",
+			"job_id", job.ID, "note_id", job.NoteID, "expected_generation", pl.ExpectedGeneration)
+		return false, nil
+	}
 	if err != nil {
 		return true, err
+	}
+
+	// This job's own transcript is now durably saved at saved.Generation. If a
+	// later step below fails retryably, Process reclaims this same job and
+	// runTranscribe runs again from a fresh decode of job.Payload — so without
+	// persisting the advance here, that retry would still carry the
+	// expected_generation captured at enqueue time and reject its own already-
+	// saved work as stale on every subsequent attempt. This only ever advances
+	// a generation this job itself just produced; a different job's newer save
+	// is still caught the normal way, by this job's next attempt observing a
+	// generation beyond what it persisted here.
+	if saved.Generation != pl.ExpectedGeneration {
+		pl.ExpectedGeneration = saved.Generation
+		if updatedPayload, merr := json.Marshal(pl); merr != nil {
+			slog.WarnContext(ctx, "failed to marshal advanced expected_generation", "error", merr, "job_id", job.ID, "note_id", job.NoteID)
+		} else if uerr := p.store.UpdateJobPayload(ctx, job.ID, updatedPayload); uerr != nil {
+			slog.WarnContext(ctx, "failed to persist advanced expected_generation on job payload", "error", uerr, "job_id", job.ID, "note_id", job.NoteID)
+		}
 	}
 
 	// If the plugin returned a partial result, mark the note and fail

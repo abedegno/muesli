@@ -64,7 +64,7 @@ func TestGetNoteFull(t *testing.T) {
 	_, _ = st.SaveTranscript(ctx, model.Transcript{
 		NoteID: note.ID, TranscriberPlugin: "stub", Model: "m",
 		Segments: []model.Segment{{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic"}},
-	})
+	}, 0)
 	sumID, _ := st.CreatePendingSummary(ctx, note.ID, tmpls[0].ID)
 	_ = st.CompleteSummary(ctx, sumID, "ollama", "llama3", []model.SummarySection{
 		{Heading: "Overview", ContentMarkdown: "It happened."},
@@ -127,7 +127,7 @@ func TestGetNoteFullSpeakerAliasSubstitution(t *testing.T) {
 		Segments: []model.Segment{
 			{StartMS: 0, EndMS: 1000, Text: "Hello", Source: "mic", Speaker: "SPEAKER_00"},
 		},
-	})
+	}, 0)
 	if err != nil {
 		t.Fatalf("save transcript: %v", err)
 	}

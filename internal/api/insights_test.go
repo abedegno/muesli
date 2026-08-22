@@ -126,7 +126,7 @@ func seedInsightMeeting(t *testing.T, st *store.Store, ownerID, title string, cr
 				Text:    "meeting",
 				Source:  "test",
 			}},
-		}); err != nil {
+		}, 0); err != nil {
 			t.Fatalf("save transcript: %v", err)
 		}
 	}
