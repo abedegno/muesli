@@ -1045,3 +1045,55 @@ func TestAppendBeforeReplacementIsDeletedByIt(t *testing.T) {
 		t.Fatal("surviving segment should be the batch one, not provisional")
 	}
 }
+
+func TestGetTranscriptExposesContinuityMetadata(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	live, err := st.CreateStreamTranscript(ctx, noteID, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := st.AppendStreamSegment(ctx, live.ID, "stream-a", model.Segment{
+		StartMS: 0, EndMS: 500, Text: "cut off", Source: "mic", Boundary: "forced",
+	}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	dropped := int64(3200)
+	if err := st.AppendTranscriptGap(ctx, live.ID, "stream-a", model.TranscriptGap{
+		StartSample: 16000, DroppedSamples: &dropped, Origin: "server",
+	}); err != nil {
+		t.Fatalf("append gap: %v", err)
+	}
+	// Open-ended: the participant that would close it died.
+	if err := st.AppendTranscriptGap(ctx, live.ID, "stream-a", model.TranscriptGap{
+		StartSample: 48000, Origin: "relay",
+	}); err != nil {
+		t.Fatalf("append open gap: %v", err)
+	}
+
+	got, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Segments) != 1 || !got.Segments[0].Provisional {
+		t.Fatalf("segments = %+v, want one provisional", got.Segments)
+	}
+	if got.Segments[0].Boundary != "forced" {
+		t.Fatalf("Boundary = %q, want \"forced\"", got.Segments[0].Boundary)
+	}
+	if got.StreamID == nil || *got.StreamID != "stream-a" {
+		t.Fatalf("StreamID = %v, want stream-a", got.StreamID)
+	}
+	if len(got.Gaps) != 2 {
+		t.Fatalf("len(Gaps) = %d, want 2", len(got.Gaps))
+	}
+	if got.Gaps[0].DroppedSamples == nil || *got.Gaps[0].DroppedSamples != 3200 {
+		t.Fatalf("Gaps[0].DroppedSamples = %v, want 3200", got.Gaps[0].DroppedSamples)
+	}
+	if got.Gaps[1].DroppedSamples != nil {
+		t.Fatalf("Gaps[1].DroppedSamples = %v, want nil (open-ended)", got.Gaps[1].DroppedSamples)
+	}
+}

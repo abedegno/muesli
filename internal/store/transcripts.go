@@ -295,12 +295,47 @@ func (s *Store) AppendStreamSegment(ctx context.Context, transcriptID, streamID 
 	return tx.Commit(ctx)
 }
 
-// GetTranscript returns a note's transcript with ordered segments.
+// AppendTranscriptGap records an interval of audio that never reached a
+// transcriber. Conditional on the stream still owning an unsealed transcript,
+// so a superseded stream cannot annotate the transcript that replaced it. A nil
+// DroppedSamples stores an open-ended interval.
+func (s *Store) AppendTranscriptGap(ctx context.Context, transcriptID, streamID string, g model.TranscriptGap) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var found string
+	err = tx.QueryRow(ctx,
+		`SELECT id FROM transcripts
+		  WHERE id=$1 AND stream_id=$2 AND sealed=FALSE
+		  FOR UPDATE`,
+		transcriptID, streamID).Scan(&found)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrStreamSuperseded
+	} else if err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO transcript_gaps (id, transcript_id, stream_id, start_sample, dropped_samples, origin)
+		 VALUES ($1,$2,$3,$4,$5,$6)`,
+		uuid.NewString(), transcriptID, streamID, g.StartSample, g.DroppedSamples, g.Origin); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// GetTranscript returns a note's transcript with ordered segments, plus the
+// stream/continuity metadata (StreamID, Sealed, Generation, Gaps) every
+// consumer in spec §9 reads through this one call.
 func (s *Store) GetTranscript(ctx context.Context, noteID string) (model.Transcript, error) {
 	var tr model.Transcript
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, note_id, transcriber_plugin, model, review_state FROM transcripts WHERE note_id=$1`, noteID).
-		Scan(&tr.ID, &tr.NoteID, &tr.TranscriberPlugin, &tr.Model, &tr.ReviewState)
+		`SELECT id, note_id, transcriber_plugin, model, review_state, stream_id, sealed, generation
+		 FROM transcripts WHERE note_id=$1`, noteID).
+		Scan(&tr.ID, &tr.NoteID, &tr.TranscriberPlugin, &tr.Model, &tr.ReviewState, &tr.StreamID, &tr.Sealed, &tr.Generation)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return model.Transcript{}, ErrNotFound
 	}
@@ -308,7 +343,8 @@ func (s *Store) GetTranscript(ctx context.Context, noteID string) (model.Transcr
 		return model.Transcript{}, err
 	}
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, start_ms, end_ms, text, source, COALESCE(speaker,''), words, confidence
+		`SELECT id, start_ms, end_ms, text, source, COALESCE(speaker,''), words, confidence,
+		        provisional, COALESCE(boundary,'')
 		 FROM transcript_segments WHERE transcript_id=$1 ORDER BY start_ms`, tr.ID)
 	if err != nil {
 		return model.Transcript{}, err
@@ -318,7 +354,8 @@ func (s *Store) GetTranscript(ctx context.Context, noteID string) (model.Transcr
 		var seg model.Segment
 		var wordsJSON []byte
 		var confidence *float64
-		if err := rows.Scan(&seg.ID, &seg.StartMS, &seg.EndMS, &seg.Text, &seg.Source, &seg.Speaker, &wordsJSON, &confidence); err != nil {
+		if err := rows.Scan(&seg.ID, &seg.StartMS, &seg.EndMS, &seg.Text, &seg.Source, &seg.Speaker, &wordsJSON, &confidence,
+			&seg.Provisional, &seg.Boundary); err != nil {
 			return model.Transcript{}, err
 		}
 		seg.Confidence = confidence
@@ -329,7 +366,32 @@ func (s *Store) GetTranscript(ctx context.Context, noteID string) (model.Transcr
 		}
 		tr.Segments = append(tr.Segments, seg)
 	}
-	return tr, rows.Err()
+	if err := rows.Err(); err != nil {
+		return model.Transcript{}, err
+	}
+
+	gapRows, err := s.pool.Query(ctx,
+		`SELECT id, stream_id, start_sample, dropped_samples, origin
+		   FROM transcript_gaps WHERE transcript_id=$1 ORDER BY start_sample`, tr.ID)
+	if err != nil {
+		return model.Transcript{}, err
+	}
+	defer gapRows.Close()
+	for gapRows.Next() {
+		var g model.TranscriptGap
+		// dropped_samples is nullable; &g.DroppedSamples is a **int64, which pgx
+		// scans as NULL -> nil.
+		if err := gapRows.Scan(&g.ID, &g.StreamID, &g.StartSample, &g.DroppedSamples, &g.Origin); err != nil {
+			return model.Transcript{}, err
+		}
+		g.TranscriptID = tr.ID
+		tr.Gaps = append(tr.Gaps, g)
+	}
+	if err := gapRows.Err(); err != nil {
+		return model.Transcript{}, err
+	}
+
+	return tr, nil
 }
 
 // GetDiarizationReview returns the diarization review payload for a note's
