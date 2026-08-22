@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -62,6 +64,24 @@ func noteClaimState(t *testing.T, st *store.Store, noteID string) (status string
 		t.Fatalf("read note claim state: %v", err)
 	}
 	return status, claimedBy
+}
+
+// noteHashes reads audio_hash and normalized_audio_hash directly (not
+// exposed by GetNoteByID). Empty string means NULL.
+func noteHashes(t *testing.T, st *store.Store, noteID string) (rawHash, normalizedHash string) {
+	t.Helper()
+	var raw, normalized *string
+	if err := st.Pool().QueryRow(context.Background(),
+		`SELECT audio_hash, normalized_audio_hash FROM notes WHERE id=$1`, noteID).Scan(&raw, &normalized); err != nil {
+		t.Fatalf("read note hashes: %v", err)
+	}
+	if raw != nil {
+		rawHash = *raw
+	}
+	if normalized != nil {
+		normalizedHash = *normalized
+	}
+	return rawHash, normalizedHash
 }
 
 // TestRunTranscribeStaleJobDetectedEarlyTouchesNothing verifies that a
@@ -451,5 +471,217 @@ func TestRunTranscribeRetriedClaimPreservesOriginalPriorStatus(t *testing.T) {
 	}
 	if calls != 2 {
 		t.Fatalf("transcribe plugin calls = %d, want 2 (one per attempt)", calls)
+	}
+}
+
+// TestRunTranscribeStaleJobDetectedLateDoesNotOverwriteAudioHashes is the
+// regression test for H2: hashNoteAudio/SetNoteHashes moved to after
+// SaveTranscript's authoritative check, so a job detected stale late (after
+// its own claim, once the generation has moved on mid-flight) must never
+// reach the hashing step at all — the note's audio_hash/normalized_audio_hash
+// must be exactly what they were before this job ran.
+//
+// This does NOT reuse staleTranscribeFixture's storage setup, because that
+// fixture never writes real bytes at the note's audio path — hashNoteAudio
+// always fails there (file doesn't exist) regardless of where the hash block
+// sits in runTranscribe, which would make "hashes unchanged" trivially true
+// for the wrong reason. Real bytes are written directly at the local storage
+// path here so hashNoteAudio can actually succeed and produce a real,
+// distinguishable hash if the code path is reached.
+func TestRunTranscribeStaleJobDetectedLateDoesNotOverwriteAudioHashes(t *testing.T) {
+	ctx := context.Background()
+
+	root := t.TempDir()
+	prov, err := storage.NewLocal(root, "http://example.test", "http://example.test", []byte("test-signing-key-0123456789"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	st := store.New(testutil.NewPool(t))
+	cr := testCrypto(t)
+	_ = st.SeedBuiltInTemplates(ctx)
+
+	ag := plugintest.NewAgent()
+	t.Cleanup(ag.Close)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("/info", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(plugin.Info{Name: "stub-hash-transcriber", Version: "0", PluginAPI: 1, Kind: "transcriber"})
+	})
+	trSrv := httptest.NewServer(mux)
+	t.Cleanup(trSrv.Close)
+
+	tp, _ := st.CreatePlugin(ctx, cr, model.Plugin{Kind: model.PluginTranscriber, Name: "t", EndpointURL: trSrv.URL, Token: "x", Enabled: true, Config: json.RawMessage(`{}`)})
+	ap, _ := st.CreatePlugin(ctx, cr, model.Plugin{Kind: model.PluginAgent, Name: "a", EndpointURL: ag.URL(), Token: "x", Enabled: true, Config: json.RawMessage(`{}`)})
+	_ = st.SetDefaultPlugin(ctx, tp.ID)
+	_ = st.SetDefaultPlugin(ctx, ap.ID)
+
+	u, _ := st.CreateUser(ctx, "o@example.com", "h")
+	n, _ := st.CreateNote(ctx, u.ID, "M")
+	noteID := n.ID
+	key := "notes/" + noteID + "/audio/a.webm"
+	_, _ = prov.PresignUpload(key, time.Minute)
+	_ = st.SetNoteAudio(ctx, u.ID, noteID, key)
+
+	// Write real bytes at the local storage path so hashNoteAudio has
+	// something real to hash.
+	audioPath := filepath.Join(root, filepath.FromSlash(key))
+	if err := os.MkdirAll(filepath.Dir(audioPath), 0o755); err != nil {
+		t.Fatalf("mkdir audio dir: %v", err)
+	}
+	if err := os.WriteFile(audioPath, []byte("fake audio bytes for hashing"), 0o644); err != nil {
+		t.Fatalf("write audio bytes: %v", err)
+	}
+
+	// Registered now that st/noteID exist: bumps the transcript generation
+	// mid-flight so this job's own SaveTranscript hits a late mismatch, the
+	// same technique as TestRunTranscribeStaleJobDetectedLateRestoresDisplacedStatus.
+	mux.HandleFunc("/transcribe", func(w http.ResponseWriter, r *http.Request) {
+		if _, err := st.Pool().Exec(context.Background(),
+			`UPDATE transcripts SET generation = generation + 1 WHERE note_id = $1`, noteID); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(plugin.TranscribeResponse{
+			Segments: []model.Segment{{StartMS: 0, EndMS: 1000, Text: "late result", Source: "mic"}},
+			Model:    "stub-late",
+		})
+	})
+
+	// Establish generation 1, park the note at "ready", and seed KNOWN hash
+	// values — the ones that must survive this job untouched.
+	if _, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "hi", Source: "mic"}},
+	}, 0); err != nil {
+		t.Fatalf("seed transcript: %v", err)
+	}
+	if err := st.SetNoteStatus(ctx, noteID, model.NoteReady); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+	const seededRawHash = "seeded-raw-hash-must-survive"
+	const seededNormalizedHash = "seeded-normalized-hash-must-survive"
+	if err := st.SetNoteHashes(ctx, noteID, seededRawHash, seededNormalizedHash); err != nil {
+		t.Fatalf("seed hashes: %v", err)
+	}
+
+	cfg := config.Config{AudioRetention: "keep"}
+	proc := worker.NewProcessor(st, cr, prov, cfg, nil)
+
+	// Correct at enqueue time (generation is 1); the /transcribe handler above
+	// bumps it to 2 before this job's own SaveTranscript runs.
+	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe,
+		json.RawMessage(`{"audio_key":"`+key+`","expected_generation":1}`))
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	job, ok, err := st.ClaimJob(ctx, 30*time.Second)
+	if err != nil || !ok {
+		t.Fatalf("claim job: ok=%v err=%v", ok, err)
+	}
+	proc.Process(ctx, job)
+
+	gotJob, err := st.GetJob(ctx, jobID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if gotJob.Status != model.JobDone {
+		t.Fatalf("job status = %q, want %q (stale detected late is a successful no-op)", gotJob.Status, model.JobDone)
+	}
+
+	rawHash, normalizedHash := noteHashes(t, st, noteID)
+	if rawHash != seededRawHash {
+		t.Fatalf("audio_hash = %q, want unchanged %q (a stale job must not touch note hashes)", rawHash, seededRawHash)
+	}
+	if normalizedHash != seededNormalizedHash {
+		t.Fatalf("normalized_audio_hash = %q, want unchanged %q", normalizedHash, seededNormalizedHash)
+	}
+}
+
+// TestRunTranscribeExpectedGenerationPersistFailureIsRetryable is the
+// regression test for the untested half of H3: persistTranscribePayload's
+// error must propagate out of runTranscribe (making the job retryable, not a
+// silent success) rather than being logged and swallowed. UpdateJobPayload's
+// own RowsAffected check (the other half of H3) is already covered directly
+// by TestUpdateJobPayload in internal/store/jobs_test.go.
+//
+// The seam: deleting this job's own row mid-flight, from inside the
+// transcribe plugin stub, so UpdateJobPayload's post-save persist call (for
+// the advanced expected_generation) hits its ErrNotFound. That also deletes
+// the only row a later assertion could read job status from, so this proves
+// the propagation a different way: if persistTranscribePayload's error
+// stopped runTranscribe (the fix), execution never reaches the summarize
+// fan-out below it, so no summarize jobs exist for the note. If it were
+// reverted to log-and-continue, execution would reach EnqueueSummarizeJobs
+// and create one summarize job per built-in template.
+func TestRunTranscribeExpectedGenerationPersistFailureIsRetryable(t *testing.T) {
+	ctx := context.Background()
+
+	var jobID string
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("/info", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(plugin.Info{Name: "stub-persist-fail-transcriber", Version: "0", PluginAPI: 1, Kind: "transcriber"})
+	})
+	trSrv := httptest.NewServer(mux)
+	t.Cleanup(trSrv.Close)
+
+	proc, st, noteID, key := staleTranscribeFixture(t, trSrv.URL)
+
+	mux.HandleFunc("/transcribe", func(w http.ResponseWriter, r *http.Request) {
+		// Delete this job's own row before responding, so that when
+		// runTranscribe reaches its post-save persistTranscribePayload call
+		// (after this handler returns and SaveTranscript succeeds),
+		// UpdateJobPayload's UPDATE ... WHERE id=$1 affects zero rows and
+		// returns ErrNotFound.
+		if _, err := st.Pool().Exec(context.Background(), `DELETE FROM jobs WHERE id=$1`, jobID); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(plugin.TranscribeResponse{
+			Segments: []model.Segment{{StartMS: 0, EndMS: 1000, Text: "result", Source: "mic"}},
+			Model:    "stub",
+		})
+	})
+
+	enqueuedID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe,
+		json.RawMessage(`{"audio_key":"`+key+`","expected_generation":0}`))
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+	jobID = enqueuedID
+
+	job, ok, err := st.ClaimJob(ctx, 30*time.Second)
+	if err != nil || !ok {
+		t.Fatalf("claim job: ok=%v err=%v", ok, err)
+	}
+	proc.Process(ctx, job)
+
+	// SaveTranscript doesn't depend on the jobs table, so it succeeded before
+	// the persist failure — confirms this test is really exercising the
+	// post-save persist call, not an earlier failure that never reached it.
+	saved, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("GetTranscript: %v", err)
+	}
+	if len(saved.Segments) != 1 || saved.Segments[0].Text != "result" {
+		t.Fatalf("transcript = %+v, want the plugin's segment (SaveTranscript should have succeeded before the persist failure)", saved.Segments)
+	}
+
+	// The job row itself is gone (deleted mid-flight), so the only way to
+	// observe whether runTranscribe actually stopped at the failed persist —
+	// rather than logging it and continuing, as before this fix — is that the
+	// fan-out past that point never ran.
+	jobs, err := st.ListJobsByNoteID(ctx, noteID)
+	if err != nil {
+		t.Fatalf("ListJobsByNoteID: %v", err)
+	}
+	for _, j := range jobs {
+		if j.Type == model.JobSummarize {
+			t.Fatalf("summarize job %s exists; a failed expected-generation persist must stop runTranscribe before the fan-out, not silently continue", j.ID)
+		}
 	}
 }
