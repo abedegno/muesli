@@ -897,8 +897,13 @@ func TestConcurrentFirstWritersDoNotRaceTheUniqueIndex(t *testing.T) {
 		// Mutated build: writer 2 reached its own read, so both reads precede
 		// either insert — the interleaving the lock exists to prevent.
 	case <-time.After(2 * time.Second):
-		// Correct build: writer 2 is blocked on the note-row lock. atLock proves
-		// it was scheduled, though not how far it got.
+		// Not proof of a correct build: atLock only shows writer 2 was
+		// scheduled and about to enter the store call, not that it completed
+		// its prior-row read, so a missing-lock mutation can land here too if
+		// writer 2 is descheduled mid-read. Correctness against unmutated code
+		// never depends on this timing — writer 2 blocks on the note lock
+		// however long writer 1 is held. Mutation detection does depend on it,
+		// so mutation runs should sample with -count rather than trust one run.
 	}
 	close(release1)
 
@@ -968,8 +973,13 @@ func TestConcurrentStreamCreatorsDoNotRaceTheUniqueIndex(t *testing.T) {
 		// Mutated build: writer 2 reached its own read, so both reads precede
 		// either insert — the interleaving the lock exists to prevent.
 	case <-time.After(2 * time.Second):
-		// Correct build: writer 2 is blocked on the note-row lock. atLock proves
-		// it was scheduled, though not how far it got.
+		// Not proof of a correct build: atLock only shows writer 2 was
+		// scheduled and about to enter the store call, not that it completed
+		// its prior-row read, so a missing-lock mutation can land here too if
+		// writer 2 is descheduled mid-read. Correctness against unmutated code
+		// never depends on this timing — writer 2 blocks on the note lock
+		// however long writer 1 is held. Mutation detection does depend on it,
+		// so mutation runs should sample with -count rather than trust one run.
 	}
 	close(release1)
 
