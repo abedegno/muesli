@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/store"
@@ -738,5 +740,292 @@ func TestAppendStreamSegmentRejectsSupersededStream(t *testing.T) {
 	}
 	if len(got.Segments) != 1 || got.Segments[0].Text != "batch text" {
 		t.Fatalf("segments = %+v, want exactly the batch segment", got.Segments)
+	}
+}
+
+// TestAppendStreamSegmentRejectsWrongStreamID binds the stream_id predicate in
+// AppendStreamSegment's guard on its own: the transcript is present and
+// unsealed, so only a stream identity mismatch can reject the write.
+func TestAppendStreamSegmentRejectsWrongStreamID(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	live, err := st.CreateStreamTranscript(ctx, noteID, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// The transcript is present and unsealed. Only the stream identity is wrong,
+	// so only the stream_id predicate can reject this.
+	if err := st.AppendStreamSegment(ctx, live.ID, "stream-b", model.Segment{
+		StartMS: 0, EndMS: 500, Text: "other stream", Source: "mic",
+	}); !errors.Is(err, store.ErrStreamSuperseded) {
+		t.Fatalf("error = %v, want ErrStreamSuperseded", err)
+	}
+
+	got, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Segments) != 0 {
+		t.Fatalf("segments = %+v, want none written", got.Segments)
+	}
+}
+
+// TestAppendStreamSegmentRejectsSealedTranscript binds the sealed predicate on
+// its own. A committed sealed row is never observable through SaveTranscript,
+// because its UPDATE and DELETE commit together, so the fixture seals directly
+// — legitimate setup for testing a predicate production reaches only
+// mid-transaction.
+func TestAppendStreamSegmentRejectsSealedTranscript(t *testing.T) {
+	t.Parallel()
+	pool := testutil.NewPool(t)
+	st := store.New(pool)
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	live, err := st.CreateStreamTranscript(ctx, noteID, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE transcripts SET sealed=TRUE WHERE id=$1`, live.ID); err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	// The transcript is present and the stream id matches. Only sealed can
+	// reject this.
+	if err := st.AppendStreamSegment(ctx, live.ID, "stream-a", model.Segment{
+		StartMS: 0, EndMS: 500, Text: "after seal", Source: "mic",
+	}); !errors.Is(err, store.ErrStreamSuperseded) {
+		t.Fatalf("error = %v, want ErrStreamSuperseded", err)
+	}
+}
+
+// TestAppendStreamSegmentRejectsWrongTranscriptID binds the id=$1 predicate on
+// its own. Dropping id=$1 is not caught by either test above: with only
+// stream_id and sealed matching, a different live transcript carrying the same
+// stream id can satisfy the lookup while the insert still targets the
+// original. Two notes are needed, because transcripts(note_id) is unique.
+func TestAppendStreamSegmentRejectsWrongTranscriptID(t *testing.T) {
+	t.Parallel()
+	pool := testutil.NewPool(t)
+	st := store.New(pool)
+	ctx := context.Background()
+	noteA := seedNote(t, st)
+	noteB := seedNote(t, st)
+
+	liveA, err := st.CreateStreamTranscript(ctx, noteA, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create A: %v", err)
+	}
+	// A second note carrying the SAME stream id, left unsealed. If the guard
+	// stops matching on transcript id, this row satisfies the lookup.
+	if _, err := st.CreateStreamTranscript(ctx, noteB, "stream-a", "whisper-live", "tiny", 0); err != nil {
+		t.Fatalf("create B: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE transcripts SET sealed=TRUE WHERE id=$1`, liveA.ID); err != nil {
+		t.Fatalf("seal A: %v", err)
+	}
+
+	if err := st.AppendStreamSegment(ctx, liveA.ID, "stream-a", model.Segment{
+		StartMS: 0, EndMS: 500, Text: "should not land", Source: "mic",
+	}); !errors.Is(err, store.ErrStreamSuperseded) {
+		t.Fatalf("error = %v, want ErrStreamSuperseded", err)
+	}
+
+	got, err := st.GetTranscript(ctx, noteA)
+	if err != nil {
+		t.Fatalf("get A: %v", err)
+	}
+	if len(got.Segments) != 0 {
+		t.Fatalf("segments on A = %+v, want none", got.Segments)
+	}
+}
+
+// TestConcurrentFirstWritersDoNotRaceTheUniqueIndex binds the note-row lock in
+// SaveTranscript deterministically. Ordering is established by channels, never
+// by sleeps: the first writer signals that it has read "no prior transcript"
+// and then blocks, so the second writer provably starts inside that window.
+// With the note-row lock the second writer cannot even reach its own read
+// until the first commits; without it, the second sails past and the first
+// then collides with the unique note_id index instead of failing cleanly.
+func TestConcurrentFirstWritersDoNotRaceTheUniqueIndex(t *testing.T) {
+	// No t.Parallel: this installs a package-level hook.
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	var mu sync.Mutex
+	var calls int
+	reached1 := make(chan struct{})
+	reached2 := make(chan struct{})
+	release1 := make(chan struct{})
+	restore := store.SetTestHookAfterPriorTranscriptRead(func() {
+		mu.Lock()
+		calls++
+		which := calls
+		mu.Unlock()
+		switch which {
+		case 1:
+			close(reached1)
+			<-release1
+		case 2:
+			close(reached2)
+		}
+	})
+	defer restore()
+
+	tr := model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "one", Source: "mic"}},
+	}
+	results := make(chan error, 2)
+	go func() { _, err := st.SaveTranscript(ctx, tr, 0); results <- err }()
+	<-reached1 // writer 1 has read, and is holding the window open
+
+	atLock := make(chan struct{})
+	go func() {
+		close(atLock) // writer 2 is scheduled and running
+		_, err := st.SaveTranscript(ctx, tr, 0)
+		results <- err
+	}()
+	<-atLock
+
+	select {
+	case <-reached2:
+		// Mutated build: writer 2 reached its own read, so both reads precede
+		// either insert — the interleaving the lock exists to prevent.
+	case <-time.After(2 * time.Second):
+		// Correct build: writer 2 is blocked on the note-row lock. atLock proves
+		// it was scheduled, though not how far it got.
+	}
+	close(release1)
+
+	var succeeded int
+	var errs []error
+	for i := 0; i < 2; i++ {
+		if err := <-results; err == nil {
+			succeeded++
+		} else {
+			errs = append(errs, err)
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("%d writers succeeded, want exactly 1 (errors: %v)", succeeded, errs)
+	}
+	if !errors.Is(errs[0], store.ErrGenerationMismatch) {
+		t.Fatalf("loser error = %v, want ErrGenerationMismatch (a unique-violation here means the note row was not locked)", errs[0])
+	}
+}
+
+// TestConcurrentStreamCreatorsDoNotRaceTheUniqueIndex is
+// TestConcurrentFirstWritersDoNotRaceTheUniqueIndex for CreateStreamTranscript,
+// binding its note-row lock the same way.
+func TestConcurrentStreamCreatorsDoNotRaceTheUniqueIndex(t *testing.T) {
+	// No t.Parallel: this installs a package-level hook.
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	var mu sync.Mutex
+	var calls int
+	reached1 := make(chan struct{})
+	reached2 := make(chan struct{})
+	release1 := make(chan struct{})
+	restore := store.SetTestHookAfterPriorTranscriptRead(func() {
+		mu.Lock()
+		calls++
+		which := calls
+		mu.Unlock()
+		switch which {
+		case 1:
+			close(reached1)
+			<-release1
+		case 2:
+			close(reached2)
+		}
+	})
+	defer restore()
+
+	results := make(chan error, 2)
+	go func() {
+		_, err := st.CreateStreamTranscript(ctx, noteID, "stream-a", "whisper-live", "tiny", 0)
+		results <- err
+	}()
+	<-reached1 // writer 1 has read, and is holding the window open
+
+	atLock := make(chan struct{})
+	go func() {
+		close(atLock) // writer 2 is scheduled and running
+		_, err := st.CreateStreamTranscript(ctx, noteID, "stream-b", "whisper-live", "tiny", 0)
+		results <- err
+	}()
+	<-atLock
+
+	select {
+	case <-reached2:
+		// Mutated build: writer 2 reached its own read, so both reads precede
+		// either insert — the interleaving the lock exists to prevent.
+	case <-time.After(2 * time.Second):
+		// Correct build: writer 2 is blocked on the note-row lock. atLock proves
+		// it was scheduled, though not how far it got.
+	}
+	close(release1)
+
+	var succeeded int
+	var errs []error
+	for i := 0; i < 2; i++ {
+		if err := <-results; err == nil {
+			succeeded++
+		} else {
+			errs = append(errs, err)
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("%d writers succeeded, want exactly 1 (errors: %v)", succeeded, errs)
+	}
+	if !errors.Is(errs[0], store.ErrGenerationMismatch) {
+		t.Fatalf("loser error = %v, want ErrGenerationMismatch (a unique-violation here means the note row was not locked)", errs[0])
+	}
+}
+
+// TestAppendBeforeReplacementIsDeletedByIt covers ordering A of the two
+// interleavings between a live append and a batch replacement: the append
+// commits first and succeeds, then replacement removes it. The append does
+// NOT fail — a row lock confers order, not priority. Ordering B — replacement
+// first, then a late append — is TestAppendStreamSegmentRejectsSupersededStream.
+func TestAppendBeforeReplacementIsDeletedByIt(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	live, err := st.CreateStreamTranscript(ctx, noteID, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := st.AppendStreamSegment(ctx, live.ID, "stream-a", model.Segment{
+		StartMS: 0, EndMS: 500, Text: "live text", Source: "mic",
+	}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if _, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 500, Text: "batch text", Source: "mic"}},
+	}, live.Generation); err != nil {
+		t.Fatalf("batch save: %v", err)
+	}
+
+	got, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Segments) != 1 || got.Segments[0].Text != "batch text" {
+		t.Fatalf("segments = %+v, want exactly the batch segment", got.Segments)
+	}
+	if got.Segments[0].Provisional {
+		t.Fatal("surviving segment should be the batch one, not provisional")
 	}
 }

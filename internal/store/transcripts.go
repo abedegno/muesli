@@ -19,6 +19,11 @@ var deterministicChannelSpeakerRe = regexp.MustCompile(`^Speaker \d+$`)
 // write should be dropped, never retried.
 var ErrStreamSuperseded = errors.New("stream superseded")
 
+// testHookAfterPriorTranscriptRead runs between reading the prior transcript
+// row and writing the replacement. It is nil in production and exists so tests
+// can hold one writer in the window the note-row lock is there to close.
+var testHookAfterPriorTranscriptRead func()
+
 // isDeterministicChannelSpeaker stays coupled to pluginkit.channelSpeaker in
 // internal/pluginkit/multitrack.go so both packages agree on channel labels.
 func isDeterministicChannelSpeaker(speaker string) bool {
@@ -78,6 +83,10 @@ func (s *Store) SaveTranscript(ctx context.Context, tr model.Transcript, expecte
 		return model.Transcript{}, err
 	default:
 		nextGeneration = priorGeneration + 1
+	}
+
+	if testHookAfterPriorTranscriptRead != nil {
+		testHookAfterPriorTranscriptRead()
 	}
 
 	// In the pgx.ErrNoRows branch priorGeneration is 0, so this one comparison
@@ -197,6 +206,11 @@ func (s *Store) CreateStreamTranscript(ctx context.Context, noteID, streamID, pl
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return model.Transcript{}, err
 	}
+
+	if testHookAfterPriorTranscriptRead != nil {
+		testHookAfterPriorTranscriptRead()
+	}
+
 	if priorGeneration != expectedGeneration {
 		return model.Transcript{}, ErrGenerationMismatch
 	}
