@@ -875,19 +875,25 @@ func TestConcurrentFirstWritersDoNotRaceTheUniqueIndex(t *testing.T) {
 	})
 	defer restore()
 
-	tr := model.Transcript{
-		NoteID:            noteID,
-		TranscriberPlugin: "whisper",
-		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "one", Source: "mic"}},
+	// Each writer gets its own Transcript, including its own Segments backing
+	// array. SaveTranscript stamps seg.ID into the slice it's given; sharing
+	// one array between goroutines would race on that write once a mutation
+	// lets both writers reach the segment loop concurrently.
+	newTranscript := func() model.Transcript {
+		return model.Transcript{
+			NoteID:            noteID,
+			TranscriberPlugin: "whisper",
+			Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "one", Source: "mic"}},
+		}
 	}
 	results := make(chan error, 2)
-	go func() { _, err := st.SaveTranscript(ctx, tr, 0); results <- err }()
+	go func() { _, err := st.SaveTranscript(ctx, newTranscript(), 0); results <- err }()
 	<-reached1 // writer 1 has read, and is holding the window open
 
 	atLock := make(chan struct{})
 	go func() {
 		close(atLock) // writer 2 is scheduled and running
-		_, err := st.SaveTranscript(ctx, tr, 0)
+		_, err := st.SaveTranscript(ctx, newTranscript(), 0)
 		results <- err
 	}()
 	<-atLock
