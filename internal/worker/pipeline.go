@@ -164,6 +164,21 @@ type transcribePayload struct {
 	// this job's own first claim) — so this field is what lets the retry still
 	// know what to restore on release, instead of losing it.
 	ClaimedPriorStatus string `json:"claimed_prior_status,omitempty"`
+	// Published and PublishedGeneration are runTranscribe's durable checkpoint,
+	// written the moment SaveTranscript succeeds and persisted onto the job row
+	// before any later step can fail. A retry reads them back and RESUMES after
+	// publication — it skips transcribe-and-save entirely and continues with the
+	// note-level work — instead of publishing a second time.
+	//
+	// This replaces advancing ExpectedGeneration to the generation this job
+	// saved. That looked equivalent and was not: it authorised the same job to
+	// REPLACE its own published transcript on retry. Review mutations do not
+	// increment the generation, so a diarization review a user made between the
+	// failure and the retry sits at exactly the generation the retry matches,
+	// and SaveTranscript deletes before it inserts. A stuck note is
+	// recoverable; a destroyed review is not.
+	Published           bool `json:"published,omitempty"`
+	PublishedGeneration int  `json:"published_generation,omitempty"`
 }
 
 // mergeModelOverride returns a per-call copy of baseConfig with its "model"
@@ -237,13 +252,22 @@ func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, err
 	if err := json.Unmarshal(job.Payload, &pl); err != nil {
 		return false, fmt.Errorf("invalid transcribe payload: %w", err)
 	}
+	// The generation this attempt must find. Before publication that is what the
+	// enqueue site observed; after it, what this job itself published — a retry
+	// resuming downstream work must abort just as readily if someone else has
+	// replaced its transcript in the meantime.
+	requiredGeneration := pl.ExpectedGeneration
+	if pl.Published {
+		requiredGeneration = pl.PublishedGeneration
+	}
 	currentGeneration, err := p.store.CurrentTranscriptGeneration(ctx, job.NoteID)
 	if err != nil {
 		return true, err
 	}
-	if currentGeneration != pl.ExpectedGeneration {
+	if currentGeneration != requiredGeneration {
 		slog.InfoContext(ctx, "stale transcribe job discarded before claim: transcript generation has moved on",
-			"job_id", job.ID, "note_id", job.NoteID, "expected_generation", pl.ExpectedGeneration, "current_generation", currentGeneration)
+			"job_id", job.ID, "note_id", job.NoteID, "published", pl.Published,
+			"required_generation", requiredGeneration, "current_generation", currentGeneration)
 		return false, nil
 	}
 
@@ -285,73 +309,90 @@ func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, err
 		return false, errors.New("note has no audio object key")
 	}
 
-	plug, err := p.store.DefaultPlugin(ctx, p.crypto, model.PluginTranscriber)
-	if errors.Is(err, store.ErrNotFound) {
-		return false, fmt.Errorf("no default transcriber plugin configured: %w", ErrPluginNotConfigured)
-	}
-	if err != nil {
-		return true, err
-	}
+	// publishedGeneration is the generation of the transcript THIS job owns from
+	// here on, and reviewState its review lifecycle state. They come either from
+	// the save below or, on a retry that already published, from the row that
+	// save left behind.
+	var publishedGeneration int
+	var reviewState string
+	var partial bool
+	var partialReason string
 
-	signedURL, err := p.storage.PresignDownload(audioKey, downloadTTL)
-	if err != nil {
-		return true, err
-	}
-
-	client := plugin.New(plug.EndpointURL, plug.Token)
-	req, err := buildTranscribeRequest(signedURL, plug, p.cfg, pl)
-	if err != nil {
-		return true, err
-	}
-	resp, err := client.Transcribe(ctx, req)
-	if err != nil {
-		return isRetryable(err), err
-	}
-
-	saved, err := p.store.SaveTranscript(ctx, model.Transcript{
-		NoteID:            job.NoteID,
-		TranscriberPlugin: plug.Name,
-		Model:             resp.Model,
-		Segments:          resp.Segments,
-	}, pl.ExpectedGeneration)
-	if errors.Is(err, store.ErrGenerationMismatch) {
-		// Detected late: a newer job won while this one was mid-transcription.
-		// Restore whatever status this job's claim displaced. If the winner has
-		// already saved, its own SaveTranscript cleared transcribing_job_id, so
-		// this release matches nothing and is a harmless no-op.
-		if priorStatus == "" {
-			// Should not happen: this job's own claim never got its prior status
-			// persisted (a crash between the claim and persistTranscribePayload
-			// above, on some earlier attempt). Releasing with an empty status
-			// would corrupt the note's status column, so leave the claim in
-			// place instead — the note stays "transcribing" rather than wrong.
-			slog.ErrorContext(ctx, "stale transcribe: no prior status to restore, leaving claim in place",
-				"job_id", job.ID, "note_id", job.NoteID)
-		} else if rerr := p.store.ReleaseNoteTranscriptionClaim(ctx, job.NoteID, job.ID, priorStatus); rerr != nil {
-			slog.WarnContext(ctx, "stale transcribe: failed to release claim", "error", rerr, "job_id", job.ID, "note_id", job.NoteID)
+	if pl.Published {
+		// Resume after publication. This job's transcript is already durable and
+		// the check above confirmed it is still the note's current one, so the
+		// transcribe-and-save is skipped entirely and only the note-level work
+		// below is redone. Repeating SaveTranscript here would delete the very
+		// transcript this job published — together with any diarization review a
+		// user has made on it since, because review mutations leave the
+		// generation unchanged and so cannot be detected by a generation check.
+		current, err := p.store.GetTranscript(ctx, job.NoteID)
+		if err != nil {
+			return true, err
 		}
-		slog.InfoContext(ctx, "stale transcribe job discarded after claim: transcript generation moved on while running",
-			"job_id", job.ID, "note_id", job.NoteID, "expected_generation", pl.ExpectedGeneration)
-		return false, nil
-	}
-	if err != nil {
-		return true, err
-	}
+		publishedGeneration = pl.PublishedGeneration
+		reviewState = current.ReviewState
+		slog.InfoContext(ctx, "transcribe retry resuming after publication: skipping transcribe and save",
+			"job_id", job.ID, "note_id", job.NoteID, "published_generation", publishedGeneration)
+	} else {
+		plug, err := p.store.DefaultPlugin(ctx, p.crypto, model.PluginTranscriber)
+		if errors.Is(err, store.ErrNotFound) {
+			return false, fmt.Errorf("no default transcriber plugin configured: %w", ErrPluginNotConfigured)
+		}
+		if err != nil {
+			return true, err
+		}
 
-	// This job's own transcript is now durably saved at saved.Generation —
-	// always past pl.ExpectedGeneration (SaveTranscript only succeeds when
-	// saved.Generation == pl.ExpectedGeneration+1). If a later step below fails
-	// retryably, Process reclaims this same job and runTranscribe runs again
-	// from a fresh decode of job.Payload — so without persisting the advance
-	// here, that retry would still carry the expected_generation captured at
-	// enqueue time and reject its own already-saved work as stale on every
-	// subsequent attempt. This only ever advances a generation this job itself
-	// just produced; a different job's newer save is still caught the normal
-	// way, by this job's next attempt observing a generation beyond what it
-	// persisted here.
-	pl.ExpectedGeneration = saved.Generation
-	if err := p.persistTranscribePayload(ctx, job.ID, pl); err != nil {
-		return true, err
+		signedURL, err := p.storage.PresignDownload(audioKey, downloadTTL)
+		if err != nil {
+			return true, err
+		}
+
+		client := plugin.New(plug.EndpointURL, plug.Token)
+		req, err := buildTranscribeRequest(signedURL, plug, p.cfg, pl)
+		if err != nil {
+			return true, err
+		}
+		resp, err := client.Transcribe(ctx, req)
+		if err != nil {
+			return isRetryable(err), err
+		}
+
+		saved, err := p.store.SaveTranscript(ctx, model.Transcript{
+			NoteID:            job.NoteID,
+			TranscriberPlugin: plug.Name,
+			Model:             resp.Model,
+			Segments:          resp.Segments,
+		}, pl.ExpectedGeneration)
+		if errors.Is(err, store.ErrGenerationMismatch) {
+			// Detected late: a newer job won while this one was mid-transcription.
+			// Restore whatever status this job's claim displaced. If the winner has
+			// already saved, its own SaveTranscript cleared transcribing_job_id, so
+			// this release matches nothing and is a harmless no-op.
+			p.releaseTranscribeClaim(ctx, job, priorStatus)
+			slog.InfoContext(ctx, "stale transcribe job discarded after claim: transcript generation moved on while running",
+				"job_id", job.ID, "note_id", job.NoteID, "expected_generation", pl.ExpectedGeneration)
+			return false, nil
+		}
+		if err != nil {
+			return true, err
+		}
+
+		// Checkpoint the publication BEFORE anything downstream can fail. A retry
+		// reads this back at the top of runTranscribe and resumes from here
+		// instead of transcribing and saving a second time. Persisting it is not
+		// best-effort: if this write fails the job must retry from the top rather
+		// than proceed, because a later failure would otherwise leave a retry
+		// believing it had never published.
+		publishedGeneration = saved.Generation
+		reviewState = saved.ReviewState
+		partial = resp.Partial
+		partialReason = resp.PartialReason
+		pl.Published = true
+		pl.PublishedGeneration = saved.Generation
+		if err := p.persistTranscribePayload(ctx, job.ID, pl); err != nil {
+			return true, err
+		}
 	}
 
 	// The audio is now confirmed to belong to the transcript this job just
@@ -372,24 +413,26 @@ func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, err
 	// If the plugin returned a partial result, mark the note and fail
 	// the job terminally (non-retryable) so handleTerminalFailure sets note→failed.
 	// The user can then retry from the UI which re-runs full transcription.
-	if resp.Partial {
+	// Never true on the resume path: a partial result fails non-retryably, so
+	// the job that published it is never retried.
+	if partial {
 		if perr := p.store.SetNotePartialTranscript(ctx, job.NoteID, true); perr != nil {
 			slog.WarnContext(ctx, "partial: failed to set flag", "error", perr, "note_id", job.NoteID)
 		}
-		return false, fmt.Errorf("partial transcript: %s", resp.PartialReason)
+		return false, fmt.Errorf("partial transcript: %s", partialReason)
 	}
 
 	if err := p.store.SetNotePartialTranscript(ctx, job.NoteID, false); err != nil {
 		slog.WarnContext(ctx, "failed to clear partial transcript flag", "error", err, "job_id", job.ID, "job_type", job.Type, "note_id", job.NoteID)
 	}
 
-	if saved.ReviewState != model.ReviewStateCompleted {
-		slog.InfoContext(ctx, "summarize held pending diarization review", "job_id", job.ID, "note_id", job.NoteID, "review_state", saved.ReviewState)
+	if reviewState != model.ReviewStateCompleted {
+		slog.InfoContext(ctx, "summarize held pending diarization review", "job_id", job.ID, "note_id", job.NoteID, "review_state", reviewState)
 		if p.cfg.Embedded {
-			// saved.Generation is this job's own just-persisted save (see the
-			// comment above pl.ExpectedGeneration): the only generation this
-			// auto-complete can legitimately be racing against.
-			if err := p.store.SetReviewState(ctx, job.NoteID, model.ReviewStateCompleted, saved.Generation); err != nil {
+			// publishedGeneration is the transcript this job published (or, on a
+			// resume, re-confirmed above): the only generation this auto-complete
+			// can legitimately be racing against.
+			if err := p.store.SetReviewState(ctx, job.NoteID, model.ReviewStateCompleted, publishedGeneration); err != nil {
 				slog.ErrorContext(ctx, "embedded diarization review auto-complete failed", "error", err, "job_id", job.ID, "note_id", job.NoteID)
 				return true, err
 			}
@@ -435,6 +478,25 @@ func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, err
 		_ = p.store.SetRetentionState(ctx, job.NoteID, "kept")
 	}
 	return false, nil
+}
+
+// releaseTranscribeClaim restores the status this job's claim displaced. If a
+// winner has already saved, its own SaveTranscript cleared transcribing_job_id,
+// so this matches nothing and is a harmless no-op.
+func (p *Processor) releaseTranscribeClaim(ctx context.Context, job model.Job, priorStatus string) {
+	if priorStatus == "" {
+		// Should not happen: this job's own claim never got its prior status
+		// persisted (a crash between the claim and persistTranscribePayload, on
+		// some earlier attempt). Releasing with an empty status would corrupt the
+		// note's status column, so leave the claim in place instead — the note
+		// stays "transcribing" rather than wrong.
+		slog.ErrorContext(ctx, "stale transcribe: no prior status to restore, leaving claim in place",
+			"job_id", job.ID, "note_id", job.NoteID)
+		return
+	}
+	if err := p.store.ReleaseNoteTranscriptionClaim(ctx, job.NoteID, job.ID, priorStatus); err != nil {
+		slog.WarnContext(ctx, "stale transcribe: failed to release claim", "error", err, "job_id", job.ID, "note_id", job.NoteID)
+	}
 }
 
 func (p *Processor) hashNoteAudio(ctx context.Context, audioKey string) (string, string, error) {
