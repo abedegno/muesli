@@ -550,6 +550,17 @@ func (s *Store) UpdateReviewState(ctx context.Context, ownerID, noteID, newState
 		return err
 	}
 
+	// Compare the generation BEFORE validating the transition, using the value
+	// just read. currentState belongs to the REPLACEMENT, not to the transcript
+	// this caller was reviewing, so validating first reports a stale submission
+	// as ErrInvalidTransition (422 "invalid state transition") whenever the
+	// replacement's state happens to make the requested transition illegal —
+	// telling a client its transition was wrong when the real answer is "the
+	// transcript changed, refetch". Spec §7's race table requires a conflict.
+	if generation != expectedGeneration {
+		return ErrGenerationMismatch
+	}
+
 	// Validate transition.
 	if !isLegalTransition(currentState, newState) {
 		return ErrInvalidTransition

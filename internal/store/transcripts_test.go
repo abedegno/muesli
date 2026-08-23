@@ -1551,3 +1551,75 @@ func TestCreateStreamTranscriptLeavesTranscribeClaimIntact(t *testing.T) {
 		t.Fatalf("transcribing_job_id = %v after SaveTranscript, want nil (cleared)", *claimedBy)
 	}
 }
+
+// TestUpdateReviewStateStaleGenerationOutranksAnIllegalTransition covers the
+// case the existing stale-generation test cannot: one where the transition is
+// ILLEGAL against the replacement's state. That test deliberately uses a legal
+// transition, to isolate the generation predicate from the transition rules —
+// correct, and it means this combination had zero coverage.
+//
+// Validating the transition first reports a stale reviewer's submission as
+// ErrInvalidTransition (422 "invalid state transition"), which tells the client
+// its transition was wrong when the real answer is "the transcript you were
+// reviewing no longer exists, refetch". Spec §7's race table requires a
+// conflict, and 422 gives a client no reason to refetch.
+func TestUpdateReviewStateStaleGenerationOutranksAnIllegalTransition(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	ownerID, noteID := seedNoteWithOwner(t, st)
+
+	// Generation 1: what the reviewer rendered. Acoustic speaker labels make its
+	// review_state "pending", whose one legal transition is to in_review.
+	first, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "one", Source: "mic", Speaker: "SPEAKER_00"}},
+	}, 0)
+	if err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+
+	// The transcript is replaced underneath the reviewer, and the replacement is
+	// then moved to in_review by whoever owns it now.
+	second, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "two", Source: "mic", Speaker: "SPEAKER_00"}},
+	}, first.Generation)
+	if err != nil {
+		t.Fatalf("second save: %v", err)
+	}
+	if err := st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateInReview, second.Generation); err != nil {
+		t.Fatalf("advance the replacement: %v", err)
+	}
+
+	// The stale reviewer now submits the transition that was legal for the
+	// transcript they rendered. Against the REPLACEMENT's state it is
+	// in_review -> in_review, which is illegal — so transition-first validation
+	// masks the conflict.
+	err = st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateInReview, first.Generation)
+	if errors.Is(err, store.ErrInvalidTransition) {
+		t.Fatalf("stale review reported as ErrInvalidTransition (422); spec §7 requires a conflict so the client refetches")
+	}
+	if !errors.Is(err, store.ErrGenerationMismatch) {
+		t.Fatalf("stale review error = %v, want ErrGenerationMismatch", err)
+	}
+
+	// Nothing was mutated: this is a signalling defect, and the fix must not
+	// turn it into a write.
+	got, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Generation != second.Generation || got.ReviewState != model.ReviewStateInReview {
+		t.Fatalf("transcript = generation %d state %q, want generation %d state %q (untouched)",
+			got.Generation, got.ReviewState, second.Generation, model.ReviewStateInReview)
+	}
+
+	// The transition rules still apply at the CURRENT generation: an illegal
+	// transition there is still 422, not a conflict.
+	if err := st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateInReview, second.Generation); !errors.Is(err, store.ErrInvalidTransition) {
+		t.Fatalf("illegal transition at the current generation = %v, want ErrInvalidTransition", err)
+	}
+}
