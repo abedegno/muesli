@@ -201,20 +201,38 @@ func drain(t *testing.T, proc *worker.Processor, st *store.Store) {
 func seedProvisionalTranscript(t *testing.T, st *store.Store, noteID string) {
 	t.Helper()
 	ctx := context.Background()
-	if err := st.AppendProvisionalTranscriptSegment(ctx, noteID, model.Transcript{
-		NoteID:            noteID,
-		TranscriberPlugin: "live-stub",
-		Model:             "stream",
-	}, model.Segment{
+	live, err := st.CreateStreamTranscript(ctx, noteID, "test-stream", "live-stub", "stream", 0)
+	if err != nil {
+		t.Fatalf("CreateStreamTranscript: %v", err)
+	}
+	if err := st.AppendStreamSegment(ctx, live.ID, "test-stream", model.Segment{
 		StartMS: 0,
 		EndMS:   1000,
 		Text:    "provisional segment",
 		Source:  "mic",
 	}); err != nil {
-		t.Fatalf("AppendProvisionalTranscriptSegment: %v", err)
+		t.Fatalf("AppendStreamSegment: %v", err)
 	}
 	if err := st.SetNotePartialTranscript(ctx, noteID, true); err != nil {
 		t.Fatalf("SetNotePartialTranscript: %v", err)
+	}
+
+	// The pipeline fixture already enqueued a transcribe job before this
+	// provisional segment existed, so its payload's expected_generation is
+	// stale (baked in as 0). Patch it to the generation the provisional
+	// segment just created, mirroring what a real caller would have observed
+	// had it enqueued after the live session started (see setNoteAudioAndJob
+	// in internal/api/stream_e2e_test.go for the production-shaped version of
+	// this same fix).
+	generation, err := st.CurrentTranscriptGeneration(ctx, noteID)
+	if err != nil {
+		t.Fatalf("CurrentTranscriptGeneration: %v", err)
+	}
+	if _, err := st.Pool().Exec(ctx,
+		`UPDATE jobs SET payload = jsonb_set(payload, '{expected_generation}', to_jsonb($2::int))
+		 WHERE note_id=$1 AND type='transcribe' AND status='pending'`,
+		noteID, generation); err != nil {
+		t.Fatalf("patch transcribe job expected_generation: %v", err)
 	}
 }
 
@@ -459,10 +477,14 @@ func TestPipelineDiarizationReviewReleaseAllowsSummaryFanout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NoteOwnerID: %v", err)
 	}
-	if err := st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateInReview); err != nil {
+	generation, err := st.CurrentTranscriptGeneration(ctx, noteID)
+	if err != nil {
+		t.Fatalf("CurrentTranscriptGeneration: %v", err)
+	}
+	if err := st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateInReview, generation); err != nil {
 		t.Fatalf("UpdateReviewState(in_review): %v", err)
 	}
-	if err := st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateCompleted); err != nil {
+	if err := st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateCompleted, generation); err != nil {
 		t.Fatalf("UpdateReviewState(completed): %v", err)
 	}
 	if err := st.EnqueueSummarizeJobs(ctx, ownerID, noteID); err != nil {

@@ -26,3 +26,8 @@ var ErrSelfLink = errors.New("self link")
 
 // ErrAlreadySetUp is returned when first-run setup has already created a user.
 var ErrAlreadySetUp = errors.New("already set up")
+
+// ErrGenerationMismatch is returned when a caller carries a transcript
+// generation that is no longer current — the transcript was replaced after the
+// caller read it. Expected generation 0 means "expected no transcript".
+var ErrGenerationMismatch = errors.New("transcript generation mismatch")

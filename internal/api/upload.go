@@ -136,8 +136,16 @@ func (s *Server) handleAudioUploaded(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Enqueue transcription. The worker pool (if running) picks it up.
-	payload, _ := buildTranscribeJobPayload(req.Key, "", "")
+	// Enqueue transcription. The worker pool (if running) picks it up. Carry the
+	// transcript generation observed now so a stale job (e.g. superseded by a
+	// live-stream finalize before the worker gets to it) is rejected rather than
+	// overwriting a newer transcript.
+	expectedGeneration, err := s.deps.Store.CurrentTranscriptGeneration(r.Context(), noteID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	payload, _ := buildTranscribeJobPayload(req.Key, "", "", expectedGeneration)
 	if _, err := s.deps.Store.EnqueueJob(r.Context(), noteID, model.JobTranscribe, payload); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

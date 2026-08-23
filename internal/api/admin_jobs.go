@@ -52,7 +52,29 @@ func (s *Server) handleRetryJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if _, err = s.deps.Store.EnqueueJob(r.Context(), job.NoteID, job.Type, job.Payload); err != nil {
+	payload := job.Payload
+	if job.Type == model.JobTranscribe {
+		// This re-enqueues a failed job's OWN payload verbatim by default, which
+		// can carry a stale expected_generation the same way handleRetryNote's
+		// did (e.g. the failed run itself partially saved a transcript before
+		// failing on a later step), and — if that save succeeded — the
+		// published/published_generation checkpoint runTranscribe uses to
+		// resume the SAME job after publication instead of re-transcribing. An
+		// admin retry is a different job that wants the work done again from
+		// the start, so both get reset: the generation to the note's current
+		// transcript generation, the same way every other transcribe enqueue
+		// site computes it, and the checkpoint cleared so the retry transcribes
+		// instead of silently resuming with whatever this one already
+		// (possibly incompletely) published.
+		refreshed, rerr := resetTranscribeRetryPayload(r.Context(), s.deps.Store, job.NoteID, job.Payload)
+		if rerr != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		payload = refreshed
+	}
+
+	if _, err = s.deps.Store.EnqueueJob(r.Context(), job.NoteID, job.Type, payload); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}

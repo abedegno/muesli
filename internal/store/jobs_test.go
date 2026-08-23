@@ -82,6 +82,43 @@ func TestCompleteJob(t *testing.T) {
 	}
 }
 
+// TestUpdateJobPayload verifies the happy path (payload replaced, readable
+// back via GetJob) and that updating a nonexistent job id returns
+// ErrNotFound rather than silently succeeding — the H3 fix: a caller that
+// can't tell a no-op from a real write would proceed as if the persist
+// landed when it didn't.
+func TestUpdateJobPayload(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{"expected_generation":0}`))
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	if err := st.UpdateJobPayload(ctx, jobID, json.RawMessage(`{"expected_generation":3}`)); err != nil {
+		t.Fatalf("update payload: %v", err)
+	}
+	got, err := st.GetJob(ctx, jobID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	var payload struct {
+		ExpectedGeneration int `json:"expected_generation"`
+	}
+	if err := json.Unmarshal(got.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+	if payload.ExpectedGeneration != 3 {
+		t.Fatalf("expected_generation = %d, want 3", payload.ExpectedGeneration)
+	}
+
+	if err := st.UpdateJobPayload(ctx, "00000000-0000-0000-0000-000000000000", json.RawMessage(`{}`)); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("update nonexistent job: err = %v, want ErrNotFound", err)
+	}
+}
+
 func TestFailJobRetryThenTerminal(t *testing.T) {
 	t.Parallel()
 	st := store.New(testutil.NewPool(t))

@@ -215,7 +215,7 @@ func seedTranscript(t *testing.T, st *store.Store, noteID string, durationMS int
 		},
 		ReviewState: model.ReviewStateCompleted,
 	}
-	if _, err := st.SaveTranscript(ctx, tr); err != nil {
+	if _, err := st.SaveTranscript(ctx, tr, 0); err != nil {
 		t.Fatalf("save transcript: %v", err)
 	}
 }

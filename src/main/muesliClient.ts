@@ -470,10 +470,12 @@ export class MuesliClient {
 
   // body mirrors the server's reviewUpdateRequest exactly (snake_case JSON keys);
   // the camelCase -> snake_case mapping happens in ipcHandlers so this client
-  // stays a thin, directly-testable wrapper over the wire format.
+  // stays a thin, directly-testable wrapper over the wire format. generation
+  // is always required server-side — a zero/absent value gets 400, not a
+  // silent unversioned edit.
   async postDiarizationReview(
     id: string,
-    body: { segment_id?: string; speaker?: string; review_state?: string },
+    body: { segment_id?: string; speaker?: string; review_state?: string; generation: number },
   ): Promise<DiarizationReview> {
     return this.json<DiarizationReview>('POST', `/api/notes/${id}/transcript/review`, body)
   }

@@ -34,11 +34,16 @@ func (s *Server) handleGetDiarizationReview(w http.ResponseWriter, r *http.Reque
 }
 
 // reviewUpdateRequest is the body accepted by POST /api/notes/{id}/transcript/review.
-// At least one of SegmentID or ReviewState must be set.
+// At least one of SegmentID or ReviewState must be set. Generation is always
+// required: it is the transcript generation the client rendered its review
+// payload from, echoed back from model.DiarizationReview.Generation, so a
+// submission against a transcript that has since been replaced is rejected
+// instead of silently mutating the one that replaced it.
 type reviewUpdateRequest struct {
 	SegmentID   string `json:"segment_id"`   // optional: confirm a segment's speaker
 	Speaker     string `json:"speaker"`      // optional: used together with SegmentID
 	ReviewState string `json:"review_state"` // optional: advance the review lifecycle
+	Generation  int    `json:"generation"`   // required: the generation this review was rendered from
 }
 
 // handlePostDiarizationReview updates a note's diarization review state and/or
@@ -60,31 +65,42 @@ func (s *Server) handlePostDiarizationReview(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusBadRequest, "segment_id or review_state required")
 		return
 	}
+	// A zero generation means the client never rendered a versioned review
+	// payload to submit against — accepting it would reintroduce the
+	// read-by-note/update-by-note bug this task removes.
+	if req.Generation == 0 {
+		writeError(w, http.StatusBadRequest, "generation required")
+		return
+	}
 
 	ctx := r.Context()
 
 	if req.SegmentID != "" {
-		if err := s.deps.Store.ConfirmSegmentSpeaker(ctx, uid, noteID, req.SegmentID, req.Speaker); err != nil {
-			if errors.Is(err, store.ErrNotFound) {
+		if err := s.deps.Store.ConfirmSegmentSpeaker(ctx, uid, noteID, req.SegmentID, req.Speaker, req.Generation); err != nil {
+			switch {
+			case errors.Is(err, store.ErrNotFound):
 				writeError(w, http.StatusNotFound, "not found")
-				return
+			case errors.Is(err, store.ErrGenerationMismatch):
+				writeError(w, http.StatusConflict, "transcript changed, refetch and retry")
+			default:
+				writeError(w, http.StatusInternalServerError, "internal error")
 			}
-			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
 	}
 
 	if req.ReviewState != "" {
-		if err := s.deps.Store.UpdateReviewState(ctx, uid, noteID, req.ReviewState); err != nil {
-			if errors.Is(err, store.ErrNotFound) {
+		if err := s.deps.Store.UpdateReviewState(ctx, uid, noteID, req.ReviewState, req.Generation); err != nil {
+			switch {
+			case errors.Is(err, store.ErrNotFound):
 				writeError(w, http.StatusNotFound, "not found")
-				return
-			}
-			if errors.Is(err, store.ErrInvalidTransition) {
+			case errors.Is(err, store.ErrInvalidTransition):
 				writeError(w, http.StatusUnprocessableEntity, "invalid state transition")
-				return
+			case errors.Is(err, store.ErrGenerationMismatch):
+				writeError(w, http.StatusConflict, "transcript changed, refetch and retry")
+			default:
+				writeError(w, http.StatusInternalServerError, "internal error")
 			}
-			writeError(w, http.StatusInternalServerError, "internal error")
 			return
 		}
 		if req.ReviewState == model.ReviewStateCompleted {

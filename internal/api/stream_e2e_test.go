@@ -161,7 +161,19 @@ func setNoteAudioAndJob(t *testing.T, st *store.Store, noteID string) {
 	if err := st.SetNoteAudio(ctx, note.OwnerID, noteID, audioKey); err != nil {
 		t.Fatalf("set note audio: %v", err)
 	}
-	if _, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{"audio_key":"`+audioKey+`"}`)); err != nil {
+	// Mirror what the real upload-completion handler does: read the transcript
+	// generation observed now (live streaming may already have created a
+	// provisional transcript row) and carry it, so this batch-finalize job is
+	// not rejected as stale by SaveTranscript's generation check.
+	expectedGeneration, err := st.CurrentTranscriptGeneration(ctx, noteID)
+	if err != nil {
+		t.Fatalf("current transcript generation: %v", err)
+	}
+	payload, err := json.Marshal(map[string]any{"audio_key": audioKey, "expected_generation": expectedGeneration})
+	if err != nil {
+		t.Fatalf("marshal payload: %v", err)
+	}
+	if _, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, payload); err != nil {
 		t.Fatalf("enqueue transcribe job: %v", err)
 	}
 }
@@ -332,7 +344,6 @@ func TestStreamingE2E_LiveSegmentsAndBatchFinalize(t *testing.T) {
 	}
 
 	noteID := createStreamingNote(t, fixture.srv, fixture.hdr, "Live")
-	setNoteAudioAndJob(t, fixture.st, noteID)
 
 	conn := openStream(t, httpSrv.URL, noteID, strings.TrimPrefix(fixture.hdr["Authorization"], "Bearer "))
 	for _, wantType := range []string{"loading", "ready"} {
@@ -424,6 +435,14 @@ func TestStreamingE2E_LiveSegmentsAndBatchFinalize(t *testing.T) {
 		t.Fatal("partial_transcript should be true after live provisional segments")
 	}
 
+	// Set the note's audio and enqueue the batch finalize job now, the way the
+	// real upload-completion handler would: after the live session has already
+	// produced its provisional transcript, so the job's observed generation
+	// reflects that (setNoteAudioAndJob reads it via
+	// CurrentTranscriptGeneration). Enqueuing this any earlier would bake in a
+	// stale expected_generation and the finalize job would be discarded.
+	setNoteAudioAndJob(t, fixture.st, noteID)
+
 	batchTranscriber := plugintest.NewTranscriber()
 	t.Cleanup(batchTranscriber.Close)
 	batchPluginID := registerPlugin(t, fixture.srv, fixture.hdr, model.PluginTranscriber, "batch-fake", batchTranscriber.URL(), "batch-token")
@@ -495,7 +514,6 @@ func TestStreamingE2E_PartialThenFinalSegmentPersistsOnlyFinal(t *testing.T) {
 	}
 
 	noteID := createStreamingNote(t, fixture.srv, fixture.hdr, "Partial then final")
-	setNoteAudioAndJob(t, fixture.st, noteID)
 
 	conn := openStream(t, httpSrv.URL, noteID, strings.TrimPrefix(fixture.hdr["Authorization"], "Bearer "))
 	frames := pcmFixtureAllFrames(t)
@@ -589,6 +607,11 @@ func TestStreamingE2E_PartialThenFinalSegmentPersistsOnlyFinal(t *testing.T) {
 		}
 	}
 
+	// Set the note's audio and enqueue the batch finalize job now (after the
+	// live session), the way the real upload-completion handler would — see
+	// the matching comment in TestStreamingE2E_LiveSegmentsAndBatchFinalize.
+	setNoteAudioAndJob(t, fixture.st, noteID)
+
 	batchTranscriber := plugintest.NewTranscriber()
 	t.Cleanup(batchTranscriber.Close)
 	batchPluginID := registerPlugin(t, fixture.srv, fixture.hdr, model.PluginTranscriber, "batch-fake", batchTranscriber.URL(), "batch-token")
@@ -648,7 +671,6 @@ func TestStreamingE2E_PartialFloodDoesNotBlockFinal(t *testing.T) {
 	}
 
 	noteID := createStreamingNote(t, fixture.srv, fixture.hdr, "Partial flood")
-	setNoteAudioAndJob(t, fixture.st, noteID)
 
 	conn := openStream(t, httpSrv.URL, noteID, strings.TrimPrefix(fixture.hdr["Authorization"], "Bearer "))
 	frames := pcmFixtureAllFrames(t)
@@ -724,6 +746,11 @@ func TestStreamingE2E_PartialFloodDoesNotBlockFinal(t *testing.T) {
 	if got := streamPlugin.BinaryFrames(); got != 2 {
 		t.Fatalf("plugin saw %d frames, want 2", got)
 	}
+
+	// Set the note's audio and enqueue the batch finalize job now (after the
+	// live session), the way the real upload-completion handler would — see
+	// the matching comment in TestStreamingE2E_LiveSegmentsAndBatchFinalize.
+	setNoteAudioAndJob(t, fixture.st, noteID)
 
 	batchTranscriber := newSingleSegmentTranscriber(t, model.Segment{
 		StartMS: 1250,

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"math"
 	"net/http"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	"github.com/abedegno/muesli/internal/plugin"
 	"github.com/abedegno/muesli/internal/store"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
@@ -80,6 +82,33 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 		_ = closeWebsocketCleanly(conn)
 		return
 	}
+
+	// The transcript this stream owns is created only now, once a streaming
+	// plugin has been found AND its session has opened. Creating it earlier
+	// sealed and deleted whatever transcript the note already had — including a
+	// batch transcript and all of its segments — before the server knew whether
+	// it could transcribe anything at all, so a note could be emptied and then
+	// told "unavailable". It still precedes every byte of audio: nothing is read
+	// from the socket until the reader goroutine below starts, so a gap arriving
+	// before the first segment always has a transcript to attach to.
+	//
+	// Interim stream identity. Plan 2 replaces this with the client-supplied
+	// stream_id from the start handshake; the mechanism below is unchanged by
+	// that swap.
+	streamID := uuid.NewString()
+
+	expectedGeneration, err := s.deps.Store.CurrentTranscriptGeneration(r.Context(), noteID)
+	if err != nil {
+		s.failStreamStart(conn, sess, noteID, "internal_error", err)
+		return
+	}
+	liveTranscript, err := s.deps.Store.CreateStreamTranscript(
+		r.Context(), noteID, streamID, "streaming", "", expectedGeneration)
+	if err != nil {
+		s.failStreamStart(conn, sess, noteID, streamStartFailureReason(err), err)
+		return
+	}
+
 	if modelWasLoading {
 		if err := writeStreamControl(conn, map[string]string{"type": "ready"}); err != nil {
 			_ = sess.Close()
@@ -195,9 +224,16 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 					seg.Speaker = *ev.Speaker
 				}
 				if ev.Final {
-					if err := s.deps.Store.AppendProvisionalTranscriptSegment(r.Context(), noteID, model.Transcript{
-						TranscriberPlugin: plug.Name,
-					}, seg); err != nil {
+					if err := s.deps.Store.AppendStreamSegment(r.Context(), liveTranscript.ID, streamID, seg); err != nil {
+						if errors.Is(err, store.ErrStreamSuperseded) {
+							// Batch transcription replaced this transcript while a
+							// final was in flight. Dropping it is correct — the
+							// batch result supersedes it.
+							slog.InfoContext(r.Context(), "dropping final for superseded stream",
+								"note_id", noteID, "stream_id", streamID)
+							closeAll()
+							return
+						}
 						closeAll()
 						return
 					}
@@ -289,6 +325,34 @@ func enqueueAudioFrame(ctx context.Context, ch chan []byte, frame []byte) error 
 
 func secondsToMS(seconds float64) int {
 	return int(math.Round(seconds * 1000))
+}
+
+// streamStartFailureReason names why the stream could not take ownership of a
+// transcript. It rides on the "unavailable" control message rather than
+// replacing it: the socket is already open by the time this can happen, so
+// there is no HTTP status left to send, and the relay degrades on `type` alone
+// (src/main/noteStreamRelay.ts). The reason exists so a client or a log can
+// tell "this note already has a batch transcript, live capture will never work
+// here" apart from "no streaming plugin".
+func streamStartFailureReason(err error) string {
+	switch {
+	case errors.Is(err, store.ErrBatchTranscriptExists):
+		return "batch_transcript_exists"
+	case errors.Is(err, store.ErrGenerationMismatch):
+		return "transcript_changed"
+	default:
+		return "internal_error"
+	}
+}
+
+// failStreamStart reports a start-handshake failure over the already-open
+// socket and tears down the plugin session that was opened for it. No
+// transcript exists at this point, so there is nothing to unwind in the store.
+func (s *Server) failStreamStart(conn *websocket.Conn, sess *plugin.StreamingSession, noteID, reason string, err error) {
+	slog.Warn("live stream start rejected", "note_id", noteID, "reason", reason, "error", err)
+	_ = writeStreamControl(conn, map[string]string{"type": "unavailable", "reason": reason})
+	_ = sess.Close()
+	_ = closeWebsocketCleanly(conn)
 }
 
 func writeStreamControl(conn *websocket.Conn, v any) error {

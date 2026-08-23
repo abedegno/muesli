@@ -12,6 +12,15 @@ export class BridgeError extends Error {
   constructor(
     message: string,
     public readonly kind: 'auth-invalidated' | 'ipc' = 'ipc',
+    /**
+     * HTTP status recovered from the `[NNN] ` prefix ipcHandlers encodes into
+     * the message, because Electron's `ipcMain.handle` rejection path
+     * round-trips only `message` and drops custom properties like
+     * `ApiError.status`. Undefined when the failure never reached the server
+     * (a transport or IPC error) — which is the distinction a caller needs to
+     * tell a 409 conflict apart from "the request never landed".
+     */
+    public readonly status?: number,
   ) {
     super(message)
     this.name = 'BridgeError'
@@ -21,7 +30,13 @@ export class BridgeError extends Error {
 const INVOKE_PREFIX = /^Error invoking remote method '[^']+':\s*/s
 const AUTH_INVALIDATED_PREFIX = /^\[AUTH_INVALIDATED\]\s*/
 const STATUS_PREFIX = /^\[(\d+)\]\s*(.*)$/s
-const ERROR_NAME_PREFIX = /^[A-Za-z_$][\w$]*Error:\s*/
+// The error-name prefix Electron leaves behind, from `error.toString()`. The
+// name part is optional because a plain `new Error(...)` — which is exactly
+// what ipcHandlers' makeStatusError builds — stringifies to a BARE "Error: ".
+// Requiring at least one character before "Error" (the original shape) matched
+// "ApiError:" but not "Error:", so a status-prefixed message arrived as
+// "Error: [409] ..." and the status was never recovered.
+const ERROR_NAME_PREFIX = /^(?:[A-Za-z_$][\w$]*)?Error:\s*/
 
 function normalizeBridgeError(err: unknown): BridgeError {
   if (err instanceof BridgeError) return err
@@ -48,9 +63,10 @@ function normalizeBridgeError(err: unknown): BridgeError {
       return new BridgeError(
         'Your saved sign-in is no longer valid for this server. Sign in again to reconnect.',
         'auth-invalidated',
+        401,
       )
     }
-    return new BridgeError(message || 'Something went wrong. Please try again.')
+    return new BridgeError(message || 'Something went wrong. Please try again.', 'ipc', Number(code))
   }
 
   return new BridgeError(cleaned || 'Something went wrong. Please try again.')

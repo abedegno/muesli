@@ -735,11 +735,18 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       return authedClient().getDiarizationReview(noteId)
     },
 
+    // No withApiError here: authedClient's proxy already routes every rejection
+    // through handleAuthedError, which re-encodes an ApiError as a `[NNN] `
+    // message prefix. That prefix is load-bearing for this endpoint — a review
+    // submitted against a transcript that has since been replaced comes back
+    // 409, and the panel must refetch rather than treat it as a generic
+    // failure — so it is bound by a test rather than left to inspection.
     async postDiarizationReview(noteId, body) {
       return authedClient().postDiarizationReview(noteId, {
         segment_id: body.segmentId,
         speaker: body.speaker,
         review_state: body.reviewState,
+        generation: body.generation,
       })
     },
 

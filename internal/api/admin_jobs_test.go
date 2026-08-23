@@ -9,6 +9,7 @@ import (
 
 	"github.com/abedegno/muesli/internal/api"
 	"github.com/abedegno/muesli/internal/crypto"
+	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/storage"
 	"github.com/abedegno/muesli/internal/store"
 	"github.com/abedegno/muesli/internal/testutil"
@@ -137,6 +138,79 @@ func TestRetryJobSuccess(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected pending transcribe job for note %s, got: %s", note.ID, rec.Body)
+	}
+}
+
+// TestRetryJobRefreshesStaleExpectedGeneration is the H4 regression test:
+// handleRetryJob (the admin job monitor's retry action) re-enqueues a failed
+// job's OWN stored payload by default, the same blind spot handleRetryNote
+// had before it was fixed. For a transcribe job it must refresh
+// expected_generation to the note's current transcript generation rather than
+// forwarding the stale value the failed job was originally enqueued with.
+func TestRetryJobRefreshesStaleExpectedGeneration(t *testing.T) {
+	srv, st, pool := newRetryTestServer(t)
+	ctx := context.Background()
+
+	hdr := setupLoginHdr(t, srv, "adminretrygen@example.com")
+
+	u, err := st.CreateUser(ctx, "ownerretrygen@example.com", "hash")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	note, err := st.CreateNote(ctx, u.ID, "test note")
+	if err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+
+	// Seed an existing transcript directly through the store, so the note's
+	// CURRENT transcript generation is 1.
+	if _, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            note.ID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "hi", Source: "mic"}},
+	}, 0); err != nil {
+		t.Fatalf("seed transcript: %v", err)
+	}
+
+	// The failed job's OWN stored payload is stale: expected_generation 0, as
+	// if it had been enqueued before that transcript ever existed.
+	audioKey := "notes/" + note.ID + "/audio/a.webm"
+	staleJobID, err := st.EnqueueJob(ctx, note.ID, model.JobTranscribe,
+		json.RawMessage(`{"audio_key":"`+audioKey+`","expected_generation":0}`))
+	if err != nil {
+		t.Fatalf("enqueue job: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE jobs SET status='failed' WHERE id=$1`, staleJobID); err != nil {
+		t.Fatalf("mark failed: %v", err)
+	}
+
+	rec := doJSON(t, srv, http.MethodPost, "/api/admin/jobs/"+staleJobID+"/retry", nil, hdr)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("retry status %d body %s", rec.Code, rec.Body)
+	}
+
+	var newJobID string
+	if err := pool.QueryRow(ctx,
+		`SELECT id FROM jobs WHERE note_id=$1 AND status=$2 AND id != $3`,
+		note.ID, model.JobPending, staleJobID).Scan(&newJobID); err != nil {
+		t.Fatalf("find retried job: %v", err)
+	}
+	newJob, err := st.GetJob(ctx, newJobID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	var payload struct {
+		AudioKey           string `json:"audio_key"`
+		ExpectedGeneration int    `json:"expected_generation"`
+	}
+	if err := json.Unmarshal(newJob.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal retried payload: %v", err)
+	}
+	if payload.ExpectedGeneration != 1 {
+		t.Fatalf("retried job expected_generation = %d, want 1 (fresh, not the stale 0 carried by the failed job)", payload.ExpectedGeneration)
+	}
+	if payload.AudioKey != audioKey {
+		t.Fatalf("retried job audio_key = %q, want %q (other fields must survive the refresh)", payload.AudioKey, audioKey)
 	}
 }
 

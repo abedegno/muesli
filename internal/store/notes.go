@@ -376,6 +376,61 @@ func (s *Store) SetNoteStatus(ctx context.Context, noteID, status string) error 
 	return nil
 }
 
+// ClaimNoteForTranscription marks the note transcribing, records which job did
+// so, and returns the status it freshly displaced — all in one statement, so
+// no other writer can slip between the read and the write.
+//
+// A re-claim by the SAME jobID (transcribing_job_id already equals it — a
+// retry of a job that claimed once, then failed before saving) does NOT
+// overwrite status: it is already "transcribing" from the original claim, and
+// re-reading it here would hand back "transcribing" as the "prior" status,
+// which a later release would then restore — permanently losing whatever the
+// note's real status was before this job's FIRST claim (e.g. "ready"). On a
+// re-claim this returns "" (no note status is ever the empty string) so the
+// caller knows to fall back to the prior status it captured and persisted on
+// the original claim, rather than trusting this call's answer.
+//
+// The prior status comes from a FOR UPDATE row lock in the UPDATE's own FROM
+// clause, not a "WITH prev AS (... FOR UPDATE) UPDATE ... RETURNING (SELECT
+// status FROM prev)" CTE. That form looks equivalent but is not: verified
+// against Postgres 16, RETURNING (SELECT status FROM prev) comes back NULL
+// even though prev's FOR UPDATE lock succeeds and the UPDATE itself affects
+// the row. The FROM-subquery form gives the same atomic before/after read and
+// returns the correct value.
+func (s *Store) ClaimNoteForTranscription(ctx context.Context, noteID, jobID string) (string, error) {
+	var prior *string
+	err := s.pool.QueryRow(ctx,
+		`UPDATE notes n
+		 SET status = CASE WHEN cur.transcribing_job_id = $3 THEN n.status ELSE $2 END,
+		     transcribing_job_id = $3,
+		     updated_at = now()
+		 FROM (SELECT status, transcribing_job_id FROM notes WHERE id=$1 FOR UPDATE) AS cur
+		 WHERE n.id=$1
+		 RETURNING CASE WHEN cur.transcribing_job_id = $3 THEN NULL ELSE cur.status END`,
+		noteID, model.NoteTranscribing, jobID).Scan(&prior)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if prior == nil {
+		return "", nil
+	}
+	return *prior, nil
+}
+
+// ReleaseNoteTranscriptionClaim undoes ClaimNoteForTranscription, but only while
+// this job's own claim still stands. If any other writer has moved the note or
+// claimed it since, the newer state wins and this is a no-op.
+func (s *Store) ReleaseNoteTranscriptionClaim(ctx context.Context, noteID, jobID, prior string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE notes SET status=$1, transcribing_job_id=NULL, updated_at=now()
+		  WHERE id=$2 AND status=$3 AND transcribing_job_id=$4`,
+		prior, noteID, model.NoteTranscribing, jobID)
+	return err
+}
+
 // MarkNoteReady atomically transitions a note to ready and reports whether
 // THIS call performed the transition (won=true) via a single
 // UPDATE ... WHERE status <> 'ready' RowsAffected check. This is the only

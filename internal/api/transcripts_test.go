@@ -44,7 +44,7 @@ func TestHandleGetDiarizationReview(t *testing.T) {
 			{StartMS: 1000, EndMS: 2000, Text: "world", Source: "mic", Speaker: "SPEAKER_01"},
 		},
 	}
-	if _, err := st.SaveTranscript(ctx, tr); err != nil {
+	if _, err := st.SaveTranscript(ctx, tr, 0); err != nil {
 		t.Fatalf("save transcript: %v", err)
 	}
 
@@ -107,14 +107,14 @@ func TestHandlePostDiarizationReview_confirmSpeaker(t *testing.T) {
 			{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic", Speaker: "SPEAKER_00"},
 		},
 	}
-	saved, err := st.SaveTranscript(ctx, tr)
+	saved, err := st.SaveTranscript(ctx, tr, 0)
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
 	segID := saved.Segments[0].ID
 
 	// POST confirm speaker.
-	body := map[string]string{"segment_id": segID, "speaker": "Alice"}
+	body := map[string]any{"segment_id": segID, "speaker": "Alice", "generation": saved.Generation}
 	r := doJSON(t, srv, http.MethodPost, "/api/notes/"+note.ID+"/transcript/review", body, hdr)
 	if r.Code != http.StatusOK {
 		t.Fatalf("POST confirm speaker: status=%d body=%s", r.Code, r.Body)
@@ -130,6 +130,12 @@ func TestHandlePostDiarizationReview_confirmSpeaker(t *testing.T) {
 	}
 	if review.Turns[0].Speaker != "Alice" {
 		t.Errorf("speaker: want %q, got %q", "Alice", review.Turns[0].Speaker)
+	}
+	// The response the client decodes over the wire must carry the real
+	// generation, not the zero value — this is the only value a client has to
+	// echo back on its next mutation (see reviewUpdateRequest.Generation).
+	if review.Generation != saved.Generation {
+		t.Errorf("generation: want %d, got %d", saved.Generation, review.Generation)
 	}
 }
 
@@ -163,13 +169,14 @@ func TestHandlePostDiarizationReview_advanceState(t *testing.T) {
 			{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic", Speaker: "SPEAKER_00"},
 		},
 	}
-	if _, err := st.SaveTranscript(ctx, tr); err != nil {
+	saved, err := st.SaveTranscript(ctx, tr, 0)
+	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
 	// Advance pending → in_review (legal).
 	r := doJSON(t, srv, http.MethodPost, "/api/notes/"+note.ID+"/transcript/review",
-		map[string]string{"review_state": model.ReviewStateInReview}, hdr)
+		map[string]any{"review_state": model.ReviewStateInReview, "generation": saved.Generation}, hdr)
 	if r.Code != http.StatusOK {
 		t.Fatalf("advance state: status=%d body=%s", r.Code, r.Body)
 	}
@@ -179,9 +186,11 @@ func TestHandlePostDiarizationReview_advanceState(t *testing.T) {
 		t.Errorf("review_state: want %q, got %q", model.ReviewStateInReview, review.ReviewState)
 	}
 
-	// Same→same (in_review → in_review) is illegal → 422.
+	// Same→same (in_review → in_review) is illegal → 422. review_state
+	// transitions don't change the generation, so saved.Generation is still
+	// current here.
 	r422 := doJSON(t, srv, http.MethodPost, "/api/notes/"+note.ID+"/transcript/review",
-		map[string]string{"review_state": model.ReviewStateInReview}, hdr)
+		map[string]any{"review_state": model.ReviewStateInReview, "generation": saved.Generation}, hdr)
 	if r422.Code != http.StatusUnprocessableEntity {
 		t.Errorf("illegal transition: want 422, got %d body=%s", r422.Code, r422.Body)
 	}
@@ -221,7 +230,8 @@ func TestHandlePostDiarizationReview_completionEnqueuesSummaries(t *testing.T) {
 			{StartMS: 1000, EndMS: 2000, Text: "there", Source: "mic", Speaker: "SPEAKER_01"},
 		},
 	}
-	if _, err := st.SaveTranscript(ctx, tr); err != nil {
+	saved, err := st.SaveTranscript(ctx, tr, 0)
+	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
@@ -238,13 +248,13 @@ func TestHandlePostDiarizationReview_completionEnqueuesSummaries(t *testing.T) {
 	}
 
 	r := doJSON(t, srv, http.MethodPost, "/api/notes/"+note.ID+"/transcript/review",
-		map[string]string{"review_state": model.ReviewStateInReview}, hdr)
+		map[string]any{"review_state": model.ReviewStateInReview, "generation": saved.Generation}, hdr)
 	if r.Code != http.StatusOK {
 		t.Fatalf("advance to in_review: status=%d body=%s", r.Code, r.Body)
 	}
 
 	r = doJSON(t, srv, http.MethodPost, "/api/notes/"+note.ID+"/transcript/review",
-		map[string]string{"review_state": model.ReviewStateCompleted}, hdr)
+		map[string]any{"review_state": model.ReviewStateCompleted, "generation": saved.Generation}, hdr)
 	if r.Code != http.StatusOK {
 		t.Fatalf("complete review: status=%d body=%s", r.Code, r.Body)
 	}
@@ -294,7 +304,7 @@ func TestHandlePostDiarizationReview_segmentOnlyDoesNotEnqueueSummaries(t *testi
 			{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic", Speaker: "SPEAKER_00"},
 		},
 	}
-	saved, err := st.SaveTranscript(ctx, tr)
+	saved, err := st.SaveTranscript(ctx, tr, 0)
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -305,7 +315,7 @@ func TestHandlePostDiarizationReview_segmentOnlyDoesNotEnqueueSummaries(t *testi
 	}
 
 	r := doJSON(t, srv, http.MethodPost, "/api/notes/"+note.ID+"/transcript/review",
-		map[string]string{"segment_id": saved.Segments[0].ID, "speaker": "X"}, hdr)
+		map[string]any{"segment_id": saved.Segments[0].ID, "speaker": "X", "generation": saved.Generation}, hdr)
 	if r.Code != http.StatusOK {
 		t.Fatalf("confirm segment: status=%d body=%s", r.Code, r.Body)
 	}
@@ -350,7 +360,7 @@ func TestHandlePostDiarizationReview_emptyBody(t *testing.T) {
 			{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic", Speaker: "SPEAKER_00"},
 		},
 	}
-	if _, err := st.SaveTranscript(ctx, tr); err != nil {
+	if _, err := st.SaveTranscript(ctx, tr, 0); err != nil {
 		t.Fatalf("save: %v", err)
 	}
 
@@ -377,4 +387,165 @@ func TestHandlePostDiarizationReview_emptyBody(t *testing.T) {
 	// suppress unused imports
 	_ = ctx
 	_ = st
+}
+
+// TestHandlePostDiarizationReview_missingGeneration verifies a submission
+// that omits generation (the zero value) is rejected with 400 rather than
+// accepted as an unversioned edit — the bug this task removes.
+func TestHandlePostDiarizationReview_missingGeneration(t *testing.T) {
+	t.Parallel()
+	srv, st := newTestServer(t)
+	ctx := context.Background()
+
+	doJSON(t, srv, http.MethodPost, "/api/setup",
+		map[string]string{"email": "rev7@example.com", "password": "password123"}, nil)
+	rec := doJSON(t, srv, http.MethodPost, "/api/login",
+		map[string]string{"email": "rev7@example.com", "password": "password123"}, nil)
+	var login struct {
+		Token string `json:"token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &login)
+	hdr := map[string]string{"Authorization": "Bearer " + login.Token}
+
+	noteRec := doJSON(t, srv, http.MethodPost, "/api/notes", map[string]string{"title": "M"}, hdr)
+	var note struct{ ID string }
+	_ = json.Unmarshal(noteRec.Body.Bytes(), &note)
+
+	tr := model.Transcript{
+		NoteID:            note.ID,
+		TranscriberPlugin: "whisper",
+		Model:             "base",
+		Segments: []model.Segment{
+			{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic", Speaker: "SPEAKER_00"},
+		},
+	}
+	if _, err := st.SaveTranscript(ctx, tr, 0); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// review_state set, generation omitted → 400.
+	r := doJSON(t, srv, http.MethodPost, "/api/notes/"+note.ID+"/transcript/review",
+		map[string]string{"review_state": model.ReviewStateInReview}, hdr)
+	if r.Code != http.StatusBadRequest {
+		t.Fatalf("missing generation: want 400, got %d body=%s", r.Code, r.Body)
+	}
+}
+
+// TestHandlePostDiarizationReview_staleGeneration verifies a review submitted
+// against a generation the transcript has since moved past returns 409. It
+// exercises the review_state path explicitly, not segment_id: a stale request
+// carrying only segment_id would leave UpdateReviewState's generation
+// predicate completely unbound.
+func TestHandlePostDiarizationReview_staleGeneration(t *testing.T) {
+	t.Parallel()
+	srv, st := newTestServer(t)
+	ctx := context.Background()
+
+	doJSON(t, srv, http.MethodPost, "/api/setup",
+		map[string]string{"email": "rev8@example.com", "password": "password123"}, nil)
+	rec := doJSON(t, srv, http.MethodPost, "/api/login",
+		map[string]string{"email": "rev8@example.com", "password": "password123"}, nil)
+	var login struct {
+		Token string `json:"token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &login)
+	hdr := map[string]string{"Authorization": "Bearer " + login.Token}
+
+	noteRec := doJSON(t, srv, http.MethodPost, "/api/notes", map[string]string{"title": "M"}, hdr)
+	var note struct{ ID string }
+	_ = json.Unmarshal(noteRec.Body.Bytes(), &note)
+
+	tr := model.Transcript{
+		NoteID:            note.ID,
+		TranscriberPlugin: "whisper",
+		Model:             "base",
+		Segments: []model.Segment{
+			{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic", Speaker: "SPEAKER_00"},
+		},
+	}
+	first, err := st.SaveTranscript(ctx, tr, 0)
+	if err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+
+	// The transcript the reviewer was looking at is replaced underneath them.
+	tr2 := model.Transcript{
+		NoteID:            note.ID,
+		TranscriberPlugin: "whisper",
+		Model:             "base",
+		Segments: []model.Segment{
+			{StartMS: 0, EndMS: 1000, Text: "hi again", Source: "mic", Speaker: "SPEAKER_00"},
+		},
+	}
+	if _, err := st.SaveTranscript(ctx, tr2, first.Generation); err != nil {
+		t.Fatalf("second save: %v", err)
+	}
+
+	r := doJSON(t, srv, http.MethodPost, "/api/notes/"+note.ID+"/transcript/review",
+		map[string]any{"review_state": model.ReviewStateInReview, "generation": first.Generation}, hdr)
+	if r.Code != http.StatusConflict {
+		t.Fatalf("stale generation review_state: want 409, got %d body=%s", r.Code, r.Body)
+	}
+}
+
+// TestHandlePostDiarizationReview_generationRoundTrip performs a real
+// GET -> POST round trip and takes the generation to submit from the DECODED
+// GET response, not from SaveTranscript's return value. Every other test in
+// this file supplies generation straight from SaveTranscript, so none of them
+// would notice if GetDiarizationReview ever stopped setting
+// model.DiarizationReview.Generation on the wire (dropped field, wrong scan
+// target, etc.) — every response would carry generation 0, every real client
+// round trip would 400, and the rest of the suite would stay green. This is
+// the one test standing between that regression and every other guard in
+// this file passing for the wrong reason.
+func TestHandlePostDiarizationReview_generationRoundTrip(t *testing.T) {
+	t.Parallel()
+	srv, st := newTestServer(t)
+	ctx := context.Background()
+
+	doJSON(t, srv, http.MethodPost, "/api/setup",
+		map[string]string{"email": "rev9@example.com", "password": "password123"}, nil)
+	rec := doJSON(t, srv, http.MethodPost, "/api/login",
+		map[string]string{"email": "rev9@example.com", "password": "password123"}, nil)
+	var login struct {
+		Token string `json:"token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &login)
+	hdr := map[string]string{"Authorization": "Bearer " + login.Token}
+
+	noteRec := doJSON(t, srv, http.MethodPost, "/api/notes", map[string]string{"title": "M"}, hdr)
+	var note struct{ ID string }
+	_ = json.Unmarshal(noteRec.Body.Bytes(), &note)
+
+	tr := model.Transcript{
+		NoteID:            note.ID,
+		TranscriberPlugin: "whisper",
+		Model:             "base",
+		Segments: []model.Segment{
+			{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic", Speaker: "SPEAKER_00"},
+		},
+	}
+	if _, err := st.SaveTranscript(ctx, tr, 0); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	getRec := doJSON(t, srv, http.MethodGet, "/api/notes/"+note.ID+"/transcript/review", nil, hdr)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET review: status=%d body=%s", getRec.Code, getRec.Body)
+	}
+	var got model.DiarizationReview
+	if err := json.Unmarshal(getRec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode GET: %v", err)
+	}
+	if got.Generation == 0 {
+		t.Fatal("GET response carried generation 0 — a real client could never submit a valid review")
+	}
+
+	// Submit exactly what a real client received — no shortcut back to the
+	// store's own return value anywhere in this test.
+	postRec := doJSON(t, srv, http.MethodPost, "/api/notes/"+note.ID+"/transcript/review",
+		map[string]any{"review_state": model.ReviewStateInReview, "generation": got.Generation}, hdr)
+	if postRec.Code != http.StatusOK {
+		t.Fatalf("POST with GET-decoded generation: status=%d body=%s", postRec.Code, postRec.Body)
+	}
 }

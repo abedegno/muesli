@@ -2,12 +2,16 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/store"
 	"github.com/abedegno/muesli/internal/testutil"
+	"github.com/google/uuid"
 )
 
 func TestTranscriptStore(t *testing.T) {
@@ -25,7 +29,7 @@ func TestTranscriptStore(t *testing.T) {
 			{StartMS: 1000, EndMS: 2000, Text: "world", Source: "system", Speaker: "spk1"},
 		},
 	}
-	saved, err := st.SaveTranscript(ctx, tr)
+	saved, err := st.SaveTranscript(ctx, tr, 0)
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -96,7 +100,7 @@ func TestTranscriptWordsRoundTrip(t *testing.T) {
 				},
 			},
 		}
-		saved, err := st.SaveTranscript(ctx, tr)
+		saved, err := st.SaveTranscript(ctx, tr, 0)
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -134,7 +138,7 @@ func TestTranscriptWordsRoundTrip(t *testing.T) {
 				{StartMS: 0, EndMS: 1000, Text: "hello", Source: "mic"},
 			},
 		}
-		saved, err := st.SaveTranscript(ctx, tr)
+		saved, err := st.SaveTranscript(ctx, tr, 0)
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -174,7 +178,7 @@ func TestTranscriptConfidenceRoundTrip(t *testing.T) {
 				{StartMS: 0, EndMS: 1000, Text: "hello", Source: "mixed", Confidence: floatPtr(0.87)},
 			},
 		}
-		_, err := st.SaveTranscript(ctx, tr)
+		_, err := st.SaveTranscript(ctx, tr, 0)
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -201,7 +205,7 @@ func TestTranscriptConfidenceRoundTrip(t *testing.T) {
 				{StartMS: 0, EndMS: 1000, Text: "hello", Source: "mixed"},
 			},
 		}
-		_, err := st.SaveTranscript(ctx, tr)
+		_, err := st.SaveTranscript(ctx, tr, 0)
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -225,7 +229,7 @@ func TestTranscriptConfidenceRoundTrip(t *testing.T) {
 				{StartMS: 0, EndMS: 1000, Text: "hello", Source: "mixed", Confidence: floatPtr(0.0)},
 			},
 		}
-		_, err := st.SaveTranscript(ctx, tr)
+		_, err := st.SaveTranscript(ctx, tr, 0)
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -277,7 +281,7 @@ func TestSaveTranscript_reviewState(t *testing.T) {
 				{StartMS: 1000, EndMS: 2000, Text: "world", Source: "mic"},
 			},
 		}
-		saved, err := st.SaveTranscript(ctx, tr)
+		saved, err := st.SaveTranscript(ctx, tr, 0)
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -304,7 +308,7 @@ func TestSaveTranscript_reviewState(t *testing.T) {
 				{StartMS: 1000, EndMS: 2000, Text: "world", Source: "mic"},
 			},
 		}
-		saved, err := st.SaveTranscript(ctx, tr)
+		saved, err := st.SaveTranscript(ctx, tr, 0)
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -331,7 +335,7 @@ func TestSaveTranscript_reviewState(t *testing.T) {
 				{StartMS: 1000, EndMS: 2000, Text: "hello", Source: "system", Speaker: model.SpeakerThem},
 			},
 		}
-		saved, err := st.SaveTranscript(ctx, tr)
+		saved, err := st.SaveTranscript(ctx, tr, 0)
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -352,7 +356,7 @@ func TestSaveTranscript_reviewState(t *testing.T) {
 				{StartMS: 2000, EndMS: 3000, Text: "third", Source: "channel 2", Speaker: "Speaker 3"},
 			},
 		}
-		saved, err := st.SaveTranscript(ctx, tr)
+		saved, err := st.SaveTranscript(ctx, tr, 0)
 		if err != nil {
 			t.Fatalf("save: %v", err)
 		}
@@ -389,7 +393,7 @@ func TestGetDiarizationReview(t *testing.T) {
 			{StartMS: 2000, EndMS: 3000, Text: "no confidence", Source: "mic", Speaker: "SPEAKER_00"},
 		},
 	}
-	_, err := st.SaveTranscript(ctx, tr)
+	saved, err := st.SaveTranscript(ctx, tr, 0)
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
@@ -403,6 +407,17 @@ func TestGetDiarizationReview(t *testing.T) {
 	}
 	if review.ReviewState != model.ReviewStatePending {
 		t.Errorf("review_state: want %q, got %q", model.ReviewStatePending, review.ReviewState)
+	}
+	// This is the one value a client can submit back to bind a review
+	// mutation to the transcript it was rendered from (see
+	// TestReviewMutatorsRejectStaleGeneration). If GetDiarizationReview ever
+	// dropped or misscanned this field, every response would carry
+	// generation 0, every real submission would 400 as "unversioned", and no
+	// other test would catch it — every other generation-path test supplies
+	// saved.Generation directly rather than reading it back off a decoded
+	// review.
+	if review.Generation != saved.Generation {
+		t.Errorf("generation: want %d (from SaveTranscript), got %d", saved.Generation, review.Generation)
 	}
 	if len(review.Turns) != 3 {
 		t.Fatalf("want 3 turns, got %d", len(review.Turns))
@@ -440,14 +455,14 @@ func TestConfirmSegmentSpeaker(t *testing.T) {
 			{StartMS: 0, EndMS: 1000, Text: "hello", Source: "mic", Speaker: "SPEAKER_00"},
 		},
 	}
-	saved, err := st.SaveTranscript(ctx, tr)
+	saved, err := st.SaveTranscript(ctx, tr, 0)
 	if err != nil {
 		t.Fatalf("save: %v", err)
 	}
 	segID := saved.Segments[0].ID
 
 	// Confirm the speaker.
-	if err := st.ConfirmSegmentSpeaker(ctx, ownerID, noteID, segID, "Alice"); err != nil {
+	if err := st.ConfirmSegmentSpeaker(ctx, ownerID, noteID, segID, "Alice", saved.Generation); err != nil {
 		t.Fatalf("confirm: %v", err)
 	}
 
@@ -461,13 +476,42 @@ func TestConfirmSegmentSpeaker(t *testing.T) {
 	}
 
 	// Wrong owner returns ErrNotFound.
-	if err := st.ConfirmSegmentSpeaker(ctx, "00000000-0000-0000-0000-000000000001", noteID, segID, "Hack"); err != store.ErrNotFound {
+	if err := st.ConfirmSegmentSpeaker(ctx, "00000000-0000-0000-0000-000000000001", noteID, segID, "Hack", saved.Generation); err != store.ErrNotFound {
 		t.Errorf("wrong owner: want ErrNotFound, got %v", err)
 	}
 
 	// Wrong segment ID returns ErrNotFound.
-	if err := st.ConfirmSegmentSpeaker(ctx, ownerID, noteID, "00000000-0000-0000-0000-000000000002", "Alice"); err != store.ErrNotFound {
+	if err := st.ConfirmSegmentSpeaker(ctx, ownerID, noteID, "00000000-0000-0000-0000-000000000002", "Alice", saved.Generation); err != store.ErrNotFound {
 		t.Errorf("bad segment id: want ErrNotFound, got %v", err)
+	}
+}
+
+// TestConfirmSegmentSpeaker_wrongOwnerPrecedesGeneration verifies that a
+// wrong owner is still reported as ErrNotFound even when the caller's
+// generation is also stale, so a wrong owner never surfaces as a version
+// conflict.
+func TestConfirmSegmentSpeaker_wrongOwnerPrecedesGeneration(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+
+	_, noteID := seedNoteWithOwner(t, st)
+	tr := model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Model:             "base",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 1000, Text: "hello", Source: "mic", Speaker: "SPEAKER_00"}},
+	}
+	saved, err := st.SaveTranscript(ctx, tr, 0)
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// Wrong owner AND a generation that does not match (0, one below the
+	// transcript's actual generation of 1): must still be ErrNotFound.
+	err = st.ConfirmSegmentSpeaker(ctx, "00000000-0000-0000-0000-000000000001", noteID, saved.Segments[0].ID, "Hack", 0)
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("wrong owner + stale generation: want ErrNotFound, got %v", err)
 	}
 }
 
@@ -499,18 +543,19 @@ func TestUpdateReviewState_valid(t *testing.T) {
 				Model:             "base",
 				Segments:          []model.Segment{{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic", Speaker: "SPEAKER_00"}},
 			}
-			if _, err := st.SaveTranscript(ctx, tr); err != nil {
+			saved, err := st.SaveTranscript(ctx, tr, 0)
+			if err != nil {
 				t.Fatalf("save: %v", err)
 			}
 
 			// Drive to the `from` state if it isn't already "pending".
 			if tc.from != model.ReviewStatePending {
-				if err := forceReviewState(ctx, st, ownerID, noteID, tc.from); err != nil {
+				if err := forceReviewState(ctx, st, ownerID, noteID, tc.from, saved.Generation); err != nil {
 					t.Fatalf("force state %q: %v", tc.from, err)
 				}
 			}
 
-			if err := st.UpdateReviewState(ctx, ownerID, noteID, tc.to); err != nil {
+			if err := st.UpdateReviewState(ctx, ownerID, noteID, tc.to, saved.Generation); err != nil {
 				t.Errorf("%s→%s: unexpected error: %v", tc.from, tc.to, err)
 				return
 			}
@@ -527,18 +572,20 @@ func TestUpdateReviewState_valid(t *testing.T) {
 }
 
 // forceReviewState drives the review state by applying legal transitions
-// from "pending" to the desired state, used only in tests.
-func forceReviewState(ctx context.Context, st *store.Store, ownerID, noteID, target string) error {
+// from "pending" to the desired state, used only in tests. generation is the
+// transcript's current generation, unaffected by review_state transitions, so
+// the same value is valid across the whole sequence.
+func forceReviewState(ctx context.Context, st *store.Store, ownerID, noteID, target string, generation int) error {
 	switch target {
 	case model.ReviewStatePending:
 		return nil
 	case model.ReviewStateInReview:
-		return st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateInReview)
+		return st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateInReview, generation)
 	case model.ReviewStateCompleted:
-		if err := st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateInReview); err != nil {
+		if err := st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateInReview, generation); err != nil {
 			return err
 		}
-		return st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateCompleted)
+		return st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateCompleted, generation)
 	}
 	return nil
 }
@@ -571,19 +618,1082 @@ func TestUpdateReviewState_illegal(t *testing.T) {
 				Model:             "base",
 				Segments:          []model.Segment{{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic", Speaker: "SPEAKER_00"}},
 			}
-			if _, err := st.SaveTranscript(ctx, tr); err != nil {
+			saved, err := st.SaveTranscript(ctx, tr, 0)
+			if err != nil {
 				t.Fatalf("save: %v", err)
 			}
 
 			// Drive to `from` state.
-			if err := forceReviewState(ctx, st, ownerID, noteID, tc.from); err != nil {
+			if err := forceReviewState(ctx, st, ownerID, noteID, tc.from, saved.Generation); err != nil {
 				t.Fatalf("force state %q: %v", tc.from, err)
 			}
 
-			err := st.UpdateReviewState(ctx, ownerID, noteID, tc.to)
+			err = st.UpdateReviewState(ctx, ownerID, noteID, tc.to, saved.Generation)
 			if err != store.ErrInvalidTransition {
 				t.Errorf("%s→%s: want ErrInvalidTransition, got %v", tc.from, tc.to, err)
 			}
 		})
+	}
+}
+
+// TestUpdateReviewState_wrongOwnerPrecedesGeneration verifies that a wrong
+// owner is still reported as ErrNotFound even when the caller's generation is
+// also stale, so a wrong owner never surfaces as a version conflict.
+func TestUpdateReviewState_wrongOwnerPrecedesGeneration(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+
+	_, noteID := seedNoteWithOwner(t, st)
+	tr := model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Model:             "base",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic", Speaker: "SPEAKER_00"}},
+	}
+	if _, err := st.SaveTranscript(ctx, tr, 0); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	// Wrong owner AND a generation that does not match (0, one below the
+	// transcript's actual generation of 1): must still be ErrNotFound.
+	err := st.UpdateReviewState(ctx, "00000000-0000-0000-0000-000000000001", noteID, model.ReviewStateInReview, 0)
+	if !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("wrong owner + stale generation: want ErrNotFound, got %v", err)
+	}
+}
+
+func TestTranscriptGenerationDefaultsToOne(t *testing.T) {
+	t.Parallel()
+	pool := testutil.NewPool(t)
+	st := store.New(pool)
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	saved, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "hi", Source: "mic"}},
+	}, 0)
+	if err != nil {
+		t.Fatalf("save: %v", err)
+	}
+	if saved.Generation != 1 {
+		t.Fatalf("Generation = %d, want 1", saved.Generation)
+	}
+	if saved.Sealed {
+		t.Fatal("new transcript should not be sealed")
+	}
+
+	// Verify the actual database defaults by reading back the row.
+	var generation int
+	var sealed bool
+	var streamID *string
+	if err := pool.QueryRow(ctx, `SELECT generation, sealed, stream_id FROM transcripts WHERE id = $1`, saved.ID).
+		Scan(&generation, &sealed, &streamID); err != nil {
+		t.Fatalf("read back: %v", err)
+	}
+	if generation != 1 {
+		t.Fatalf("database generation = %d, want 1", generation)
+	}
+	if sealed {
+		t.Fatal("database sealed should be false")
+	}
+	if streamID != nil {
+		t.Fatalf("database stream_id should be NULL for batch transcript, got %v", streamID)
+	}
+}
+
+func TestTranscriptGenerationIncrementsOnReplacement(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	base := model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "one", Source: "mic"}},
+	}
+	first, err := st.SaveTranscript(ctx, base, 0)
+	if err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	second, err := st.SaveTranscript(ctx, base, first.Generation)
+	if err != nil {
+		t.Fatalf("second save: %v", err)
+	}
+	if first.Generation != 1 || second.Generation != 2 {
+		t.Fatalf("generations = %d, %d; want 1, 2", first.Generation, second.Generation)
+	}
+	if second.ID == first.ID {
+		t.Fatal("replacement should be a new transcript row")
+	}
+}
+
+// TestSaveTranscriptRejectsStaleExpectedGeneration verifies that SaveTranscript
+// rejects a caller carrying a transcript generation the note has since moved
+// past — the mechanism that stops an older transcribe job from overwriting a
+// newer retranscription (spec §7).
+func TestSaveTranscriptRejectsStaleExpectedGeneration(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	base := model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "one", Source: "mic"}},
+	}
+	// First job: expects no transcript.
+	first, err := st.SaveTranscript(ctx, base, 0)
+	if err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	// A retranscribe enqueued against generation 1 publishes generation 2.
+	if _, err := st.SaveTranscript(ctx, base, first.Generation); err != nil {
+		t.Fatalf("retranscribe save: %v", err)
+	}
+	// An older job, enqueued when no transcript existed, must not publish.
+	if _, err := st.SaveTranscript(ctx, base, 0); !errors.Is(err, store.ErrGenerationMismatch) {
+		t.Fatalf("stale job error = %v, want ErrGenerationMismatch", err)
+	}
+
+	// GetTranscript does not select generation until Task 6, so confirm the
+	// stale save left the note on generation 2 via CurrentTranscriptGeneration
+	// (the same read path production callers use), not GetTranscript.
+	generation, err := st.CurrentTranscriptGeneration(ctx, noteID)
+	if err != nil {
+		t.Fatalf("current generation: %v", err)
+	}
+	if generation != 2 {
+		t.Fatalf("Generation = %d, want 2", generation)
+	}
+}
+
+// TestAppendStreamSegmentRejectsSupersededStream verifies the bug #724 fixes:
+// a live final that arrives after batch transcription has replaced the
+// transcript must not land in the batch transcript it no longer owns.
+func TestAppendStreamSegmentRejectsSupersededStream(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	live, err := st.CreateStreamTranscript(ctx, noteID, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create stream transcript: %v", err)
+	}
+	if err := st.AppendStreamSegment(ctx, live.ID, "stream-a", model.Segment{
+		StartMS: 0, EndMS: 500, Text: "live text", Source: "mic",
+	}); err != nil {
+		t.Fatalf("append before replacement: %v", err)
+	}
+
+	if _, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 500, Text: "batch text", Source: "mic"}},
+	}, live.Generation); err != nil {
+		t.Fatalf("batch save: %v", err)
+	}
+
+	// A final still in flight now arrives. It must not land anywhere.
+	if err := st.AppendStreamSegment(ctx, live.ID, "stream-a", model.Segment{
+		StartMS: 500, EndMS: 900, Text: "late live text", Source: "mic",
+	}); !errors.Is(err, store.ErrStreamSuperseded) {
+		t.Fatalf("late append error = %v, want ErrStreamSuperseded", err)
+	}
+
+	got, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Segments) != 1 || got.Segments[0].Text != "batch text" {
+		t.Fatalf("segments = %+v, want exactly the batch segment", got.Segments)
+	}
+}
+
+// TestAppendStreamSegmentRejectsWrongStreamID binds the stream_id predicate in
+// AppendStreamSegment's guard on its own: the transcript is present and
+// unsealed, so only a stream identity mismatch can reject the write.
+func TestAppendStreamSegmentRejectsWrongStreamID(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	live, err := st.CreateStreamTranscript(ctx, noteID, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	// The transcript is present and unsealed. Only the stream identity is wrong,
+	// so only the stream_id predicate can reject this.
+	if err := st.AppendStreamSegment(ctx, live.ID, "stream-b", model.Segment{
+		StartMS: 0, EndMS: 500, Text: "other stream", Source: "mic",
+	}); !errors.Is(err, store.ErrStreamSuperseded) {
+		t.Fatalf("error = %v, want ErrStreamSuperseded", err)
+	}
+
+	got, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Segments) != 0 {
+		t.Fatalf("segments = %+v, want none written", got.Segments)
+	}
+}
+
+// TestAppendStreamSegmentRejectsSealedTranscript binds the sealed predicate on
+// its own. A committed sealed row is never observable through SaveTranscript,
+// because its UPDATE and DELETE commit together, so the fixture seals directly
+// — legitimate setup for testing a predicate production reaches only
+// mid-transaction.
+func TestAppendStreamSegmentRejectsSealedTranscript(t *testing.T) {
+	t.Parallel()
+	pool := testutil.NewPool(t)
+	st := store.New(pool)
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	live, err := st.CreateStreamTranscript(ctx, noteID, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE transcripts SET sealed=TRUE WHERE id=$1`, live.ID); err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	// The transcript is present and the stream id matches. Only sealed can
+	// reject this.
+	if err := st.AppendStreamSegment(ctx, live.ID, "stream-a", model.Segment{
+		StartMS: 0, EndMS: 500, Text: "after seal", Source: "mic",
+	}); !errors.Is(err, store.ErrStreamSuperseded) {
+		t.Fatalf("error = %v, want ErrStreamSuperseded", err)
+	}
+}
+
+// TestAppendStreamSegmentRejectsWrongTranscriptID binds the id=$1 predicate on
+// its own. Dropping id=$1 is not caught by either test above: with only
+// stream_id and sealed matching, a different live transcript carrying the same
+// stream id can satisfy the lookup while the insert still targets the
+// original. Two notes are needed, because transcripts(note_id) is unique.
+func TestAppendStreamSegmentRejectsWrongTranscriptID(t *testing.T) {
+	t.Parallel()
+	pool := testutil.NewPool(t)
+	st := store.New(pool)
+	ctx := context.Background()
+	noteA := seedNote(t, st)
+	noteB := seedNote(t, st)
+
+	liveA, err := st.CreateStreamTranscript(ctx, noteA, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create A: %v", err)
+	}
+	// A second note carrying the SAME stream id, left unsealed. If the guard
+	// stops matching on transcript id, this row satisfies the lookup.
+	if _, err := st.CreateStreamTranscript(ctx, noteB, "stream-a", "whisper-live", "tiny", 0); err != nil {
+		t.Fatalf("create B: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE transcripts SET sealed=TRUE WHERE id=$1`, liveA.ID); err != nil {
+		t.Fatalf("seal A: %v", err)
+	}
+
+	if err := st.AppendStreamSegment(ctx, liveA.ID, "stream-a", model.Segment{
+		StartMS: 0, EndMS: 500, Text: "should not land", Source: "mic",
+	}); !errors.Is(err, store.ErrStreamSuperseded) {
+		t.Fatalf("error = %v, want ErrStreamSuperseded", err)
+	}
+
+	got, err := st.GetTranscript(ctx, noteA)
+	if err != nil {
+		t.Fatalf("get A: %v", err)
+	}
+	if len(got.Segments) != 0 {
+		t.Fatalf("segments on A = %+v, want none", got.Segments)
+	}
+}
+
+// TestConcurrentFirstWritersDoNotRaceTheUniqueIndex binds the note-row lock in
+// SaveTranscript deterministically. Ordering is established by channels, never
+// by sleeps: the first writer signals that it has read "no prior transcript"
+// and then blocks, so the second writer provably starts inside that window.
+// With the note-row lock the second writer cannot even reach its own read
+// until the first commits; without it, the second sails past and the first
+// then collides with the unique note_id index instead of failing cleanly.
+func TestConcurrentFirstWritersDoNotRaceTheUniqueIndex(t *testing.T) {
+	// No t.Parallel: this installs a package-level hook.
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	var mu sync.Mutex
+	var calls int
+	reached1 := make(chan struct{})
+	reached2 := make(chan struct{})
+	release1 := make(chan struct{})
+	restore := store.SetTestHookAfterPriorTranscriptRead(func() {
+		mu.Lock()
+		calls++
+		which := calls
+		mu.Unlock()
+		switch which {
+		case 1:
+			close(reached1)
+			<-release1
+		case 2:
+			close(reached2)
+		}
+	})
+	defer restore()
+
+	// Each writer gets its own Transcript, including its own Segments backing
+	// array. SaveTranscript stamps seg.ID into the slice it's given; sharing
+	// one array between goroutines would race on that write once a mutation
+	// lets both writers reach the segment loop concurrently.
+	newTranscript := func() model.Transcript {
+		return model.Transcript{
+			NoteID:            noteID,
+			TranscriberPlugin: "whisper",
+			Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "one", Source: "mic"}},
+		}
+	}
+	results := make(chan error, 2)
+	go func() { _, err := st.SaveTranscript(ctx, newTranscript(), 0); results <- err }()
+	<-reached1 // writer 1 has read, and is holding the window open
+
+	atLock := make(chan struct{})
+	go func() {
+		close(atLock) // writer 2 is scheduled and running
+		_, err := st.SaveTranscript(ctx, newTranscript(), 0)
+		results <- err
+	}()
+	<-atLock
+
+	select {
+	case <-reached2:
+		// Mutated build: writer 2 reached its own read, so both reads precede
+		// either insert — the interleaving the lock exists to prevent.
+	case <-time.After(2 * time.Second):
+		// Not proof of a correct build: atLock only shows writer 2 was
+		// scheduled and about to enter the store call, not that it completed
+		// its prior-row read, so a missing-lock mutation can land here too if
+		// writer 2 is descheduled mid-read. Correctness against unmutated code
+		// never depends on this timing — writer 2 blocks on the note lock
+		// however long writer 1 is held. Mutation detection does depend on it,
+		// so mutation runs should sample with -count rather than trust one run.
+	}
+	close(release1)
+
+	var succeeded int
+	var errs []error
+	for i := 0; i < 2; i++ {
+		if err := <-results; err == nil {
+			succeeded++
+		} else {
+			errs = append(errs, err)
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("%d writers succeeded, want exactly 1 (errors: %v)", succeeded, errs)
+	}
+	if !errors.Is(errs[0], store.ErrGenerationMismatch) {
+		t.Fatalf("loser error = %v, want ErrGenerationMismatch (a unique-violation here means the note row was not locked)", errs[0])
+	}
+}
+
+// TestConcurrentStreamCreatorsDoNotRaceTheUniqueIndex is
+// TestConcurrentFirstWritersDoNotRaceTheUniqueIndex for CreateStreamTranscript,
+// binding its note-row lock the same way.
+func TestConcurrentStreamCreatorsDoNotRaceTheUniqueIndex(t *testing.T) {
+	// No t.Parallel: this installs a package-level hook.
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	var mu sync.Mutex
+	var calls int
+	reached1 := make(chan struct{})
+	reached2 := make(chan struct{})
+	release1 := make(chan struct{})
+	restore := store.SetTestHookAfterPriorTranscriptRead(func() {
+		mu.Lock()
+		calls++
+		which := calls
+		mu.Unlock()
+		switch which {
+		case 1:
+			close(reached1)
+			<-release1
+		case 2:
+			close(reached2)
+		}
+	})
+	defer restore()
+
+	results := make(chan error, 2)
+	go func() {
+		_, err := st.CreateStreamTranscript(ctx, noteID, "stream-a", "whisper-live", "tiny", 0)
+		results <- err
+	}()
+	<-reached1 // writer 1 has read, and is holding the window open
+
+	atLock := make(chan struct{})
+	go func() {
+		close(atLock) // writer 2 is scheduled and running
+		_, err := st.CreateStreamTranscript(ctx, noteID, "stream-b", "whisper-live", "tiny", 0)
+		results <- err
+	}()
+	<-atLock
+
+	select {
+	case <-reached2:
+		// Mutated build: writer 2 reached its own read, so both reads precede
+		// either insert — the interleaving the lock exists to prevent.
+	case <-time.After(2 * time.Second):
+		// Not proof of a correct build: atLock only shows writer 2 was
+		// scheduled and about to enter the store call, not that it completed
+		// its prior-row read, so a missing-lock mutation can land here too if
+		// writer 2 is descheduled mid-read. Correctness against unmutated code
+		// never depends on this timing — writer 2 blocks on the note lock
+		// however long writer 1 is held. Mutation detection does depend on it,
+		// so mutation runs should sample with -count rather than trust one run.
+	}
+	close(release1)
+
+	var succeeded int
+	var errs []error
+	for i := 0; i < 2; i++ {
+		if err := <-results; err == nil {
+			succeeded++
+		} else {
+			errs = append(errs, err)
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("%d writers succeeded, want exactly 1 (errors: %v)", succeeded, errs)
+	}
+	if !errors.Is(errs[0], store.ErrGenerationMismatch) {
+		t.Fatalf("loser error = %v, want ErrGenerationMismatch (a unique-violation here means the note row was not locked)", errs[0])
+	}
+}
+
+// TestAppendBeforeReplacementIsDeletedByIt covers ordering A of the two
+// interleavings between a live append and a batch replacement: the append
+// commits first and succeeds, then replacement removes it. The append does
+// NOT fail — a row lock confers order, not priority. Ordering B — replacement
+// first, then a late append — is TestAppendStreamSegmentRejectsSupersededStream.
+func TestAppendBeforeReplacementIsDeletedByIt(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	live, err := st.CreateStreamTranscript(ctx, noteID, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := st.AppendStreamSegment(ctx, live.ID, "stream-a", model.Segment{
+		StartMS: 0, EndMS: 500, Text: "live text", Source: "mic",
+	}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	if _, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 500, Text: "batch text", Source: "mic"}},
+	}, live.Generation); err != nil {
+		t.Fatalf("batch save: %v", err)
+	}
+
+	got, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Segments) != 1 || got.Segments[0].Text != "batch text" {
+		t.Fatalf("segments = %+v, want exactly the batch segment", got.Segments)
+	}
+	if got.Segments[0].Provisional {
+		t.Fatal("surviving segment should be the batch one, not provisional")
+	}
+}
+
+func TestGetTranscriptExposesContinuityMetadata(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	live, err := st.CreateStreamTranscript(ctx, noteID, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := st.AppendStreamSegment(ctx, live.ID, "stream-a", model.Segment{
+		StartMS: 0, EndMS: 500, Text: "cut off", Source: "mic", Boundary: "forced",
+	}); err != nil {
+		t.Fatalf("append: %v", err)
+	}
+	dropped := int64(3200)
+	if err := st.AppendTranscriptGap(ctx, live.ID, "stream-a", model.TranscriptGap{
+		StartSample: 16000, DroppedSamples: &dropped, Origin: "server",
+	}); err != nil {
+		t.Fatalf("append gap: %v", err)
+	}
+	// Open-ended: the participant that would close it died.
+	if err := st.AppendTranscriptGap(ctx, live.ID, "stream-a", model.TranscriptGap{
+		StartSample: 48000, Origin: "relay",
+	}); err != nil {
+		t.Fatalf("append open gap: %v", err)
+	}
+
+	got, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Segments) != 1 || !got.Segments[0].Provisional {
+		t.Fatalf("segments = %+v, want one provisional", got.Segments)
+	}
+	if got.Segments[0].Boundary != "forced" {
+		t.Fatalf("Boundary = %q, want \"forced\"", got.Segments[0].Boundary)
+	}
+	if got.StreamID == nil || *got.StreamID != "stream-a" {
+		t.Fatalf("StreamID = %v, want stream-a", got.StreamID)
+	}
+	if got.Sealed {
+		t.Fatal("Sealed = true, want false: this stream was never replaced")
+	}
+	if got.Generation != 1 {
+		t.Fatalf("Generation = %d, want 1", got.Generation)
+	}
+	if len(got.Gaps) != 2 {
+		t.Fatalf("len(Gaps) = %d, want 2", len(got.Gaps))
+	}
+
+	// Field values below are chosen to be mutually distinguishable within a
+	// gap row (a UUID, "stream-a", "server"/"relay" are never equal to one
+	// another), so a scan-target permutation among the row's three string
+	// columns (id, stream_id, origin) lands a wrong value somewhere an
+	// assertion below checks, rather than silently swapping two equal values.
+	g0 := got.Gaps[0]
+	if _, err := uuid.Parse(g0.ID); err != nil {
+		t.Fatalf("Gaps[0].ID = %q, not a valid UUID: %v", g0.ID, err)
+	}
+	if g0.TranscriptID != live.ID {
+		t.Fatalf("Gaps[0].TranscriptID = %q, want %q", g0.TranscriptID, live.ID)
+	}
+	if g0.StreamID != "stream-a" {
+		t.Fatalf("Gaps[0].StreamID = %q, want \"stream-a\"", g0.StreamID)
+	}
+	if g0.StartSample != 16000 {
+		t.Fatalf("Gaps[0].StartSample = %d, want 16000", g0.StartSample)
+	}
+	if g0.Origin != "server" {
+		t.Fatalf("Gaps[0].Origin = %q, want \"server\"", g0.Origin)
+	}
+	if g0.DroppedSamples == nil || *g0.DroppedSamples != 3200 {
+		t.Fatalf("Gaps[0].DroppedSamples = %v, want 3200", g0.DroppedSamples)
+	}
+
+	g1 := got.Gaps[1]
+	if _, err := uuid.Parse(g1.ID); err != nil {
+		t.Fatalf("Gaps[1].ID = %q, not a valid UUID: %v", g1.ID, err)
+	}
+	if g1.TranscriptID != live.ID {
+		t.Fatalf("Gaps[1].TranscriptID = %q, want %q", g1.TranscriptID, live.ID)
+	}
+	if g1.StreamID != "stream-a" {
+		t.Fatalf("Gaps[1].StreamID = %q, want \"stream-a\"", g1.StreamID)
+	}
+	if g1.StartSample != 48000 {
+		t.Fatalf("Gaps[1].StartSample = %d, want 48000", g1.StartSample)
+	}
+	if g1.Origin != "relay" {
+		t.Fatalf("Gaps[1].Origin = %q, want \"relay\"", g1.Origin)
+	}
+	if g1.DroppedSamples != nil {
+		t.Fatalf("Gaps[1].DroppedSamples = %v, want nil (open-ended)", g1.DroppedSamples)
+	}
+}
+
+// TestAppendTranscriptGapRejectsSupersededStream binds the prose in
+// AppendTranscriptGap's doc comment — "a superseded stream cannot annotate
+// the transcript that replaced it" — to runtime behavior. Mirrors
+// TestAppendStreamSegmentRejectsSupersededStream.
+func TestAppendTranscriptGapRejectsSupersededStream(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	live, err := st.CreateStreamTranscript(ctx, noteID, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create stream transcript: %v", err)
+	}
+	if err := st.AppendTranscriptGap(ctx, live.ID, "stream-a", model.TranscriptGap{
+		StartSample: 16000, Origin: "server",
+	}); err != nil {
+		t.Fatalf("append gap before replacement: %v", err)
+	}
+
+	if _, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 500, Text: "batch text", Source: "mic"}},
+	}, live.Generation); err != nil {
+		t.Fatalf("batch save: %v", err)
+	}
+
+	// A final gap still in flight now arrives. It must not land anywhere.
+	if err := st.AppendTranscriptGap(ctx, live.ID, "stream-a", model.TranscriptGap{
+		StartSample: 48000, Origin: "relay",
+	}); !errors.Is(err, store.ErrStreamSuperseded) {
+		t.Fatalf("late append gap error = %v, want ErrStreamSuperseded", err)
+	}
+
+	got, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Gaps) != 0 {
+		t.Fatalf("gaps = %+v, want none — the batch transcript carries no gaps", got.Gaps)
+	}
+}
+
+// TestReviewMutatorsRejectStaleGeneration binds each of the three review
+// mutators' generation predicate independently: a review begun against one
+// transcript must not be able to mutate the transcript that replaced it.
+func TestReviewMutatorsRejectStaleGeneration(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	ownerID, noteID := seedNoteWithOwner(t, st)
+
+	first, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "one", Source: "mic", Speaker: "SPEAKER_00"}},
+	}, 0)
+	if err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+
+	// The transcript the reviewer was looking at is replaced underneath them.
+	second, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "two", Source: "mic", Speaker: "SPEAKER_00"}},
+	}, first.Generation)
+	if err != nil {
+		t.Fatalf("second save: %v", err)
+	}
+	// Deliberately the CURRENT (second) transcript's segment id, not the
+	// deleted first-generation one: ConfirmSegmentSpeaker is called with a
+	// stale expectedGeneration (first.Generation) against a segment that
+	// really does exist under the current transcript. If a segment id from
+	// the deleted transcript were used instead, disabling the generation
+	// check would still error — just with ErrNotFound instead of
+	// ErrGenerationMismatch, because the UPDATE's WHERE clause would match no
+	// row — which proves only that one error replaced another, not that the
+	// check prevents a real mutation. Using the current segment id means
+	// disabling the check produces a silent, successful write to a live row.
+	currentSegmentID := second.Segments[0].ID
+
+	if err := st.SetReviewState(ctx, noteID, model.ReviewStateCompleted, first.Generation); !errors.Is(err, store.ErrGenerationMismatch) {
+		t.Fatalf("SetReviewState stale = %v, want ErrGenerationMismatch", err)
+	}
+	if err := st.ConfirmSegmentSpeaker(ctx, ownerID, noteID, currentSegmentID, "Alice", first.Generation); !errors.Is(err, store.ErrGenerationMismatch) {
+		t.Fatalf("ConfirmSegmentSpeaker stale = %v, want ErrGenerationMismatch", err)
+	}
+	// The rejected call must not have touched the live row — otherwise the
+	// error return is theater over a real mutation.
+	if got, err := st.GetTranscript(ctx, noteID); err != nil {
+		t.Fatalf("get after rejected stale confirm: %v", err)
+	} else if got.Segments[0].Speaker != "SPEAKER_00" {
+		t.Fatalf("stale ConfirmSegmentSpeaker mutated the current segment: speaker = %q, want unchanged %q", got.Segments[0].Speaker, "SPEAKER_00")
+	}
+	// UpdateReviewState needs its own case: without one, its generation
+	// predicate could be deleted with the suite green.
+	// Both transcripts carry SPEAKER_00, so their review state is "pending",
+	// whose only legal transition is to in_review. Using an otherwise-legal
+	// transition is what makes this bind the generation predicate rather than
+	// the transition rules.
+	if err := st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateInReview, first.Generation); !errors.Is(err, store.ErrGenerationMismatch) {
+		t.Fatalf("UpdateReviewState stale = %v, want ErrGenerationMismatch", err)
+	}
+	if err := st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateInReview, second.Generation); err != nil {
+		t.Fatalf("UpdateReviewState current: %v", err)
+	}
+	if err := st.SetReviewState(ctx, noteID, model.ReviewStateCompleted, second.Generation); err != nil {
+		t.Fatalf("SetReviewState current: %v", err)
+	}
+}
+
+// TestConfirmSegmentSpeakerRejectsRaceWithReplacement binds
+// ConfirmSegmentSpeaker's generation predicate to its write, not to the
+// fast-path read that precedes it. TestReviewMutatorsRejectStaleGeneration
+// above replaces the transcript before calling ConfirmSegmentSpeaker, which
+// never exercises the window between this call's own read and its write —
+// a caller can start with a matching generation and still lose a race that
+// lands inside that window. This test controls the window directly: the
+// hook holds ConfirmSegmentSpeaker right after its fast-path read, while a
+// legitimate replacement (which the fast-path read has already declared
+// current) runs to completion and seals + deletes the segment this call is
+// about to edit. The resumed call must report ErrGenerationMismatch — not
+// ErrNotFound, which the vanished segment ID would produce if the write
+// weren't re-checking live state, and not a false success, which landing the
+// edit on the row before the replacement's delete commits would produce.
+func TestConfirmSegmentSpeakerRejectsRaceWithReplacement(t *testing.T) {
+	// No t.Parallel: this installs a package-level hook.
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	ownerID, noteID := seedNoteWithOwner(t, st)
+
+	first, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "one", Source: "mic", Speaker: "SPEAKER_00"}},
+	}, 0)
+	if err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	segID := first.Segments[0].ID
+
+	reached := make(chan struct{})
+	release := make(chan struct{})
+	restore := store.SetTestHookAfterConfirmSegmentSpeakerRead(func() {
+		close(reached)
+		<-release
+	})
+	defer restore()
+
+	results := make(chan error, 1)
+	go func() {
+		results <- st.ConfirmSegmentSpeaker(ctx, ownerID, noteID, segID, "Alice", first.Generation)
+	}()
+	<-reached // the confirm call has read generation 1 and is holding the window open
+
+	// A legitimate replacement runs to completion while the confirm call is
+	// paused, sealing and deleting the transcript segID belongs to.
+	second, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "two", Source: "mic", Speaker: "SPEAKER_00"}},
+	}, first.Generation)
+	if err != nil {
+		t.Fatalf("replacement save: %v", err)
+	}
+
+	close(release)
+	if err := <-results; !errors.Is(err, store.ErrGenerationMismatch) {
+		t.Fatalf("confirm raced with replacement = %v, want ErrGenerationMismatch", err)
+	}
+
+	// The replacement's own segment must be untouched: the race must not
+	// have let the stale confirm land on the transcript that replaced it.
+	got, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("get after race: %v", err)
+	}
+	if got.Generation != second.Generation {
+		t.Fatalf("generation = %d, want %d (the replacement)", got.Generation, second.Generation)
+	}
+	if got.Segments[0].Speaker != "SPEAKER_00" {
+		t.Fatalf("raced confirm mutated the replacement's segment: speaker = %q, want unchanged %q", got.Segments[0].Speaker, "SPEAKER_00")
+	}
+}
+
+// TestCreateStreamTranscriptRefusesBatchOwnedTranscript binds the ownership
+// scope spec §7 defines: a new stream start supersedes a STREAM-owned
+// transcript and refuses a BATCH-owned one. Both halves are asserted here, so
+// removing the refusal shows up as a batch transcript and its segments being
+// deleted rather than merely as a missing error.
+func TestCreateStreamTranscriptRefusesBatchOwnedTranscript(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	batch, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments: []model.Segment{
+			{StartMS: 0, EndMS: 500, Text: "batch one", Source: "mic"},
+			{StartMS: 500, EndMS: 900, Text: "batch two", Source: "mic"},
+		},
+	}, 0)
+	if err != nil {
+		t.Fatalf("seed batch transcript: %v", err)
+	}
+
+	// The generation is correct, so nothing but the ownership rule can reject
+	// this call.
+	if _, err := st.CreateStreamTranscript(ctx, noteID, "stream-a", "whisper-live", "tiny", batch.Generation); !errors.Is(err, store.ErrBatchTranscriptExists) {
+		t.Fatalf("create over batch transcript = %v, want ErrBatchTranscriptExists", err)
+	}
+
+	got, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.ID != batch.ID {
+		t.Fatalf("transcript id = %q, want the batch transcript %q", got.ID, batch.ID)
+	}
+	if got.Generation != batch.Generation {
+		t.Fatalf("generation = %d, want %d (untouched)", got.Generation, batch.Generation)
+	}
+	if got.StreamID != nil {
+		t.Fatalf("stream_id = %v, want nil (still batch-owned)", *got.StreamID)
+	}
+	if len(got.Segments) != 2 {
+		t.Fatalf("segments = %d (%+v), want the 2 batch segments — CASCADE deleted them", len(got.Segments), got.Segments)
+	}
+
+	// The other half of §7: a stream-owned transcript IS superseded, so the
+	// refusal above is scoped to ownership and not a blanket ban on replacement.
+	other := seedNote(t, st)
+	first, err := st.CreateStreamTranscript(ctx, other, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create first stream transcript: %v", err)
+	}
+	second, err := st.CreateStreamTranscript(ctx, other, "stream-b", "whisper-live", "tiny", first.Generation)
+	if err != nil {
+		t.Fatalf("supersede stream transcript: %v", err)
+	}
+	if second.Generation != first.Generation+1 {
+		t.Fatalf("superseding generation = %d, want %d", second.Generation, first.Generation+1)
+	}
+}
+
+// TestAppendTranscriptGapRejectsWrongStreamID binds the stream_id predicate in
+// AppendTranscriptGap's guard on its own: the transcript is present and
+// unsealed, so only a stream identity mismatch can reject the write. The
+// sibling AppendStreamSegment has had this since Task 5;
+// AppendTranscriptGap arrived in Task 6 with the same code and none of the
+// coverage, so reducing its guard to `WHERE id=$1` left the package green.
+func TestAppendTranscriptGapRejectsWrongStreamID(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	live, err := st.CreateStreamTranscript(ctx, noteID, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := st.AppendTranscriptGap(ctx, live.ID, "stream-b", model.TranscriptGap{
+		StartSample: 16000, Origin: "server",
+	}); !errors.Is(err, store.ErrStreamSuperseded) {
+		t.Fatalf("error = %v, want ErrStreamSuperseded", err)
+	}
+
+	got, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Gaps) != 0 {
+		t.Fatalf("gaps = %+v, want none written", got.Gaps)
+	}
+}
+
+// TestAppendTranscriptGapRejectsSealedTranscript binds the sealed predicate on
+// its own. As with the segment sibling, a committed sealed row is never
+// observable through SaveTranscript (its UPDATE and DELETE commit together), so
+// the fixture seals directly.
+func TestAppendTranscriptGapRejectsSealedTranscript(t *testing.T) {
+	t.Parallel()
+	pool := testutil.NewPool(t)
+	st := store.New(pool)
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	live, err := st.CreateStreamTranscript(ctx, noteID, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE transcripts SET sealed=TRUE WHERE id=$1`, live.ID); err != nil {
+		t.Fatalf("seal: %v", err)
+	}
+	// The transcript is present and the stream id matches. Only sealed can
+	// reject this.
+	if err := st.AppendTranscriptGap(ctx, live.ID, "stream-a", model.TranscriptGap{
+		StartSample: 16000, Origin: "server",
+	}); !errors.Is(err, store.ErrStreamSuperseded) {
+		t.Fatalf("error = %v, want ErrStreamSuperseded", err)
+	}
+
+	got, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if len(got.Gaps) != 0 {
+		t.Fatalf("gaps = %+v, want none written", got.Gaps)
+	}
+}
+
+// TestAppendTranscriptGapRejectsWrongTranscriptID binds the id=$1 predicate on
+// its own, completing the trio the segment sibling already has. Neither test
+// above catches dropping id=$1: with only stream_id and sealed matching, a
+// different live transcript carrying the same stream id satisfies the lookup
+// while the insert still targets the original. Two notes are needed, because
+// transcripts(note_id) is unique.
+func TestAppendTranscriptGapRejectsWrongTranscriptID(t *testing.T) {
+	t.Parallel()
+	pool := testutil.NewPool(t)
+	st := store.New(pool)
+	ctx := context.Background()
+	noteA := seedNote(t, st)
+	noteB := seedNote(t, st)
+
+	liveA, err := st.CreateStreamTranscript(ctx, noteA, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create A: %v", err)
+	}
+	if _, err := st.CreateStreamTranscript(ctx, noteB, "stream-a", "whisper-live", "tiny", 0); err != nil {
+		t.Fatalf("create B: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE transcripts SET sealed=TRUE WHERE id=$1`, liveA.ID); err != nil {
+		t.Fatalf("seal A: %v", err)
+	}
+
+	if err := st.AppendTranscriptGap(ctx, liveA.ID, "stream-a", model.TranscriptGap{
+		StartSample: 16000, Origin: "server",
+	}); !errors.Is(err, store.ErrStreamSuperseded) {
+		t.Fatalf("error = %v, want ErrStreamSuperseded", err)
+	}
+
+	got, err := st.GetTranscript(ctx, noteA)
+	if err != nil {
+		t.Fatalf("get A: %v", err)
+	}
+	if len(got.Gaps) != 0 {
+		t.Fatalf("gaps on A = %+v, want none", got.Gaps)
+	}
+}
+
+// TestCreateStreamTranscriptLeavesTranscribeClaimIntact binds the asymmetry the
+// plan's watch-item 1 called for and no test ever covered: SaveTranscript
+// clears notes.transcribing_job_id because a completed transcript is
+// authoritative over the claim it displaced, and CreateStreamTranscript
+// deliberately does NOT, because a stream start is not. Clearing it there would
+// strand a legitimate batch job — its release would match nothing after the
+// generation mismatch that follows, leaving the note stuck at "transcribing"
+// forever. Making the two symmetric left the WHOLE REPO green.
+func TestCreateStreamTranscriptLeavesTranscribeClaimIntact(t *testing.T) {
+	t.Parallel()
+	pool := testutil.NewPool(t)
+	st := store.New(pool)
+	ctx := context.Background()
+	noteID := seedNote(t, st)
+
+	// A stream already owns the note's transcript, so the second start below
+	// supersedes it rather than being refused as batch-owned.
+	first, err := st.CreateStreamTranscript(ctx, noteID, "stream-a", "whisper-live", "tiny", 0)
+	if err != nil {
+		t.Fatalf("create first stream transcript: %v", err)
+	}
+
+	jobID := "11111111-1111-1111-1111-111111111111"
+	if _, err := st.ClaimNoteForTranscription(ctx, noteID, jobID); err != nil {
+		t.Fatalf("claim note: %v", err)
+	}
+
+	second, err := st.CreateStreamTranscript(ctx, noteID, "stream-b", "whisper-live", "tiny", first.Generation)
+	if err != nil {
+		t.Fatalf("supersede: %v", err)
+	}
+
+	var claimedBy *string
+	if err := pool.QueryRow(ctx, `SELECT transcribing_job_id FROM notes WHERE id=$1`, noteID).Scan(&claimedBy); err != nil {
+		t.Fatalf("read claim after stream start: %v", err)
+	}
+	if claimedBy == nil || *claimedBy != jobID {
+		t.Fatalf("transcribing_job_id = %v after a stream start, want %q left intact", claimedBy, jobID)
+	}
+
+	// The other half of the asymmetry: a completed batch save DOES clear it.
+	if _, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "batch", Source: "mic"}},
+	}, second.Generation); err != nil {
+		t.Fatalf("batch save: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT transcribing_job_id FROM notes WHERE id=$1`, noteID).Scan(&claimedBy); err != nil {
+		t.Fatalf("read claim after save: %v", err)
+	}
+	if claimedBy != nil {
+		t.Fatalf("transcribing_job_id = %v after SaveTranscript, want nil (cleared)", *claimedBy)
+	}
+}
+
+// TestUpdateReviewStateStaleGenerationOutranksAnIllegalTransition covers the
+// case the existing stale-generation test cannot: one where the transition is
+// ILLEGAL against the replacement's state. That test deliberately uses a legal
+// transition, to isolate the generation predicate from the transition rules —
+// correct, and it means this combination had zero coverage.
+//
+// Validating the transition first reports a stale reviewer's submission as
+// ErrInvalidTransition (422 "invalid state transition"), which tells the client
+// its transition was wrong when the real answer is "the transcript you were
+// reviewing no longer exists, refetch". Spec §7's race table requires a
+// conflict, and 422 gives a client no reason to refetch.
+func TestUpdateReviewStateStaleGenerationOutranksAnIllegalTransition(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	ownerID, noteID := seedNoteWithOwner(t, st)
+
+	// Generation 1: what the reviewer rendered. Acoustic speaker labels make its
+	// review_state "pending", whose one legal transition is to in_review.
+	first, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "one", Source: "mic", Speaker: "SPEAKER_00"}},
+	}, 0)
+	if err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+
+	// The transcript is replaced underneath the reviewer, and the replacement is
+	// then moved to in_review by whoever owns it now.
+	second, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "two", Source: "mic", Speaker: "SPEAKER_00"}},
+	}, first.Generation)
+	if err != nil {
+		t.Fatalf("second save: %v", err)
+	}
+	if err := st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateInReview, second.Generation); err != nil {
+		t.Fatalf("advance the replacement: %v", err)
+	}
+
+	// The stale reviewer now submits the transition that was legal for the
+	// transcript they rendered. Against the REPLACEMENT's state it is
+	// in_review -> in_review, which is illegal — so transition-first validation
+	// masks the conflict.
+	err = st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateInReview, first.Generation)
+	if errors.Is(err, store.ErrInvalidTransition) {
+		t.Fatalf("stale review reported as ErrInvalidTransition (422); spec §7 requires a conflict so the client refetches")
+	}
+	if !errors.Is(err, store.ErrGenerationMismatch) {
+		t.Fatalf("stale review error = %v, want ErrGenerationMismatch", err)
+	}
+
+	// Nothing was mutated: this is a signalling defect, and the fix must not
+	// turn it into a write.
+	got, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+	if got.Generation != second.Generation || got.ReviewState != model.ReviewStateInReview {
+		t.Fatalf("transcript = generation %d state %q, want generation %d state %q (untouched)",
+			got.Generation, got.ReviewState, second.Generation, model.ReviewStateInReview)
+	}
+
+	// The transition rules still apply at the CURRENT generation: an illegal
+	// transition there is still 422, not a conflict.
+	if err := st.UpdateReviewState(ctx, ownerID, noteID, model.ReviewStateInReview, second.Generation); !errors.Is(err, store.ErrInvalidTransition) {
+		t.Fatalf("illegal transition at the current generation = %v, want ErrInvalidTransition", err)
 	}
 }

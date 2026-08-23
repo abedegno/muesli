@@ -7,3 +7,21 @@ import "context"
 func RecoverStartupJobsForTest(ctx context.Context, store jobRecoverer) {
 	recoverStartupJobs(ctx, store)
 }
+
+// SetTestHookAfterTranscriptPublished installs the hook that runs between
+// runTranscribe recording its publication checkpoint and re-checking that the
+// transcript it published is still current. Returns a restore func.
+func SetTestHookAfterTranscriptPublished(f func()) func() {
+	prev := testHookAfterTranscriptPublished
+	testHookAfterTranscriptPublished = f
+	return func() { testHookAfterTranscriptPublished = prev }
+}
+
+// SetTestHookBeforeAudioRetention installs the hook that runs immediately
+// before runTranscribe re-checks the generation and applies audio retention.
+// Returns a restore func.
+func SetTestHookBeforeAudioRetention(f func()) func() {
+	prev := testHookBeforeAudioRetention
+	testHookBeforeAudioRetention = f
+	return func() { testHookBeforeAudioRetention = prev }
+}
