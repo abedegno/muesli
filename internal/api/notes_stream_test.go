@@ -495,7 +495,6 @@ func TestNoteStreamWithoutPluginPreservesExistingBatchTranscript(t *testing.T) {
 		t.Fatalf("dial: %v resp=%v", err, resp)
 	}
 	defer conn.Close()
-	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 
 	_, payload, err := conn.ReadMessage()
 	if err != nil {
@@ -559,7 +558,6 @@ func TestNoteStreamOnBatchTranscriptIsRefusedWithReason(t *testing.T) {
 	// Bounded: a regression here leaves the stream open and healthy, so an
 	// unbounded read would hang until the package test timeout instead of
 	// failing.
-	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 
 	_, payload, err := conn.ReadMessage()
 	if err != nil {
@@ -607,7 +605,6 @@ func TestNoteStreamWithoutPluginPreservesExistingStreamTranscript(t *testing.T) 
 	}
 
 	conn := openStream(t, httpSrv.URL, noteID, strings.TrimPrefix(hdr["Authorization"], "Bearer "))
-	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	_, payload, err := conn.ReadMessage()
 	if err != nil {
 		t.Fatalf("read unavailable: %v", err)
