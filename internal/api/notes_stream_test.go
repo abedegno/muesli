@@ -578,6 +578,11 @@ func TestNoteStreamOnBatchTranscriptIsRefusedWithReason(t *testing.T) {
 	if got.ID != saved.ID || len(got.Segments) != 1 {
 		t.Fatalf("transcript = %+v, want the seeded batch transcript intact", got)
 	}
+
+	// The session is acquired before ownership is attempted, so refusing here
+	// must also release it. Without this, dropping failStreamStart's Close would
+	// leak the session and every other assertion above would still pass.
+	waitForPluginSessionEnd(t, fake)
 }
 
 // TestNoteStreamWithoutPluginPreservesExistingStreamTranscript binds the
