@@ -1328,6 +1328,80 @@ func TestReviewMutatorsRejectStaleGeneration(t *testing.T) {
 	}
 }
 
+// TestConfirmSegmentSpeakerRejectsRaceWithReplacement binds
+// ConfirmSegmentSpeaker's generation predicate to its write, not to the
+// fast-path read that precedes it. TestReviewMutatorsRejectStaleGeneration
+// above replaces the transcript before calling ConfirmSegmentSpeaker, which
+// never exercises the window between this call's own read and its write —
+// a caller can start with a matching generation and still lose a race that
+// lands inside that window. This test controls the window directly: the
+// hook holds ConfirmSegmentSpeaker right after its fast-path read, while a
+// legitimate replacement (which the fast-path read has already declared
+// current) runs to completion and seals + deletes the segment this call is
+// about to edit. The resumed call must report ErrGenerationMismatch — not
+// ErrNotFound, which the vanished segment ID would produce if the write
+// weren't re-checking live state, and not a false success, which landing the
+// edit on the row before the replacement's delete commits would produce.
+func TestConfirmSegmentSpeakerRejectsRaceWithReplacement(t *testing.T) {
+	// No t.Parallel: this installs a package-level hook.
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	ownerID, noteID := seedNoteWithOwner(t, st)
+
+	first, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "one", Source: "mic", Speaker: "SPEAKER_00"}},
+	}, 0)
+	if err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	segID := first.Segments[0].ID
+
+	reached := make(chan struct{})
+	release := make(chan struct{})
+	restore := store.SetTestHookAfterConfirmSegmentSpeakerRead(func() {
+		close(reached)
+		<-release
+	})
+	defer restore()
+
+	results := make(chan error, 1)
+	go func() {
+		results <- st.ConfirmSegmentSpeaker(ctx, ownerID, noteID, segID, "Alice", first.Generation)
+	}()
+	<-reached // the confirm call has read generation 1 and is holding the window open
+
+	// A legitimate replacement runs to completion while the confirm call is
+	// paused, sealing and deleting the transcript segID belongs to.
+	second, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "two", Source: "mic", Speaker: "SPEAKER_00"}},
+	}, first.Generation)
+	if err != nil {
+		t.Fatalf("replacement save: %v", err)
+	}
+
+	close(release)
+	if err := <-results; !errors.Is(err, store.ErrGenerationMismatch) {
+		t.Fatalf("confirm raced with replacement = %v, want ErrGenerationMismatch", err)
+	}
+
+	// The replacement's own segment must be untouched: the race must not
+	// have let the stale confirm land on the transcript that replaced it.
+	got, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("get after race: %v", err)
+	}
+	if got.Generation != second.Generation {
+		t.Fatalf("generation = %d, want %d (the replacement)", got.Generation, second.Generation)
+	}
+	if got.Segments[0].Speaker != "SPEAKER_00" {
+		t.Fatalf("raced confirm mutated the replacement's segment: speaker = %q, want unchanged %q", got.Segments[0].Speaker, "SPEAKER_00")
+	}
+}
+
 // TestCreateStreamTranscriptRefusesBatchOwnedTranscript binds the ownership
 // scope spec §7 defines: a new stream start supersedes a STREAM-owned
 // transcript and refuses a BATCH-owned one. Both halves are asserted here, so

@@ -32,6 +32,14 @@ var ErrBatchTranscriptExists = errors.New("note already has a batch transcript")
 // can hold one writer in the window the note-row lock is there to close.
 var testHookAfterPriorTranscriptRead func()
 
+// testHookAfterConfirmSegmentSpeakerRead runs between ConfirmSegmentSpeaker's
+// fast-path read and its write, mirroring testHookAfterPriorTranscriptRead's
+// placement in SaveTranscript/CreateStreamTranscript. It is nil in production
+// and exists so tests can hold a caller here while a concurrent replacement
+// runs to completion, landing it inside the window the write's own live
+// generation predicate — not the fast-path read — is what actually closes.
+var testHookAfterConfirmSegmentSpeakerRead func()
+
 // isDeterministicChannelSpeaker stays coupled to pluginkit.channelSpeaker in
 // internal/pluginkit/multitrack.go so both packages agree on channel labels.
 func isDeterministicChannelSpeaker(speaker string) bool {
@@ -485,38 +493,81 @@ func (s *Store) GetDiarizationReview(ctx context.Context, ownerID, noteID string
 // ErrNotFound, so a wrong owner never surfaces as a version conflict; only a
 // transcript that exists, is owned, and sits at the wrong generation returns
 // ErrGenerationMismatch.
+//
+// The read below is a fast path, not the authority: its generation value is
+// used only to skip a write already known to be stale, never to let a write
+// through. The write's own WHERE clause carries the real generation
+// predicate, joined live against transcripts/notes rather than against a
+// transcript ID cached from the read, so a replacement (SaveTranscript,
+// CreateStreamTranscript) racing in between — sealing and deleting the row
+// this call is about to edit — makes the write match no rows instead of
+// landing on a row that is moments from disappearing. Zero rows is then
+// re-classified against the transcript's current generation, so a caller
+// still gets ErrGenerationMismatch, not the ErrNotFound a vanished segment ID
+// would otherwise produce.
 func (s *Store) ConfirmSegmentSpeaker(ctx context.Context, ownerID, noteID, segmentID, speaker string, expectedGeneration int) error {
-	var transcriptID string
 	var generation int
 	err := s.pool.QueryRow(ctx,
-		`SELECT t.id, t.generation FROM transcripts t
+		`SELECT t.generation FROM transcripts t
 		 JOIN notes n ON n.id = t.note_id
 		 WHERE t.note_id = $1 AND n.owner_id = $2`,
-		noteID, ownerID).Scan(&transcriptID, &generation)
+		noteID, ownerID).Scan(&generation)
 	if errors.Is(err, pgx.ErrNoRows) || isUUIDSyntaxError(err) {
 		return ErrNotFound
 	}
 	if err != nil {
 		return err
 	}
+
+	if testHookAfterConfirmSegmentSpeakerRead != nil {
+		testHookAfterConfirmSegmentSpeakerRead()
+	}
+
 	if generation != expectedGeneration {
 		return ErrGenerationMismatch
 	}
 
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE transcript_segments SET speaker = $1
-		 WHERE id = $2 AND transcript_id = $3`,
-		speaker, segmentID, transcriptID)
+		`UPDATE transcript_segments ts SET speaker = $1
+		 FROM transcripts t
+		 JOIN notes n ON n.id = t.note_id
+		 WHERE ts.id = $2
+		   AND ts.transcript_id = t.id
+		   AND t.note_id = $3
+		   AND n.owner_id = $4
+		   AND t.generation = $5`,
+		speaker, segmentID, noteID, ownerID, expectedGeneration)
 	if isUUIDSyntaxError(err) {
 		return ErrNotFound
 	}
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if tag.RowsAffected() > 0 {
+		return nil
+	}
+
+	// The write matched no rows even though the fast-path read above
+	// passed. Re-classify against the transcript's *current* generation: a
+	// transcript that still exists and is still owned, just at a different
+	// generation now, is exactly the race this predicate exists to catch,
+	// and must come back as a conflict rather than a 404.
+	var currentGeneration int
+	err = s.pool.QueryRow(ctx,
+		`SELECT t.generation FROM transcripts t
+		 JOIN notes n ON n.id = t.note_id
+		 WHERE t.note_id = $1 AND n.owner_id = $2`,
+		noteID, ownerID).Scan(&currentGeneration)
+	if errors.Is(err, pgx.ErrNoRows) || isUUIDSyntaxError(err) {
 		return ErrNotFound
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	if currentGeneration != expectedGeneration {
+		return ErrGenerationMismatch
+	}
+	return ErrNotFound
 }
 
 // UpdateReviewState transitions a transcript's review_state. Legal transitions:
