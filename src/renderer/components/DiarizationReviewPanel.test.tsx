@@ -35,6 +35,15 @@ function makeReview(reviewState = 'pending', generation = 5): DiarizationReview 
   }
 }
 
+// The shape a real 409 arrives in: BridgeError carries `status`, recovered from
+// the `[409] ` prefix ipcHandlers encodes into the message. That wire path —
+// server 409 -> ApiError -> `[409] ` message -> BridgeError.status — is bound
+// by src/main/ipcHandlers.test.ts and src/renderer/api.test.ts; this file binds
+// what the panel does once it has the status.
+function conflictError(): Error {
+  return Object.assign(new Error('transcript changed, refetch and retry'), { status: 409 })
+}
+
 beforeEach(() => {
   getDiarizationReviewMock.mockReset().mockResolvedValue(makeReview())
   postDiarizationReviewMock.mockReset().mockImplementation(async (_noteId: string, body: { reviewState?: string; generation: number }) =>
@@ -193,5 +202,125 @@ describe('DiarizationReviewPanel', () => {
     )
     await waitFor(() => expect(screen.queryByRole('button', { name: /review speakers/i })).not.toBeInTheDocument())
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+  })
+  it('treats a 409 on confirm as a replaced transcript: refetches, says so, and does not resubmit', async () => {
+    postDiarizationReviewMock.mockImplementation(async (_noteId: string, body: { segmentId?: string; reviewState?: string; generation: number }) => {
+      if (body.segmentId) throw conflictError()
+      return makeReview(body.reviewState ?? 'in_review', body.generation)
+    })
+    // The replacement the refetch finds, at a different generation.
+    getDiarizationReviewMock.mockResolvedValueOnce(makeReview()).mockResolvedValue(makeReview('in_review', 9))
+
+    render(<DiarizationReviewPanel noteId="n1" hasTranscript />)
+    await openPanel()
+    const options = screen.getAllByRole('option')
+    await waitFor(() => expect(options[0]).toHaveFocus())
+
+    fireEvent.keyDown(options[0], { key: 'Enter' })
+
+    // The user is told, in the panel, that their edit was not saved.
+    const notice = await screen.findByTestId('review-conflict')
+    expect(notice).toHaveTextContent(/was not saved/i)
+    // The review was refetched (once on mount, once after the conflict).
+    await waitFor(() => expect(getDiarizationReviewMock).toHaveBeenCalledTimes(2))
+    // The turn is NOT shown as confirmed, and the edit was not resubmitted.
+    expect(within(screen.getAllByRole('option')[0]).queryByText('Confirmed')).not.toBeInTheDocument()
+    const segmentPosts = postDiarizationReviewMock.mock.calls.filter((c) => c[1].segmentId)
+    expect(segmentPosts).toHaveLength(1)
+  })
+
+  it('after a conflict, later actions carry the refetched generation rather than the dead one', async () => {
+    let failNextSegmentPost = true
+    postDiarizationReviewMock.mockImplementation(async (_noteId: string, body: { segmentId?: string; reviewState?: string; generation: number }) => {
+      if (body.segmentId && failNextSegmentPost) {
+        failNextSegmentPost = false
+        throw conflictError()
+      }
+      return makeReview(body.reviewState ?? 'in_review', body.generation)
+    })
+    getDiarizationReviewMock.mockResolvedValueOnce(makeReview()).mockResolvedValue(makeReview('in_review', 9))
+
+    render(<DiarizationReviewPanel noteId="n1" hasTranscript />)
+    await openPanel()
+    fireEvent.keyDown(screen.getAllByRole('option')[0], { key: 'Enter' })
+    await screen.findByTestId('review-conflict')
+
+    // A fresh, deliberate action by the user — never an automatic retry.
+    fireEvent.keyDown(screen.getAllByRole('option')[0], { key: 'Enter' })
+    await waitFor(() =>
+      expect(postDiarizationReviewMock).toHaveBeenCalledWith('n1', { segmentId: 't1', speaker: 'SPEAKER_00', generation: 9 }),
+    )
+  })
+
+  it('stops Accept all remaining at the first 409 instead of reporting "Confirmed 0 of 3"', async () => {
+    postDiarizationReviewMock.mockImplementation(async (_noteId: string, body: { segmentId?: string; reviewState?: string; generation: number }) => {
+      if (body.segmentId) throw conflictError()
+      return makeReview(body.reviewState ?? 'in_review', body.generation)
+    })
+    getDiarizationReviewMock.mockResolvedValueOnce(makeReview()).mockResolvedValue(makeReview('in_review', 9))
+
+    render(<DiarizationReviewPanel noteId="n1" hasTranscript />)
+    await openPanel()
+    await userEvent.click(screen.getByRole('button', { name: /accept all remaining/i }))
+
+    await screen.findByTestId('review-conflict')
+    // Every remaining turn carries the same dead generation, so continuing the
+    // batch can only produce more 409s.
+    const segmentPosts = postDiarizationReviewMock.mock.calls.filter((c) => c[1].segmentId)
+    expect(segmentPosts).toHaveLength(1)
+    await waitFor(() => expect(getDiarizationReviewMock).toHaveBeenCalledTimes(2))
+  })
+
+  it('surfaces a 409 on Mark review complete without hiding the panel', async () => {
+    postDiarizationReviewMock.mockImplementation(async (_noteId: string, body: { segmentId?: string; reviewState?: string; generation: number }) => {
+      if (body.reviewState === 'completed') throw conflictError()
+      return makeReview(body.reviewState ?? 'in_review', body.generation)
+    })
+    getDiarizationReviewMock.mockResolvedValueOnce(makeReview()).mockResolvedValue(makeReview('in_review', 9))
+
+    render(<DiarizationReviewPanel noteId="n1" hasTranscript />)
+    await openPanel()
+    await userEvent.click(screen.getByRole('button', { name: /mark review complete/i }))
+
+    await screen.findByTestId('review-conflict')
+    // The review was NOT completed, so the entry point must not disappear.
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    await waitFor(() => expect(getDiarizationReviewMock).toHaveBeenCalledTimes(2))
+  })
+
+  it('refetches when the open-panel transition itself conflicts, so later actions are not stale', async () => {
+    postDiarizationReviewMock.mockImplementation(async (_noteId: string, body: { segmentId?: string; reviewState?: string; generation: number }) => {
+      if (body.reviewState === 'in_review') throw conflictError()
+      return makeReview(body.reviewState ?? 'in_review', body.generation)
+    })
+    getDiarizationReviewMock.mockResolvedValueOnce(makeReview()).mockResolvedValue(makeReview('in_review', 9))
+
+    render(<DiarizationReviewPanel noteId="n1" hasTranscript />)
+    await openPanel()
+
+    await screen.findByTestId('review-conflict')
+    await waitFor(() => expect(getDiarizationReviewMock).toHaveBeenCalledTimes(2))
+
+    // The panel is now bound to the refetched transcript, not the dead one.
+    fireEvent.keyDown(screen.getAllByRole('option')[0], { key: 'Enter' })
+    await waitFor(() =>
+      expect(postDiarizationReviewMock).toHaveBeenCalledWith('n1', { segmentId: 't1', speaker: 'SPEAKER_00', generation: 9 }),
+    )
+  })
+
+  it('does not treat an ordinary failure as a conflict', async () => {
+    postDiarizationReviewMock.mockImplementation(async (_noteId: string, body: { segmentId?: string; reviewState?: string; generation: number }) => {
+      if (body.segmentId) throw new Error('socket hang up')
+      return makeReview(body.reviewState ?? 'in_review', body.generation)
+    })
+
+    render(<DiarizationReviewPanel noteId="n1" hasTranscript />)
+    await openPanel()
+    fireEvent.keyDown(screen.getAllByRole('option')[0], { key: 'Enter' })
+
+    await waitFor(() => expect(postDiarizationReviewMock).toHaveBeenCalledWith('n1', { segmentId: 't1', speaker: 'SPEAKER_00', generation: 5 }))
+    // No conflict notice, and no refetch: the user's in-progress review stands.
+    expect(screen.queryByTestId('review-conflict')).not.toBeInTheDocument()
+    expect(getDiarizationReviewMock).toHaveBeenCalledTimes(1)
   })
 })

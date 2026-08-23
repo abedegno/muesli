@@ -38,6 +38,30 @@ describe('ipc handlers', () => {
     return createHandlers({ tokenStore, fetch, onProgress: () => {} })
   }
 
+  it('encodes a 409 from a diarization review mutation into the rejected message', async () => {
+    // The server returns 409 when the transcript was replaced under a reviewer.
+    // Electron's ipcMain.handle rejection path round-trips only `message`, so
+    // the status has to travel as a `[NNN] ` prefix or the renderer cannot tell
+    // a conflict from a network failure — which is the whole point of the 409.
+    const fetch = vi.fn(async (input: string | URL) => {
+      if (new URL(String(input)).pathname.endsWith('/transcript/review')) {
+        return new Response(JSON.stringify({ error: 'transcript changed, refetch and retry' }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' },
+        })
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }) as unknown as typeof server.fetch
+    const h = makePluginHandlers(fetch)
+
+    await expect(
+      h.postDiarizationReview('n1', { segmentId: 's1', speaker: 'Alice', generation: 1 }),
+    ).rejects.toSatisfy((err: unknown) => {
+      expect((err as Error).message).toMatch(/^\[409\] /)
+      return true
+    })
+  })
+
   it('lists plugins and checks plugin health through the authenticated client', async () => {
     const calls: string[] = []
     const fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {

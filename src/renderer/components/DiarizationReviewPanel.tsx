@@ -4,6 +4,7 @@ import { Users, X } from 'lucide-react'
 import { muesli } from '@/api'
 import { useAnnouncer } from '@/hooks/useAnnouncer'
 import { cn } from '@/lib/cn'
+import { isConflictError } from '@/lib/apiError'
 import type { DiarizationReview, TranscriptSegment } from '../../shared/types'
 
 // A review turn requires an `id` (the segment_id the POST endpoint keys off).
@@ -18,6 +19,12 @@ interface Turn {
   selectedSpeaker: string
   confirmed: boolean
 }
+
+// Shown, announced and returned from every path that hits a 409. The wording
+// has to say that the edit was NOT saved: a refetch that silently re-rendered
+// would look like success.
+const CONFLICT_MESSAGE =
+  'This transcript was replaced while you were reviewing it. Your change was not saved, and the turns below have been reloaded from the new transcript.'
 
 function toTurns(review: DiarizationReview): Turn[] {
   return review.turns
@@ -54,6 +61,7 @@ export function DiarizationReviewPanel({
   const [turns, setTurns] = useState<Turn[]>([])
   const [activeIndex, setActiveIndex] = useState(0)
   const [busy, setBusy] = useState(false)
+  const [conflict, setConflict] = useState(false)
   const itemRefs = useRef<Array<HTMLLIElement | null>>([])
   const { announce } = useAnnouncer()
 
@@ -63,6 +71,7 @@ export function DiarizationReviewPanel({
   useEffect(() => {
     setReview(null)
     setOpen(false)
+    setConflict(false)
     if (!hasTranscript) return
     const get = muesli?.getDiarizationReview
     if (typeof get !== 'function') return
@@ -75,21 +84,50 @@ export function DiarizationReviewPanel({
 
   const speakers = useMemo(() => (review ? distinctSpeakers(review) : []), [review])
 
+  // Refetch after a 409 and surface it. The refetched review replaces the
+  // panel's state so later actions carry a generation that exists — but the
+  // rejected edit is deliberately NOT resubmitted. Retrying it silently would
+  // apply the user's change to a transcript they never saw, which is the
+  // mutation the generation guard exists to prevent.
+  const handleConflict = useCallback(async () => {
+    setConflict(true)
+    announce(CONFLICT_MESSAGE)
+    const get = muesli?.getDiarizationReview
+    if (typeof get !== 'function') return
+    try {
+      const fresh = await get(noteId)
+      setReview(fresh)
+      setTurns(toTurns(fresh))
+      setActiveIndex(0)
+    } catch {
+      // The replacement is not reviewable (no transcript, or it needs no
+      // review). Nothing is left to show, so close rather than leave a panel
+      // bound to a transcript that no longer exists.
+      setReview(null)
+      setOpen(false)
+    }
+  }, [noteId, announce])
+
   const openPanel = useCallback(() => {
     if (!review) return
     setTurns(toTurns(review))
     setActiveIndex(0)
+    setConflict(false)
     setOpen(true)
     if (review.review_state === 'pending') {
-      // Best-effort lifecycle transition — proceed regardless of outcome; a
-      // 422 (e.g. a race with another client) just leaves review_state as-is.
+      // Best-effort lifecycle transition — a 422 (e.g. a race with another
+      // client) just leaves review_state as-is. A 409 is NOT best-effort: it
+      // means the transcript this panel was rendered from is gone, so every
+      // later action would 409 too unless the review is refetched here.
       // generation is the one this panel was just rendered from (review_state
       // transitions never change it), not a refetched value.
       muesli.postDiarizationReview(noteId, { reviewState: 'in_review', generation: review.generation })
         .then((r) => setReview(r))
-        .catch(() => undefined)
+        .catch((err: unknown) => {
+          if (isConflictError(err)) void handleConflict()
+        })
     }
-  }, [review, noteId])
+  }, [review, noteId, handleConflict])
 
   // Move DOM focus to the active item whenever the panel opens.
   useEffect(() => {
@@ -131,12 +169,14 @@ export function DiarizationReviewPanel({
       await muesli.postDiarizationReview(noteId, { segmentId: t.id, speaker: t.selectedSpeaker, generation: review.generation })
       setTurns((ts) => ts.map((tt, i) => (i === idx ? { ...tt, confirmed: true } : tt)))
       announce(`Confirmed speaker ${t.selectedSpeaker || 'unknown'} for turn ${idx + 1}`)
-    } catch {
-      announce(`Could not confirm turn ${idx + 1}`)
+    } catch (err) {
+      // A 409 is not a failed request to retry — the transcript changed.
+      if (isConflictError(err)) await handleConflict()
+      else announce(`Could not confirm turn ${idx + 1}`)
     } finally {
       setBusy(false)
     }
-  }, [turns, review, noteId, announce])
+  }, [turns, review, noteId, announce, handleConflict])
 
   const acceptAllRemaining = useCallback(async () => {
     if (!review) return
@@ -144,6 +184,7 @@ export function DiarizationReviewPanel({
     if (remaining.length === 0) return
     setBusy(true)
     let count = 0
+    let conflicted = false
     for (const t of remaining) {
       try {
         // Confirmations are sent sequentially (not Promise.all) so a consistent
@@ -153,13 +194,25 @@ export function DiarizationReviewPanel({
         await muesli.postDiarizationReview(noteId, { segmentId: t.id, speaker: t.selectedSpeaker, generation: review.generation })
         count++
         setTurns((ts) => ts.map((tt) => (tt.id === t.id ? { ...tt, confirmed: true } : tt)))
-      } catch {
-        // Keep going — surfaced in aggregate via the final announcement below.
+      } catch (err) {
+        // A 409 applies to the whole batch: every remaining confirmation
+        // carries the same now-dead generation, so continuing would send
+        // requests that cannot succeed and report "Confirmed 0 of N" as though
+        // the server had merely been flaky. Stop and refetch instead.
+        if (isConflictError(err)) {
+          conflicted = true
+          break
+        }
+        // Any other failure is per-request — keep going and report in aggregate.
       }
     }
     setBusy(false)
+    if (conflicted) {
+      await handleConflict()
+      return
+    }
     announce(`Confirmed ${count} of ${remaining.length} remaining turn${remaining.length === 1 ? '' : 's'}`)
-  }, [turns, review, noteId, announce])
+  }, [turns, review, noteId, announce, handleConflict])
 
   const completeReview = useCallback(async () => {
     if (!review) return
@@ -169,12 +222,13 @@ export function DiarizationReviewPanel({
       announce('Diarization review completed')
       setReview(null) // hides the entry point
       setOpen(false)
-    } catch {
-      announce('Could not complete the review')
+    } catch (err) {
+      if (isConflictError(err)) await handleConflict()
+      else announce('Could not complete the review')
     } finally {
       setBusy(false)
     }
-  }, [review, noteId, announce])
+  }, [review, noteId, announce, handleConflict])
 
   const onItemKeyDown = (e: ReactKeyboardEvent<HTMLLIElement>, idx: number) => {
     switch (e.key) {
@@ -234,6 +288,16 @@ export function DiarizationReviewPanel({
                 <X size={16} />
               </button>
             </div>
+
+            {conflict && (
+              <p
+                role="alert"
+                data-testid="review-conflict"
+                className="border-b border-border bg-muted px-4 py-3 text-sm text-foreground"
+              >
+                {CONFLICT_MESSAGE}
+              </p>
+            )}
 
             {turns.length === 0 ? (
               <p className="px-4 py-6 text-sm text-muted-foreground">No low-confidence turns to review.</p>

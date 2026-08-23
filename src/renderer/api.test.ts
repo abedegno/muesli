@@ -64,6 +64,46 @@ describe('renderer bridge accessor', () => {
     })
   })
 
+  it('carries the HTTP status through to the BridgeError so callers can act on a 409', async () => {
+    // The full production shape: muesliClient throws ApiError(409), ipcHandlers
+    // re-encodes it as a `[409] ` message prefix (Electron drops custom error
+    // properties), Electron wraps that in its own prefix. A caller that must
+    // tell "the transcript changed, refetch" apart from "the request never
+    // landed" needs the status to survive all three hops.
+    installContextBridgeLike({
+      postDiarizationReview: async () => {
+        throw new Error(
+          "Error invoking remote method 'muesli:postDiarizationReview': Error: [409] transcript changed, refetch and retry",
+        )
+      },
+    })
+
+    const { muesli, BridgeError } = await loadApi()
+
+    await expect(muesli.postDiarizationReview('n1', { generation: 1 })).rejects.toSatisfy((err: unknown) => {
+      expect(err).toBeInstanceOf(BridgeError)
+      expect((err as InstanceType<typeof BridgeError>).status).toBe(409)
+      expect((err as InstanceType<typeof BridgeError>).kind).toBe('ipc')
+      expect((err as Error).message).toBe('transcript changed, refetch and retry')
+      return true
+    })
+  })
+
+  it('leaves status undefined when the failure never reached the server', async () => {
+    installContextBridgeLike({
+      createNote: async () => {
+        throw new Error("Error invoking remote method 'muesli:createNote': Error: socket hang up")
+      },
+    })
+
+    const { muesli } = await loadApi()
+
+    await expect(muesli.createNote('x')).rejects.toSatisfy((err: unknown) => {
+      expect((err as { status?: number }).status).toBeUndefined()
+      return true
+    })
+  })
+
   it('does not throw when the bridge is absent (non-Electron host)', async () => {
     Object.defineProperty(window, 'muesli', {
       value: undefined,
