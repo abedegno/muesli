@@ -279,6 +279,19 @@ func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, err
 		return true, err
 	}
 	if currentGeneration != requiredGeneration {
+		// pl.ClaimedPriorStatus is only ever set once this SAME job has already
+		// claimed the note on an earlier attempt (see the re-claim comment below).
+		// If that attempt then failed retryably before SaveTranscript, the claim
+		// is still standing — and CreateStreamTranscript deliberately leaves a
+		// claim in place when a live stream supersedes the transcript it displaced
+		// (internal/store/transcripts.go), so THIS is the mismatch that would
+		// otherwise see it. Returning early without releasing here would leave the
+		// note stuck at "transcribing" forever: nothing else about this job runs
+		// again. A job that never claimed has ClaimedPriorStatus == "" and must
+		// release nothing.
+		if pl.ClaimedPriorStatus != "" {
+			p.releaseTranscribeClaim(ctx, job, pl.ClaimedPriorStatus)
+		}
 		slog.InfoContext(ctx, "stale transcribe job discarded before claim: transcript generation has moved on",
 			"job_id", job.ID, "note_id", job.NoteID, "published", pl.Published,
 			"required_generation", requiredGeneration, "current_generation", currentGeneration)

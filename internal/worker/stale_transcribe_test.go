@@ -695,3 +695,139 @@ func TestRunTranscribeExpectedGenerationPersistFailureIsRetryable(t *testing.T) 
 		}
 	}
 }
+
+// TestRunTranscribeRetryReleasesClaimLeftByFailedAttemptOnEarlyMismatch is the
+// regression test for the gap between the early and late mismatch handling:
+// attempt 1 claims the note (persisting ClaimedPriorStatus onto the job
+// payload), then fails retryably before ever reaching SaveTranscript —
+// leaving transcribing_job_id set, since a plain retryable failure releases
+// nothing. A live stream then supersedes the transcript via
+// CreateStreamTranscript, which deliberately preserves that claim (see
+// internal/store/transcripts.go — clearing it there would strand a legitimate
+// batch job). The retry (same job) now observes a generation that has already
+// moved on before it ever re-claims, so it hits the EARLY mismatch branch —
+// not the late one covered by
+// TestRunTranscribeStaleJobDetectedLateRestoresDisplacedStatus, which only
+// fires after a fresh claim and a plugin round-trip. Without releasing there
+// too, the job completes successfully and nothing is ever left to clear the
+// claim: the note is stuck at "transcribing" permanently.
+func TestRunTranscribeRetryReleasesClaimLeftByFailedAttemptOnEarlyMismatch(t *testing.T) {
+	ctx := context.Background()
+
+	var calls int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("/info", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(plugin.Info{Name: "stub-early-after-fail-transcriber", Version: "0", PluginAPI: 1, Kind: "transcriber"})
+	})
+	trSrv := httptest.NewServer(mux)
+	t.Cleanup(trSrv.Close)
+
+	proc, st, noteID, key := staleTranscribeFixture(t, trSrv.URL)
+
+	// Attempt 1 fails retryably before SaveTranscript ever runs. Attempt 2 must
+	// never reach this handler at all — it is caught by the early mismatch
+	// check before the plugin is ever called again.
+	mux.HandleFunc("/transcribe", func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		http.Error(w, "injected failure", http.StatusInternalServerError)
+	})
+
+	// Establish generation 1 as a STREAM-owned transcript — CreateStreamTranscript
+	// refuses to supersede a batch-owned one with ErrBatchTranscriptExists — and
+	// park the note at "ready", the status this job's claim will displace and
+	// the value that must be restored.
+	live, err := st.CreateStreamTranscript(ctx, noteID, "stream-early", "streaming", "", 0)
+	if err != nil {
+		t.Fatalf("seed stream transcript: %v", err)
+	}
+	if err := st.AppendStreamSegment(ctx, live.ID, "stream-early", model.Segment{
+		StartMS: 0, EndMS: 10, Text: "hi", Source: "mic",
+	}); err != nil {
+		t.Fatalf("seed live segment: %v", err)
+	}
+	if err := st.SetNoteStatus(ctx, noteID, model.NoteReady); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+
+	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe,
+		json.RawMessage(`{"audio_key":"`+key+`","expected_generation":1}`))
+	if err != nil {
+		t.Fatalf("enqueue: %v", err)
+	}
+
+	// Attempt 1: claims (ready -> transcribing, persisting ClaimedPriorStatus
+	// "ready" onto the job payload), then the plugin call fails retryably.
+	job, ok, err := st.ClaimJob(ctx, 30*time.Second)
+	if err != nil || !ok {
+		t.Fatalf("claim job (attempt 1): ok=%v err=%v", ok, err)
+	}
+	proc.Process(ctx, job)
+
+	gotJob, err := st.GetJob(ctx, jobID)
+	if err != nil {
+		t.Fatalf("GetJob after attempt 1: %v", err)
+	}
+	if gotJob.Status != model.JobPending {
+		t.Fatalf("job status after attempt 1 = %q, want %q (retryable failure)", gotJob.Status, model.JobPending)
+	}
+	statusAfterAttempt1, claimedByAfterAttempt1 := noteClaimState(t, st, noteID)
+	if statusAfterAttempt1 != model.NoteTranscribing {
+		t.Fatalf("note status after attempt 1 = %q, want %q (claim still in place)", statusAfterAttempt1, model.NoteTranscribing)
+	}
+	if claimedByAfterAttempt1 == nil || *claimedByAfterAttempt1 != jobID {
+		t.Fatalf("transcribing_job_id after attempt 1 = %v, want %q", claimedByAfterAttempt1, jobID)
+	}
+
+	// A live stream starts, superseding the stream-owned transcript this job's
+	// claim was made against (generation 1 -> 2). This is the real
+	// CreateStreamTranscript, which deliberately leaves transcribing_job_id
+	// alone — see internal/store/transcripts.go.
+	if _, err := st.CreateStreamTranscript(ctx, noteID, "stream-supersede", "streaming", "", 1); err != nil {
+		t.Fatalf("supersede stream transcript: %v", err)
+	}
+
+	// Clear the retry lease so ClaimJob can pick attempt 1's job straight back
+	// up, the way the shared drain() helper does.
+	if _, err := st.Pool().Exec(ctx, "UPDATE jobs SET lease_expires_at = NULL WHERE id=$1", jobID); err != nil {
+		t.Fatalf("clear retry lease: %v", err)
+	}
+
+	// Attempt 2 (the retry, same job id): the note's transcript generation has
+	// already moved on (1 -> 2) before this attempt ever re-claims, so it hits
+	// the EARLY mismatch branch — not the late one, which only fires after a
+	// fresh claim and a plugin round-trip.
+	job2, ok, err := st.ClaimJob(ctx, 30*time.Second)
+	if err != nil || !ok {
+		t.Fatalf("claim job (attempt 2): ok=%v err=%v", ok, err)
+	}
+	if job2.ID != jobID {
+		t.Fatalf("attempt 2 claimed a different job: %s, want %s", job2.ID, jobID)
+	}
+	proc.Process(ctx, job2)
+
+	gotJob2, err := st.GetJob(ctx, jobID)
+	if err != nil {
+		t.Fatalf("GetJob after attempt 2: %v", err)
+	}
+	if gotJob2.Status != model.JobDone {
+		t.Fatalf("job status after attempt 2 = %q, want %q (stale-detected-early is a successful no-op)", gotJob2.Status, model.JobDone)
+	}
+
+	// The core assertion: the note must be back at "ready" with its claim
+	// cleared, not stuck at "transcribing" forever — no future attempt of this
+	// job will ever run again to clear it.
+	finalStatus, finalClaimedBy := noteClaimState(t, st, noteID)
+	if finalStatus != model.NoteReady {
+		t.Fatalf("note status after attempt 2 = %q, want %q (claim left by the failed attempt 1 was never released)", finalStatus, model.NoteReady)
+	}
+	if finalClaimedBy != nil {
+		t.Fatalf("transcribing_job_id after attempt 2 = %v, want nil (released)", finalClaimedBy)
+	}
+
+	// The decisive assertion distinguishing "caught early" from "caught late":
+	// attempt 2 must never reach the plugin at all.
+	if calls != 1 {
+		t.Fatalf("transcribe plugin calls = %d, want 1 (attempt 2 must be caught by the early mismatch, never reaching the plugin)", calls)
+	}
+}
