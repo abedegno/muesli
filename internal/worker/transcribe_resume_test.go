@@ -280,3 +280,168 @@ func TestRunTranscribeRetryPreservesReviewMadeAfterPublication(t *testing.T) {
 		t.Fatalf("reviewed segment speaker = %q, want %q — the user's diarization review was erased by the retry", confirmed, "Alice")
 	}
 }
+
+// TestRunTranscribeSkipsNoteWorkWhenTranscriptReplacedAfterSave binds the
+// generation re-check that guards the eight note-level mutations following the
+// save: SetNoteHashes, SetNotePartialTranscript (twice), SetRetentionState
+// (three times, one of which DISCARDS AUDIO), DeleteNoteSummaries and
+// EnqueueSummarizeJobs. Only SetReviewState ever carried a generation.
+//
+// The test pauses immediately after publication, replaces the transcript from
+// another writer, and then asserts that not one of the eight ran. Each assertion
+// is against pre-seeded state that differs from what the mutation would write,
+// so "not called" is distinguishable from "called with the default".
+func TestRunTranscribeSkipsNoteWorkWhenTranscriptReplacedAfterSave(t *testing.T) {
+	ctx := context.Background()
+	f := newResumeFixture(t, "discard", plainResumeSegments)
+
+	// Pre-seed each observable so its untouched value is distinctive.
+	if _, err := f.st.Pool().Exec(ctx, `UPDATE notes SET partial_transcript=TRUE WHERE id=$1`, f.noteID); err != nil {
+		t.Fatalf("seed partial flag: %v", err)
+	}
+	templates, err := f.st.TemplatesForSummary(ctx, f.ownerID)
+	if err != nil || len(templates) == 0 {
+		t.Fatalf("templates for summary: %v (%d)", err, len(templates))
+	}
+	summaryID, err := f.st.CreatePendingSummary(ctx, f.noteID, templates[0].ID)
+	if err != nil {
+		t.Fatalf("seed summary: %v", err)
+	}
+
+	var hookErr error
+	restore := worker.SetTestHookAfterTranscriptPublished(func() {
+		// Another writer publishes over this job's transcript in the window
+		// between its save and its note-level work.
+		if _, err := f.st.SaveTranscript(context.Background(), model.Transcript{
+			NoteID:            f.noteID,
+			TranscriberPlugin: "whisper",
+			Model:             "newer",
+			Segments:          []model.Segment{{StartMS: 0, EndMS: 900, Text: "newer transcript", Source: "mic"}},
+		}, 1); err != nil {
+			hookErr = err
+		}
+	})
+	defer restore()
+
+	jobID := f.enqueue(t, 0)
+	f.runOnce(t, jobID)
+	if hookErr != nil {
+		t.Fatalf("replacement writer failed: %v", hookErr)
+	}
+
+	gotJob, err := f.st.GetJob(ctx, jobID)
+	if err != nil {
+		t.Fatalf("GetJob: %v", err)
+	}
+	if gotJob.Status != model.JobDone {
+		t.Fatalf("job status = %q, want %q (aborting cleanly is a no-op, not a failure)", gotJob.Status, model.JobDone)
+	}
+
+	// 1. SetNoteHashes
+	if raw, normalized := noteHashes(t, f.st, f.noteID); raw != "" || normalized != "" {
+		t.Fatalf("note hashes = (%q, %q), want both empty — SetNoteHashes ran on a superseded transcript", raw, normalized)
+	}
+	// 2. SetNotePartialTranscript
+	var partial bool
+	var retentionState string
+	if err := f.st.Pool().QueryRow(ctx,
+		`SELECT partial_transcript, retention_state FROM notes WHERE id=$1`, f.noteID).Scan(&partial, &retentionState); err != nil {
+		t.Fatalf("read note flags: %v", err)
+	}
+	if !partial {
+		t.Fatal("partial_transcript was cleared — SetNotePartialTranscript ran on a superseded transcript")
+	}
+	// 3. SetRetentionState
+	if retentionState != "pending" {
+		t.Fatalf("retention_state = %q, want the seeded default %q — SetRetentionState ran on a superseded transcript", retentionState, "pending")
+	}
+	// 4. The audio itself
+	exists, _, err := f.prov.Verify(f.audioKey)
+	if err != nil {
+		t.Fatalf("Verify audio: %v", err)
+	}
+	if !exists {
+		t.Fatal("the audio object was deleted by a job whose transcript had already been replaced")
+	}
+	// 5. DeleteNoteSummaries
+	summaries, err := f.st.GetSummaries(ctx, f.noteID)
+	if err != nil {
+		t.Fatalf("GetSummaries: %v", err)
+	}
+	found := false
+	for _, s := range summaries {
+		if s.ID == summaryID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("seeded summary %s was deleted — DeleteNoteSummaries ran on a superseded transcript", summaryID)
+	}
+	// 6. EnqueueSummarizeJobs
+	var summarizeJobs int
+	if err := f.st.Pool().QueryRow(ctx,
+		`SELECT count(*) FROM jobs WHERE note_id=$1 AND type=$2`, f.noteID, model.JobSummarize).Scan(&summarizeJobs); err != nil {
+		t.Fatalf("count summarize jobs: %v", err)
+	}
+	if summarizeJobs != 0 {
+		t.Fatalf("summarize jobs enqueued = %d, want 0 — EnqueueSummarizeJobs ran on a superseded transcript", summarizeJobs)
+	}
+	// The replacement is untouched.
+	got, err := f.st.GetTranscript(ctx, f.noteID)
+	if err != nil {
+		t.Fatalf("GetTranscript: %v", err)
+	}
+	if got.Generation != 2 || len(got.Segments) != 1 || got.Segments[0].Text != "newer transcript" {
+		t.Fatalf("transcript = %+v, want the replacement at generation 2", got)
+	}
+}
+
+// TestRunTranscribeDoesNotDiscardAudioForASupersededTranscript binds the SECOND
+// generation re-check — the one inside applyAudioRetention. The group check
+// above cannot bind it: with that check in place the job aborts long before
+// retention, so removing the retention check alone leaves
+// TestRunTranscribeSkipsNoteWorkWhenTranscriptReplacedAfterSave green.
+//
+// Deleting audio is the only irreversible thing runTranscribe does, and the
+// step furthest from the group check — a long-running audio hash sits between
+// them. This moves the transcript inside exactly that window and asserts the
+// audio survives.
+func TestRunTranscribeDoesNotDiscardAudioForASupersededTranscript(t *testing.T) {
+	ctx := context.Background()
+	f := newResumeFixture(t, "discard", plainResumeSegments)
+
+	var hookErr error
+	restore := worker.SetTestHookBeforeAudioRetention(func() {
+		if _, err := f.st.SaveTranscript(context.Background(), model.Transcript{
+			NoteID:            f.noteID,
+			TranscriberPlugin: "whisper",
+			Model:             "newer",
+			Segments:          []model.Segment{{StartMS: 0, EndMS: 900, Text: "newer transcript", Source: "mic"}},
+		}, 1); err != nil {
+			hookErr = err
+		}
+	})
+	defer restore()
+
+	jobID := f.enqueue(t, 0)
+	f.runOnce(t, jobID)
+	if hookErr != nil {
+		t.Fatalf("replacement writer failed: %v", hookErr)
+	}
+
+	exists, _, err := f.prov.Verify(f.audioKey)
+	if err != nil {
+		t.Fatalf("Verify audio: %v", err)
+	}
+	if !exists {
+		t.Fatal("audio deleted on the authority of a transcript that had already been replaced")
+	}
+	var retentionState string
+	if err := f.st.Pool().QueryRow(ctx,
+		`SELECT retention_state FROM notes WHERE id=$1`, f.noteID).Scan(&retentionState); err != nil {
+		t.Fatalf("read retention state: %v", err)
+	}
+	if retentionState != "pending" {
+		t.Fatalf("retention_state = %q, want the seeded default %q", retentionState, "pending")
+	}
+}
