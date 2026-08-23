@@ -195,8 +195,8 @@ func TestTranscriptCoreJSONRoundTrip(t *testing.T) {
 			wantKeys: []string{"id", "note_id", "transcriber_plugin", "model", "segments", "review_state", "sealed", "generation"},
 		},
 		{
-			name:     "zero omitted optional",
-			value:    Transcript{},
+			name:  "zero omitted optional",
+			value: Transcript{},
 			// sealed and generation are always on the wire (no omitempty) — the
 			// live-continuity design deliberately exposes them, not internal-only.
 			wantKeys: []string{"id", "note_id", "transcriber_plugin", "model", "segments", "review_state", "sealed", "generation"},
