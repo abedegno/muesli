@@ -80,15 +80,31 @@ func buildTranscribeJobPayload(audioKey, modelOverride, languageOverride string,
 	return json.Marshal(payload)
 }
 
-// refreshTranscribeExpectedGeneration rebuilds a transcribe job's payload with
-// the note's CURRENT transcript generation, overwriting whatever
-// expected_generation the payload already carried. Used by every site that
-// re-enqueues an EXISTING job's own stored payload rather than building a
-// fresh one (handleRetryNote, handleRetryJob) — that stored payload can be
-// stale, since the failed run it came from may have partially saved a
-// transcript before failing on a later step, bumping the generation past
-// what it originally observed at enqueue time.
-func refreshTranscribeExpectedGeneration(ctx context.Context, st *store.Store, noteID string, payload json.RawMessage) (json.RawMessage, error) {
+// resetTranscribeRetryPayload rebuilds a transcribe job's payload for a user-
+// or admin-initiated retry. Used by every site that re-enqueues an EXISTING
+// job's own stored payload rather than building a fresh one (handleRetryNote,
+// handleRetryJob) — that stored payload can carry two kinds of state that
+// belong to the failed job's own prior attempt, not to the fresh one this
+// retry is starting:
+//
+//   - expected_generation, observed when the failed job was itself enqueued,
+//     which can be stale (e.g. that run partially saved a transcript before
+//     failing on a later step, bumping the generation past what it originally
+//     observed). This gets overwritten with the note's CURRENT generation, the
+//     same way every other transcribe enqueue site computes it.
+//   - published/published_generation, the durable checkpoint runTranscribe
+//     writes onto its OWN job row so an automatic retry of the SAME job can
+//     resume after publication instead of transcribing again (see the
+//     Published field's doc on transcribePayload in internal/worker/pipeline.go).
+//     A user/admin retry is a different intent — it enqueues a brand-new job
+//     and wants the work done again from the start — so this must be cleared,
+//     not carried forward. Left in place, a job that published a partial
+//     transcript and then terminally failed would have its retry skip the
+//     transcriber entirely and resume downstream with that same incomplete
+//     transcript. claimed_prior_status is cleared alongside it: it is part of
+//     the same claim lineage and, being scoped to a job id no fresh retry can
+//     ever hold, has no business surviving onto a new one.
+func resetTranscribeRetryPayload(ctx context.Context, st *store.Store, noteID string, payload json.RawMessage) (json.RawMessage, error) {
 	expectedGeneration, err := st.CurrentTranscriptGeneration(ctx, noteID)
 	if err != nil {
 		return nil, err
@@ -98,6 +114,9 @@ func refreshTranscribeExpectedGeneration(ctx context.Context, st *store.Store, n
 		return nil, err
 	}
 	fields["expected_generation"] = expectedGeneration
+	delete(fields, "published")
+	delete(fields, "published_generation")
+	delete(fields, "claimed_prior_status")
 	return json.Marshal(fields)
 }
 
@@ -610,13 +629,18 @@ func (s *Server) handleRetryNote(w http.ResponseWriter, r *http.Request) {
 	}
 	payload := job.Payload
 	if job.Type == model.JobTranscribe {
-		// The failed job's own payload carries the expected_generation observed
-		// when IT was enqueued, which may since be stale (e.g. the failed run
-		// itself partially saved a transcript before failing on a later step).
-		// Refresh it to what the note's transcript generation actually is now,
-		// the same way every other transcribe enqueue site does, so the retry
-		// isn't rejected as stale against its own prior work.
-		refreshed, rerr := refreshTranscribeExpectedGeneration(r.Context(), s.deps.Store, id, job.Payload)
+		// The failed job's own payload carries expected_generation observed
+		// when IT was enqueued (which may since be stale — e.g. the failed run
+		// itself partially saved a transcript before failing on a later step)
+		// and, if that save succeeded, the published/published_generation
+		// checkpoint runTranscribe uses to resume the SAME job after
+		// publication instead of re-transcribing. This is a different job: it
+		// wants the work done again from the start, so both get reset rather
+		// than forwarded — the generation to what the note's transcript
+		// actually is now, and the checkpoint cleared so the retry transcribes
+		// instead of silently resuming with whatever this one already
+		// (possibly incompletely) published.
+		refreshed, rerr := resetTranscribeRetryPayload(r.Context(), s.deps.Store, id, job.Payload)
 		if rerr != nil {
 			writeError(w, http.StatusInternalServerError, "internal error")
 			return
