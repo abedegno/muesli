@@ -78,6 +78,9 @@ func TestImportAudioFlow(t *testing.T) {
 	if created.ID == "" || created.Title != "Imported meeting" || created.Status != "uploaded" {
 		t.Fatalf("unexpected created note %+v body %s", created, rec.Body)
 	}
+	if got := enqueuedTranscribeGeneration(t, st, created.ID); got != 0 {
+		t.Fatalf("enqueued expected_generation = %d, want 0 for a newly imported note", got)
+	}
 
 	dupBody, dupContentType := buildImportBody(t, "Imported meeting", "meeting.webm", "audio/webm", "audio-bytes")
 	dupReq := httptest.NewRequest(http.MethodPost, "/api/notes/import", dupBody)

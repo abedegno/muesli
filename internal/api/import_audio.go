@@ -208,22 +208,13 @@ haveFile:
 		return
 	}
 
-	// The note was just created above, so it has no transcript yet — but read the
-	// generation the same way every enqueue site does rather than assuming 0, so
-	// this stays correct if note creation ever starts a transcript some other way.
-	//
-	// Deliberately unbound by a test, unlike the other two enqueue sites. The
-	// note cannot have a transcript here, so 0 is the only value this read can
-	// produce and an assertion on it would pass whether the read happened or
-	// not. The sites where the value CAN differ are bound:
-	// TestAudioUploadedEnqueuesCurrentGeneration (upload completion) and
-	// TestRetranscribeEnqueuesCurrentGeneration (retranscribe).
-	expectedGeneration, err := s.deps.Store.CurrentTranscriptGeneration(r.Context(), note.ID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	payload, _ := json.Marshal(map[string]any{"audio_key": grant.Key, "expected_generation": expectedGeneration})
+	// Generation is provably 0: CreateNote created this note moments ago in this
+	// function, and nothing since then can attach a transcript. A store lookup here
+	// was unverifiable theater because the test suite could never distinguish it
+	// from the required literal 0. If import ever supports adding audio to an
+	// existing note, that path must restore a real CurrentTranscriptGeneration
+	// lookup.
+	payload, _ := json.Marshal(map[string]any{"audio_key": grant.Key, "expected_generation": 0})
 	if _, err := s.deps.Store.EnqueueJob(r.Context(), note.ID, model.JobTranscribe, payload); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
