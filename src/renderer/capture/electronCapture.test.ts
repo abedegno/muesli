@@ -14,6 +14,7 @@ function makeGainNode(gainValue = 0) {
   const node = {
     gain: { value: gainValue },
     connect: vi.fn(),
+    disconnect: vi.fn(),
   }
   return node
 }
@@ -46,11 +47,18 @@ function makeAudioContext(gainNode: ReturnType<typeof makeGainNode>) {
   const source = makeMediaStreamSource()
   const destination = makeDestination()
   const merger = { connect: vi.fn() }
+  const scriptProcessor = {
+    onaudioprocess: null as ((event: AudioProcessingEvent) => void) | null,
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+  }
   const ctx = {
+    sampleRate: 16_000,
     createMediaStreamSource: vi.fn(() => source),
     createGain: vi.fn(() => gainNode),
     createMediaStreamDestination: vi.fn(() => destination),
     createChannelMerger: vi.fn(() => merger),
+    createScriptProcessor: vi.fn(() => scriptProcessor),
     createAnalyser: vi.fn(() => ({
       fftSize: 0,
       getFloatTimeDomainData: vi.fn((samples: Float32Array) => samples.fill(0.25)),
@@ -60,6 +68,7 @@ function makeAudioContext(gainNode: ReturnType<typeof makeGainNode>) {
     source,
     destination,
     merger,
+    scriptProcessor,
   }
   return ctx
 }
@@ -94,6 +103,40 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('ElectronCapture', () => {
+  it('flushes the residual PCM tail when a capture stops mid-frame', async () => {
+    const gainNode = makeGainNode()
+    const ctx = makeAudioContext(gainNode)
+    const rec = makeMediaRecorder()
+
+    vi.stubGlobal('AudioContext', vi.fn(() => ctx))
+    vi.stubGlobal('MediaRecorder', Object.assign(vi.fn(() => rec), {
+      isTypeSupported: vi.fn(() => true),
+    }))
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(makeMicStream()) },
+    })
+    const onPcmFrame = vi.fn()
+    const capture = new ElectronCapture({ onPcmFrame })
+    await capture.start()
+
+    const tail = new Float32Array([0.25, -0.5, 1])
+    ctx.scriptProcessor.onaudioprocess?.({
+      inputBuffer: {
+        length: tail.length,
+        numberOfChannels: 1,
+        getChannelData: () => tail,
+      } as unknown as AudioBuffer,
+    } as AudioProcessingEvent)
+
+    expect(onPcmFrame).not.toHaveBeenCalled()
+    await capture.stop()
+
+    expect(onPcmFrame).toHaveBeenCalledOnce()
+    expect(new Uint8Array(onPcmFrame.mock.calls[0][0])).toEqual(
+      new Uint8Array([0x00, 0x20, 0x01, 0xc0, 0xff, 0x7f]),
+    )
+  })
+
   it('reports post-gain microphone levels from an analyser attached after the gain node', async () => {
     const gainNode = makeGainNode()
     const ctx = makeAudioContext(gainNode)
