@@ -203,6 +203,15 @@ export class ElectronCapture implements AudioCapture {
       recorder.stop()
     })
 
+    try {
+      const frames = this.pcmEncoder?.flush() ?? []
+      for (const frame of frames) {
+        this.onPcmFrame?.(new Uint8Array(frame).buffer)
+      }
+    } catch {
+      // Best-effort live transcript only.
+    }
+
     this.streams.forEach((s) => s.getTracks().forEach((t) => t.stop()))
     this.pcmTap?.disconnect()
     this.pcmTapSink?.disconnect()
