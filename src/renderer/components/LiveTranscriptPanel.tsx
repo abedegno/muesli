@@ -64,6 +64,9 @@ export function LiveTranscriptPanel({
         setInterimSegment(null)
         return
       }
+      // Gap events are exposed to renderer consumers, but visual treatment is
+      // intentionally deferred. Do not reinterpret them as connection state.
+      if (event.type === 'gap') return
       setStatus(event.type)
       setSegments([])
       setInterimSegment(null)

@@ -54,7 +54,7 @@ class ActiveStream {
         return
       }
       if (!payload || typeof payload !== 'object') return
-      const message = payload as { type?: string; text?: string; start_ms?: number; end_ms?: number; speaker?: string | null; provisional?: boolean; final?: boolean }
+      const message = payload as { type?: string; text?: string; start_ms?: number; end_ms?: number; speaker?: string | null; provisional?: boolean; final?: boolean; stream_id?: string; dropped_duration_ms?: number }
       if (message.type === 'unavailable') {
         this.status = 'unavailable'
         this.pendingFrames.length = 0
@@ -70,6 +70,15 @@ class ActiveStream {
       if (message.type === 'ready') {
         this.status = 'live'
         this.emit({ noteId: this.noteId, type: 'live' })
+        return
+      }
+      if (message.type === 'gap') {
+        this.emit({
+          noteId: this.noteId,
+          type: 'gap',
+          stream_id: message.stream_id ?? '',
+          dropped_duration_ms: message.dropped_duration_ms ?? 0,
+        })
         return
       }
       if (message.type === 'segment') {
