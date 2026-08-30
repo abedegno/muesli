@@ -132,6 +132,36 @@ func TestStreamingSessionBoundsContinuousSpeechWindow(t *testing.T) {
 	}
 }
 
+func TestStreamingContinuousUtteranceExceedingMaxWindow(t *testing.T) {
+	cfg := testStreamingConfig()
+	cfg.MaxWindow = 30 * time.Millisecond
+	cfg.PartialInterval = time.Second
+	segments := make(chan StreamingSegment, 1)
+	session, err := NewStreamingSession(cfg, nil, func(samples []float32) (string, error) {
+		return fmt.Sprintf("samples:%d", len(samples)), nil
+	}, func(segment StreamingSegment, err error) { segments <- segment })
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// This documents the current sliding-window behavior pending #711's
+	// max-utterance commit-policy fix.
+	for range 5 {
+		session.Feed(pcm(10, 0.5))
+	}
+	select {
+	case segment := <-segments:
+		t.Fatalf("continuous speech unexpectedly emitted a segment: %+v", segment)
+	default:
+	}
+	session.Feed(pcm(20, 0))
+	session.Wait()
+	segment := receiveSegment(t, segments)
+	if !segment.Final || segment.Text != "samples:30" || segment.StartMS != 20 || segment.EndMS != 50 {
+		t.Fatalf("unexpected final after continuous speech: %+v", segment)
+	}
+}
+
 func TestStreamingSessionDropsTriggersDuringTranscription(t *testing.T) {
 	cfg := testStreamingConfig()
 	cfg.PartialInterval = 10 * time.Millisecond

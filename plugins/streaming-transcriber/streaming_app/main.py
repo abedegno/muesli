@@ -72,6 +72,12 @@ CONFIG_SCHEMA = {
             "minimum": 100,
             "default": 400,
         },
+        "max_utterance_ms": {
+            "type": "integer",
+            "title": "Maximum utterance duration (ms)",
+            "minimum": 20,
+            "default": 30000,
+        },
     },
     "additionalProperties": False,
 }
@@ -86,6 +92,7 @@ class _SegmenterState:
     silence_threshold_ms: int = 600
     min_speech_ms: int = 120
     partial_interval_ms: int = 400
+    max_utterance_ms: int = 30000
 
     def __post_init__(self) -> None:
         self.frame_bytes = self.sample_rate * 2 * self.frame_ms // 1000
@@ -108,6 +115,10 @@ class _SegmenterState:
         return events
 
     def finish(self) -> list[StreamSegmentResponse]:
+        if self._segment_start_frame is not None and self._buffer:
+            # Preserve trailing active-segment PCM that is shorter than one VAD frame.
+            self._utterance.extend(self._buffer)
+            self._buffer.clear()
         return self._flush(force=True)
 
     def _process_frame(self, frame: bytes) -> list[StreamSegmentResponse]:
@@ -127,6 +138,8 @@ class _SegmenterState:
             self._speech_ms += self.frame_ms
             self._speech_since_partial_ms += self.frame_ms
             events = []
+            if self._speech_ms >= self.max_utterance_ms:
+                return self._flush(force=True)
             if self.partial_interval_ms > 0 and self._speech_since_partial_ms >= self.partial_interval_ms:
                 events.extend(self._emit_partial())
             return events
@@ -140,8 +153,10 @@ class _SegmenterState:
     def _emit_partial(self) -> list[StreamSegmentResponse]:
         if self._segment_start_frame is None:
             return []
+        # Decode only a trailing 5-second suffix so each partial has bounded cost.
+        partial_bytes = self.sample_rate * 2 * 5000 // 1000
         text = transcribe_module.transcribe_utterance(
-            bytes(self._utterance), self.sample_rate, self.settings
+            bytes(self._utterance[-partial_bytes:]), self.sample_rate, self.settings
         ).strip()
         self._speech_since_partial_ms = 0
         if not text:
@@ -233,6 +248,9 @@ def create_app(settings: Settings) -> FastAPI:
                 min_speech_ms=int(start.config.get("min_speech_ms", app.state.settings.min_speech_ms)),
                 partial_interval_ms=int(
                     start.config.get("partial_interval_ms", app.state.settings.partial_interval_ms)
+                ),
+                max_utterance_ms=int(
+                    start.config.get("max_utterance_ms", app.state.settings.max_utterance_ms)
                 ),
             )
             await websocket.send_json(StreamReadyResponse().model_dump(exclude_none=True))
