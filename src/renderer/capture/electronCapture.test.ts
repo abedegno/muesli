@@ -14,6 +14,7 @@ function makeGainNode(gainValue = 0) {
   const node = {
     gain: { value: gainValue },
     connect: vi.fn(),
+    disconnect: vi.fn(),
   }
   return node
 }
@@ -42,13 +43,25 @@ class TestBlob {
   }
 }
 
-function makeAudioContext(gainNode: ReturnType<typeof makeGainNode>) {
+function makeAudioContext(
+  gainNode: ReturnType<typeof makeGainNode>,
+  pcmTapSink?: ReturnType<typeof makeGainNode>,
+) {
   const source = makeMediaStreamSource()
   const destination = makeDestination()
   const merger = { connect: vi.fn() }
+  const pcmTap = {
+    connect: vi.fn(),
+    disconnect: vi.fn(),
+    onaudioprocess: null as ((event: { inputBuffer: AudioBuffer }) => void) | null,
+  }
   const ctx = {
+    sampleRate: 16_000,
     createMediaStreamSource: vi.fn(() => source),
-    createGain: vi.fn(() => gainNode),
+    createGain: vi.fn()
+      .mockImplementationOnce(() => pcmTapSink ?? gainNode)
+      .mockImplementation(() => gainNode),
+    createScriptProcessor: vi.fn(() => pcmTap),
     createMediaStreamDestination: vi.fn(() => destination),
     createChannelMerger: vi.fn(() => merger),
     createAnalyser: vi.fn(() => ({
@@ -60,6 +73,8 @@ function makeAudioContext(gainNode: ReturnType<typeof makeGainNode>) {
     source,
     destination,
     merger,
+    pcmTap,
+    pcmTapSink,
   }
   return ctx
 }
@@ -94,6 +109,78 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('ElectronCapture', () => {
+  it('delivers the final partial PCM frame before the caller sends the stop control frame', async () => {
+    const gainNode = makeGainNode()
+    const pcmTapSink = makeGainNode()
+    const ctx = makeAudioContext(gainNode, pcmTapSink)
+    const rec = makeMediaRecorder()
+    const micStream = makeMicStream()
+    const socketMessages: Array<ArrayBuffer | 'stop'> = []
+    vi.stubGlobal('AudioContext', vi.fn(() => ctx))
+    vi.stubGlobal('MediaRecorder', Object.assign(vi.fn(() => rec), {
+      isTypeSupported: vi.fn(() => true),
+    }))
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(micStream) },
+    })
+
+    const capture = new ElectronCapture({
+      onPcmFrame: (frame) => socketMessages.push(frame),
+    })
+    await capture.start()
+    ctx.pcmTap.onaudioprocess?.({
+      inputBuffer: {
+        length: 3,
+        numberOfChannels: 1,
+        getChannelData: () => new Float32Array([0, 0.5, -0.5]),
+      } as unknown as AudioBuffer,
+    })
+
+    await capture.stop()
+    socketMessages.push('stop')
+
+    expect(socketMessages).toHaveLength(2)
+    expect(socketMessages[1]).toBe('stop')
+    const frame = socketMessages[0] as ArrayBuffer
+    expect(Array.from(new Int16Array(frame))).toEqual([0, 16_384, -16_383])
+  })
+
+  it('completes capture teardown when delivery of the flushed PCM frame throws', async () => {
+    const gainNode = makeGainNode()
+    const pcmTapSink = makeGainNode()
+    const ctx = makeAudioContext(gainNode, pcmTapSink)
+    const rec = makeMediaRecorder()
+    const trackStop = vi.fn()
+    const micStream = { getTracks: () => [{ stop: trackStop }] } as unknown as MediaStream
+    vi.stubGlobal('AudioContext', vi.fn(() => ctx))
+    vi.stubGlobal('MediaRecorder', Object.assign(vi.fn(() => rec), {
+      isTypeSupported: vi.fn(() => true),
+    }))
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(micStream) },
+    })
+
+    const capture = new ElectronCapture({
+      onPcmFrame: () => {
+        throw new Error('socket closed')
+      },
+    })
+    await capture.start()
+    ctx.pcmTap.onaudioprocess?.({
+      inputBuffer: {
+        length: 1,
+        numberOfChannels: 1,
+        getChannelData: () => new Float32Array([0.25]),
+      } as unknown as AudioBuffer,
+    })
+
+    await expect(capture.stop()).resolves.toBeDefined()
+    expect(trackStop).toHaveBeenCalledOnce()
+    expect(ctx.pcmTap.disconnect).toHaveBeenCalledOnce()
+    expect(pcmTapSink.disconnect).toHaveBeenCalledOnce()
+    expect(ctx.close).toHaveBeenCalledOnce()
+  })
+
   it('reports post-gain microphone levels from an analyser attached after the gain node', async () => {
     const gainNode = makeGainNode()
     const ctx = makeAudioContext(gainNode)
