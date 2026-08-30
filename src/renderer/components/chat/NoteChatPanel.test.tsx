@@ -2,6 +2,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { render, screen, cleanup, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
+import { BridgeError } from '@/api'
 import { NoteChatPanel } from './NoteChatPanel'
 import type { Conversation, Message } from '../../../shared/types'
 
@@ -17,14 +18,18 @@ const {
   sendMessageMock: vi.fn(),
 }))
 
-vi.mock('@/api', () => ({
-  muesli: {
-    listConversations: listConversationsMock,
-    createConversation: createConversationMock,
-    listMessages: listMessagesMock,
-    sendMessage: sendMessageMock,
-  },
-}))
+vi.mock('@/api', async () => {
+  const actual = await vi.importActual<typeof import('@/api')>('@/api')
+  return {
+    ...actual,
+    muesli: {
+      listConversations: listConversationsMock,
+      createConversation: createConversationMock,
+      listMessages: listMessagesMock,
+      sendMessage: sendMessageMock,
+    },
+  }
+})
 
 afterEach(cleanup)
 beforeEach(() => {
@@ -97,7 +102,9 @@ describe('NoteChatPanel', () => {
   it('surfaces a 409 in-flight send distinctly from a generic error, re-enabling input either way', async () => {
     listConversationsMock.mockResolvedValue([conversation])
     listMessagesMock.mockResolvedValue([])
-    sendMessageMock.mockRejectedValueOnce(new Error('[409] message send already in progress'))
+    sendMessageMock.mockRejectedValueOnce(
+      new BridgeError('message send already in progress', 'ipc', 409),
+    )
 
     render(<NoteChatPanel noteId="note-1" onClose={() => {}} />)
     const input = await screen.findByRole('textbox', { name: /message/i })
@@ -110,7 +117,7 @@ describe('NoteChatPanel', () => {
 
     // A different (non-409) failure surfaces the server's generic/plugin-failure
     // message instead — distinct wording, and never crashes the thread view.
-    sendMessageMock.mockRejectedValueOnce(new Error('[500] internal error'))
+    sendMessageMock.mockRejectedValueOnce(new BridgeError('internal error', 'ipc', 500))
     await userEvent.type(input, 'Second question')
     await userEvent.click(screen.getByRole('button', { name: /^send$/i }))
 
@@ -122,7 +129,7 @@ describe('NoteChatPanel', () => {
   it('renders no-agent errors as muted actionable copy instead of a destructive generic error', async () => {
     listConversationsMock.mockResolvedValue([conversation])
     listMessagesMock.mockResolvedValue([])
-    sendMessageMock.mockRejectedValueOnce(new Error('[422] no default agent configured'))
+    sendMessageMock.mockRejectedValueOnce(new BridgeError('no default agent configured', 'ipc', 422))
 
     render(<NoteChatPanel noteId="note-1" onClose={() => {}} />)
     const input = await screen.findByRole('textbox', { name: /message/i })
