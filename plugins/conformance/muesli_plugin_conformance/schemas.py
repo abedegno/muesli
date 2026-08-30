@@ -7,8 +7,36 @@ INFO_SCHEMA = {
         "name": {"type": "string", "minLength": 1},
         "version": {"type": "string", "minLength": 1},
         "plugin_api": {"const": 1},
-        "kind": {"enum": ["transcriber", "agent"]},
+        "kind": {"enum": ["transcriber", "agent", "streaming-transcriber"]},
         "config_schema": {"type": "object"},
+    },
+}
+
+STREAM_READY_RESPONSE_SCHEMA = {
+    "type": "object",
+    "required": ["type"],
+    "properties": {"type": {"const": "ready"}},
+}
+
+STREAM_SEGMENT_RESPONSE_SCHEMA = {
+    "type": "object",
+    "required": ["type", "final", "text", "t0", "t1", "speaker"],
+    "properties": {
+        "type": {"const": "segment"},
+        "final": {"type": "boolean"},
+        "text": {"type": "string"},
+        "t0": {"type": "number"},
+        "t1": {"type": "number"},
+        "speaker": {"type": ["string", "null"]},
+    },
+}
+
+STREAM_ERROR_RESPONSE_SCHEMA = {
+    "type": "object",
+    "required": ["type", "message"],
+    "properties": {
+        "type": {"const": "error"},
+        "message": {"type": "string"},
     },
 }
 

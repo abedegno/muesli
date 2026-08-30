@@ -1,5 +1,8 @@
+import json
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Iterator, Optional
+from urllib.parse import urljoin, urlparse, urlunparse
 
 import httpx
 from jsonschema import ValidationError, validate
@@ -34,6 +37,53 @@ class Report:
 
 def _auth(token: str) -> dict:
     return {"Authorization": f"Bearer {token}", "X-Muesli-Plugin-API": "1"}
+
+
+def _http_work_endpoint(kind: str) -> str:
+    endpoints = {"transcriber": "/transcribe", "agent": "/generate"}
+    try:
+        return endpoints[kind]
+    except KeyError as e:
+        raise ValueError(f"{kind!r} does not have an HTTP work endpoint") from e
+
+
+def _is_websocket_close(error: Exception) -> bool:
+    return error.__class__.__name__ in {"WebSocketDisconnect", "ConnectionClosedOK", "ConnectionClosedError"}
+
+
+class _NetworkWebSocket:
+    def __init__(self, socket, receive_timeout: float | None) -> None:
+        self._socket = socket
+        self._receive_timeout = receive_timeout
+
+    def send_json(self, message: dict) -> None:
+        self._socket.send(json.dumps(message))
+
+    def send_bytes(self, data: bytes) -> None:
+        self._socket.send(data)
+
+    def receive_json(self) -> dict:
+        message = self._socket.recv(timeout=self._receive_timeout)
+        if isinstance(message, bytes):
+            message = message.decode()
+        return json.loads(message)
+
+
+@contextmanager
+def _websocket_connect(client: httpx.Client, path: str, headers: dict) -> Iterator[object]:
+    """Open a stream using Starlette TestClient or a live websocket connection."""
+    if hasattr(client, "websocket_connect"):
+        with client.websocket_connect(path, headers=headers) as socket:
+            yield socket
+        return
+
+    from websockets.sync.client import connect
+
+    base = urlparse(str(client.base_url))
+    scheme = "wss" if base.scheme == "https" else "ws"
+    websocket_url = urljoin(urlunparse(base._replace(scheme=scheme)), path.lstrip("/"))
+    with connect(websocket_url, additional_headers=headers, open_timeout=client.timeout.connect) as socket:
+        yield _NetworkWebSocket(socket, client.timeout.read)
 
 
 def check_info(client: httpx.Client, token: str, kind: str, report: Report) -> Optional[dict]:
@@ -92,7 +142,7 @@ def check_auth_on_work_endpoint(
     client: httpx.Client, token: str, kind: str, report: Report
 ) -> None:
     """Auth must be enforced on the work endpoint (/transcribe or /generate), not just /info."""
-    path = "/transcribe" if kind == "transcriber" else "/generate"
+    path = _http_work_endpoint(kind)
     # Use an empty body — auth must be checked before body parsing.
     no_token = client.post(
         path, json={}, headers={"X-Muesli-Plugin-API": "1"}
@@ -146,7 +196,7 @@ def check_malformed_payload(
     client: httpx.Client, token: str, kind: str, report: Report
 ) -> None:
     """Sending {} (all required fields missing) must be rejected with 4xx, not 200/500."""
-    path = "/transcribe" if kind == "transcriber" else "/generate"
+    path = _http_work_endpoint(kind)
     try:
         r = client.post(path, json={}, headers=_auth(token))
     except Exception as e:  # noqa: BLE001
@@ -215,8 +265,10 @@ def check_generate_system_prompt_override(client: httpx.Client, token: str, repo
 def check_roundtrip(client: httpx.Client, token: str, kind: str, report: Report) -> None:
     if kind == "transcriber":
         path, payload, schema = "/transcribe", canonical_transcribe_payload(), schemas.TRANSCRIBE_RESPONSE_SCHEMA
-    else:
+    elif kind == "agent":
         path, payload, schema = "/generate", canonical_generate_payload(), schemas.GENERATE_RESPONSE_SCHEMA
+    else:
+        raise ValueError(f"{kind!r} does not have an HTTP roundtrip")
     try:
         r = client.post(path, json=payload, headers=_auth(token))
     except Exception as e:  # noqa: BLE001
@@ -231,3 +283,94 @@ def check_roundtrip(client: httpx.Client, token: str, kind: str, report: Report)
         report.add("roundtrip.schema", False, e.message)
         return
     report.add("roundtrip.ok", True)
+
+
+def check_streaming_auth(client: httpx.Client, token: str, report: Report) -> None:
+    attempts = [
+        ("no-token", {}),
+        ("wrong-token", _auth("definitely-wrong")),
+    ]
+    outcomes = []
+    for label, headers in attempts:
+        rejected = False
+        try:
+            with _websocket_connect(client, "/stream", headers) as socket:
+                socket.send_json({"type": "start"})
+                socket.receive_json()
+        except Exception:  # noqa: BLE001 - rejection differs by websocket transport
+            rejected = True
+        outcomes.append((label, rejected))
+    ok = all(rejected for _, rejected in outcomes)
+    detail = " ".join(f"{label}={'rejected' if rejected else 'accepted'}" for label, rejected in outcomes)
+    report.add("auth.streaming_work_endpoint", ok, detail)
+
+
+def check_streaming_malformed_payload(client: httpx.Client, token: str, report: Report) -> None:
+    closed_after_send = False
+    message = None
+    try:
+        with _websocket_connect(client, "/stream", _auth(token)) as socket:
+            socket.send_json({"type": "start", "sample_rate": 8000})
+            try:
+                message = socket.receive_json()
+            except Exception as e:  # noqa: BLE001 - transports use different close exceptions
+                if not _is_websocket_close(e):
+                    raise
+                closed_after_send = True
+    except Exception as e:  # noqa: BLE001
+        if closed_after_send:
+            report.add("payload.streaming_malformed_rejected", True)
+            return
+        if message is None:
+            report.add("payload.streaming_malformed_rejected", False, f"valid-auth connect failed: {e}")
+            return
+
+    if closed_after_send:
+        report.add("payload.streaming_malformed_rejected", True)
+        return
+    assert message is not None
+    if message.get("type") == "error":
+        try:
+            validate(message, schemas.STREAM_ERROR_RESPONSE_SCHEMA)
+        except ValidationError as e:
+            report.add("payload.streaming_malformed_rejected", False, e.message)
+            return
+        report.add("payload.streaming_malformed_rejected", True)
+        return
+    report.add(
+        "payload.streaming_malformed_rejected",
+        False,
+        f"invalid start produced {message!r} (want error or close)",
+    )
+
+
+def check_streaming_roundtrip(client: httpx.Client, token: str, report: Report) -> None:
+    try:
+        with _websocket_connect(client, "/stream", _auth(token)) as socket:
+            socket.send_json({"type": "start"})
+            ready = socket.receive_json()
+            validate(ready, schemas.STREAM_READY_RESPONSE_SCHEMA)
+            socket.send_json({"type": "stop"})
+            while True:
+                try:
+                    message = socket.receive_json()
+                except Exception as e:  # noqa: BLE001 - transports use different close exceptions
+                    if not _is_websocket_close(e):
+                        raise
+                    break
+                if message.get("type") == "segment":
+                    validate(message, schemas.STREAM_SEGMENT_RESPONSE_SCHEMA)
+                elif message.get("type") == "error":
+                    validate(message, schemas.STREAM_ERROR_RESPONSE_SCHEMA)
+                    report.add("roundtrip.streaming", False, message["message"])
+                    return
+                else:
+                    report.add("roundtrip.streaming", False, f"unexpected message: {message!r}")
+                    return
+    except (ValidationError, ValueError, TypeError, KeyError) as e:
+        report.add("roundtrip.streaming", False, str(e))
+        return
+    except Exception as e:  # noqa: BLE001
+        report.add("roundtrip.streaming", False, f"stream failed: {e}")
+        return
+    report.add("roundtrip.streaming", True)

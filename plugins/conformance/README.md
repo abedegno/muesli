@@ -1,7 +1,7 @@
 # Muesli plugin conformance suite
 
 The conformance suite is a Python-based test harness that verifies any Muesli
-transcriber or agent plugin correctly implements the
+transcriber, streaming-transcriber, or agent plugin correctly implements the
 [published Muesli plugin contract](../../docs/ARCHITECTURE.md#the-plugin-contract).
 Run it before registering a plugin with a Muesli server — or as part of your
 own plugin's CI pipeline.
@@ -20,12 +20,13 @@ own plugin's CI pipeline.
 
 The suite exercises every normative requirement in the contract:
 
-| Area                          | What is checked                                                                                                                                                                                                                        |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **HTTP endpoints**            | `GET /info` returns `{name, version, plugin_api: 1, kind, config_schema}` and `kind` matches `--kind`. `GET /health` returns 200. `POST /transcribe` (transcriber) or `POST /generate` (agent) returns 200 with a valid response body. |
-| **Authentication**            | Requests with no bearer token **and** requests with a wrong bearer token both receive 401 on `GET /info` and the work endpoint. The `X-Muesli-Plugin-API: 1` header is required on authenticated calls.                                |
-| **Response JSON schema**      | Each response body is validated against the contract JSON Schema (`schemas.py`) — field names, types, and required keys are all checked.                                                                                               |
-| **Lifecycle / health probes** | `GET /health` must return 200 **without** any `Authorization` header. Scale-to-zero infrastructure and Kubernetes readiness probes send no credentials; gating health on auth will cause the plugin to be killed or never start.       |
+| Area                          | What is checked                                                                                                                                                                                                                                                                                      |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Endpoints**                 | `GET /info` returns `{name, version, plugin_api: 1, kind, config_schema}` and `kind` matches `--kind`. `GET /health` returns 200. The work endpoint is `POST /transcribe` (transcriber), `POST /generate` (agent), or WebSocket `/stream` (streaming-transcriber).                                   |
+| **Authentication**            | Requests with no bearer token **and** requests with a wrong bearer token are rejected on `GET /info` and the work endpoint. WebSocket authentication failures reject the handshake; HTTP authentication failures return 401. The `X-Muesli-Plugin-API: 1` header is required on authenticated calls. |
+| **Response JSON schema**      | Each HTTP response and streaming `ready`, `segment`, or `error` message is validated against the contract JSON Schema (`schemas.py`) — field names, types, and required keys are checked.                                                                                                            |
+| **Streaming protocol**        | A valid `start` receives `{"type":"ready"}`; malformed first messages produce an error or close; `stop` completes and closes the stream. Any emitted segment is schema-validated, but silence is allowed to emit none.                                                                               |
+| **Lifecycle / health probes** | `GET /health` must return 200 **without** any `Authorization` header. Scale-to-zero infrastructure and Kubernetes readiness probes send no credentials; gating health on auth will cause the plugin to be killed or never start.                                                                     |
 
 ---
 
@@ -44,13 +45,14 @@ pip install -e .
 
 ### Also run the pytest self-certification suite
 
-The test suite imports the reference Whisper transcriber plugin in-process and
-self-certifies it. To run those tests you need the extra test dependencies and
-(optionally) the reference plugin:
+The test suite imports the reference Whisper and streaming transcriber plugins
+in-process and self-certifies them. To run those tests you need the extra test
+dependencies and the corresponding optional reference plugins:
 
 ```bash
 pip install -e '.[test]'
 pip install -e ../whisper-transcriber   # optional — only needed for reference-plugin tests
+pip install -e ../streaming-transcriber # optional — only needed for reference-plugin tests
 pytest
 ```
 
@@ -72,16 +74,19 @@ python -m muesli_plugin_conformance http://localhost:8000 --kind transcriber --t
 
 # Validate an agent plugin
 python -m muesli_plugin_conformance http://localhost:8001 --kind agent --token <your-token>
+
+# Validate a streaming transcriber plugin
+python -m muesli_plugin_conformance http://localhost:8002 --kind streaming-transcriber --token <your-token>
 ```
 
 ### Arguments
 
-| Argument           | Description                                                                                                                                                      |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `url` (positional) | Base URL of the running plugin, e.g. `http://localhost:8000`. Trailing slashes are stripped automatically.                                                       |
-| `--kind`           | Either `transcriber` or `agent`. Must match the `kind` field the plugin returns from `GET /info`.                                                                |
-| `--token`          | The per-plugin bearer token the server was configured to accept. Sent as `Authorization: Bearer <token>` plus `X-Muesli-Plugin-API: 1`.                          |
-| `--timeout`        | Request timeout in seconds. Defaults to **300**. Increase this if your plugin performs a heavy warm-up on the first `POST /transcribe` or `POST /generate` call. |
+| Argument           | Description                                                                                                                             |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `url` (positional) | Base URL of the running plugin, e.g. `http://localhost:8000`. Trailing slashes are stripped automatically.                              |
+| `--kind`           | `transcriber`, `streaming-transcriber`, or `agent`. Must match the `kind` field the plugin returns from `GET /info`.                    |
+| `--token`          | The per-plugin bearer token the server was configured to accept. Sent as `Authorization: Bearer <token>` plus `X-Muesli-Plugin-API: 1`. |
+| `--timeout`        | Request timeout in seconds. Defaults to **300**. Increase this if your plugin performs a heavy warm-up on its first work request.       |
 
 ---
 
@@ -154,6 +159,7 @@ plugins/conformance/
 │   └── __main__.py    # CLI entry point
 └── tests/
     ├── test_checks_transcriber.py  # checks for transcriber plugins
+    ├── test_checks_streaming.py    # checks for streaming-transcriber plugins
     ├── test_checks_agent.py        # checks for agent plugins
     └── test_failure_modes.py       # error-handling and edge-case scenarios
 ```

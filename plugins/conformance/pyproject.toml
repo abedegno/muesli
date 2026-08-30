@@ -1,19 +1,21 @@
 [project]
 name = "muesli-plugin-conformance"
 version = "0.1.0"
-description = "Conformance test harness for Muesli transcriber/agent plugins"
+description = "Conformance test harness for Muesli plugins"
 requires-python = ">=3.12"
 dependencies = [
     "httpx>=0.27",
     "jsonschema>=4.22",
+    "websockets>=14",
 ]
 
 [project.optional-dependencies]
 # The conformance package itself stays dependency-light (httpx + jsonschema) so
 # it can validate arbitrary third-party plugins. The *test* suite additionally
-# self-certifies the reference whisper plugin, which is installed editable
-# alongside this package (a test-only path dependency):
+# self-certifies reference plugins, which are installed editable alongside
+# this package (test-only path dependencies):
 #     pip install -e ../whisper-transcriber
+#     pip install -e ../streaming-transcriber
 # CI installs both editable packages before running these tests.
 test = ["pytest>=8.2", "fastapi>=0.111", "respx>=0.21", "freezegun>=1.5"]
 

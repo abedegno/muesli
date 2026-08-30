@@ -420,7 +420,7 @@ jobs:
           - dir: ollama-agent
             install: pip install -e '.[test]'
           - dir: conformance
-            install: pip install -e ../whisper-transcriber && pip install -e ../ollama-agent && pip install -e ../parakeet-transcriber && pip install -e '.[test]'
+            install: pip install -e ../whisper-transcriber && pip install -e ../streaming-transcriber && pip install -e ../ollama-agent && pip install -e ../parakeet-transcriber && pip install -e '.[test]'
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
