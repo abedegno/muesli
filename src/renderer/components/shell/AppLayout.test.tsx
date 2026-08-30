@@ -2,7 +2,7 @@
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
 import { act, render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { MemoryRouter, Routes, Route } from 'react-router-dom'
+import { Link, MemoryRouter, Routes, Route } from 'react-router-dom'
 import { AppLayout } from './AppLayout'
 import { NotesListScreen } from '../NotesListScreen'
 
@@ -109,6 +109,28 @@ afterEach(() => {
   autoRecordListeners.clear()
   mockNotify.mockClear()
   localStorage.clear()
+})
+
+describe('AppLayout route-entry refresh', () => {
+  it('refetches notes when a routed child changes without changing the active view', async () => {
+    listNotes.mockResolvedValue(NOTES)
+    render(
+      <MemoryRouter>
+        <Routes>
+          <Route path="/" element={<AppLayout />}>
+            <Route index element={<Link to="/notes/1">Open note</Link>} />
+            <Route path="notes/:id" element={<div>Note detail</div>} />
+          </Route>
+        </Routes>
+      </MemoryRouter>,
+    )
+
+    await waitFor(() => expect(listNotes).toHaveBeenCalledTimes(1))
+    fireEvent.click(screen.getByRole('link', { name: 'Open note' }))
+
+    expect(await screen.findByText('Note detail')).toBeInTheDocument()
+    await waitFor(() => expect(listNotes).toHaveBeenCalledTimes(2))
+  })
 })
 
 describe('AppLayout client-side search filter', () => {
