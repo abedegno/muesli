@@ -188,11 +188,8 @@ type transcribePayload struct {
 // is there to close.
 var testHookAfterTranscriptPublished func()
 
-// testHookBeforeAudioRetention runs immediately before applyAudioRetention
-// re-checks the generation and possibly deletes the note's audio. It is nil in
-// production and exists so a test can move the transcript inside the window
-// between the group re-check above and the one irreversible step — the window
-// the second check is there to close.
+// testHookBeforeAudioRetention runs after applyAudioRetention's advisory
+// generation read and before its conditional retention write.
 var testHookBeforeAudioRetention func()
 
 // mergeModelOverride returns a per-call copy of baseConfig with its "model"
@@ -426,17 +423,10 @@ func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, err
 		testHookAfterTranscriptPublished()
 	}
 
-	// Everything below mutates NOTE-level state — hashes, the partial flag, the
-	// review state, summaries, retention (which can delete the audio). None of it
-	// is generation-guarded at the store, so re-check here that the transcript
-	// this job published is still the note's current one and abort cleanly if it
-	// is not. Without this, a job that lost the race while hashing would go on to
-	// overwrite state belonging to newer work and could discard its audio.
-	//
-	// This closes the window rather than eliminating it: a replacement committed
-	// after this check still races the writes below. The same check is repeated
-	// immediately before the audio delete, which is the one irreversible step
-	// and the one furthest from here.
+	// Everything below mutates note-level state. Bail early when publication is
+	// already stale to avoid unnecessary work; each subsequent store mutation
+	// also carries publishedGeneration so a replacement after this advisory read
+	// cannot win the TOCTOU race.
 	if stillOurs, err := p.transcriptStillCurrent(ctx, job.NoteID, publishedGeneration); err != nil {
 		return true, err
 	} else if !stillOurs {
@@ -456,7 +446,7 @@ func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, err
 	if rawHash, normalizedHash, err := p.hashNoteAudio(ctx, audioKey); err != nil {
 		slog.WarnContext(ctx, "failed to hash note audio", "job_id", job.ID, "job_type", job.Type, "note_id", job.NoteID, "audio_key", audioKey, "error", err)
 	} else if rawHash != "" {
-		if err := p.store.SetNoteHashes(ctx, job.NoteID, rawHash, normalizedHash); err != nil {
+		if _, err := p.store.SetNoteHashesForGeneration(ctx, job.NoteID, rawHash, normalizedHash, publishedGeneration); err != nil {
 			slog.WarnContext(ctx, "failed to persist note audio hashes", "job_id", job.ID, "job_type", job.Type, "note_id", job.NoteID, "audio_key", audioKey, "error", err)
 		}
 	}
@@ -467,13 +457,13 @@ func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, err
 	// Never true on the resume path: a partial result fails non-retryably, so
 	// the job that published it is never retried.
 	if partial {
-		if perr := p.store.SetNotePartialTranscript(ctx, job.NoteID, true); perr != nil {
+		if _, perr := p.store.SetNotePartialTranscriptForGeneration(ctx, job.NoteID, true, publishedGeneration); perr != nil {
 			slog.WarnContext(ctx, "partial: failed to set flag", "error", perr, "note_id", job.NoteID)
 		}
 		return false, fmt.Errorf("partial transcript: %s", partialReason)
 	}
 
-	if err := p.store.SetNotePartialTranscript(ctx, job.NoteID, false); err != nil {
+	if _, err := p.store.SetNotePartialTranscriptForGeneration(ctx, job.NoteID, false, publishedGeneration); err != nil {
 		slog.WarnContext(ctx, "failed to clear partial transcript flag", "error", err, "job_id", job.ID, "job_type", job.Type, "note_id", job.NoteID)
 	}
 
@@ -500,10 +490,10 @@ func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, err
 	if err != nil {
 		return true, err
 	}
-	if err := p.store.DeleteNoteSummaries(ctx, owner, job.NoteID); err != nil {
+	if _, err := p.store.DeleteNoteSummariesForGeneration(ctx, owner, job.NoteID, publishedGeneration); err != nil {
 		return true, err
 	}
-	if err := p.store.EnqueueSummarizeJobs(ctx, owner, job.NoteID); err != nil {
+	if _, err := p.store.EnqueueSummarizeJobsForGeneration(ctx, owner, job.NoteID, publishedGeneration); err != nil {
 		return true, err
 	}
 
@@ -550,9 +540,6 @@ func (p *Processor) releaseTranscribeClaim(ctx context.Context, job model.Job, p
 // discarded on an older job's authority. Returning nil on a stale check is
 // deliberate — the job's own work is done, and the newer writer owns retention.
 func (p *Processor) applyAudioRetention(ctx context.Context, job model.Job, audioKey string, publishedGeneration int) error {
-	if testHookBeforeAudioRetention != nil {
-		testHookBeforeAudioRetention()
-	}
 	stillOurs, err := p.transcriptStillCurrent(ctx, job.NoteID, publishedGeneration)
 	if err != nil {
 		return err
@@ -562,15 +549,24 @@ func (p *Processor) applyAudioRetention(ctx context.Context, job model.Job, audi
 			"job_id", job.ID, "note_id", job.NoteID, "audio_key", audioKey, "published_generation", publishedGeneration)
 		return nil
 	}
+	if testHookBeforeAudioRetention != nil {
+		testHookBeforeAudioRetention()
+	}
 	if p.cfg.AudioRetention == "discard" {
+		applied, err := p.store.SetRetentionStateForGeneration(ctx, job.NoteID, "discarded", publishedGeneration)
+		if err != nil {
+			return err
+		}
+		if !applied {
+			return nil
+		}
 		if derr := p.storage.Delete(audioKey); derr != nil {
 			slog.WarnContext(ctx, "retention: failed to delete audio", "job_id", job.ID, "job_type", job.Type, "note_id", job.NoteID, "audio_key", audioKey, "error", derr)
 			return nil
 		}
-		_ = p.store.SetRetentionState(ctx, job.NoteID, "discarded")
 		return nil
 	}
-	_ = p.store.SetRetentionState(ctx, job.NoteID, "kept")
+	_, _ = p.store.SetRetentionStateForGeneration(ctx, job.NoteID, "kept", publishedGeneration)
 	return nil
 }
 

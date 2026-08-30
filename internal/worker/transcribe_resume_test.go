@@ -396,11 +396,10 @@ func TestRunTranscribeSkipsNoteWorkWhenTranscriptReplacedAfterSave(t *testing.T)
 	}
 }
 
-// TestRunTranscribeDoesNotDiscardAudioForASupersededTranscript binds the SECOND
-// generation re-check — the one inside applyAudioRetention. The group check
-// above cannot bind it: with that check in place the job aborts long before
-// retention, so removing the retention check alone leaves
-// TestRunTranscribeSkipsNoteWorkWhenTranscriptReplacedAfterSave green.
+// TestRunTranscribeDoesNotDiscardAudioForASupersededTranscript binds the
+// conditional retention write. The replacement commits after the advisory
+// generation read but before that write, the exact TOCTOU window that a
+// read-before-write check cannot close.
 //
 // Deleting audio is the only irreversible thing runTranscribe does, and the
 // step furthest from the group check — a long-running audio hash sits between

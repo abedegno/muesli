@@ -466,6 +466,23 @@ func (s *Store) SetNoteHashes(ctx context.Context, noteID, audioHash, normalized
 	return nil
 }
 
+// SetNoteHashesForGeneration persists audio hashes only while expectedGeneration
+// is still the note's current transcript generation. A superseded generation is
+// a successful no-op.
+func (s *Store) SetNoteHashesForGeneration(ctx context.Context, noteID, audioHash, normalizedAudioHash string, expectedGeneration int) (bool, error) {
+	ct, err := s.pool.Exec(ctx,
+		`UPDATE notes n
+		 SET audio_hash=$2, normalized_audio_hash=NULLIF($3, ''), updated_at=now()
+		 WHERE n.id=$1 AND EXISTS (
+			SELECT 1 FROM transcripts t WHERE t.note_id=n.id AND t.generation=$4
+		 )`,
+		noteID, audioHash, normalizedAudioHash, expectedGeneration)
+	if err != nil {
+		return false, err
+	}
+	return ct.RowsAffected() == 1, nil
+}
+
 // SetNoteHashesForOwner persists audio hashes on an owner's note. It mirrors
 // SetNoteHashes but keeps the write owner-scoped for request handlers.
 func (s *Store) SetNoteHashesForOwner(ctx context.Context, ownerID, noteID, audioHash, normalizedAudioHash string) error {
@@ -546,6 +563,20 @@ func (s *Store) SetRetentionState(ctx context.Context, noteID, state string) err
 	_, err := s.pool.Exec(ctx,
 		`UPDATE notes SET retention_state=$1, updated_at=now() WHERE id=$2`, state, noteID)
 	return err
+}
+
+// SetRetentionStateForGeneration records retention only while expectedGeneration
+// is current. The bool reports whether the guarded update was applied.
+func (s *Store) SetRetentionStateForGeneration(ctx context.Context, noteID, state string, expectedGeneration int) (bool, error) {
+	ct, err := s.pool.Exec(ctx,
+		`UPDATE notes n SET retention_state=$1, updated_at=now()
+		 WHERE n.id=$2 AND EXISTS (
+			SELECT 1 FROM transcripts t WHERE t.note_id=n.id AND t.generation=$3
+		 )`, state, noteID, expectedGeneration)
+	if err != nil {
+		return false, err
+	}
+	return ct.RowsAffected() == 1, nil
 }
 
 // NoteBody returns the user's live-typed Markdown for a note.
@@ -859,4 +890,18 @@ func (s *Store) SetNotePartialTranscript(ctx context.Context, noteID string, par
 		`UPDATE notes SET partial_transcript=$1, updated_at=now() WHERE id=$2`,
 		partial, noteID)
 	return err
+}
+
+// SetNotePartialTranscriptForGeneration updates the partial flag only while
+// expectedGeneration is current. A superseded generation is a successful no-op.
+func (s *Store) SetNotePartialTranscriptForGeneration(ctx context.Context, noteID string, partial bool, expectedGeneration int) (bool, error) {
+	ct, err := s.pool.Exec(ctx,
+		`UPDATE notes n SET partial_transcript=$1, updated_at=now()
+		 WHERE n.id=$2 AND EXISTS (
+			SELECT 1 FROM transcripts t WHERE t.note_id=n.id AND t.generation=$3
+		 )`, partial, noteID, expectedGeneration)
+	if err != nil {
+		return false, err
+	}
+	return ct.RowsAffected() == 1, nil
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // EnqueueSummarizeJobs fans out one pending summary + summarize job per template the
@@ -37,12 +38,101 @@ func (s *Store) EnqueueSummarizeJobs(ctx context.Context, ownerID, noteID string
 	return nil
 }
 
+// EnqueueSummarizeJobsForGeneration performs the complete fan-out only while
+// expectedGeneration remains current. Locking the transcript row makes the
+// generation check atomic with every write in the transaction.
+func (s *Store) EnqueueSummarizeJobsForGeneration(ctx context.Context, ownerID, noteID string, expectedGeneration int) (bool, error) {
+	templates, err := s.TemplatesForSummary(ctx, ownerID)
+	if err != nil {
+		return false, err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+
+	var currentGeneration int
+	err = tx.QueryRow(ctx,
+		`SELECT generation FROM transcripts WHERE note_id=$1 FOR UPDATE`, noteID).
+		Scan(&currentGeneration)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, tx.Commit(ctx)
+	}
+	if err != nil {
+		return false, err
+	}
+	if currentGeneration != expectedGeneration {
+		return false, tx.Commit(ctx)
+	}
+
+	status := model.NoteSummarizing
+	if len(templates) == 0 {
+		status = model.NoteReady
+	}
+	ct, err := tx.Exec(ctx,
+		`UPDATE notes SET status=$1, updated_at=now() WHERE id=$2`, status, noteID)
+	if err != nil {
+		return false, err
+	}
+	if ct.RowsAffected() == 0 {
+		return false, ErrNotFound
+	}
+	for _, tmpl := range templates {
+		summaryID := uuid.NewString()
+		empty, _ := json.Marshal([]model.SummarySection{})
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO summaries (id, note_id, template_id, agent_plugin, model, content)
+			 VALUES ($1,$2,$3,'','', jsonb_build_object('status',$4::text,'sections',$5::jsonb,'truncated',false))`,
+			summaryID, noteID, tmpl.ID, model.SummaryPending, string(empty)); err != nil {
+			return false, err
+		}
+		payload, _ := json.Marshal(map[string]string{"template_id": tmpl.ID, "summary_id": summaryID})
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO jobs (id, note_id, type, status, payload)
+			 VALUES ($1,$2,$3,$4,$5::jsonb)`,
+			uuid.NewString(), noteID, model.JobSummarize, model.JobPending, string(payload)); err != nil {
+			return false, err
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // DeleteNoteSummaries removes all summaries for an owner's note (used before a re-run).
 func (s *Store) DeleteNoteSummaries(ctx context.Context, ownerID, noteID string) error {
 	_, err := s.pool.Exec(ctx,
 		`DELETE FROM summaries WHERE note_id=$1 AND note_id IN (SELECT id FROM notes WHERE owner_id=$2)`,
 		noteID, ownerID)
 	return err
+}
+
+// DeleteNoteSummariesForGeneration deletes summaries only while
+// expectedGeneration is current. A superseded generation is a successful no-op.
+func (s *Store) DeleteNoteSummariesForGeneration(ctx context.Context, ownerID, noteID string, expectedGeneration int) (bool, error) {
+	ct, err := s.pool.Exec(ctx,
+		`DELETE FROM summaries s
+		 WHERE s.note_id=$1
+		   AND EXISTS (SELECT 1 FROM notes n WHERE n.id=s.note_id AND n.owner_id=$2)
+		   AND EXISTS (SELECT 1 FROM transcripts t WHERE t.note_id=s.note_id AND t.generation=$3)`,
+		noteID, ownerID, expectedGeneration)
+	if err != nil {
+		return false, err
+	}
+	// A matching generation with no summaries is still an applied no-op. Check
+	// generation separately only in that case so callers can distinguish stale.
+	if ct.RowsAffected() > 0 {
+		return true, nil
+	}
+	var matches bool
+	err = s.pool.QueryRow(ctx,
+		`SELECT EXISTS (
+			SELECT 1 FROM notes n JOIN transcripts t ON t.note_id=n.id
+			WHERE n.id=$1 AND n.owner_id=$2 AND t.generation=$3
+		)`, noteID, ownerID, expectedGeneration).Scan(&matches)
+	return matches, err
 }
 
 // CreatePendingSummary inserts a summary row in the "pending" state with empty

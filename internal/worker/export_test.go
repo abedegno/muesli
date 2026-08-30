@@ -17,8 +17,8 @@ func SetTestHookAfterTranscriptPublished(f func()) func() {
 	return func() { testHookAfterTranscriptPublished = prev }
 }
 
-// SetTestHookBeforeAudioRetention installs the hook that runs immediately
-// before runTranscribe re-checks the generation and applies audio retention.
+// SetTestHookBeforeAudioRetention installs the hook after the advisory
+// generation read and before the conditional retention write.
 // Returns a restore func.
 func SetTestHookBeforeAudioRetention(f func()) func() {
 	prev := testHookBeforeAudioRetention
