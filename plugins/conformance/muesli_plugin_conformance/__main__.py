@@ -12,7 +12,9 @@ def main(argv: list[str] | None = None) -> int:
         description="Validate a Muesli plugin endpoint against the contract.",
     )
     parser.add_argument("url", help="Base URL of the plugin (e.g. http://localhost:8000)")
-    parser.add_argument("--kind", required=True, choices=["transcriber", "agent"])
+    parser.add_argument(
+        "--kind", required=True, choices=["transcriber", "agent", "streaming-transcriber"]
+    )
     parser.add_argument("--token", required=True, help="Per-plugin shared bearer token")
     parser.add_argument("--timeout", type=float, default=300.0)
     args = parser.parse_args(argv)

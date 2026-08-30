@@ -7,7 +7,7 @@ INFO_SCHEMA = {
         "name": {"type": "string", "minLength": 1},
         "version": {"type": "string", "minLength": 1},
         "plugin_api": {"const": 1},
-        "kind": {"enum": ["transcriber", "agent"]},
+        "kind": {"enum": ["transcriber", "agent", "streaming-transcriber"]},
         "config_schema": {"type": "object"},
     },
 }
