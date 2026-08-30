@@ -172,6 +172,26 @@ describe('NoteStreamRelay', () => {
 	expect(socket.sent).toEqual([Buffer.from([1])])
   })
 
+  it('relays server audio gaps with stream identity and duration', async () => {
+    const { emit, relayFactory } = makeRelay()
+    const relay = await relayFactory()
+    relay.start('note-1')
+    const socket = websocketState.websocketInstances[0]
+    socket.open()
+
+    socket.emit(
+      'message',
+      Buffer.from(JSON.stringify({ type: 'gap', note_id: 'note-1', stream_id: 'stream-1', dropped_duration_ms: 40 })),
+    )
+
+    expect(emit).toHaveBeenCalledWith({
+      noteId: 'note-1',
+      type: 'gap',
+      stream_id: 'stream-1',
+      dropped_duration_ms: 40,
+    })
+  })
+
   it('releases the active stream on stop and makes later sends no-ops', async () => {
     const { relayFactory } = makeRelay()
     const relay = await relayFactory()

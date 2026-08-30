@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/abedegno/muesli/internal/model"
 	"github.com/gorilla/websocket"
 )
 
@@ -36,29 +37,33 @@ func TestStreamSecondsToMS(t *testing.T) {
 }
 
 func TestStreamEnqueueAudioFrameDropsOldest(t *testing.T) {
-	ch := make(chan []byte, 2)
+	ch := make(chan streamAudioFrame, 2)
 	oldest := []byte("oldest")
 	survivor := []byte("survivor")
-	ch <- oldest
-	ch <- survivor
+	ch <- streamAudioFrame{data: oldest}
+	ch <- streamAudioFrame{data: survivor}
 
 	frame := []byte("new")
-	if err := enqueueAudioFrame(context.Background(), ch, frame); err != nil {
+	dropped, err := enqueueAudioFrame(context.Background(), ch, streamAudioFrame{data: frame})
+	if err != nil {
 		t.Fatalf("enqueueAudioFrame() error = %v", err)
 	}
+	if dropped == nil || string(dropped.data) != "oldest" {
+		t.Fatalf("dropped frame = %#v, want oldest", dropped)
+	}
 
-	if got := string(<-ch); got != "survivor" {
+	if got := string((<-ch).data); got != "survivor" {
 		t.Fatalf("first queued frame = %q, want survivor", got)
 	}
 	queued := <-ch
-	if got := string(queued); got != "new" {
+	if got := string(queued.data); got != "new" {
 		t.Fatalf("second queued frame = %q, want new", got)
 	}
 
 	// enqueueAudioFrame itself intentionally transfers the supplied slice without
 	// copying it. handleNoteStream makes the defensive copy at its call site.
 	frame[0] = 'N'
-	if got := string(queued); got != "New" {
+	if got := string(queued.data); got != "New" {
 		t.Fatalf("queued frame = %q after caller mutation, want alias New", got)
 	}
 }
@@ -67,8 +72,61 @@ func TestStreamEnqueueAudioFrameReturnsCancelledContextWhenSendCannotProceed(t *
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	if err := enqueueAudioFrame(ctx, make(chan []byte), []byte("frame")); !errors.Is(err, context.Canceled) {
+	_, err := enqueueAudioFrame(ctx, make(chan streamAudioFrame), streamAudioFrame{data: []byte("frame")})
+	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("enqueueAudioFrame() error = %v, want context.Canceled", err)
+	}
+}
+
+func TestStreamDropTrackerCountsContiguousFramesAndSamples(t *testing.T) {
+	var tracker streamDropTracker
+	if got := tracker.observe(&streamAudioFrame{data: make([]byte, 640), startSample: 320}); got != nil {
+		t.Fatalf("first drop resolved run = %#v, want nil", got)
+	}
+	if got := tracker.observe(&streamAudioFrame{data: make([]byte, 320), startSample: 640}); got != nil {
+		t.Fatalf("second drop resolved run = %#v, want nil", got)
+	}
+	got := tracker.observe(nil)
+	if got == nil || got.startSample != 320 || got.droppedSamples != 480 {
+		t.Fatalf("resolved run = %#v, want start=320 dropped=480", got)
+	}
+	if got := tracker.flush(); got != nil {
+		t.Fatalf("second resolve = %#v, want nil", got)
+	}
+}
+
+func TestStreamGapStateMarksOnlyNextSegment(t *testing.T) {
+	state := &streamGapState{}
+	state.markGap()
+	first := model.Segment{}
+	state.applyToNextSegment(&first)
+	second := model.Segment{}
+	state.applyToNextSegment(&second)
+	if first.Boundary != "gap" || second.Boundary != "" {
+		t.Fatalf("boundaries = %q, %q; want gap then empty", first.Boundary, second.Boundary)
+	}
+}
+
+func TestStreamGapControlEmitsJSON(t *testing.T) {
+	serverConn, clientConn := streamWebsocketPair(t)
+	written := make(chan error, 1)
+	go func() {
+		written <- writeStreamControl(serverConn, streamSegmentMessage{Type: "gap", StreamID: "stream-1", NoteID: "note-1", DroppedMS: 40, Final: true})
+	}()
+
+	_, payload, err := clientConn.ReadMessage()
+	if err != nil {
+		t.Fatalf("ReadMessage() error = %v", err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(payload, &got); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if got["type"] != "gap" || got["stream_id"] != "stream-1" || got["note_id"] != "note-1" || got["dropped_duration_ms"] != float64(40) {
+		t.Fatalf("gap control message = %#v", got)
+	}
+	if err := <-written; err != nil {
+		t.Fatalf("writeStreamControl() error = %v", err)
 	}
 }
 

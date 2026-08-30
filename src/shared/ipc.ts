@@ -201,11 +201,19 @@ export interface NoteStreamConnectionEvent {
   type: 'connecting' | 'loading' | 'live' | 'unavailable' | 'dropped'
 }
 
+/** A bounded server audio buffer discarded PCM before transcription. */
+export interface NoteStreamGapEvent {
+  noteId: string
+  type: 'gap'
+  stream_id: string
+  dropped_duration_ms: number
+}
+
 /**
  * Fire-and-forget main-to-renderer payload for `noteStreamEvent`; stream lifecycle
  * requests are handled in `src/main/main.ts`, not `ipcHandlers.ts`.
  */
-export type NoteStreamEvent = NoteStreamSegmentEvent | NoteStreamConnectionEvent
+export type NoteStreamEvent = NoteStreamSegmentEvent | NoteStreamConnectionEvent | NoteStreamGapEvent
 
 /**
  * Renderer-to-main `postDiarizationReview` payload handled by

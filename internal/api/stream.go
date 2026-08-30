@@ -22,6 +22,11 @@ import (
 
 const streamingAudioBuffer = 16
 
+const (
+	streamingSampleRate     = 16000
+	streamingBytesPerSample = 2 // mono signed 16-bit little-endian PCM
+)
+
 var streamUpgrader = websocket.Upgrader{
 	CheckOrigin: func(*http.Request) bool { return true },
 }
@@ -34,6 +39,67 @@ type streamSegmentMessage struct {
 	Speaker     *string `json:"speaker"`
 	Provisional bool    `json:"provisional"`
 	Final       bool    `json:"final"`
+	StreamID    string  `json:"stream_id,omitempty"`
+	NoteID      string  `json:"note_id,omitempty"`
+	DroppedMS   int64   `json:"dropped_duration_ms,omitempty"`
+}
+
+type streamAudioFrame struct {
+	data        []byte
+	startSample int64
+}
+
+type streamDropRun struct {
+	startSample    int64
+	droppedSamples int64
+}
+
+type streamDropTracker struct {
+	run *streamDropRun
+}
+
+// observe records a dropped frame. A nil frame means audio flowed without a
+// drop and closes the current contiguous run, if any.
+func (t *streamDropTracker) observe(dropped *streamAudioFrame) *streamDropRun {
+	if dropped != nil {
+		if t.run == nil {
+			t.run = &streamDropRun{startSample: dropped.startSample}
+		}
+		t.run.droppedSamples += int64(len(dropped.data) / streamingBytesPerSample)
+		return nil
+	}
+	resolved := t.run
+	t.run = nil
+	return resolved
+}
+
+func (t *streamDropTracker) flush() *streamDropRun {
+	return t.observe(nil)
+}
+
+type streamGapState struct {
+	mu               sync.Mutex
+	nextSegmentIsGap bool
+}
+
+func (s *streamGapState) markGap() {
+	s.mu.Lock()
+	s.nextSegmentIsGap = true
+	s.mu.Unlock()
+}
+
+func (s *streamGapState) applyToNextSegment(seg *model.Segment) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.nextSegmentIsGap {
+		return
+	}
+	if seg.Boundary == "" {
+		seg.Boundary = "gap"
+	} else if seg.Boundary != "gap" {
+		seg.Boundary += ",gap"
+	}
+	s.nextSegmentIsGap = false
 }
 
 func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
@@ -69,7 +135,7 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 		LanguageHint: "",
 		Options:      json.RawMessage(`{}`),
 		Config:       plug.Config,
-		SampleRate:   16000,
+		SampleRate:   streamingSampleRate,
 		Channels:     1,
 	}, func(ev plugin.StreamingEvent) {
 		if ev.Type == "loading" {
@@ -117,8 +183,9 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	audioCh := make(chan []byte, streamingAudioBuffer)
+	audioCh := make(chan streamAudioFrame, streamingAudioBuffer)
 	outboundCh := newStreamOutboundMailbox()
+	gapState := &streamGapState{}
 	var closeAudioOnce sync.Once
 	closeAudio := func() {
 		closeAudioOnce.Do(func() {
@@ -153,20 +220,45 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer wg.Done()
 		defer closeAudio()
+		var nextSample int64
+		var dropTracker streamDropTracker
+		resolveDropRun := func(dropRun *streamDropRun) bool {
+			if err := s.resolveStreamDropRun(r.Context(), liveTranscript.ID, streamID, noteID, dropRun, gapState, outboundCh); err != nil {
+				return false
+			}
+			return true
+		}
+		flushDropRun := func() bool {
+			return resolveDropRun(dropTracker.flush())
+		}
+		defer func() {
+			if !flushDropRun() {
+				closeAll()
+			}
+		}()
 		for {
 			msgType, payload, err := conn.ReadMessage()
 			if err != nil {
 				if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway, websocket.CloseNoStatusReceived) || errors.Is(err, io.EOF) {
 					return
 				}
+				_ = flushDropRun()
 				closeAll()
 				return
 			}
 			if msgType != websocket.BinaryMessage {
 				continue
 			}
-			frame := append([]byte(nil), payload...)
-			if err := enqueueAudioFrame(r.Context(), audioCh, frame); err != nil {
+			frame := streamAudioFrame{data: append([]byte(nil), payload...), startSample: nextSample}
+			nextSample += int64(len(frame.data) / streamingBytesPerSample)
+			dropped, err := enqueueAudioFrame(r.Context(), audioCh, frame)
+			if err != nil {
+				_ = flushDropRun()
+				closeAll()
+				return
+			}
+			if !resolveDropRun(dropTracker.observe(dropped)) {
+				_ = flushDropRun()
 				closeAll()
 				return
 			}
@@ -177,7 +269,7 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer wg.Done()
 		for frame := range audioCh {
-			if err := sess.WriteAudio(frame); err != nil {
+			if err := sess.WriteAudio(frame.data); err != nil {
 				closeAll()
 				return
 			}
@@ -224,6 +316,7 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 					seg.Speaker = *ev.Speaker
 				}
 				if ev.Final {
+					gapState.applyToNextSegment(&seg)
 					if err := s.deps.Store.AppendStreamSegment(r.Context(), liveTranscript.ID, streamID, seg); err != nil {
 						if errors.Is(err, store.ErrStreamSuperseded) {
 							// Batch transcription replaced this transcript while a
@@ -279,6 +372,37 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 	wg.Wait()
 }
 
+func (s *Server) resolveStreamDropRun(ctx context.Context, transcriptID, streamID, noteID string, dropRun *streamDropRun, gapState *streamGapState, outboundCh *streamOutboundMailbox) error {
+	if dropRun == nil {
+		return nil
+	}
+	dropped := dropRun.droppedSamples
+	gap := model.TranscriptGap{
+		ID:             uuid.NewString(),
+		TranscriptID:   transcriptID,
+		StreamID:       streamID,
+		StartSample:    dropRun.startSample,
+		DroppedSamples: &dropped,
+		Origin:         "server",
+	}
+	if err := s.deps.Store.AppendTranscriptGap(ctx, transcriptID, streamID, gap); err != nil {
+		return err
+	}
+	gapState.markGap()
+	outboundCh.enqueue(streamSegmentMessage{
+		Type:      "gap",
+		StreamID:  streamID,
+		NoteID:    noteID,
+		DroppedMS: dropped * 1000 / streamingSampleRate,
+		Final:     true,
+	})
+	slog.WarnContext(ctx, "stream audio: dropped frames under backpressure",
+		"note_id", noteID, "stream_id", streamID,
+		"dropped_samples", dropped,
+		"dropped_duration_ms", dropped*1000/streamingSampleRate)
+	return nil
+}
+
 func (s *Server) streamingTranscriber(ctx context.Context) (model.Plugin, error) {
 	if s.deps.Crypto == nil {
 		return model.Plugin{}, errors.New("streaming plugin unavailable")
@@ -305,21 +429,23 @@ func (s *Server) streamingTranscriber(ctx context.Context) (model.Plugin, error)
 	return plug, nil
 }
 
-func enqueueAudioFrame(ctx context.Context, ch chan []byte, frame []byte) error {
+func enqueueAudioFrame(ctx context.Context, ch chan streamAudioFrame, frame streamAudioFrame) (*streamAudioFrame, error) {
 	select {
 	case ch <- frame:
-		return nil
+		return nil, nil
+	default:
+	}
+	var dropped *streamAudioFrame
+	select {
+	case oldest := <-ch:
+		dropped = &oldest
 	default:
 	}
 	select {
-	case <-ch:
-	default:
-	}
-	select {
 	case ch <- frame:
-		return nil
+		return dropped, nil
 	case <-ctx.Done():
-		return ctx.Err()
+		return dropped, ctx.Err()
 	}
 }
 
