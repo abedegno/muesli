@@ -18,12 +18,20 @@ def run_conformance(client: httpx.Client, kind: str, token: str) -> Report:
 
     `client` is any httpx.Client whose base_url points at the plugin (a live URL
     in the CLI, or an in-process ASGI transport in tests)."""
-    if kind not in ("transcriber", "agent"):
-        raise ValueError(f"kind must be 'transcriber' or 'agent', got {kind!r}")
+    kinds = ("transcriber", "agent", "streaming-transcriber")
+    if kind not in kinds:
+        raise ValueError(f"kind must be one of {kinds}, got {kind!r}")
     report = Report()
     check_info(client, token, kind, report)
     check_health(client, report)  # health is unauthenticated by contract
     check_auth_enforced(client, kind, report)
+    if kind == "streaming-transcriber":
+        report.add(
+            "work_endpoint.streaming_not_covered",
+            True,
+            "streaming transport conformance checks are deferred until the #723 follow-up after #711",
+        )
+        return report
     check_auth_on_work_endpoint(client, token, kind, report)
     check_roundtrip(client, token, kind, report)
     check_malformed_payload(client, token, kind, report)

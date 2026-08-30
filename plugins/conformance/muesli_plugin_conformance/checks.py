@@ -36,6 +36,14 @@ def _auth(token: str) -> dict:
     return {"Authorization": f"Bearer {token}", "X-Muesli-Plugin-API": "1"}
 
 
+def _http_work_endpoint(kind: str) -> str:
+    if kind == "transcriber":
+        return "/transcribe"
+    if kind == "agent":
+        return "/generate"
+    raise ValueError(f"no HTTP work endpoint for kind {kind!r}")
+
+
 def check_info(client: httpx.Client, token: str, kind: str, report: Report) -> Optional[dict]:
     try:
         r = client.get("/info", headers=_auth(token))
@@ -92,7 +100,7 @@ def check_auth_on_work_endpoint(
     client: httpx.Client, token: str, kind: str, report: Report
 ) -> None:
     """Auth must be enforced on the work endpoint (/transcribe or /generate), not just /info."""
-    path = "/transcribe" if kind == "transcriber" else "/generate"
+    path = _http_work_endpoint(kind)
     # Use an empty body — auth must be checked before body parsing.
     no_token = client.post(
         path, json={}, headers={"X-Muesli-Plugin-API": "1"}
@@ -146,7 +154,7 @@ def check_malformed_payload(
     client: httpx.Client, token: str, kind: str, report: Report
 ) -> None:
     """Sending {} (all required fields missing) must be rejected with 4xx, not 200/500."""
-    path = "/transcribe" if kind == "transcriber" else "/generate"
+    path = _http_work_endpoint(kind)
     try:
         r = client.post(path, json={}, headers=_auth(token))
     except Exception as e:  # noqa: BLE001
@@ -213,10 +221,11 @@ def check_generate_system_prompt_override(client: httpx.Client, token: str, repo
 
 
 def check_roundtrip(client: httpx.Client, token: str, kind: str, report: Report) -> None:
+    path = _http_work_endpoint(kind)
     if kind == "transcriber":
-        path, payload, schema = "/transcribe", canonical_transcribe_payload(), schemas.TRANSCRIBE_RESPONSE_SCHEMA
+        payload, schema = canonical_transcribe_payload(), schemas.TRANSCRIBE_RESPONSE_SCHEMA
     else:
-        path, payload, schema = "/generate", canonical_generate_payload(), schemas.GENERATE_RESPONSE_SCHEMA
+        payload, schema = canonical_generate_payload(), schemas.GENERATE_RESPONSE_SCHEMA
     try:
         r = client.post(path, json=payload, headers=_auth(token))
     except Exception as e:  # noqa: BLE001
