@@ -109,11 +109,21 @@ func (s *Server) handleNoteStream(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	if _, err := s.deps.Store.GetNote(r.Context(), uid, noteID); errors.Is(err, store.ErrNotFound) {
+	note, err := s.deps.Store.GetNote(r.Context(), uid, noteID)
+	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	// A mid-pipeline note already has batch work in flight, so starting a live
+	// stream would race a second transcription path against it. Ready and failed
+	// notes remain streamable so callers can deliberately record more audio.
+	switch note.Status {
+	case model.NoteRecording, model.NoteUploaded, model.NoteTranscribing, model.NoteSummarizing:
+		writeError(w, http.StatusConflict, "note is not ready to stream")
 		return
 	}
 
