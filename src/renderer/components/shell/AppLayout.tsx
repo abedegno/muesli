@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Outlet, useNavigate } from 'react-router-dom'
+import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { muesli } from '@/api'
 import type { Note, SearchMatch, SmartList, Folder } from '../../../shared/types'
 import { tagIndex, type TagCount } from '@/lib/tagIndex'
@@ -64,6 +64,7 @@ export function AppLayout() {
   const { width, collapsed, setWidth, toggleCollapsed } = useSidebarPrefs()
   const { notify } = useToast()
   const navigate = useNavigate()
+  const location = useLocation()
   const selectView = (next: ActiveView) => {
     if (next.type === 'folder') setFolderNotesLoaded(false)
     setView(next)
@@ -104,7 +105,7 @@ export function AppLayout() {
     void muesli.listFolders().then(setFolders).catch(() => {})
     void muesli.listTags().then(setSidebarTags).catch(() => {})
   }, [notify, view])
-  useEffect(() => { refresh() }, [refresh])
+  useEffect(() => { refresh() }, [refresh, location.pathname])
 
   const { promptEvent, acceptPrompt, dismissPrompt } = useMeetingDetectionLoop({
     navigate,

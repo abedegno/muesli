@@ -71,13 +71,10 @@ test('the notes list has no serious accessibility violations', async ({ page }) 
   // sampling whichever of the two the mouse happened to leave behind.
   await page.mouse.move(0, 0)
   await expect(page.getByRole('link', { name: 'All notes' })).toBeVisible()
-  // Content-based wait, not just a nav-link visibility check: AppLayout only
-  // refetches notes when its `view` state changes identity (useCallback dep
-  // in AppLayout.tsx), which the "All notes" NavLink's onClick incidentally
-  // does by passing a fresh `{ type: 'all' }` object into setView on every
-  // click -- not because of the route change itself. Waiting for the note's
-  // own title, not just the link, is what actually proves the populated
-  // state rendered rather than the "No notes yet" empty state.
+  // Content-based wait, not just a nav-link visibility check: AppLayout
+  // deliberately refetches notes when the route changes. Waiting for the
+  // note's own title proves that refresh completed and the populated state
+  // rendered rather than the "No notes yet" empty state.
   await expect(page.getByText('Accessibility fixture note')).toBeVisible()
   await expectNoAxeViolations(page, 'notes list', NOTES_LIST_A11Y_EXCEPTIONS)
 })
