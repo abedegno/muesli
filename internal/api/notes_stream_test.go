@@ -145,6 +145,67 @@ func TestNoteStreamOwnerScopeAndMissingNoteReturn404(t *testing.T) {
 	}
 }
 
+func TestNoteStreamStatusGate(t *testing.T) {
+	srv, st, _, hdr := streamTestServer(t)
+	httpSrv := httptest.NewServer(srv.Handler())
+	defer httpSrv.Close()
+
+	cases := []struct {
+		status string
+		want   int
+	}{
+		{status: model.NoteRecording, want: http.StatusConflict},
+		{status: model.NoteUploaded, want: http.StatusConflict},
+		{status: model.NoteTranscribing, want: http.StatusConflict},
+		{status: model.NoteSummarizing, want: http.StatusConflict},
+		{status: model.NoteReady, want: http.StatusSwitchingProtocols},
+		{status: model.NoteFailed, want: http.StatusSwitchingProtocols},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.status, func(t *testing.T) {
+			noteRec := doJSON(t, srv, http.MethodPost, "/api/notes", map[string]string{"title": tc.status}, hdr)
+			if noteRec.Code != http.StatusCreated {
+				t.Fatalf("create note: %d %s", noteRec.Code, noteRec.Body)
+			}
+			var note struct {
+				ID string `json:"id"`
+			}
+			if err := json.Unmarshal(noteRec.Body.Bytes(), &note); err != nil {
+				t.Fatalf("decode note: %v", err)
+			}
+			if err := st.SetNoteStatus(context.Background(), note.ID, tc.status); err != nil {
+				t.Fatalf("set note status: %v", err)
+			}
+
+			conn, resp, err := websocket.DefaultDialer.Dial(wsURLFromHTTP(httpSrv.URL)+"/api/notes/"+note.ID+"/stream", http.Header{
+				"Authorization": []string{hdr["Authorization"]},
+			})
+			if resp != nil {
+				defer resp.Body.Close()
+			}
+			if tc.want == http.StatusConflict {
+				if err == nil {
+					conn.Close()
+					t.Fatal("expected dial failure")
+				}
+				if resp == nil || resp.StatusCode != tc.want {
+					t.Fatalf("status = %v, want %d", resp, tc.want)
+				}
+				return
+			}
+
+			if err != nil {
+				t.Fatalf("dial: %v resp=%v", err, resp)
+			}
+			defer conn.Close()
+			if resp == nil || resp.StatusCode != tc.want {
+				t.Fatalf("status = %v, want %d", resp, tc.want)
+			}
+		})
+	}
+}
+
 func TestNoteStreamRelaysAndPersistsProvisionalSegments(t *testing.T) {
 	srv, st, pool, hdr := streamTestServer(t)
 	httpSrv := httptest.NewServer(srv.Handler())
