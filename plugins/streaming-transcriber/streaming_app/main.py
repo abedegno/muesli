@@ -133,6 +133,15 @@ class _SegmenterState:
         # otherwise be silently dropped from the emitted final segment's
         # `t1` even though the residual bytes are transcribed.
         self._residual_seconds = 0.0
+        # Source `frame_index` at the moment a `finish()` residual was
+        # appended. A VAD-classified pause too short to trigger a flush
+        # advances `_frame_index` without advancing `_last_speech_frame_end`
+        # (whole silent frames aren't appended to `_utterance`), so anchoring
+        # the residual's `t1` to `_last_speech_frame_end` would ignore that
+        # unflushed gap and understate where the residual bytes actually
+        # land in source time. This records the *current* source position
+        # instead, which is correct whether or not such a gap occurred.
+        self._residual_frame_index: int | None = None
 
     def feed(self, chunk: bytes) -> list[StreamSegmentResponse]:
         self._buffer.extend(chunk)
@@ -155,6 +164,7 @@ class _SegmenterState:
             self._utterance_frame_indices.append(self._frame_index)
             # 16-bit mono PCM: 2 bytes per sample, `sample_rate` samples/sec.
             self._residual_seconds = len(self._buffer) / (self.sample_rate * 2)
+            self._residual_frame_index = self._frame_index
             self._buffer.clear()
         return self._flush(force=True)
 
@@ -239,8 +249,17 @@ class _SegmenterState:
             bytes(self._utterance), self.sample_rate, self.settings
         ).strip()
         t0 = self._segment_start_frame * self.frame_ms / 1000.0
-        end_frame = self._last_speech_frame_end or self._frame_index
-        t1 = end_frame * self.frame_ms / 1000.0 + self._residual_seconds
+        if self._residual_seconds and self._residual_frame_index is not None:
+            # A `finish()` residual's source position is the current source
+            # frame index, not `_last_speech_frame_end` -- an intervening
+            # VAD-classified pause too short to flush advances `_frame_index`
+            # without advancing `_last_speech_frame_end`, so the latter would
+            # understate where the residual bytes actually land.
+            end_frame = self._residual_frame_index
+            t1 = end_frame * self.frame_ms / 1000.0 + self._residual_seconds
+        else:
+            end_frame = self._last_speech_frame_end or self._frame_index
+            t1 = end_frame * self.frame_ms / 1000.0
         self._reset()
         if not text:
             return []
@@ -263,6 +282,7 @@ class _SegmenterState:
         self._utterance.clear()
         self._utterance_frame_indices.clear()
         self._residual_seconds = 0.0
+        self._residual_frame_index = None
 
 
 def create_app(settings: Settings) -> FastAPI:

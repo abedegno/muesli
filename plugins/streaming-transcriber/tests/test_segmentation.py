@@ -248,3 +248,61 @@ def test_finish_residual_bytes_extend_t1(monkeypatch):
 
     assert segment.t1 == pytest.approx(pcm_duration)
     assert segment.t1 >= pcm_duration - 1e-9
+
+
+def test_finish_residual_t1_accounts_for_intervening_pause(monkeypatch):
+    """Regression test for the cross-review finding on i722/PR #752: a
+    sub-threshold VAD-classified silence gap between speech and a `finish()`
+    residual must not be dropped from the final segment's `t1`. Whole silent
+    frames advance `_frame_index` but not `_last_speech_frame_end`, so
+    anchoring the residual purely to `_last_speech_frame_end` understates
+    where the residual bytes actually land in source time.
+
+    VAD classification is forced deterministically here rather than relying
+    on webrtcvad's real noise-floor/hangover timing on synthetic audio,
+    which is too undocumented and version-fragile to pin an exact scenario
+    (300ms speech, then a 100ms sub-threshold pause, then a residual) to.
+    """
+
+    monkeypatch.setattr(transcribe_mod, "transcribe_utterance", lambda pcm, sr, settings: "text")
+    state = _state(silence_threshold_ms=600, partial_interval_ms=100_000)
+
+    # 15 frames (300ms) classified as speech, then 5 frames (100ms)
+    # classified as non-speech -- sub-threshold, so must not flush.
+    classifications = [True] * 15 + [False] * 5
+    monkeypatch.setattr(state.vad, "is_speech", lambda frame, sample_rate: classifications.pop(0))
+
+    frame = b"\x00\x00" * (FRAME_BYTES // 2)
+    for _ in range(20):
+        state.feed(frame)
+
+    # The gap must be too short to flush -- the segment is still open. And
+    # this must actually be a meaningful regression check: the 5 silent
+    # frames must have been VAD-classified as non-speech (accumulating
+    # `_silence_ms`) yet never appended to `_utterance`, so `_frame_index`
+    # (20) has advanced past `_last_speech_frame_end` (15) without the
+    # latter following it.
+    assert state._segment_start_frame is not None
+    assert state._silence_ms == 100
+    assert state._last_speech_frame_end == 15
+    assert state._frame_index == 20
+    assert len(state._utterance_frame_indices) == 15
+
+    residual = b"\x11\x22" * 100  # 200 bytes == 6.25ms at 16kHz/16-bit mono
+    state.feed(residual)  # too short to become a whole frame; stays in `_buffer`
+    events = state.finish()
+
+    final_events = [event for event in events if event.final]
+    assert len(final_events) == 1
+    segment = final_events[0]
+
+    # Buggy behaviour (pre-fix): t1 anchored to speech end + residual only,
+    # silently ignoring the 100ms unflushed silence gap in between.
+    buggy_t1 = 15 * state.frame_ms / 1000.0 + len(residual) / (SAMPLE_RATE * 2)
+    assert segment.t1 > buggy_t1 + 1e-9
+
+    # Correct: t1 anchored to the true source position of the residual --
+    # 300ms speech + 100ms unflushed silence + 6.25ms residual == 0.40625s.
+    expected_t1 = 20 * state.frame_ms / 1000.0 + len(residual) / (SAMPLE_RATE * 2)
+    assert expected_t1 == pytest.approx(0.40625)
+    assert segment.t1 == pytest.approx(expected_t1)
