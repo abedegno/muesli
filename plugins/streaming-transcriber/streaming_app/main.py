@@ -72,6 +72,12 @@ CONFIG_SCHEMA = {
             "minimum": 100,
             "default": 400,
         },
+        "max_utterance_ms": {
+            "type": "integer",
+            "title": "Maximum utterance duration (ms)",
+            "minimum": 20,
+            "default": 30000,
+        },
     },
     "additionalProperties": False,
 }
@@ -86,6 +92,7 @@ class _SegmenterState:
     silence_threshold_ms: int = 600
     min_speech_ms: int = 120
     partial_interval_ms: int = 400
+    max_utterance_ms: int = 30000
 
     def __post_init__(self) -> None:
         self.frame_bytes = self.sample_rate * 2 * self.frame_ms // 1000
@@ -108,6 +115,10 @@ class _SegmenterState:
         return events
 
     def finish(self) -> list[StreamSegmentResponse]:
+        if self._segment_start_frame is not None and self._buffer:
+            # Preserve trailing active-segment PCM that is shorter than one VAD frame.
+            self._utterance.extend(self._buffer)
+            self._buffer.clear()
         return self._flush(force=True)
 
     def _process_frame(self, frame: bytes) -> list[StreamSegmentResponse]:
@@ -126,6 +137,10 @@ class _SegmenterState:
             self._silence_ms = 0
             self._speech_ms += self.frame_ms
             self._speech_since_partial_ms += self.frame_ms
+            if self._speech_ms >= self.max_utterance_ms:
+                # Commit the utterance as final and let the next frame start a
+                # fresh segment, instead of letting the buffer grow unbounded.
+                return self._flush(force=True)
             events = []
             if self.partial_interval_ms > 0 and self._speech_since_partial_ms >= self.partial_interval_ms:
                 events.extend(self._emit_partial())
@@ -140,14 +155,24 @@ class _SegmenterState:
     def _emit_partial(self) -> list[StreamSegmentResponse]:
         if self._segment_start_frame is None:
             return []
+        # Decode only a trailing 5-second suffix so each partial has bounded cost
+        # regardless of how long the utterance has grown.
+        partial_ms = 5000
+        partial_bytes = self.sample_rate * 2 * partial_ms // 1000
+        partial_frames = partial_bytes // self.frame_bytes
         text = transcribe_module.transcribe_utterance(
-            bytes(self._utterance), self.sample_rate, self.settings
+            bytes(self._utterance[-partial_bytes:]), self.sample_rate, self.settings
         ).strip()
         self._speech_since_partial_ms = 0
         if not text:
             return []
-        t0 = self._segment_start_frame * self.frame_ms / 1000.0
         end_frame = self._last_speech_frame_end or self._frame_index
+        # Anchor t0 to the start of the trailing window actually decoded above
+        # (clamped to the segment's true start), not the segment's original
+        # start — otherwise t0..t1 overstates the span once the utterance
+        # exceeds the trailing window and only its tail is transcribed.
+        window_start_frame = max(self._segment_start_frame, end_frame - partial_frames)
+        t0 = window_start_frame * self.frame_ms / 1000.0
         t1 = end_frame * self.frame_ms / 1000.0
         return [
             StreamSegmentResponse(
@@ -233,6 +258,9 @@ def create_app(settings: Settings) -> FastAPI:
                 min_speech_ms=int(start.config.get("min_speech_ms", app.state.settings.min_speech_ms)),
                 partial_interval_ms=int(
                     start.config.get("partial_interval_ms", app.state.settings.partial_interval_ms)
+                ),
+                max_utterance_ms=int(
+                    start.config.get("max_utterance_ms", app.state.settings.max_utterance_ms)
                 ),
             )
             await websocket.send_json(StreamReadyResponse().model_dump(exclude_none=True))
