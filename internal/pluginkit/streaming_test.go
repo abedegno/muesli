@@ -432,6 +432,71 @@ func TestStreamingSessionTolerateSpeechDipsBeforeFinalizing(t *testing.T) {
 	}
 }
 
+// TestStreamingContinuousUtteranceExceedingMaxWindow documents this
+// package's current behavior for a continuous talker who runs well past
+// MaxWindow (muesli#722, mirroring plugins/streaming-transcriber's
+// equivalent regression test). Each max-window boundary commits the
+// accumulated window as a final segment and starts a fresh one -- see
+// TestStreamingSessionCommitsOnMaxWindowInsteadOfEvicting -- so no audio is
+// silently evicted here.
+//
+// It also pins a known divergence from the Python plugin: this session
+// decodes the *entire* accumulated (uncommitted) window on every partial
+// trigger, so partial decode cost grows with how much speech has
+// accumulated since the last commit or reset, up to MaxWindow's sample
+// bound, before dropping back to near zero on the next window. The Python
+// plugin instead bounds every partial's decode cost to a fixed trailing
+// window regardless of utterance length (muesli#722). This test does not
+// assert the Go behavior is correct or incorrect -- only that it is what it
+// currently is, so a follow-up (tracked against muesli#711) that changes it
+// must consciously update this test rather than silently regress unnoticed.
+func TestStreamingContinuousUtteranceExceedingMaxWindow(t *testing.T) {
+	cfg := testStreamingConfig()
+	cfg.MaxWindow = 30 * time.Millisecond
+	cfg.PartialInterval = 10 * time.Millisecond
+
+	var mu sync.Mutex
+	var callSizes []int
+	session, err := NewStreamingSession(cfg, nil, func(samples []float32) (string, error) {
+		mu.Lock()
+		callSizes = append(callSizes, len(samples))
+		mu.Unlock()
+		return fmt.Sprintf("samples:%d", len(samples)), nil
+	}, func(segment StreamingSegment, err error) {
+		if err != nil {
+			t.Errorf("emit error: %v", err)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 120 samples of continuous speech, four times the 30-sample MaxWindow,
+	// fed and drained one 10-sample frame at a time so each trigger (partial
+	// or max-window commit) completes before the next frame arrives.
+	for range 12 {
+		session.Feed(pcm(10, 0.5))
+		session.Wait()
+	}
+	session.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	// Every 10-sample frame triggers PartialInterval, so within each
+	// 30-sample window the accumulated decode grows 10, 20, 30 (never
+	// capped to a fixed trailing window); the fourth frame in each group of
+	// four crosses MaxWindow and commits the full 40-sample window as a
+	// final before the cycle repeats.
+	want := []int{
+		10, 20, 30, 40,
+		10, 20, 30, 40,
+		10, 20, 30, 40,
+	}
+	if !reflect.DeepEqual(callSizes, want) {
+		t.Fatalf("transcribe call sizes = %v, want %v (partial decode cost grows with the uncommitted window, unlike the Python plugin's fixed trailing window)", callSizes, want)
+	}
+}
+
 func receiveSegment(t *testing.T, segments <-chan StreamingSegment) StreamingSegment {
 	t.Helper()
 	select {

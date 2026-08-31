@@ -72,9 +72,26 @@ CONFIG_SCHEMA = {
             "minimum": 100,
             "default": 400,
         },
+        "max_utterance_ms": {
+            "type": "integer",
+            "title": "Maximum utterance duration (ms)",
+            "description": (
+                "Hard cap on a single utterance's accumulated speech. Once reached, the "
+                "utterance-so-far is committed as a final segment and a fresh segment starts "
+                "on the next speech frame, instead of the buffer growing without bound."
+            ),
+            "minimum": 1000,
+            "default": 30000,
+        },
     },
     "additionalProperties": False,
 }
+
+# Trailing window (ms) of a partial's accumulated utterance that is actually
+# decoded. Bounding this keeps partial decode cost flat regardless of how
+# long the current utterance has run, instead of re-decoding the whole
+# growing buffer on every partial_interval_ms tick.
+_PARTIAL_WINDOW_MS = 5000
 
 
 @dataclass
@@ -86,9 +103,14 @@ class _SegmenterState:
     silence_threshold_ms: int = 600
     min_speech_ms: int = 120
     partial_interval_ms: int = 400
+    max_utterance_ms: int = 30000
 
     def __post_init__(self) -> None:
         self.frame_bytes = self.sample_rate * 2 * self.frame_ms // 1000
+        # Fixed frame count for the partial decode window rather than a byte
+        # count derived from ms/bytes division, so slicing `_utterance` for a
+        # partial always lands on exact frame boundaries.
+        self._partial_window_frames = max(1, _PARTIAL_WINDOW_MS // self.frame_ms)
         self._buffer = bytearray()
         self._frame_index = 0
         self._segment_start_frame: int | None = None
@@ -97,6 +119,14 @@ class _SegmenterState:
         self._speech_ms = 0
         self._speech_since_partial_ms = 0
         self._utterance = bytearray()
+        # Parallel to `_utterance`: the true source `frame_index` of every
+        # frame appended to it. `_utterance` only ever holds speech frames,
+        # so a VAD-classified pause shorter than `silence_threshold_ms`
+        # advances `_frame_index` without a corresponding append -- this
+        # list lets a partial's trailing window look up the *actual* source
+        # position of its first frame instead of inferring it by subtracting
+        # a frame count, which silently assumes (and breaks on) contiguity.
+        self._utterance_frame_indices: list[int] = []
 
     def feed(self, chunk: bytes) -> list[StreamSegmentResponse]:
         self._buffer.extend(chunk)
@@ -108,6 +138,16 @@ class _SegmenterState:
         return events
 
     def finish(self) -> list[StreamSegmentResponse]:
+        # `feed` only classifies whole `frame_bytes`-sized frames, so a
+        # trailing remainder shorter than one VAD frame (e.g. the client's
+        # final chunk before `stop`) sits unclassified in `self._buffer`
+        # forever unless it is folded into the active utterance here. It
+        # cannot be run through the VAD (which requires an exact frame
+        # size), so it is appended as-is, best-effort, rather than dropped.
+        if self._buffer and self._segment_start_frame is not None:
+            self._utterance.extend(self._buffer)
+            self._utterance_frame_indices.append(self._frame_index)
+            self._buffer.clear()
         return self._flush(force=True)
 
     def _process_frame(self, frame: bytes) -> list[StreamSegmentResponse]:
@@ -121,7 +161,9 @@ class _SegmenterState:
                 self._silence_ms = 0
                 self._speech_since_partial_ms = 0
                 self._utterance.clear()
+                self._utterance_frame_indices.clear()
             self._utterance.extend(frame)
+            self._utterance_frame_indices.append(frame_index)
             self._last_speech_frame_end = frame_index + 1
             self._silence_ms = 0
             self._speech_ms += self.frame_ms
@@ -129,6 +171,12 @@ class _SegmenterState:
             events = []
             if self.partial_interval_ms > 0 and self._speech_since_partial_ms >= self.partial_interval_ms:
                 events.extend(self._emit_partial())
+            if self._speech_ms >= self.max_utterance_ms:
+                # Commit-and-restart: a continuous talker who never pauses
+                # long enough to hit the silence flush must not grow
+                # `_utterance` without bound. Commit what has accumulated as
+                # a final segment; the next speech frame starts a fresh one.
+                events.extend(self._flush(force=True))
             return events
         if self._segment_start_frame is None:
             return []
@@ -140,13 +188,27 @@ class _SegmenterState:
     def _emit_partial(self) -> list[StreamSegmentResponse]:
         if self._segment_start_frame is None:
             return []
+        total_frames = len(self._utterance_frame_indices)
+        partial_frames = self._partial_window_frames
+        if total_frames <= partial_frames:
+            window_start_frame = self._segment_start_frame
+            window_pcm = bytes(self._utterance)
+        else:
+            # The true source frame_index of the first frame in the trailing
+            # window, looked up directly rather than inferred by subtracting
+            # a frame count -- correct even if a sub-threshold VAD pause
+            # inside this utterance means buffered frames aren't contiguous
+            # with wall-clock frame_index.
+            window_start_frame = self._utterance_frame_indices[-partial_frames]
+            window_bytes = partial_frames * self.frame_bytes
+            window_pcm = bytes(self._utterance[-window_bytes:])
         text = transcribe_module.transcribe_utterance(
-            bytes(self._utterance), self.sample_rate, self.settings
+            window_pcm, self.sample_rate, self.settings
         ).strip()
         self._speech_since_partial_ms = 0
         if not text:
             return []
-        t0 = self._segment_start_frame * self.frame_ms / 1000.0
+        t0 = window_start_frame * self.frame_ms / 1000.0
         end_frame = self._last_speech_frame_end or self._frame_index
         t1 = end_frame * self.frame_ms / 1000.0
         return [
@@ -191,6 +253,7 @@ class _SegmenterState:
         self._speech_ms = 0
         self._speech_since_partial_ms = 0
         self._utterance.clear()
+        self._utterance_frame_indices.clear()
 
 
 def create_app(settings: Settings) -> FastAPI:
@@ -233,6 +296,9 @@ def create_app(settings: Settings) -> FastAPI:
                 min_speech_ms=int(start.config.get("min_speech_ms", app.state.settings.min_speech_ms)),
                 partial_interval_ms=int(
                     start.config.get("partial_interval_ms", app.state.settings.partial_interval_ms)
+                ),
+                max_utterance_ms=int(
+                    start.config.get("max_utterance_ms", app.state.settings.max_utterance_ms)
                 ),
             )
             await websocket.send_json(StreamReadyResponse().model_dump(exclude_none=True))
