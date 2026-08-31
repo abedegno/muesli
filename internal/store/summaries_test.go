@@ -10,6 +10,111 @@ import (
 	"github.com/abedegno/muesli/internal/testutil"
 )
 
+// TestDeleteNoteSummariesIfCurrentLocksAgainstConcurrentSaveTranscript is the
+// specific coverage the round-2 review found missing: it proves
+// DeleteNoteSummariesIfCurrent's notes-row lock actually EXCLUDES a
+// concurrent SaveTranscript, not merely that a sequential
+// replace-then-call ends up consistent. Ordering is established by channels,
+// never sleeps, mirroring TestConcurrentFirstWritersDoNotRaceTheUniqueIndex
+// in transcripts_test.go: DeleteNoteSummariesIfCurrent is parked, still
+// holding the notes-row lock, right after its own generation check passes;
+// SaveTranscript is then launched and proven NOT to complete while that lock
+// is held (a bounded time.After select — a soft mutation-detection signal,
+// not proof on its own, exactly as documented at the precedent test); only
+// once the lock is released does SaveTranscript unblock and succeed.
+func TestDeleteNoteSummariesIfCurrentLocksAgainstConcurrentSaveTranscript(t *testing.T) {
+	// No t.Parallel: this installs a package-level hook.
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	if err := st.SeedBuiltInTemplates(ctx); err != nil {
+		t.Fatalf("seed templates: %v", err)
+	}
+	ownerID, noteID := seedNoteWithOwner(t, st)
+
+	saved, err := st.SaveTranscript(ctx, model.Transcript{
+		NoteID:            noteID,
+		TranscriberPlugin: "whisper",
+		Segments:          []model.Segment{{StartMS: 0, EndMS: 10, Text: "one", Source: "mic"}},
+	}, 0)
+	if err != nil {
+		t.Fatalf("seed transcript: %v", err)
+	}
+
+	templates, err := st.TemplatesForSummary(ctx, ownerID)
+	if err != nil || len(templates) == 0 {
+		t.Fatalf("templates for summary: %v (%d)", err, len(templates))
+	}
+	summaryID, err := st.CreatePendingSummary(ctx, noteID, templates[0].ID)
+	if err != nil {
+		t.Fatalf("seed summary: %v", err)
+	}
+
+	reachedLock := make(chan struct{})
+	releaseLock := make(chan struct{})
+	restore := store.SetTestHookAfterDeleteNoteSummariesGenerationCheck(func() {
+		close(reachedLock)
+		<-releaseLock
+	})
+	defer restore()
+
+	deleteResult := make(chan error, 1)
+	go func() {
+		deleteResult <- st.DeleteNoteSummariesIfCurrent(ctx, ownerID, noteID, saved.Generation)
+	}()
+	<-reachedLock // the delete tx holds the notes-row lock; its own generation check has already passed
+
+	saveResult := make(chan error, 1)
+	go func() {
+		_, err := st.SaveTranscript(ctx, model.Transcript{
+			NoteID:            noteID,
+			TranscriberPlugin: "whisper",
+			Segments:          []model.Segment{{StartMS: 0, EndMS: 20, Text: "two", Source: "mic"}},
+		}, saved.Generation)
+		saveResult <- err
+	}()
+
+	select {
+	case err := <-saveResult:
+		t.Fatalf("SaveTranscript completed while DeleteNoteSummariesIfCurrent still held the notes-row lock (err=%v) — the row was not locked", err)
+	case <-time.After(300 * time.Millisecond):
+		// Expected: SaveTranscript's own first statement blocks on the same
+		// notes-row lock DeleteNoteSummariesIfCurrent is holding.
+	}
+
+	close(releaseLock)
+
+	if err := <-deleteResult; err != nil {
+		t.Fatalf("DeleteNoteSummariesIfCurrent: %v", err)
+	}
+	if err := <-saveResult; err != nil {
+		t.Fatalf("SaveTranscript after lock release: %v", err)
+	}
+
+	// Summaries at the old generation were deleted.
+	summaries, err := st.GetSummaries(ctx, noteID)
+	if err != nil {
+		t.Fatalf("GetSummaries: %v", err)
+	}
+	for _, sm := range summaries {
+		if sm.ID == summaryID {
+			t.Fatalf("summary %s still present after DeleteNoteSummariesIfCurrent committed", summaryID)
+		}
+	}
+
+	// The transcript is now at the new generation, published only after the
+	// lock was released.
+	got, err := st.GetTranscript(ctx, noteID)
+	if err != nil {
+		t.Fatalf("GetTranscript: %v", err)
+	}
+	if got.Generation != saved.Generation+1 {
+		t.Fatalf("generation = %d, want %d", got.Generation, saved.Generation+1)
+	}
+	if len(got.Segments) != 1 || got.Segments[0].Text != "two" {
+		t.Fatalf("transcript segments = %+v, want the replacement", got.Segments)
+	}
+}
+
 func TestEnqueueSummarizeJobs(t *testing.T) {
 	t.Parallel()
 	st := store.New(testutil.NewPool(t))

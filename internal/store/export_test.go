@@ -15,3 +15,11 @@ func SetTestHookAfterConfirmSegmentSpeakerRead(f func()) func() {
 	testHookAfterConfirmSegmentSpeakerRead = f
 	return func() { testHookAfterConfirmSegmentSpeakerRead = prev }
 }
+
+// SetTestHookAfterDeleteNoteSummariesGenerationCheck installs the hook for
+// tests in package store_test and returns a restore function.
+func SetTestHookAfterDeleteNoteSummariesGenerationCheck(f func()) func() {
+	prev := testHookAfterDeleteNoteSummariesGenerationCheck
+	testHookAfterDeleteNoteSummariesGenerationCheck = f
+	return func() { testHookAfterDeleteNoteSummariesGenerationCheck = prev }
+}

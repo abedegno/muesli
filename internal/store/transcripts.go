@@ -62,6 +62,18 @@ func isDeterministicChannelSpeaker(speaker string) bool {
 //     confirming before summarizing → "pending".
 //   - Channel-based multitrack ("You"/"Them") is deterministic, and no-speaker
 //     transcripts have nothing to review → "completed".
+//
+// Invariant: every writer that changes transcripts.generation (SaveTranscript,
+// CreateStreamTranscript) MUST lock the notes row FIRST, before reading or
+// writing the transcript row. The note-level *IfCurrent guarded writes in
+// notes.go/summaries.go (SetNoteHashesIfCurrent, SetNotePartialTranscriptIfCurrent,
+// SetRetentionStateDiscardedIfCurrent, DeleteNoteSummariesIfCurrent,
+// EnqueueSummarizeJobsIfCurrent) depend on this for their own serialization:
+// several of them take the SAME notes-row FOR UPDATE lock before re-checking
+// the generation, and it is that shared lock — not the generation check alone
+// — which actually excludes a concurrent SaveTranscript from landing between
+// their check and their write. Breaking this ordering in either direction
+// reopens the race this fix closes.
 func (s *Store) SaveTranscript(ctx context.Context, tr model.Transcript, expectedGeneration int) (model.Transcript, error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
