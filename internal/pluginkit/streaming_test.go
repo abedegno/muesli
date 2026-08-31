@@ -218,10 +218,23 @@ func TestStreamingSessionDropsPartialsButQueuesFinalDuringTranscription(t *testi
 // reversing the delivery order of two queued finals (muesli#711 review
 // finding). The fix moves the handoff to after emit, so the next queued
 // commit's transcription cannot even start until the current one has been
-// handed to emit. This test pins that: while the first result's emit call is
-// deliberately kept blocked, the queued second transcription must not have
-// started yet, and once everything unblocks, emit must have been called in
-// queue order.
+// handed to emit and that call has returned.
+//
+// The check below does not infer this from scheduling opportunities (an
+// earlier version polled a call counter after a runtime.Gosched() loop,
+// which cannot distinguish "correctly never started" from "started but
+// hasn't finished yet" and so can pass against the regression under real
+// parallelism). Instead the queued second commit's fake transcribe signals
+// secondTranscribeStarted the instant it is entered -- an explicit,
+// unambiguous test hook straight from the reviewer's suggested fix -- and
+// the test waits on that channel (not a fixed iteration count) for a
+// generous window before proceeding, exactly like every other
+// synchronization wait already in this file. On the fix that channel
+// cannot fire during the wait (the second commit's transcription is not
+// even launched until the first's emit call, still blocked on
+// releaseEmit, returns), so the wait always genuinely times out. On the
+// regression it reliably fires. The final emitOrder equality check is then
+// a second, independent confirmation of the same outcome.
 func TestStreamingEmitsQueuedFinalsInOrderNotConcurrently(t *testing.T) {
 	cfg := testStreamingConfig()
 	cfg.PartialInterval = 10 * time.Millisecond
@@ -230,6 +243,7 @@ func TestStreamingEmitsQueuedFinalsInOrderNotConcurrently(t *testing.T) {
 	release := make(chan struct{})
 	emitPaused := make(chan struct{})
 	releaseEmit := make(chan struct{})
+	secondTranscribeStarted := make(chan struct{})
 
 	var calls atomic.Int64
 	var mu sync.Mutex
@@ -241,6 +255,7 @@ func TestStreamingEmitsQueuedFinalsInOrderNotConcurrently(t *testing.T) {
 			<-release
 			return "first", nil
 		}
+		close(secondTranscribeStarted)
 		return "second", nil
 	}, func(segment StreamingSegment, err error) {
 		mu.Lock()
@@ -278,22 +293,17 @@ func TestStreamingEmitsQueuedFinalsInOrderNotConcurrently(t *testing.T) {
 		t.Fatal("emit for the first result was not reached")
 	}
 
-	// Give a wrongly-launched second transcription goroutine a chance to
-	// run to completion (its fake transcribe does no blocking work at
-	// all) before checking. This is only to make catching a regression
-	// reliable; it does not weaken the assertion below for correct code,
-	// where the handoff is gated on emit(first) returning -- a real
-	// synchronization point, not a timing race -- so calls cannot advance
-	// here no matter how many scheduling opportunities we give it.
-	for range 100 {
-		runtime.Gosched()
-	}
-
-	// While emit for the first result is still blocked inside the handler,
-	// the queued second commit's transcription must not have started: the
-	// handoff to it may only happen after the first has been emitted.
-	if got := calls.Load(); got != 1 {
-		t.Fatalf("second transcription started before first was emitted: calls=%d, want 1", got)
+	// Explicit test hook: while the first result's emit call is still
+	// blocked (releaseEmit not yet closed), the queued second commit's
+	// transcription must not have been entered. secondTranscribeStarted
+	// only fires from inside that transcription itself, so seeing it here
+	// is unambiguous proof the handoff happened before emit(first)
+	// returned -- not an inference from how much scheduling time has
+	// passed.
+	select {
+	case <-secondTranscribeStarted:
+		t.Fatal("second transcription started before first was emitted")
+	case <-time.After(50 * time.Millisecond):
 	}
 
 	close(releaseEmit)
