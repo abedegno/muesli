@@ -107,9 +107,18 @@ func (s *session) WriteAudio(ctx context.Context, pcm []float32) ([]pluginkit.St
 	return events, nil
 }
 
-func (s *session) Close(context.Context) error {
-	s.stream.Wait()
-	return nil
+// Close forces whatever utterance was still active to a final transcription
+// (see pluginkit.StreamingSession.Finish) and returns any resulting events
+// alongside anything already produced but not yet drained by WriteAudio, so
+// the caller can deliver the trailing utterance instead of it being silently
+// dropped when the session ends.
+func (s *session) Close(context.Context) ([]pluginkit.StreamingEvent, error) {
+	s.stream.Finish()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	events := append([]pluginkit.StreamingEvent(nil), s.events...)
+	s.events = s.events[:0]
+	return events, nil
 }
 
 func (s *session) transcribe(samples []float32) (string, error) {

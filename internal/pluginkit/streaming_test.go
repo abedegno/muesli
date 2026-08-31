@@ -2,6 +2,7 @@ package pluginkit
 
 import (
 	"fmt"
+	"reflect"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -104,35 +105,70 @@ func TestStreamingSessionFinalizesOnceAndResets(t *testing.T) {
 	}
 }
 
-func TestStreamingSessionBoundsContinuousSpeechWindow(t *testing.T) {
+// TestStreamingSessionCommitsOnMaxWindowInsteadOfEvicting pins the fix for
+// muesli#711's second loss path: a continuous talker who never pauses long
+// enough to hit the silence finalize clock used to have the window silently
+// slide once it passed MaxWindow, evicting the oldest audio -- everything
+// before the trailing MaxWindow of a long utterance was lost, and only ever
+// the tail got transcribed. Hitting MaxWindow must instead commit whatever
+// has accumulated as a final segment and keep accumulating a fresh window for
+// the rest of the same (still active) utterance, so a continuous talker's
+// audio is fully covered by a sequence of finals instead of truncated to one.
+func TestStreamingSessionCommitsOnMaxWindowInsteadOfEvicting(t *testing.T) {
 	cfg := testStreamingConfig()
 	cfg.MaxWindow = 30 * time.Millisecond
-	cfg.PartialInterval = 40 * time.Millisecond
-	var maxSeen atomic.Int64
+	cfg.PartialInterval = 40 * time.Millisecond // keep partials out of the way
+	var mu sync.Mutex
+	var finals []StreamingSegment
 	session, err := NewStreamingSession(cfg, nil, func(samples []float32) (string, error) {
-		for {
-			old := maxSeen.Load()
-			if int64(len(samples)) <= old || maxSeen.CompareAndSwap(old, int64(len(samples))) {
-				break
-			}
+		return fmt.Sprintf("samples:%d", len(samples)), nil
+	}, func(segment StreamingSegment, err error) {
+		if err != nil {
+			t.Errorf("emit error: %v", err)
+			return
 		}
-		return "bounded", nil
-	}, func(StreamingSegment, error) {})
+		mu.Lock()
+		finals = append(finals, segment)
+		mu.Unlock()
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	// 120 samples of continuous speech, four times the 30-sample MaxWindow,
+	// fed and drained one 10-sample frame at a time so each max-window commit
+	// completes before the next frame arrives.
 	for range 12 {
 		session.Feed(pcm(10, 0.5))
 		session.Wait()
 	}
-	session.Feed(pcm(20, 0))
 	session.Wait()
-	if got := maxSeen.Load(); got == 0 || got > 30 {
-		t.Fatalf("largest transcription window = %d samples, want 1..30", got)
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []StreamingSegment{
+		{StartMS: 0, EndMS: 40, Text: "samples:40", Final: true},
+		{StartMS: 40, EndMS: 80, Text: "samples:40", Final: true},
+		{StartMS: 80, EndMS: 120, Text: "samples:40", Final: true},
+	}
+	if !reflect.DeepEqual(finals, want) {
+		t.Fatalf("finals = %+v, want %+v (every sample committed, none evicted)", finals, want)
 	}
 }
 
-func TestStreamingSessionDropsTriggersDuringTranscription(t *testing.T) {
+// TestStreamingSessionDropsPartialsButQueuesFinalDuringTranscription covers
+// two invariants that must both hold while a transcription is in flight.
+// First, the one that must never change: a transcription cannot be
+// re-entered concurrently, so calls stays at 1 for as long as the first
+// callback is blocked, no matter how many more triggers arrive. Second, the
+// one muesli#711 fixes: of those triggers, the partial (cadence) ones are
+// still dropped -- they're just a preview refresh, and the same audio is
+// still sitting in the window for the next trigger to pick up -- but the
+// final (commit) trigger is queued rather than dropped, so releasing the
+// first callback lets it run and calls reaches 2. Before this fix every
+// trigger reached while busy was dropped outright, so the final for this
+// utterance would have disappeared even after the callback was released.
+func TestStreamingSessionDropsPartialsButQueuesFinalDuringTranscription(t *testing.T) {
 	cfg := testStreamingConfig()
 	cfg.PartialInterval = 10 * time.Millisecond
 	started := make(chan struct{}, 1)
@@ -157,19 +193,127 @@ func TestStreamingSessionDropsTriggersDuringTranscription(t *testing.T) {
 	for range 5 {
 		session.Feed(pcm(10, 0.5))
 	}
-	session.Feed(pcm(20, 0)) // the final trigger is also dropped, not deferred
+	session.Feed(pcm(20, 0)) // the final trigger; queued, not dropped
 	// Give any incorrectly launched callbacks an opportunity to enter the fake.
 	// Without the in-flight guard, each trigger above increments calls here.
 	for range 100 {
 		runtime.Gosched()
 	}
 	if got := calls.Load(); got != 1 {
-		t.Fatalf("calls while first callback blocked = %d, want 1", got)
+		t.Fatalf("calls while first callback blocked = %d, want 1 (no concurrent re-entry)", got)
 	}
 	close(release)
 	session.Wait()
-	if got := calls.Load(); got != 1 {
-		t.Fatalf("calls after release = %d, want 1 (triggers must not queue)", got)
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("calls after release = %d, want 2 (the queued final must still run)", got)
+	}
+}
+
+// TestStreamingEmitsQueuedFinalsInOrderNotConcurrently is a regression test
+// for a race in launchTranscriptionLocked: a completing transcription goroutine
+// used to hand off to the next queued commit -- launching its transcription
+// goroutine -- BEFORE calling emit for the commit that just finished. That let
+// the newly launched goroutine run its own (possibly much faster)
+// transcription and call emit before the first goroutine got a chance to,
+// reversing the delivery order of two queued finals (muesli#711 review
+// finding). The fix moves the handoff to after emit, so the next queued
+// commit's transcription cannot even start until the current one has been
+// handed to emit and that call has returned.
+//
+// The check below does not infer this from scheduling opportunities (an
+// earlier version polled a call counter after a runtime.Gosched() loop,
+// which cannot distinguish "correctly never started" from "started but
+// hasn't finished yet" and so can pass against the regression under real
+// parallelism). Instead the queued second commit's fake transcribe signals
+// secondTranscribeStarted the instant it is entered -- an explicit,
+// unambiguous test hook straight from the reviewer's suggested fix -- and
+// the test waits on that channel (not a fixed iteration count) for a
+// generous window before proceeding, exactly like every other
+// synchronization wait already in this file. On the fix that channel
+// cannot fire during the wait (the second commit's transcription is not
+// even launched until the first's emit call, still blocked on
+// releaseEmit, returns), so the wait always genuinely times out. On the
+// regression it reliably fires. The final emitOrder equality check is then
+// a second, independent confirmation of the same outcome.
+func TestStreamingEmitsQueuedFinalsInOrderNotConcurrently(t *testing.T) {
+	cfg := testStreamingConfig()
+	cfg.PartialInterval = 10 * time.Millisecond
+
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	emitPaused := make(chan struct{})
+	releaseEmit := make(chan struct{})
+	secondTranscribeStarted := make(chan struct{})
+
+	var calls atomic.Int64
+	var mu sync.Mutex
+	var emitOrder []string
+
+	session, err := NewStreamingSession(cfg, nil, func([]float32) (string, error) {
+		if calls.Add(1) == 1 {
+			started <- struct{}{}
+			<-release
+			return "first", nil
+		}
+		close(secondTranscribeStarted)
+		return "second", nil
+	}, func(segment StreamingSegment, err error) {
+		mu.Lock()
+		emitOrder = append(emitOrder, segment.Text)
+		mu.Unlock()
+		if segment.Text == "first" {
+			close(emitPaused)
+			<-releaseEmit
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Start the first (in-flight) transcription.
+	session.Feed(pcm(10, 0.5))
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first transcription did not start")
+	}
+
+	// Trigger a final while the first is still in flight; this must be
+	// queued rather than dropped (muesli#711 defect 3).
+	session.Feed(pcm(20, 0)) // silence -> finalize -> queued behind the first
+
+	// Let the first transcription's transcribe() return, so its goroutine
+	// reaches the point where it either hands off to the queued commit or
+	// (correctly) emits first.
+	close(release)
+
+	select {
+	case <-emitPaused:
+	case <-time.After(time.Second):
+		t.Fatal("emit for the first result was not reached")
+	}
+
+	// Explicit test hook: while the first result's emit call is still
+	// blocked (releaseEmit not yet closed), the queued second commit's
+	// transcription must not have been entered. secondTranscribeStarted
+	// only fires from inside that transcription itself, so seeing it here
+	// is unambiguous proof the handoff happened before emit(first)
+	// returned -- not an inference from how much scheduling time has
+	// passed.
+	select {
+	case <-secondTranscribeStarted:
+		t.Fatal("second transcription started before first was emitted")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(releaseEmit)
+	session.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"first", "second"}
+	if !reflect.DeepEqual(emitOrder, want) {
+		t.Fatalf("emit order = %v, want %v (queued finals must be delivered in order)", emitOrder, want)
 	}
 }
 

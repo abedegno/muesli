@@ -54,6 +54,50 @@ func TestSessionProducesPartialAndFinal(t *testing.T) {
 	}
 }
 
+// TestSessionCloseFlushesTrailingUtterance pins the fix for muesli#711's
+// first loss path: session.Close used to only call stream.Wait, which blocks
+// on transcription work already started but never starts one for an
+// utterance that is still open when the stream ends. Speech shorter than
+// PartialInterval never reaches a partial trigger, and with no trailing
+// silence it never reaches the SilenceDuration finalize clock either, so
+// nothing but an explicit end-of-stream flush can ever produce a final for
+// it. Close must now force that flush (via stream.Finish) and return the
+// resulting event instead of the trailing utterance simply vanishing.
+func TestSessionCloseFlushesTrailingUtterance(t *testing.T) {
+	eng := New(engine.Config{Model: "tiny.en", Language: "en"})
+	if err := eng.whisper.EnsureReady(context.Background()); err != nil {
+		t.Fatalf("prepare model: %v", err)
+	}
+	const sampleRate = 16_000
+	req := pluginkit.StreamingStartRequest{Type: "start", SampleRate: sampleRate, Channels: 1}
+	session, err := eng.StartStream(context.Background(), req)
+	if err != nil {
+		t.Fatalf("start stream: %v", err)
+	}
+	cfg := pluginkit.DefaultStreamingConfig()
+
+	// Well short of PartialInterval, so WriteAudio produces nothing yet.
+	speech := make([]float32, streamingSamples(cfg.PartialInterval, sampleRate)/3)
+	for i := range speech {
+		speech[i] = .25
+	}
+	events, err := session.WriteAudio(context.Background(), speech)
+	if err != nil {
+		t.Fatalf("write audio: %v", err)
+	}
+	if len(events) != 0 {
+		t.Fatalf("events before close = %#v, want none yet", events)
+	}
+
+	events, err = session.Close(context.Background())
+	if err != nil {
+		t.Fatalf("close: %v", err)
+	}
+	if len(events) != 1 || !events[0].Final || events[0].Text == "" {
+		t.Fatalf("close events = %#v, want exactly one non-empty final", events)
+	}
+}
+
 func TestJoinTranscriptionSegmentsDropsWhisperSilenceTokens(t *testing.T) {
 	tests := []struct {
 		name string

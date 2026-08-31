@@ -37,6 +37,57 @@ func (e *loadingWireEngine) StartStream(ctx context.Context, req StreamingStartR
 	return e.ready.StartStream(ctx, req)
 }
 
+// flushOnCloseSession simulates an engine session that, like the real
+// pluginkit.StreamingSession.Finish/live.session.Close, produces a final
+// event for a still-open utterance when the session is closed.
+type flushOnCloseSession struct {
+	closeEvent StreamingEvent
+}
+
+func (s *flushOnCloseSession) WriteAudio(context.Context, []float32) ([]StreamingEvent, error) {
+	return nil, nil
+}
+
+func (s *flushOnCloseSession) Close(context.Context) ([]StreamingEvent, error) {
+	return []StreamingEvent{s.closeEvent}, nil
+}
+
+type flushOnCloseEngine struct{}
+
+func (flushOnCloseEngine) Transcribe(context.Context, []float32, TranscribeRequest) (TranscribeResult, error) {
+	return TranscribeResult{}, nil
+}
+
+func (flushOnCloseEngine) StartStream(context.Context, StreamingStartRequest) (StreamingEngineSession, error) {
+	return &flushOnCloseSession{closeEvent: StreamingEvent{Type: "segment", Final: true, Text: "trailing utterance"}}, nil
+}
+
+// TestStreamingStopFlushesTrailingFinalBeforeClosing pins the fix for
+// muesli#711 path 1 at the wire level: the deferred session.Close used to
+// discard its error return and never look at any events, so a final produced
+// only when the session closed (the trailing, still-open utterance) was never
+// written to the client -- it disappeared between the "stop" control frame
+// and the socket tearing down. The handler must now write whatever Close
+// returns before the connection closes.
+func TestStreamingStopFlushesTrailingFinalBeforeClosing(t *testing.T) {
+	server := httptest.NewServer(TranscriberHandler(Config{Token: "secret"}, flushOnCloseEngine{}))
+	defer server.Close()
+
+	session := openWireSession(t, server.URL, "secret", "trailing")
+	defer session.Close()
+
+	if err := session.Stop(); err != nil {
+		t.Fatal(err)
+	}
+	event := recvWireEvent(t, session)
+	if !event.Final || event.Text != "trailing utterance" {
+		t.Fatalf("event after stop = %#v, want the flushed trailing final", event)
+	}
+	if _, err := session.Recv(); err == nil {
+		t.Fatal("expected the connection to close after the flushed final")
+	}
+}
+
 func TestStreamingLoadingKeepsSessionOpenUntilReady(t *testing.T) {
 	engine := &loadingWireEngine{ready: newWireTestEngine()}
 	server := httptest.NewServer(TranscriberHandler(Config{Token: "secret"}, engine))
@@ -94,9 +145,9 @@ func (s *wireTestSession) WriteAudio(_ context.Context, pcm []float32) ([]Stream
 	}, nil
 }
 
-func (s *wireTestSession) Close(context.Context) error {
+func (s *wireTestSession) Close(context.Context) ([]StreamingEvent, error) {
 	s.closeOnce.Do(func() { close(s.closed) })
-	return nil
+	return nil, nil
 }
 
 func TestStreamingWireProtocolWithRealClient(t *testing.T) {
