@@ -37,6 +37,17 @@ type resumeFixture struct {
 // something to discard.
 func newResumeFixture(t *testing.T, retention string, segments []model.Segment) *resumeFixture {
 	t.Helper()
+	return newResumeFixtureWithStorageWrap(t, retention, segments, nil)
+}
+
+// newResumeFixtureWithStorageWrap is newResumeFixture with an optional hook
+// to wrap the real local storage.Provider before it is handed to the
+// Processor — e.g. to make Delete fail on demand without touching the
+// underlying object, so a test can inject a transient storage error while
+// still exercising a real filesystem-backed provider for everything else.
+// wrap may be nil, in which case this is exactly newResumeFixture.
+func newResumeFixtureWithStorageWrap(t *testing.T, retention string, segments []model.Segment, wrap func(storage.Provider) storage.Provider) *resumeFixture {
+	t.Helper()
 	ctx := context.Background()
 	st := store.New(testutil.NewPool(t))
 	cr := testCrypto(t)
@@ -46,6 +57,10 @@ func newResumeFixture(t *testing.T, retention string, segments []model.Segment) 
 	prov, err := storage.NewLocal(root, "http://example.test", "http://example.test", []byte("test-signing-key-0123456789"))
 	if err != nil {
 		t.Fatal(err)
+	}
+	var wrapped storage.Provider = prov
+	if wrap != nil {
+		wrapped = wrap(prov)
 	}
 
 	var calls atomic.Int64
@@ -85,8 +100,8 @@ func newResumeFixture(t *testing.T, retention string, segments []model.Segment) 
 		t.Fatalf("set note audio: %v", err)
 	}
 
-	proc := worker.NewProcessor(st, cr, prov, config.Config{AudioRetention: retention}, nil)
-	return &resumeFixture{proc: proc, st: st, prov: prov, ownerID: u.ID, noteID: n.ID, audioKey: key, transcribeCalls: &calls}
+	proc := worker.NewProcessor(st, cr, wrapped, config.Config{AudioRetention: retention}, nil)
+	return &resumeFixture{proc: proc, st: st, prov: wrapped, ownerID: u.ID, noteID: n.ID, audioKey: key, transcribeCalls: &calls}
 }
 
 // writeStorageObject places a real object under the local provider's root, the

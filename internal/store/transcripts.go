@@ -46,6 +46,26 @@ func isDeterministicChannelSpeaker(speaker string) bool {
 	return speaker == model.SpeakerYou || speaker == model.SpeakerThem || deterministicChannelSpeakerRe.MatchString(speaker)
 }
 
+// Invariant: every writer that changes transcripts.generation — currently
+// SaveTranscript and CreateStreamTranscript, the only two — MUST lock the
+// notes row for the note FIRST, before reading or writing the transcript row
+// (SaveTranscript does this via `UPDATE notes SET transcribing_job_id=NULL
+// WHERE id=$1`; CreateStreamTranscript via `SELECT id FROM notes WHERE id=$1
+// FOR UPDATE`). This is not just for their own correctness: downstream
+// pipeline code (internal/worker/pipeline.go's applyAudioRetention /
+// EnqueueSummarizeJobs fan-out, via SetRetentionStateDiscardedIfCurrent and
+// EnqueueSummarizeJobsIfCurrent in internal/store/notes.go and
+// internal/store/summaries.go) depends on it too. Those take the SAME
+// notes-row lock, under their own transaction, before re-verifying a
+// transcript's generation and performing an otherwise irreversible or
+// multi-statement write (deleting audio; fanning out summarize jobs). That
+// only correctly serializes against a concurrent replacement BECAUSE any
+// writer that could replace the transcript first has to acquire this same
+// lock — if a future writer of transcripts.generation skipped locking the
+// notes row, a replacement could commit while one of those sections holds
+// the lock and believes it has therefore excluded all replacements, silently
+// reopening the race this package's generation checks exist to close.
+//
 // SaveTranscript writes a transcript and its segments in one transaction,
 // replacing any prior transcript for the note (idempotent re-runs). The
 // transcripts(note_id) unique index (migration 0003) guarantees at most one

@@ -466,6 +466,32 @@ func (s *Store) SetNoteHashes(ctx context.Context, noteID, audioHash, normalized
 	return nil
 }
 
+// SetNoteHashesIfCurrent is SetNoteHashes's generation-guarded counterpart,
+// for the transcribe pipeline: it must not persist hashes derived from audio
+// belonging to a transcript a newer job has since replaced. The predicate
+// ("the note's current transcript is still at expectedGeneration") is pushed
+// into the UPDATE's WHERE clause itself — the same conditional-write pattern
+// SetReviewState/AppendStreamSegment/AppendTranscriptGap/
+// ReleaseNoteTranscriptionClaim already use — so the check and the write are
+// one atomic statement instead of a read followed by a write a replacement
+// can land between. RowsAffected()==0 (no transcript at that generation, or
+// the note itself is gone) reports ErrGenerationMismatch.
+func (s *Store) SetNoteHashesIfCurrent(ctx context.Context, noteID, audioHash, normalizedAudioHash string, expectedGeneration int) error {
+	ct, err := s.pool.Exec(ctx,
+		`UPDATE notes n
+		 SET audio_hash=$2, normalized_audio_hash=NULLIF($3, ''), updated_at=now()
+		 WHERE n.id=$1
+		   AND EXISTS (SELECT 1 FROM transcripts t WHERE t.note_id = n.id AND t.generation = $4)`,
+		noteID, audioHash, normalizedAudioHash, expectedGeneration)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrGenerationMismatch
+	}
+	return nil
+}
+
 // SetNoteHashesForOwner persists audio hashes on an owner's note. It mirrors
 // SetNoteHashes but keeps the write owner-scoped for request handlers.
 func (s *Store) SetNoteHashesForOwner(ctx context.Context, ownerID, noteID, audioHash, normalizedAudioHash string) error {
@@ -546,6 +572,101 @@ func (s *Store) SetRetentionState(ctx context.Context, noteID, state string) err
 	_, err := s.pool.Exec(ctx,
 		`UPDATE notes SET retention_state=$1, updated_at=now() WHERE id=$2`, state, noteID)
 	return err
+}
+
+// SetRetentionStateIfCurrent is SetRetentionState's generation-guarded
+// counterpart, for the transcribe pipeline's non-destructive "kept" path: it
+// must not record a retention disposition for a transcript a newer job has
+// since replaced. Pushes the generation predicate into the UPDATE's WHERE
+// clause so the check and the write are one atomic statement.
+// RowsAffected()==0 reports ErrGenerationMismatch.
+//
+// The "discard" path (which deletes audio — irreversible) does NOT use this
+// function: see SetRetentionStateDiscardedIfCurrent, which additionally
+// spans the storage delete itself under a notes-row lock, because a bare
+// conditional UPDATE here would not close the window between the check and
+// the (external, unconditional) storage delete call that precedes it.
+func (s *Store) SetRetentionStateIfCurrent(ctx context.Context, noteID, state string, expectedGeneration int) error {
+	ct, err := s.pool.Exec(ctx,
+		`UPDATE notes n SET retention_state=$2, updated_at=now()
+		 WHERE n.id=$1
+		   AND EXISTS (SELECT 1 FROM transcripts t WHERE t.note_id = n.id AND t.generation = $3)`,
+		noteID, state, expectedGeneration)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrGenerationMismatch
+	}
+	return nil
+}
+
+// SetRetentionStateDiscardedIfCurrent atomically discards a note's audio. It
+// begins a transaction, locks the notes row for noteID — the SAME lock
+// SaveTranscript takes before publishing a replacement transcript (see the
+// invariant documented on SaveTranscript in transcripts.go: every writer
+// that changes transcripts.generation locks the notes row first) — and
+// re-verifies under that lock that the note's transcript is still at
+// expectedGeneration. Only if it still matches does it invoke deleteAudio
+// (the caller's storage delete, e.g. storage.Provider.Delete). If deleteAudio
+// succeeds, retention_state is set to "discarded" in the SAME transaction
+// before commit.
+//
+// This closes a window a plain conditional UPDATE cannot: deleteAudio is an
+// external, unconditional call with no DB predicate of its own, so without a
+// lock spanning the whole sequence a replacement could still commit in the
+// gap between the generation check and the delete, and the delete would
+// happen anyway. Holding the notes-row lock for the duration blocks a
+// concurrent SaveTranscript/CreateStreamTranscript (which takes the same
+// lock first) until this transaction commits or rolls back, so no
+// replacement can land mid-delete.
+//
+// If the generation check fails, ErrGenerationMismatch is returned and
+// deleteAudio is never invoked — the note's audio is never touched on a
+// stale job's authority.
+//
+// If deleteAudio returns a non-nil error (e.g. a transient storage failure),
+// that error is returned as-is and the transaction is rolled back WITHOUT
+// writing "discarded": retention_state is left exactly as it was. This
+// matters because retranscribeConflictReason (internal/api/notes.go)
+// permanently refuses to retranscribe a note whose retention_state is
+// "discarded" — writing that state for audio that was never actually
+// deleted would strand the note. Callers must preserve this: only treat the
+// delete as done, and the note as no-longer-retryable, once this call
+// returns nil.
+func (s *Store) SetRetentionStateDiscardedIfCurrent(ctx context.Context, noteID string, expectedGeneration int, deleteAudio func() error) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `SELECT id FROM notes WHERE id=$1 FOR UPDATE`, noteID); err != nil {
+		return err
+	}
+
+	var generation int
+	err = tx.QueryRow(ctx, `SELECT generation FROM transcripts WHERE note_id=$1`, noteID).Scan(&generation)
+	if errors.Is(err, pgx.ErrNoRows) {
+		generation = 0
+	} else if err != nil {
+		return err
+	}
+	if generation != expectedGeneration {
+		return ErrGenerationMismatch
+	}
+
+	// The delete itself runs while still holding the notes-row lock, so a
+	// replacement cannot commit between the check above and this call.
+	if err := deleteAudio(); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE notes SET retention_state=$1, updated_at=now() WHERE id=$2`, "discarded", noteID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // NoteBody returns the user's live-typed Markdown for a note.
@@ -859,4 +980,25 @@ func (s *Store) SetNotePartialTranscript(ctx context.Context, noteID string, par
 		`UPDATE notes SET partial_transcript=$1, updated_at=now() WHERE id=$2`,
 		partial, noteID)
 	return err
+}
+
+// SetNotePartialTranscriptIfCurrent is SetNotePartialTranscript's
+// generation-guarded counterpart, for the transcribe pipeline: it must not
+// flip the partial flag for a transcript a newer job has since replaced.
+// Pushes the generation predicate into the UPDATE's WHERE clause so the
+// check and the write are one atomic statement. RowsAffected()==0 reports
+// ErrGenerationMismatch.
+func (s *Store) SetNotePartialTranscriptIfCurrent(ctx context.Context, noteID string, partial bool, expectedGeneration int) error {
+	ct, err := s.pool.Exec(ctx,
+		`UPDATE notes n SET partial_transcript=$2, updated_at=now()
+		 WHERE n.id=$1
+		   AND EXISTS (SELECT 1 FROM transcripts t WHERE t.note_id = n.id AND t.generation = $3)`,
+		noteID, partial, expectedGeneration)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrGenerationMismatch
+	}
+	return nil
 }

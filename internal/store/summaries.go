@@ -7,6 +7,7 @@ import (
 
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // EnqueueSummarizeJobs fans out one pending summary + summarize job per template the
@@ -37,12 +38,126 @@ func (s *Store) EnqueueSummarizeJobs(ctx context.Context, ownerID, noteID string
 	return nil
 }
 
+// EnqueueSummarizeJobsIfCurrent is EnqueueSummarizeJobs's generation-guarded
+// counterpart, for the transcribe pipeline: it must not fan out summarize
+// jobs for a transcript a newer job has since replaced.
+//
+// Unlike the other seven guarded writes this cannot be a single conditional
+// UPDATE/DELETE: it spans multiple statements (SetNoteStatus, one
+// CreatePendingSummary + EnqueueJob pair per template, or the
+// zero-templates SetNoteStatus(ready) fallback). So instead it takes its own
+// generation-guarded transaction: lock the notes row FIRST — the SAME lock
+// SaveTranscript takes before publishing a replacement (see the invariant
+// documented on SaveTranscript in transcripts.go) — then re-verify the
+// generation once under that lock before any sub-write, mirroring how
+// SaveTranscript takes the notes row lock via
+// `UPDATE notes SET transcribing_job_id=NULL WHERE id=$1` before its own
+// generation logic. Holding the lock for the duration blocks a concurrent
+// SaveTranscript/CreateStreamTranscript (which takes the same lock first)
+// until this transaction commits or rolls back, so a replacement cannot land
+// midway through the fan-out.
+func (s *Store) EnqueueSummarizeJobsIfCurrent(ctx context.Context, ownerID, noteID string, expectedGeneration int) error {
+	templates, err := s.TemplatesForSummary(ctx, ownerID)
+	if err != nil {
+		return err
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `SELECT id FROM notes WHERE id=$1 FOR UPDATE`, noteID); err != nil {
+		return err
+	}
+
+	var generation int
+	err = tx.QueryRow(ctx, `SELECT generation FROM transcripts WHERE note_id=$1`, noteID).Scan(&generation)
+	if errors.Is(err, pgx.ErrNoRows) {
+		generation = 0
+	} else if err != nil {
+		return err
+	}
+	if generation != expectedGeneration {
+		return ErrGenerationMismatch
+	}
+
+	newStatus := model.NoteSummarizing
+	if len(templates) == 0 {
+		newStatus = model.NoteReady
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE notes SET status=$1, updated_at=now() WHERE id=$2`, newStatus, noteID); err != nil {
+		return err
+	}
+	for _, tmpl := range templates {
+		sumID := uuid.NewString()
+		empty, merr := json.Marshal([]model.SummarySection{})
+		if merr != nil {
+			return merr
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO summaries (id, note_id, template_id, agent_plugin, model, content)
+			 VALUES ($1,$2,$3,'','', jsonb_build_object('status',$4::text,'sections',$5::jsonb,'truncated',false))`,
+			sumID, noteID, tmpl.ID, model.SummaryPending, string(empty)); err != nil {
+			return err
+		}
+		payload, merr := json.Marshal(map[string]string{"template_id": tmpl.ID, "summary_id": sumID})
+		if merr != nil {
+			return merr
+		}
+		jobID := uuid.NewString()
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO jobs (id, note_id, type, status, payload) VALUES ($1,$2,$3,$4,$5::jsonb)`,
+			jobID, noteID, model.JobSummarize, model.JobPending, string(payload)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
 // DeleteNoteSummaries removes all summaries for an owner's note (used before a re-run).
 func (s *Store) DeleteNoteSummaries(ctx context.Context, ownerID, noteID string) error {
 	_, err := s.pool.Exec(ctx,
 		`DELETE FROM summaries WHERE note_id=$1 AND note_id IN (SELECT id FROM notes WHERE owner_id=$2)`,
 		noteID, ownerID)
 	return err
+}
+
+// DeleteNoteSummariesIfCurrent is DeleteNoteSummaries's generation-guarded
+// counterpart, for the transcribe pipeline: it must not remove summaries
+// belonging to a transcript a newer job has since replaced.
+//
+// A DELETE's RowsAffected alone cannot distinguish "guard failed, nothing
+// deleted" from "guard passed, there simply were no summaries yet" (the
+// normal case on a note's first transcription) — both report 0. So the
+// generation check is evaluated once, in a CTE the DELETE's WHERE clause
+// reads from, and its result is what the trailing SELECT reports back,
+// independently of how many rows the DELETE itself touched. Both run in one
+// statement (one snapshot), so this is still a single atomic check-and-write,
+// not a read followed by a write a replacement could land between.
+func (s *Store) DeleteNoteSummariesIfCurrent(ctx context.Context, ownerID, noteID string, expectedGeneration int) error {
+	var genOK bool
+	err := s.pool.QueryRow(ctx,
+		`WITH gen_ok AS (
+		   SELECT EXISTS (SELECT 1 FROM transcripts WHERE note_id=$1 AND generation=$3) AS ok
+		 ), deleted AS (
+		   DELETE FROM summaries
+		   WHERE note_id=$1
+		     AND note_id IN (SELECT id FROM notes WHERE owner_id=$2)
+		     AND (SELECT ok FROM gen_ok)
+		   RETURNING 1
+		 )
+		 SELECT ok FROM gen_ok`,
+		noteID, ownerID, expectedGeneration).Scan(&genOK)
+	if err != nil {
+		return err
+	}
+	if !genOK {
+		return ErrGenerationMismatch
+	}
+	return nil
 }
 
 // CreatePendingSummary inserts a summary row in the "pending" state with empty
