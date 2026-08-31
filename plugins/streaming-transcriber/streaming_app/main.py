@@ -127,6 +127,12 @@ class _SegmenterState:
         # position of its first frame instead of inferring it by subtracting
         # a frame count, which silently assumes (and breaks on) contiguity.
         self._utterance_frame_indices: list[int] = []
+        # Duration (seconds) of a sub-frame residual folded into `_utterance`
+        # by `finish()`. `_last_speech_frame_end` only tracks whole VAD
+        # frames, so this extra, less-than-one-frame duration would
+        # otherwise be silently dropped from the emitted final segment's
+        # `t1` even though the residual bytes are transcribed.
+        self._residual_seconds = 0.0
 
     def feed(self, chunk: bytes) -> list[StreamSegmentResponse]:
         self._buffer.extend(chunk)
@@ -147,6 +153,8 @@ class _SegmenterState:
         if self._buffer and self._segment_start_frame is not None:
             self._utterance.extend(self._buffer)
             self._utterance_frame_indices.append(self._frame_index)
+            # 16-bit mono PCM: 2 bytes per sample, `sample_rate` samples/sec.
+            self._residual_seconds = len(self._buffer) / (self.sample_rate * 2)
             self._buffer.clear()
         return self._flush(force=True)
 
@@ -232,7 +240,7 @@ class _SegmenterState:
         ).strip()
         t0 = self._segment_start_frame * self.frame_ms / 1000.0
         end_frame = self._last_speech_frame_end or self._frame_index
-        t1 = end_frame * self.frame_ms / 1000.0
+        t1 = end_frame * self.frame_ms / 1000.0 + self._residual_seconds
         self._reset()
         if not text:
             return []
@@ -254,6 +262,7 @@ class _SegmenterState:
         self._speech_since_partial_ms = 0
         self._utterance.clear()
         self._utterance_frame_indices.clear()
+        self._residual_seconds = 0.0
 
 
 def create_app(settings: Settings) -> FastAPI:

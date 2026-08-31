@@ -217,3 +217,34 @@ def test_finish_flushes_subframe_residual_bytes(monkeypatch):
     assert len(final_events) == 1
     # The residual bytes must have reached the transcriber, not been dropped.
     assert sizes[-1] == 15 * FRAME_BYTES + len(residual)
+
+
+def test_finish_residual_bytes_extend_t1(monkeypatch):
+    """The sub-frame residual `finish()` folds into the transcription must
+    also be reflected in the emitted final segment's `t1` -- otherwise the
+    segment claims to end before the audio it actually transcribed covers.
+    """
+
+    monkeypatch.setattr(transcribe_mod, "transcribe_utterance", lambda pcm, sr, settings: "text")
+    state = _state(partial_interval_ms=100_000)
+    speech = _tone_burst(300)  # 15 whole 20ms frames, evenly divides FRAME_BYTES
+    residual = b"\x11\x22" * 100  # 200 bytes == 6.25ms at 16kHz/16-bit mono
+
+    for chunk in _chunks(speech, FRAME_BYTES):
+        state.feed(chunk)
+    state.feed(residual)
+
+    pcm_duration = (len(speech) + len(residual)) / (SAMPLE_RATE * 2)
+
+    events = state.finish()
+    final_events = [event for event in events if event.final]
+    assert len(final_events) == 1
+    segment = final_events[0]
+
+    # Naive/buggy behaviour: t1 truncated to the whole-frame boundary,
+    # ignoring the residual entirely.
+    buggy_t1 = len(speech) / (SAMPLE_RATE * 2)
+    assert segment.t1 > buggy_t1 + 1e-9
+
+    assert segment.t1 == pytest.approx(pcm_duration)
+    assert segment.t1 >= pcm_duration - 1e-9
