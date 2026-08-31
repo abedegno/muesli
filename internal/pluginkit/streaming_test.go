@@ -278,14 +278,16 @@ func TestStreamingEmitsQueuedFinalsInOrderNotConcurrently(t *testing.T) {
 		t.Fatal("emit for the first result was not reached")
 	}
 
-	// Give a wrongly-launched second transcription goroutine ample real
-	// time to run to completion (its fake transcribe does no blocking work
-	// at all) before checking. This is only to make catching a regression
+	// Give a wrongly-launched second transcription goroutine a chance to
+	// run to completion (its fake transcribe does no blocking work at
+	// all) before checking. This is only to make catching a regression
 	// reliable; it does not weaken the assertion below for correct code,
 	// where the handoff is gated on emit(first) returning -- a real
 	// synchronization point, not a timing race -- so calls cannot advance
-	// here no matter how long we wait.
-	time.Sleep(5 * time.Millisecond)
+	// here no matter how many scheduling opportunities we give it.
+	for range 100 {
+		runtime.Gosched()
+	}
 
 	// While emit for the first result is still blocked inside the handler,
 	// the queued second commit's transcription must not have started: the
