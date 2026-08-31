@@ -469,10 +469,7 @@ func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, err
 	if stillOurs, err := p.transcriptStillCurrent(ctx, job.NoteID, publishedGeneration); err != nil {
 		return true, err
 	} else if !stillOurs {
-		p.releaseTranscribeClaim(ctx, job, priorStatus)
-		slog.InfoContext(ctx, "transcript replaced after this job published: skipping all note-level work",
-			"job_id", job.ID, "note_id", job.NoteID, "published_generation", publishedGeneration)
-		return false, nil
+		return p.abortNoteWork(ctx, job, priorStatus, publishedGeneration, "group check")
 	}
 
 	if testHookAfterGroupCheckBeforeNoteWrites != nil {
@@ -569,18 +566,29 @@ func (p *Processor) transcriptStillCurrent(ctx context.Context, noteID string, p
 	return current == publishedGeneration, nil
 }
 
-// abortNoteWork is the single place every one of the eight generation-guarded
-// note-level writes in runTranscribe/applyAudioRetention funnels through once
-// its own guard reports a mismatch: release whatever this job's claim
-// displaced, log at Info level (this is an expected outcome of a normal race,
-// not a failure), and report the same clean no-op the upfront
-// transcriptStillCurrent check reports on staleness. write identifies which
-// guarded write caught the race, for the log line only.
-func (p *Processor) abortNoteWork(ctx context.Context, job model.Job, priorStatus string, publishedGeneration int, write string) (bool, error) {
+// abortNoteWorkErr is the ONE implementation of "generation mismatch during
+// note-level work": release whatever this job's claim displaced, log at Info
+// level (this is an expected outcome of a normal race, not a failure), and
+// report a clean no-op. Every one of the eight generation-guarded note-level
+// writes in runTranscribe/applyAudioRetention funnels through this on a
+// mismatch — including the two "still current" early-exit checks that
+// precede them (runTranscribe's group check and applyAudioRetention's own),
+// which report the identical outcome on staleness. write identifies which
+// guarded write (or check) caught the race, for the log line only.
+func (p *Processor) abortNoteWorkErr(ctx context.Context, job model.Job, priorStatus string, publishedGeneration int, write string) error {
 	p.releaseTranscribeClaim(ctx, job, priorStatus)
 	slog.InfoContext(ctx, "transcript replaced while note-level work was in flight: aborting",
 		"job_id", job.ID, "note_id", job.NoteID, "published_generation", publishedGeneration, "write", write)
-	return false, nil
+	return nil
+}
+
+// abortNoteWork adapts abortNoteWorkErr to runTranscribe's (bool, error)
+// return shape. It does not duplicate abortNoteWorkErr's logic — every call
+// site, in both runTranscribe (via this) and applyAudioRetention (via
+// abortNoteWorkErr directly, since that function returns a bare error), ends
+// up running the same code.
+func (p *Processor) abortNoteWork(ctx context.Context, job model.Job, priorStatus string, publishedGeneration int, write string) (bool, error) {
+	return false, p.abortNoteWorkErr(ctx, job, priorStatus, publishedGeneration, write)
 }
 
 // releaseTranscribeClaim restores the status this job's claim displaced. If a
@@ -625,10 +633,7 @@ func (p *Processor) applyAudioRetention(ctx context.Context, job model.Job, audi
 		return err
 	}
 	if !stillOurs {
-		p.releaseTranscribeClaim(ctx, job, priorStatus)
-		slog.InfoContext(ctx, "retention skipped: transcript replaced after this job published",
-			"job_id", job.ID, "note_id", job.NoteID, "audio_key", audioKey, "published_generation", publishedGeneration)
-		return nil
+		return p.abortNoteWorkErr(ctx, job, priorStatus, publishedGeneration, "audio retention check")
 	}
 
 	if testHookAfterRetentionCheckBeforeClaim != nil {
@@ -639,9 +644,7 @@ func (p *Processor) applyAudioRetention(ctx context.Context, job model.Job, audi
 		// No irreversible side effect on this branch, but it gets the same
 		// generation guard for consistency with the rest of the group.
 		if err := p.store.SetRetentionStateIfGeneration(ctx, job.NoteID, "kept", publishedGeneration); errors.Is(err, store.ErrGenerationMismatch) {
-			p.releaseTranscribeClaim(ctx, job, priorStatus)
-			slog.InfoContext(ctx, "retention skipped: transcript replaced after this job published",
-				"job_id", job.ID, "note_id", job.NoteID, "audio_key", audioKey, "published_generation", publishedGeneration)
+			return p.abortNoteWorkErr(ctx, job, priorStatus, publishedGeneration, "SetRetentionState(kept)")
 		} else if err != nil {
 			slog.WarnContext(ctx, "retention: failed to record kept state", "job_id", job.ID, "note_id", job.NoteID, "audio_key", audioKey, "error", err)
 		}
@@ -657,10 +660,7 @@ func (p *Processor) applyAudioRetention(ctx context.Context, job model.Job, audi
 		return nil
 	}
 	if !claimed {
-		p.releaseTranscribeClaim(ctx, job, priorStatus)
-		slog.InfoContext(ctx, "retention skipped: transcript replaced after this job published",
-			"job_id", job.ID, "note_id", job.NoteID, "audio_key", audioKey, "published_generation", publishedGeneration)
-		return nil
+		return p.abortNoteWorkErr(ctx, job, priorStatus, publishedGeneration, "ClaimAudioDiscard")
 	}
 
 	if derr := p.storage.Delete(audioKey); derr != nil {
