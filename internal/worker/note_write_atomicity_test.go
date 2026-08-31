@@ -85,17 +85,25 @@ func assertReplacementIntact(t *testing.T, st *store.Store, noteID string) {
 // generation predicate: a replacement landing between the shared group
 // re-check and this specific write must stop the write from applying, not
 // just the write that follows it.
+//
+// Unlike the other gap tests in this file, this one needs a REAL audio object
+// on disk: SetNoteHashesIfCurrent is only reached when hashNoteAudio actually
+// succeeds (a rawHash of "" — the case with pipelineFixtureWith's registered-
+// but-never-written key — skips the call, and the hook, entirely). It uses
+// newResumeFixture, which writes real bytes via writeStorageObject, the same
+// fixture transcribe_resume_test.go's audio-survives assertions depend on.
 func TestSetNoteHashesGapAbortsOnReplacement(t *testing.T) {
-	proc, st, noteID, _, _ := pipelineFixtureWith(t, "keep", plugintest.NewTranscriber())
-	replaceTranscriptAtGeneration1(t, st, noteID, worker.SetTestHookBeforeSetNoteHashes)
+	f := newResumeFixture(t, "keep", plainResumeSegments)
+	replaceTranscriptAtGeneration1(t, f.st, f.noteID, worker.SetTestHookBeforeSetNoteHashes)
 
-	job := claimAndProcessOne(t, proc, st)
+	jobID := f.enqueue(t, 0)
+	f.runOnce(t, jobID)
 
-	assertJobDoneNotFailed(t, st, job.ID)
-	if raw, normalized := noteHashes(t, st, noteID); raw != "" || normalized != "" {
+	assertJobDoneNotFailed(t, f.st, jobID)
+	if raw, normalized := noteHashes(t, f.st, f.noteID); raw != "" || normalized != "" {
 		t.Fatalf("note hashes = (%q, %q), want both empty — SetNoteHashesIfCurrent ran on a superseded transcript", raw, normalized)
 	}
-	assertReplacementIntact(t, st, noteID)
+	assertReplacementIntact(t, f.st, f.noteID)
 }
 
 // TestSetNotePartialTranscriptClearGapAbortsOnReplacement binds the "clear"
