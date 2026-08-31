@@ -7,6 +7,7 @@ import (
 
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 // EnqueueSummarizeJobs fans out one pending summary + summarize job per template the
@@ -43,6 +44,131 @@ func (s *Store) DeleteNoteSummaries(ctx context.Context, ownerID, noteID string)
 		`DELETE FROM summaries WHERE note_id=$1 AND note_id IN (SELECT id FROM notes WHERE owner_id=$2)`,
 		noteID, ownerID)
 	return err
+}
+
+// testHookAfterDeleteNoteSummariesGenerationCheck runs inside
+// DeleteNoteSummariesIfCurrent's transaction, after the notes-row lock is
+// taken and the generation re-check passes, and before the DELETE. It is nil
+// in production and exists so a test can hold this transaction open — still
+// holding the notes-row lock — while proving a concurrent SaveTranscript
+// blocks on that same lock rather than racing past it.
+var testHookAfterDeleteNoteSummariesGenerationCheck func()
+
+// EnqueueSummarizeJobsIfCurrent is EnqueueSummarizeJobs guarded by the
+// transcript generation. It can't be a single conditional UPDATE — it spans
+// SetNoteStatus + N x (CreatePendingSummary+EnqueueJob), or the
+// zero-templates ready fallback — so it takes its own tx: lock the notes row
+// FIRST, re-verify generation once under that lock, then do the sub-writes,
+// then commit. Locking first is what excludes a concurrent SaveTranscript:
+// SaveTranscript's very first statement takes the same notes-row lock.
+func (s *Store) EnqueueSummarizeJobsIfCurrent(ctx context.Context, ownerID, noteID string, expectedGeneration int) error {
+	templates, err := s.TemplatesForSummary(ctx, ownerID)
+	if err != nil {
+		return err
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `SELECT id FROM notes WHERE id=$1 FOR UPDATE`, noteID); err != nil {
+		return err
+	}
+
+	var generation int
+	err = tx.QueryRow(ctx, `SELECT generation FROM transcripts WHERE note_id=$1`, noteID).Scan(&generation)
+	if errors.Is(err, pgx.ErrNoRows) {
+		generation = 0
+	} else if err != nil {
+		return err
+	}
+	if generation != expectedGeneration {
+		return ErrGenerationMismatch
+	}
+
+	newStatus := model.NoteSummarizing
+	if len(templates) == 0 {
+		newStatus = model.NoteReady
+	}
+	if _, err := tx.Exec(ctx, `UPDATE notes SET status=$1, updated_at=now() WHERE id=$2`, newStatus, noteID); err != nil {
+		return err
+	}
+	for _, tmpl := range templates {
+		sumID := uuid.NewString()
+		empty, merr := json.Marshal([]model.SummarySection{})
+		if merr != nil {
+			return merr
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO summaries (id, note_id, template_id, agent_plugin, model, content)
+			 VALUES ($1,$2,$3,'','', jsonb_build_object('status',$4::text,'sections',$5::jsonb,'truncated',false))`,
+			sumID, noteID, tmpl.ID, model.SummaryPending, string(empty)); err != nil {
+			return err
+		}
+		payload, merr := json.Marshal(map[string]string{"template_id": tmpl.ID, "summary_id": sumID})
+		if merr != nil {
+			return merr
+		}
+		jobID := uuid.NewString()
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO jobs (id, note_id, type, status, payload) VALUES ($1,$2,$3,$4,$5::jsonb)`,
+			jobID, noteID, model.JobSummarize, model.JobPending, string(payload)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}
+
+// DeleteNoteSummariesIfCurrent is DeleteNoteSummaries guarded by the
+// transcript generation. This is the fix for the round-2 review finding: a
+// prior attempt used a single CTE-based statement
+// (`WITH gen_ok AS (...), deleted AS (DELETE ... WHERE ... AND gen_ok) ...`)
+// that checked the generation and deleted without ever taking a lock on the
+// notes row, so it did not compose with the locking discipline every other
+// guarded write in this fix uses and did NOT actually exclude a concurrent
+// SaveTranscript. This version instead uses the same lock-then-check-then-write
+// transaction shape as SetRetentionStateDiscardedIfCurrent /
+// EnqueueSummarizeJobsIfCurrent above: it locks the notes row FIRST
+// (`SELECT id FROM notes WHERE id=$1 FOR UPDATE`), re-checks the generation
+// under that lock, then deletes, then commits. SaveTranscript's own first
+// statement (`UPDATE notes SET transcribing_job_id=NULL WHERE id=$1`) takes
+// the SAME row lock and blocks until this transaction commits or rolls back,
+// which is what actually closes the race — see the invariant documented on
+// SaveTranscript in transcripts.go.
+func (s *Store) DeleteNoteSummariesIfCurrent(ctx context.Context, ownerID, noteID string, expectedGeneration int) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `SELECT id FROM notes WHERE id=$1 FOR UPDATE`, noteID); err != nil {
+		return err
+	}
+
+	var generation int
+	err = tx.QueryRow(ctx, `SELECT generation FROM transcripts WHERE note_id=$1`, noteID).Scan(&generation)
+	if errors.Is(err, pgx.ErrNoRows) {
+		generation = 0
+	} else if err != nil {
+		return err
+	}
+	if generation != expectedGeneration {
+		return ErrGenerationMismatch
+	}
+
+	if testHookAfterDeleteNoteSummariesGenerationCheck != nil {
+		testHookAfterDeleteNoteSummariesGenerationCheck()
+	}
+
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM summaries WHERE note_id=$1 AND note_id IN (SELECT id FROM notes WHERE owner_id=$2)`,
+		noteID, ownerID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 // CreatePendingSummary inserts a summary row in the "pending" state with empty
