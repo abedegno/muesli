@@ -357,4 +357,30 @@ func TestRunTranscribeStorageDeleteFailureLeavesRetentionUntouchedAndRetranscrib
 	if !exists {
 		t.Fatal("audio object no longer exists despite the injected Delete call reporting failure without ever running the real delete")
 	}
+
+	// retention_state alone is not the full retranscribe-eligibility check.
+	// retranscribeConflictReason (internal/api/notes.go) requires BOTH:
+	//   - AudioObjectKey != "" && RetentionState != "discarded", and
+	//   - Status is a terminal one (ready or failed) — mid-pipeline statuses
+	//     (recording/uploaded/transcribing/summarizing) are rejected too.
+	// It is unexported in package api, so it can't be called directly from
+	// this package; replicate its exact two-clause predicate instead of
+	// asserting only the retention_state/audio-key/object-existence clause in
+	// isolation. Drive the note through the rest of the pipeline this same
+	// job already enqueued (the summarize fan-out it ran before reaching
+	// retention) so status reaches its real terminal value, the way it would
+	// in production, rather than asserting against a status this test forced
+	// by hand.
+	drain(t, f.proc, f.st)
+
+	note, err = f.st.GetNoteByID(ctx, f.noteID)
+	if err != nil {
+		t.Fatalf("GetNoteByID after drain: %v", err)
+	}
+	if note.Status != model.NoteReady && note.Status != model.NoteFailed {
+		t.Fatalf("note status = %q once the pipeline finished, want %q or %q — retranscribeConflictReason would still refuse this note", note.Status, model.NoteReady, model.NoteFailed)
+	}
+	if note.AudioObjectKey == "" || note.RetentionState == "discarded" {
+		t.Fatalf("retranscribeConflictReason's audio/retention clause would refuse this note: audio_object_key=%q retention_state=%q", note.AudioObjectKey, note.RetentionState)
+	}
 }
