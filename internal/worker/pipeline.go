@@ -312,10 +312,8 @@ func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, err
 		// note stuck at "transcribing" forever: nothing else about this job runs
 		// again. A job that never claimed has ClaimedPriorStatus == "" and must
 		// release nothing.
-		if pl.ClaimedPriorStatus != "" {
-			p.releaseTranscribeClaim(ctx, job, pl.ClaimedPriorStatus)
-		}
-		slog.InfoContext(ctx, "stale transcribe job discarded before claim: transcript generation has moved on",
+		p.abortTranscribe(ctx, job, pl.ClaimedPriorStatus, true,
+			"stale transcribe job discarded before claim: transcript generation has moved on",
 			"job_id", job.ID, "note_id", job.NoteID, "published", pl.Published,
 			"required_generation", requiredGeneration, "current_generation", currentGeneration)
 		return false, nil
@@ -419,8 +417,8 @@ func (p *Processor) runTranscribe(ctx context.Context, job model.Job) (bool, err
 			// Restore whatever status this job's claim displaced. If the winner has
 			// already saved, its own SaveTranscript cleared transcribing_job_id, so
 			// this release matches nothing and is a harmless no-op.
-			p.releaseTranscribeClaim(ctx, job, priorStatus)
-			slog.InfoContext(ctx, "stale transcribe job discarded after claim: transcript generation moved on while running",
+			p.abortTranscribe(ctx, job, priorStatus, false,
+				"stale transcribe job discarded after claim: transcript generation moved on while running",
 				"job_id", job.ID, "note_id", job.NoteID, "expected_generation", pl.ExpectedGeneration)
 			return false, nil
 		}
@@ -566,18 +564,41 @@ func (p *Processor) transcriptStillCurrent(ctx context.Context, noteID string, p
 	return current == publishedGeneration, nil
 }
 
-// abortNoteWorkErr is the ONE implementation of "generation mismatch during
-// note-level work": release whatever this job's claim displaced, log at Info
-// level (this is an expected outcome of a normal race, not a failure), and
-// report a clean no-op. Every one of the eight generation-guarded note-level
-// writes in runTranscribe/applyAudioRetention funnels through this on a
-// mismatch — including the two "still current" early-exit checks that
-// precede them (runTranscribe's group check and applyAudioRetention's own),
-// which report the identical outcome on staleness. write identifies which
-// guarded write (or check) caught the race, for the log line only.
+// abortTranscribe is the ONE implementation behind every generation-mismatch
+// / staleness early exit anywhere in runTranscribe and applyAudioRetention:
+// release whatever this job's claim displaced, then log at Info level (all
+// of these are expected outcomes of a normal race, not failures). Callers
+// each return their own function's clean no-op shape immediately after.
+//
+// skipReleaseIfNoPriorStatus distinguishes two genuinely different meanings
+// an empty priorStatus can have, and the two must not be collapsed into one:
+//
+//   - false (every site except the pre-claim exit in runTranscribe): a claim
+//     WAS made earlier in this same call, and its prior status was captured
+//     onto priorStatus. An empty priorStatus here would mean that capture
+//     was itself lost — a bug — so this delegates to releaseTranscribeClaim,
+//     which logs exactly that as an ERROR.
+//   - true (the pre-claim exit only): this job may never have claimed the
+//     note at all — an empty priorStatus there is the normal, expected case
+//     for a stale job caught before it ever claims anything, and there is
+//     nothing to release. Passing false at that site would make every
+//     ordinary never-claimed stale job log a spurious "no prior status to
+//     restore" ERROR.
+func (p *Processor) abortTranscribe(ctx context.Context, job model.Job, priorStatus string, skipReleaseIfNoPriorStatus bool, msg string, logArgs ...any) {
+	if !(skipReleaseIfNoPriorStatus && priorStatus == "") {
+		p.releaseTranscribeClaim(ctx, job, priorStatus)
+	}
+	slog.InfoContext(ctx, msg, logArgs...)
+}
+
+// abortNoteWorkErr is abortTranscribe specialised for the eight post-
+// publication generation-guarded note-level writes (and the two "still
+// current" early-exit checks that precede them): a claim always exists by
+// this point in runTranscribe, so priorStatus is never legitimately empty
+// here — see abortTranscribe's doc. write identifies which guarded write (or
+// check) caught the race, for the log line only.
 func (p *Processor) abortNoteWorkErr(ctx context.Context, job model.Job, priorStatus string, publishedGeneration int, write string) error {
-	p.releaseTranscribeClaim(ctx, job, priorStatus)
-	slog.InfoContext(ctx, "transcript replaced while note-level work was in flight: aborting",
+	p.abortTranscribe(ctx, job, priorStatus, false, "transcript replaced while note-level work was in flight: aborting",
 		"job_id", job.ID, "note_id", job.NoteID, "published_generation", publishedGeneration, "write", write)
 	return nil
 }
