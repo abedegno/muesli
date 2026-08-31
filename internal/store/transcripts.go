@@ -46,6 +46,19 @@ func isDeterministicChannelSpeaker(speaker string) bool {
 	return speaker == model.SpeakerYou || speaker == model.SpeakerThem || deterministicChannelSpeakerRe.MatchString(speaker)
 }
 
+// Cross-table generation guard invariant: every writer that changes
+// transcripts.generation (SaveTranscript, CreateStreamTranscript) locks the
+// note's row (via an UPDATE or an explicit SELECT ... FOR UPDATE against
+// notes) BEFORE it reads or writes the transcripts row. Guarded writes
+// elsewhere that condition themselves on a note's transcript generation
+// (internal/store's *IfGeneration helpers, ClaimAudioDiscard,
+// lockNoteAndCheckGeneration, and the internal/worker pipeline call sites
+// that use them) rely on this: locking the same note row before checking the
+// generation is what forces them to serialize against a concurrent
+// replacement instead of racing it, turning a plain "UPDATE ... WHERE
+// EXISTS (... generation=$N)" (or an explicit lock-then-check) into an
+// atomic guard rather than a check-then-write with a gap in the middle.
+//
 // SaveTranscript writes a transcript and its segments in one transaction,
 // replacing any prior transcript for the note (idempotent re-runs). The
 // transcripts(note_id) unique index (migration 0003) guarantees at most one

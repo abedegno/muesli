@@ -860,3 +860,138 @@ func (s *Store) SetNotePartialTranscript(ctx context.Context, noteID string, par
 		partial, noteID)
 	return err
 }
+
+// retentionStateDiscardPending is the interim state ClaimAudioDiscard commits
+// to BEFORE storage.Delete runs. retranscribeConflictReason
+// (internal/api/notes.go) only refuses retranscription on the literal string
+// "discarded", so a note sitting in this interim state — including one stuck
+// here by a storage.Delete failure — stays retranscribable.
+const retentionStateDiscardPending = "discard_pending"
+
+// SetNoteHashesIfGeneration is SetNoteHashes's generation-guarded counterpart.
+// The predicate lives in the UPDATE itself, not a preceding read: a
+// replacement transcript that commits between the caller's last check and
+// this call is still invisible to a separate read, but not to this one,
+// because the write and the check are the same statement. Returns
+// ErrGenerationMismatch (not ErrNotFound) when the guard fails, matching the
+// convention SetReviewState already uses on the transcripts table.
+func (s *Store) SetNoteHashesIfGeneration(ctx context.Context, noteID, audioHash, normalizedAudioHash string, expectedGeneration int) error {
+	ct, err := s.pool.Exec(ctx,
+		`UPDATE notes
+		 SET audio_hash=$2, normalized_audio_hash=NULLIF($3, ''), updated_at=now()
+		 WHERE id=$1
+		   AND EXISTS (SELECT 1 FROM transcripts t WHERE t.note_id = $1 AND t.generation = $4)`,
+		noteID, audioHash, normalizedAudioHash, expectedGeneration)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrGenerationMismatch
+	}
+	return nil
+}
+
+// SetNotePartialTranscriptIfGeneration is SetNotePartialTranscript's
+// generation-guarded counterpart; see SetNoteHashesIfGeneration for why the
+// predicate has to live in this statement rather than a preceding read.
+func (s *Store) SetNotePartialTranscriptIfGeneration(ctx context.Context, noteID string, partial bool, expectedGeneration int) error {
+	ct, err := s.pool.Exec(ctx,
+		`UPDATE notes SET partial_transcript=$2, updated_at=now()
+		 WHERE id=$1
+		   AND EXISTS (SELECT 1 FROM transcripts t WHERE t.note_id = $1 AND t.generation = $3)`,
+		noteID, partial, expectedGeneration)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrGenerationMismatch
+	}
+	return nil
+}
+
+// SetRetentionStateIfGeneration is SetRetentionState's generation-guarded
+// counterpart, used for the "kept" disposition (and any other state without
+// an irreversible side effect). It must NOT be used for discarding audio:
+// that path needs storage.Delete gated behind the DB transition, not run
+// after it — see ClaimAudioDiscard, FinalizeAudioDiscard and
+// RevertAudioDiscardClaim.
+func (s *Store) SetRetentionStateIfGeneration(ctx context.Context, noteID, state string, expectedGeneration int) error {
+	ct, err := s.pool.Exec(ctx,
+		`UPDATE notes SET retention_state=$2, updated_at=now()
+		 WHERE id=$1
+		   AND EXISTS (SELECT 1 FROM transcripts t WHERE t.note_id = $1 AND t.generation = $3)`,
+		noteID, state, expectedGeneration)
+	if err != nil {
+		return err
+	}
+	if ct.RowsAffected() == 0 {
+		return ErrGenerationMismatch
+	}
+	return nil
+}
+
+// ClaimAudioDiscard atomically claims the right to physically delete a note's
+// audio, conditioned on the note's transcript still being at
+// expectedGeneration. It MUST be called, and MUST succeed (claimed==true),
+// BEFORE storage.Delete runs.
+//
+// This is the fix for issue #727 / the regression PR #743 was rejected for:
+// #743 reordered the discard branch to write retention_state="discarded" via
+// a guarded write BEFORE calling storage.Delete, so a Delete failure left
+// retention_state permanently "discarded" with the audio object still
+// present — and retranscribeConflictReason (internal/api/notes.go) treats
+// retention_state=="discarded" as a permanent refusal to retranscribe, so
+// that note could never be retried again. Committing to the interim
+// retentionStateDiscardPending state here, atomically and BEFORE the delete,
+// means a job that has already lost the generation race can never reach
+// storage.Delete at all (claimed==false, nothing physical happens) — and a
+// job that DOES win the claim but then has storage.Delete fail can revert the
+// interim state (RevertAudioDiscardClaim) instead of ever having published
+// "discarded" prematurely.
+//
+// Returns claimed=false (no error) when the guard fails; the caller must not
+// proceed to storage.Delete in that case — the newer job/writer owns
+// retention.
+func (s *Store) ClaimAudioDiscard(ctx context.Context, noteID string, expectedGeneration int) (bool, error) {
+	ct, err := s.pool.Exec(ctx,
+		`UPDATE notes SET retention_state=$2, updated_at=now()
+		 WHERE id=$1
+		   AND EXISTS (SELECT 1 FROM transcripts t WHERE t.note_id = $1 AND t.generation = $3)`,
+		noteID, retentionStateDiscardPending, expectedGeneration)
+	if err != nil {
+		return false, err
+	}
+	return ct.RowsAffected() > 0, nil
+}
+
+// FinalizeAudioDiscard commits retention_state="discarded" once
+// storage.Delete has ACTUALLY succeeded. It only overwrites the exact claim
+// this job itself made (retention_state=discard_pending), so a note can only
+// ever reach "discarded" by way of a ClaimAudioDiscard this same call
+// sequence won followed by a storage.Delete that returned no error —
+// preserving the invariant retranscribeConflictReason relies on: "discarded"
+// implies the audio object is actually gone.
+func (s *Store) FinalizeAudioDiscard(ctx context.Context, noteID string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE notes SET retention_state=$2, updated_at=now()
+		 WHERE id=$1 AND retention_state=$3`,
+		noteID, "discarded", retentionStateDiscardPending)
+	return err
+}
+
+// RevertAudioDiscardClaim undoes ClaimAudioDiscard after storage.Delete
+// fails. It reverts to "kept" rather than "discarded" or leaving the interim
+// discard_pending state in place indefinitely: storage.Delete failing means
+// the audio is confirmed still physically present, so "kept" is the accurate
+// disposition, and moving off discard_pending here (rather than, say, retrying
+// the delete inline) keeps this job's outcome simple — a future retranscribe
+// or a later retention pass is what gets another attempt. Scoped to the exact
+// claim this job made (retention_state=discard_pending) so it cannot clobber
+// a state some other writer has since moved on to.
+func (s *Store) RevertAudioDiscardClaim(ctx context.Context, noteID string) error {
+	_, err := s.pool.Exec(ctx,
+		`UPDATE notes SET retention_state=$2, updated_at=now()
+		 WHERE id=$1 AND retention_state=$3`,
+		noteID, "kept", retentionStateDiscardPending)
+	return err
+}

@@ -168,3 +168,103 @@ func (s *Store) EnqueueTemplateSummarizeJob(ctx context.Context, ownerID, noteID
 	_, err = s.EnqueueJob(ctx, noteID, model.JobSummarize, payload)
 	return err
 }
+
+// DeleteNoteSummariesIfGeneration is DeleteNoteSummaries's generation-guarded
+// counterpart. Unlike SetNoteHashesIfGeneration and friends, a plain
+// "UPDATE/DELETE ... WHERE EXISTS (...)" can't report the mismatch via
+// RowsAffected()==0 here: deleting zero summary rows is a legitimate outcome
+// on its own (a note can reach this call with no prior summaries), so it
+// can't double as the "guard failed" signal. Instead this locks the note row
+// and checks the generation explicitly (lockNoteAndCheckGeneration), then
+// deletes in the SAME transaction so nothing can interleave between the check
+// and the write.
+func (s *Store) DeleteNoteSummariesIfGeneration(ctx context.Context, ownerID, noteID string, expectedGeneration int) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if err := lockNoteAndCheckGeneration(ctx, tx, noteID, expectedGeneration); err != nil {
+		return err
+	}
+
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM summaries WHERE note_id=$1 AND note_id IN (SELECT id FROM notes WHERE owner_id=$2)`,
+		noteID, ownerID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
+// EnqueueSummarizeJobsIfGeneration is EnqueueSummarizeJobs's generation-guarded
+// counterpart. It re-implements the fan-out inline (rather than calling
+// TemplatesForSummary/CreatePendingSummary/EnqueueJob, which each open their
+// own statement against s.pool) so the generation check and every one of the
+// fan-out writes share the SAME transaction and note-row lock — see
+// lockNoteAndCheckGeneration for why that's what makes the guard airtight
+// against a concurrent SaveTranscript/CreateStreamTranscript.
+func (s *Store) EnqueueSummarizeJobsIfGeneration(ctx context.Context, ownerID, noteID string, expectedGeneration int) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if err := lockNoteAndCheckGeneration(ctx, tx, noteID, expectedGeneration); err != nil {
+		return err
+	}
+
+	rows, err := tx.Query(ctx,
+		`SELECT id FROM templates WHERE (owner_id IS NULL OR owner_id=$1) AND auto_run=true`, ownerID)
+	if err != nil {
+		return err
+	}
+	var templateIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return err
+		}
+		templateIDs = append(templateIDs, id)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+
+	newStatus := model.NoteSummarizing
+	if len(templateIDs) == 0 {
+		newStatus = model.NoteReady
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE notes SET status=$1, updated_at=now() WHERE id=$2`, newStatus, noteID); err != nil {
+		return err
+	}
+
+	empty, err := json.Marshal([]model.SummarySection{})
+	if err != nil {
+		return err
+	}
+	for _, templateID := range templateIDs {
+		sumID := uuid.NewString()
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO summaries (id, note_id, template_id, agent_plugin, model, content)
+			 VALUES ($1,$2,$3,'','', jsonb_build_object('status',$4::text,'sections',$5::jsonb,'truncated',false))`,
+			sumID, noteID, templateID, model.SummaryPending, string(empty)); err != nil {
+			return err
+		}
+		payload, err := json.Marshal(map[string]string{"template_id": templateID, "summary_id": sumID})
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO jobs (id, note_id, type, status, payload) VALUES ($1,$2,$3,$4,$5::jsonb)`,
+			uuid.NewString(), noteID, model.JobSummarize, model.JobPending, string(payload)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
+}

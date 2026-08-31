@@ -25,3 +25,23 @@ func SetTestHookBeforeAudioRetention(f func()) func() {
 	testHookBeforeAudioRetention = f
 	return func() { testHookBeforeAudioRetention = prev }
 }
+
+// SetTestHookAfterGroupCheckBeforeNoteWrites installs the hook that runs
+// after runTranscribe's group transcriptStillCurrent re-check has PASSED and
+// before the first individually-guarded note-level write. Returns a restore
+// func.
+func SetTestHookAfterGroupCheckBeforeNoteWrites(f func()) func() {
+	prev := testHookAfterGroupCheckBeforeNoteWrites
+	testHookAfterGroupCheckBeforeNoteWrites = f
+	return func() { testHookAfterGroupCheckBeforeNoteWrites = prev }
+}
+
+// SetTestHookAfterRetentionCheckBeforeClaim installs the hook that runs after
+// applyAudioRetention's own transcriptStillCurrent re-check has PASSED and
+// before it writes retention state (SetRetentionStateIfGeneration /
+// ClaimAudioDiscard). Returns a restore func.
+func SetTestHookAfterRetentionCheckBeforeClaim(f func()) func() {
+	prev := testHookAfterRetentionCheckBeforeClaim
+	testHookAfterRetentionCheckBeforeClaim = f
+	return func() { testHookAfterRetentionCheckBeforeClaim = prev }
+}
