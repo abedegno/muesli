@@ -114,18 +114,18 @@ func TestStreamingSegmentationIsIndependentOfChunkSize(t *testing.T) {
 	}
 }
 
-// TestStreamingDropsAllButOneFinalPerFeedCall pins a pre-existing limitation
-// that reframing makes reachable rather than causes: Feed holds s.mu for the
-// whole call, and the transcription goroutine needs that same lock to clear
-// transcriptionInFlight, so at most one transcription can start per Feed call.
-// A caller that sends a chunk spanning several utterances therefore loses all
-// but the first.
-//
-// Dropping rather than queueing is deliberate here, not accidental: see
-// TestStreamingSessionDropsTriggersDuringTranscription, which asserts that
-// triggers must not queue. Queueing finals would bound memory by the backlog
-// instead, and reversing that decision belongs with the rest of the
-// end-of-stream work in muesli#711, not with reframing.
+// TestStreamingQueuesFinalsAcrossAFeedCall pins the fix for muesli#711's
+// third loss path, which TestStreamingDropsAllButOneFinalPerFeedCall used to
+// pin as intentional: Feed holds s.mu for the whole call, so the
+// transcription goroutine launched by the first final trigger cannot
+// reacquire s.mu to clear transcriptionInFlight until Feed itself returns.
+// Every later trigger reached inside that same Feed call used to see
+// transcriptionInFlight still true and simply drop -- a caller that sends a
+// chunk spanning several utterances lost all but the first. Those triggers
+// now queue (bounded, see maxPendingCommits) instead, and run in order once
+// Feed returns and the in-flight transcription (and each queued one after it)
+// completes, so a chunk spanning several utterances produces the same finals
+// a caller that fed the audio incrementally would have gotten.
 //
 // Production capture sends 200ms chunks while finalizing needs
 // SilenceHysteresis+SilenceDuration (1s by default) of silence, so a single
@@ -133,20 +133,25 @@ func TestStreamingSegmentationIsIndependentOfChunkSize(t *testing.T) {
 // desktop app. It is reachable for any client that buffers more aggressively --
 // which before reframing got one RMS decision per whole chunk, so its
 // segmentation was already unusable.
-func TestStreamingDropsAllButOneFinalPerFeedCall(t *testing.T) {
+func TestStreamingQueuesFinalsAcrossAFeedCall(t *testing.T) {
 	cfg := framingConfig()
 	subframe := int(cfg.VADFrame) * cfg.SampleRate / int(time.Second)
 	signal := framingSignal(subframe)
 
-	perSubframe := collectFinals(t, cfg, signal, []int{subframe})
-	if len(perSubframe) < 2 {
-		t.Fatalf("fixture must span several utterances to show the loss, got %d", len(perSubframe))
+	reference := collectFinals(t, cfg, signal, []int{subframe})
+	if len(reference) < 2 {
+		t.Fatalf("fixture must span several utterances to show queuing, got %d", len(reference))
 	}
 
 	whole := collectFinals(t, cfg, signal, []int{len(signal)})
-	if len(whole) != 1 {
-		t.Fatalf("expected exactly one final from a single chunk spanning %d utterances, got %d: %v",
-			len(perSubframe), len(whole), whole)
+	if len(whole) != len(reference) {
+		t.Fatalf("got %d finals from one chunk spanning %d utterances, want %d: %v vs %v",
+			len(whole), len(reference), len(reference), whole, reference)
+	}
+	for i := range whole {
+		if whole[i] != reference[i] {
+			t.Errorf("final %d: got %v, reference %v", i, whole[i], reference[i])
+		}
 	}
 }
 

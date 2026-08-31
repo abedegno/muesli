@@ -46,10 +46,14 @@ type StreamingTranscriber interface {
 }
 
 // StreamingEngineSession consumes normalized, interleaved PCM and returns any
-// transcript events made available by that frame. Close releases session state.
+// transcript events made available by that frame. Close releases session
+// state and, if an utterance was still active, forces it to a final
+// transcription and returns the resulting event(s) so the caller can deliver
+// them before tearing down the connection -- without that, whatever audio was
+// still in progress when the session ended is silently lost.
 type StreamingEngineSession interface {
 	WriteAudio(ctx context.Context, pcm []float32) ([]StreamingEvent, error)
-	Close(ctx context.Context) error
+	Close(ctx context.Context) ([]StreamingEvent, error)
 }
 
 type streamingHandler struct {
@@ -121,7 +125,21 @@ func (h *streamingHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_ = writeStreamingEvent(conn, StreamingEvent{Type: "error", Message: err.Error()})
 		return
 	}
-	defer session.Close(context.WithoutCancel(ctx))
+	// Closing the session can itself produce a final event for whatever
+	// utterance was still active (see StreamingEngineSession.Close); write it
+	// to the client before the deferred conn.Close() above tears the socket
+	// down, otherwise a client that just sent "stop" or simply disconnected
+	// never learns about the audio it was still speaking.
+	defer func() {
+		events, _ := session.Close(context.WithoutCancel(ctx))
+		for _, event := range events {
+			if err := validateStreamingEvent(event); err != nil {
+				_ = writeStreamingEvent(conn, StreamingEvent{Type: "error", Message: err.Error()})
+				continue
+			}
+			_ = writeStreamingEvent(conn, event)
+		}
+	}()
 	if err := writeStreamingEvent(conn, StreamingEvent{Type: "ready"}); err != nil {
 		return
 	}

@@ -2,6 +2,7 @@ package pluginkit
 
 import (
 	"fmt"
+	"reflect"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -104,35 +105,70 @@ func TestStreamingSessionFinalizesOnceAndResets(t *testing.T) {
 	}
 }
 
-func TestStreamingSessionBoundsContinuousSpeechWindow(t *testing.T) {
+// TestStreamingSessionCommitsOnMaxWindowInsteadOfEvicting pins the fix for
+// muesli#711's second loss path: a continuous talker who never pauses long
+// enough to hit the silence finalize clock used to have the window silently
+// slide once it passed MaxWindow, evicting the oldest audio -- everything
+// before the trailing MaxWindow of a long utterance was lost, and only ever
+// the tail got transcribed. Hitting MaxWindow must instead commit whatever
+// has accumulated as a final segment and keep accumulating a fresh window for
+// the rest of the same (still active) utterance, so a continuous talker's
+// audio is fully covered by a sequence of finals instead of truncated to one.
+func TestStreamingSessionCommitsOnMaxWindowInsteadOfEvicting(t *testing.T) {
 	cfg := testStreamingConfig()
 	cfg.MaxWindow = 30 * time.Millisecond
-	cfg.PartialInterval = 40 * time.Millisecond
-	var maxSeen atomic.Int64
+	cfg.PartialInterval = 40 * time.Millisecond // keep partials out of the way
+	var mu sync.Mutex
+	var finals []StreamingSegment
 	session, err := NewStreamingSession(cfg, nil, func(samples []float32) (string, error) {
-		for {
-			old := maxSeen.Load()
-			if int64(len(samples)) <= old || maxSeen.CompareAndSwap(old, int64(len(samples))) {
-				break
-			}
+		return fmt.Sprintf("samples:%d", len(samples)), nil
+	}, func(segment StreamingSegment, err error) {
+		if err != nil {
+			t.Errorf("emit error: %v", err)
+			return
 		}
-		return "bounded", nil
-	}, func(StreamingSegment, error) {})
+		mu.Lock()
+		finals = append(finals, segment)
+		mu.Unlock()
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	// 120 samples of continuous speech, four times the 30-sample MaxWindow,
+	// fed and drained one 10-sample frame at a time so each max-window commit
+	// completes before the next frame arrives.
 	for range 12 {
 		session.Feed(pcm(10, 0.5))
 		session.Wait()
 	}
-	session.Feed(pcm(20, 0))
 	session.Wait()
-	if got := maxSeen.Load(); got == 0 || got > 30 {
-		t.Fatalf("largest transcription window = %d samples, want 1..30", got)
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []StreamingSegment{
+		{StartMS: 0, EndMS: 40, Text: "samples:40", Final: true},
+		{StartMS: 40, EndMS: 80, Text: "samples:40", Final: true},
+		{StartMS: 80, EndMS: 120, Text: "samples:40", Final: true},
+	}
+	if !reflect.DeepEqual(finals, want) {
+		t.Fatalf("finals = %+v, want %+v (every sample committed, none evicted)", finals, want)
 	}
 }
 
-func TestStreamingSessionDropsTriggersDuringTranscription(t *testing.T) {
+// TestStreamingSessionDropsPartialsButQueuesFinalDuringTranscription covers
+// two invariants that must both hold while a transcription is in flight.
+// First, the one that must never change: a transcription cannot be
+// re-entered concurrently, so calls stays at 1 for as long as the first
+// callback is blocked, no matter how many more triggers arrive. Second, the
+// one muesli#711 fixes: of those triggers, the partial (cadence) ones are
+// still dropped -- they're just a preview refresh, and the same audio is
+// still sitting in the window for the next trigger to pick up -- but the
+// final (commit) trigger is queued rather than dropped, so releasing the
+// first callback lets it run and calls reaches 2. Before this fix every
+// trigger reached while busy was dropped outright, so the final for this
+// utterance would have disappeared even after the callback was released.
+func TestStreamingSessionDropsPartialsButQueuesFinalDuringTranscription(t *testing.T) {
 	cfg := testStreamingConfig()
 	cfg.PartialInterval = 10 * time.Millisecond
 	started := make(chan struct{}, 1)
@@ -157,19 +193,19 @@ func TestStreamingSessionDropsTriggersDuringTranscription(t *testing.T) {
 	for range 5 {
 		session.Feed(pcm(10, 0.5))
 	}
-	session.Feed(pcm(20, 0)) // the final trigger is also dropped, not deferred
+	session.Feed(pcm(20, 0)) // the final trigger; queued, not dropped
 	// Give any incorrectly launched callbacks an opportunity to enter the fake.
 	// Without the in-flight guard, each trigger above increments calls here.
 	for range 100 {
 		runtime.Gosched()
 	}
 	if got := calls.Load(); got != 1 {
-		t.Fatalf("calls while first callback blocked = %d, want 1", got)
+		t.Fatalf("calls while first callback blocked = %d, want 1 (no concurrent re-entry)", got)
 	}
 	close(release)
 	session.Wait()
-	if got := calls.Load(); got != 1 {
-		t.Fatalf("calls after release = %d, want 1 (triggers must not queue)", got)
+	if got := calls.Load(); got != 2 {
+		t.Fatalf("calls after release = %d, want 2 (the queued final must still run)", got)
 	}
 }
 

@@ -89,6 +89,27 @@ type TranscribeFunc func(samples []float32) (string, error)
 // segment and a non-nil error. Calls can occur on the session's transcription goroutine.
 type SegmentHandler func(segment StreamingSegment, err error)
 
+// maxPendingCommits bounds how many final commits can queue up behind an
+// in-flight transcription. A single Feed call (or a continuous talker who
+// never pauses) can cross several utterance boundaries while one
+// transcription is still running; each of those needs to wait its turn
+// rather than silently disappear. The bound is small and deliberate: an
+// unbounded queue would let a session that never stops talking accumulate
+// unbounded transcription backlog (and memory). Once the queue is full, the
+// oldest still-queued commit is dropped to make room for the newest -- losing
+// the earliest backlog under sustained overload is preferable to growing
+// without bound, and no bound smaller than 1 can carry a Feed call spanning
+// even two utterances.
+const maxPendingCommits = 2
+
+// pendingCommit is a final-segment snapshot captured while a transcription
+// was already in flight, queued to run once that transcription completes.
+type pendingCommit struct {
+	samples []float32
+	start   int64
+	end     int64
+}
+
 // StreamingSession turns framed PCM input into partial and final transcript segments.
 // Feed may be called concurrently; each session owns all of its mutable state.
 type StreamingSession struct {
@@ -108,6 +129,7 @@ type StreamingSession struct {
 	lowEnergySamples      int64
 	active                bool
 	transcriptionInFlight bool
+	pendingCommits        []pendingCommit
 	wg                    sync.WaitGroup
 }
 
@@ -246,9 +268,29 @@ func (s *StreamingSession) appendSpeechLocked(frame []float32) {
 	}
 }
 
-// Wait blocks until all transcription callbacks currently running for the session finish.
-// Callers must not call Feed concurrently with Wait.
+// Wait blocks until all transcription callbacks currently running (or queued
+// behind one that is running) for the session finish. It does not itself
+// start a final transcription for a still-open utterance -- callers that need
+// the trailing utterance flushed before treating the session as done must
+// call Finish instead. Callers must not call Feed concurrently with Wait.
 func (s *StreamingSession) Wait() {
+	s.wg.Wait()
+}
+
+// Finish forces whatever utterance is still active to a final transcription
+// and blocks until it -- along with anything already in flight or queued
+// ahead of it -- has been produced and handed to emit. Session shutdown (a
+// client's stop frame, a disconnect, an explicit close) must call Finish
+// rather than Wait: Wait only waits for work that has already started, so on
+// its own it lets a still-open utterance's audio simply vanish. Feed must not
+// be called concurrently with Finish.
+func (s *StreamingSession) Finish() {
+	s.mu.Lock()
+	if s.active && len(s.window) > 0 {
+		s.startTranscriptionLocked(true)
+		s.resetUtteranceLocked()
+	}
+	s.mu.Unlock()
 	s.wg.Wait()
 }
 
@@ -257,22 +299,75 @@ func (s *StreamingSession) boundWindow() {
 	if len(s.window) <= maxSamples {
 		return
 	}
-	dropped := len(s.window) - maxSamples
-	copy(s.window, s.window[dropped:])
-	s.window = s.window[:maxSamples]
-	s.windowStartSample += int64(dropped)
+	// The utterance has run long enough to fill the window without a silence
+	// gap ever finalizing it (a continuous talker). Silently evicting the
+	// oldest audio here used to mean only the trailing MaxWindow of a long
+	// utterance was ever transcribed. Commit what has accumulated as a final
+	// segment instead, then start a fresh window for the rest of the same
+	// (still active) utterance.
+	s.startTranscriptionLocked(true)
+	s.beginNextWindowLocked()
 }
 
+// startTranscriptionLocked either launches a transcription of the current
+// window immediately, or -- if one is already running -- decides what to do
+// with this trigger. Callers must hold s.mu.
 func (s *StreamingSession) startTranscriptionLocked(final bool) {
-	// This is intentionally a drop, not a wait or queue: cadence and final triggers
-	// that occur while the callback is busy disappear here.
-	if s.transcriptionInFlight || len(s.window) == 0 {
+	if len(s.window) == 0 {
 		return
 	}
+	if s.transcriptionInFlight {
+		// A transcription cannot be re-entered concurrently; that invariant
+		// is unconditional. What happens to this trigger while it waits
+		// depends on what it represents. A partial (cadence) trigger is just
+		// a preview refresh: the audio is still sitting in the window and
+		// will be included in the next partial or the eventual final, so
+		// dropping it here loses nothing permanent. A final (commit) trigger
+		// is different -- it is about to hand off a snapshot of the window
+		// and the window is about to be cleared for what comes next, so
+		// dropping it would lose that utterance's audio outright. Queue it
+		// (bounded by maxPendingCommits) instead, to run as soon as the
+		// in-flight transcription -- and anything already ahead of it in the
+		// queue -- finishes.
+		if final {
+			s.queueCommitLocked()
+		}
+		return
+	}
+	s.launchTranscriptionLocked(final, append([]float32(nil), s.window...), s.windowStartSample, s.lastSpeechEndSample)
+}
+
+// queueCommitLocked snapshots the current window as a final commit to run
+// once the in-flight transcription completes. Callers must hold s.mu.
+func (s *StreamingSession) queueCommitLocked() {
+	if len(s.pendingCommits) >= maxPendingCommits {
+		s.pendingCommits = s.pendingCommits[1:]
+	}
+	s.pendingCommits = append(s.pendingCommits, pendingCommit{
+		samples: append([]float32(nil), s.window...),
+		start:   s.windowStartSample,
+		end:     s.lastSpeechEndSample,
+	})
+}
+
+// dequeueCommitLocked pops the oldest queued commit, if any. Callers must
+// hold s.mu.
+func (s *StreamingSession) dequeueCommitLocked() (pendingCommit, bool) {
+	if len(s.pendingCommits) == 0 {
+		return pendingCommit{}, false
+	}
+	next := s.pendingCommits[0]
+	s.pendingCommits = s.pendingCommits[1:]
+	return next, true
+}
+
+// launchTranscriptionLocked starts one transcription goroutine for the given
+// snapshot. On completion it re-acquires s.mu to hand off to the next queued
+// commit (if any) before clearing transcriptionInFlight, so queued commits
+// run one at a time in order without ever overlapping. Callers must hold
+// s.mu.
+func (s *StreamingSession) launchTranscriptionLocked(final bool, samples []float32, start, end int64) {
 	s.transcriptionInFlight = true
-	samples := append([]float32(nil), s.window...)
-	start := s.windowStartSample
-	end := s.lastSpeechEndSample
 	s.wg.Add(1)
 	go func() {
 		defer s.wg.Done()
@@ -287,12 +382,27 @@ func (s *StreamingSession) startTranscriptionLocked(final bool) {
 			}
 		}
 		s.mu.Lock()
-		s.transcriptionInFlight = false
+		if next, ok := s.dequeueCommitLocked(); ok {
+			s.launchTranscriptionLocked(true, next.samples, next.start, next.end)
+		} else {
+			s.transcriptionInFlight = false
+		}
 		s.mu.Unlock()
 		if err != nil || segment.Text != "" {
 			s.emit(segment, err)
 		}
 	}()
+}
+
+// beginNextWindowLocked starts accumulating a fresh transcription window for
+// an utterance that remains active (e.g. after a max-window commit) -- unlike
+// resetUtteranceLocked, which ends the utterance entirely. Callers must hold
+// s.mu.
+func (s *StreamingSession) beginNextWindowLocked() {
+	s.window = nil
+	s.speechSincePartial = 0
+	s.windowStartSample = s.totalSamples
+	s.lastSpeechEndSample = s.totalSamples
 }
 
 func (s *StreamingSession) resetUtteranceLocked() {
