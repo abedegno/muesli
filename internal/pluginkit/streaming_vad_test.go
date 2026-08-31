@@ -183,38 +183,125 @@ func TestStreamingPendingBufferDoesNotRetainLargeChunks(t *testing.T) {
 	}
 }
 
-// TestStreamingLeavesASubframeRemainderUnclassified pins what happens to audio
-// shorter than one VAD frame at the end of a stream: it stays buffered and is
-// never classified, so up to VADFrame-1 samples contribute to no utterance and
-// no timestamp. The fixture in the chunk-independence test is an exact multiple
-// of the subframe, which would hide this.
-//
-// Fixing it needs an explicit end-of-stream flush, tracked in muesli#711
-// alongside the other paths that lose in-progress speech.
-func TestStreamingLeavesASubframeRemainderUnclassified(t *testing.T) {
+// TestStreamingFinishClassifiesSubframeRemainder pins the fix for the
+// sub-frame-remainder gap in muesli#711: audio shorter than one VAD frame at
+// the end of a stream (Feed only classifies whole cfg.VADFrame-sized
+// subframes, so up to VADFrame-1 samples are held in s.pending rather than
+// classified) must not silently vanish once the caller is done feeding audio.
+// Finish now runs that remainder through classification before deciding
+// whether to commit, so it either joins the active utterance's final commit
+// or -- if the whole utterance never lasted a full subframe -- starts and
+// immediately commits its own. Either way s.pending must end up drained and
+// the remainder's samples must end up accounted for. The fixture in the
+// chunk-independence test is an exact multiple of the subframe, which would
+// hide this.
+func TestStreamingFinishClassifiesSubframeRemainder(t *testing.T) {
 	cfg := framingConfig()
 	subframe := int(cfg.VADFrame) * cfg.SampleRate / int(time.Second)
 
 	for _, remainder := range []int{1, subframe / 2, subframe - 1} {
+		var finals [][2]int64
 		session, err := NewStreamingSession(cfg, nil,
 			func([]float32) (string, error) { return "x", nil },
-			func(StreamingSegment, error) {})
+			func(segment StreamingSegment, err error) {
+				if err != nil {
+					t.Errorf("emit error: %v", err)
+					return
+				}
+				if segment.Final {
+					finals = append(finals, [2]int64{segment.StartMS, segment.EndMS})
+				}
+			})
 		if err != nil {
 			t.Fatal(err)
 		}
-		session.Feed(make([]float32, 3*subframe+remainder))
+		// Loud (speech) samples so the remainder itself carries speech that a
+		// commit must not drop.
+		session.Feed(pcm(3*subframe+remainder, 0.5))
 		session.Wait()
 
 		session.mu.Lock()
-		held, classified := len(session.pending), session.totalSamples
+		held := len(session.pending)
+		session.mu.Unlock()
+		if held != remainder {
+			t.Fatalf("remainder %d: %d samples held before Finish, want %d", remainder, held, remainder)
+		}
+
+		session.Finish()
+
+		session.mu.Lock()
+		heldAfter, classified := len(session.pending), session.totalSamples
 		session.mu.Unlock()
 
-		if held != remainder {
-			t.Errorf("remainder %d: %d samples held, want %d", remainder, held, remainder)
+		if heldAfter != 0 {
+			t.Errorf("remainder %d: %d samples still held after Finish, want 0", remainder, heldAfter)
 		}
-		if classified != int64(3*subframe) {
+		if classified != int64(3*subframe+remainder) {
 			t.Errorf("remainder %d: accounted for %d samples, want %d",
-				remainder, classified, 3*subframe)
+				remainder, classified, 3*subframe+remainder)
 		}
+		if len(finals) == 0 {
+			t.Fatalf("remainder %d: Finish produced no final; the remainder's speech was lost", remainder)
+		}
+		last := finals[len(finals)-1]
+		if last[1] != int64(3*subframe+remainder) {
+			t.Errorf("remainder %d: last final ends at %d, want it to cover the remainder up to %d",
+				remainder, last[1], 3*subframe+remainder)
+		}
+	}
+}
+
+// TestStreamingFinishCommitsUtteranceShorterThanOneVADFrame covers the most
+// extreme case of the same gap: a stream that never even reaches one whole
+// VAD subframe has nothing in s.window at all -- everything is sitting in
+// s.pending -- so Finish must still classify it and, if it is speech, commit
+// and emit it as a Final rather than treating "no window" as "nothing to do".
+func TestStreamingFinishCommitsUtteranceShorterThanOneVADFrame(t *testing.T) {
+	cfg := framingConfig()
+	subframe := int(cfg.VADFrame) * cfg.SampleRate / int(time.Second)
+
+	var finals []StreamingSegment
+	session, err := NewStreamingSession(cfg, nil,
+		func([]float32) (string, error) { return "x", nil },
+		func(segment StreamingSegment, err error) {
+			if err != nil {
+				t.Errorf("emit error: %v", err)
+				return
+			}
+			if segment.Final {
+				finals = append(finals, segment)
+			}
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	session.Feed(pcm(subframe-1, 0.5))
+	session.Wait()
+
+	session.mu.Lock()
+	windowEmpty, held := len(session.window) == 0, len(session.pending)
+	session.mu.Unlock()
+	if !windowEmpty {
+		t.Fatalf("window already populated before Finish; fixture no longer isolates the sub-frame-only case")
+	}
+	if held != subframe-1 {
+		t.Fatalf("%d samples held before Finish, want %d", held, subframe-1)
+	}
+
+	session.Finish()
+
+	if len(finals) != 1 {
+		t.Fatalf("got %d finals, want exactly 1: %+v", len(finals), finals)
+	}
+	if finals[0].EndMS != int64(subframe-1) {
+		t.Errorf("final ends at %d, want %d", finals[0].EndMS, subframe-1)
+	}
+
+	session.mu.Lock()
+	heldAfter := len(session.pending)
+	session.mu.Unlock()
+	if heldAfter != 0 {
+		t.Errorf("%d samples still held after Finish, want 0", heldAfter)
 	}
 }

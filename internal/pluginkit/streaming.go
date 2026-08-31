@@ -282,10 +282,24 @@ func (s *StreamingSession) Wait() {
 // ahead of it -- has been produced and handed to emit. Session shutdown (a
 // client's stop frame, a disconnect, an explicit close) must call Finish
 // rather than Wait: Wait only waits for work that has already started, so on
-// its own it lets a still-open utterance's audio simply vanish. Feed must not
-// be called concurrently with Finish.
+// its own it lets a still-open utterance's audio simply vanish. Before
+// deciding whether there is anything to commit, Finish also classifies
+// whatever sub-frame remainder Feed left buffered in s.pending -- Feed only
+// classifies whole cfg.VADFrame-sized subframes, so up to one subframe's
+// worth of trailing audio (or, for a stream shorter than one VAD frame, *all*
+// of it) would otherwise sit in s.pending forever, contributing to no
+// utterance and no timestamp. Running it through classifyLocked, the same
+// path a completed subframe boundary would have taken, folds it into the
+// window (or starts a fresh utterance from it, if none was active) before the
+// final-commit decision below. Feed must not be called concurrently with
+// Finish.
 func (s *StreamingSession) Finish() {
 	s.mu.Lock()
+	if len(s.pending) > 0 {
+		remainder := s.pending
+		s.pending = nil
+		s.classifyLocked(remainder)
+	}
 	if s.active && len(s.window) > 0 {
 		s.startTranscriptionLocked(true)
 		s.resetUtteranceLocked()
