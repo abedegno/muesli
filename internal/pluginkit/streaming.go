@@ -362,10 +362,14 @@ func (s *StreamingSession) dequeueCommitLocked() (pendingCommit, bool) {
 }
 
 // launchTranscriptionLocked starts one transcription goroutine for the given
-// snapshot. On completion it re-acquires s.mu to hand off to the next queued
-// commit (if any) before clearing transcriptionInFlight, so queued commits
-// run one at a time in order without ever overlapping. Callers must hold
-// s.mu.
+// snapshot. On completion it emits this result and only then re-acquires
+// s.mu to hand off to the next queued commit (if any) before clearing
+// transcriptionInFlight, so queued commits both run *and emit* one at a time,
+// strictly in order, without ever overlapping. Launching the next
+// transcription before this one has emitted would let two goroutines race to
+// call emit concurrently -- the next one can finish and emit first, reversing
+// the delivery order of queued commits -- so the handoff must happen after
+// emit, not before. Callers must hold s.mu.
 func (s *StreamingSession) launchTranscriptionLocked(final bool, samples []float32, start, end int64) {
 	s.transcriptionInFlight = true
 	s.wg.Add(1)
@@ -381,6 +385,9 @@ func (s *StreamingSession) launchTranscriptionLocked(final bool, samples []float
 				Final:   final,
 			}
 		}
+		if err != nil || segment.Text != "" {
+			s.emit(segment, err)
+		}
 		s.mu.Lock()
 		if next, ok := s.dequeueCommitLocked(); ok {
 			s.launchTranscriptionLocked(true, next.samples, next.start, next.end)
@@ -388,9 +395,6 @@ func (s *StreamingSession) launchTranscriptionLocked(final bool, samples []float
 			s.transcriptionInFlight = false
 		}
 		s.mu.Unlock()
-		if err != nil || segment.Text != "" {
-			s.emit(segment, err)
-		}
 	}()
 }
 

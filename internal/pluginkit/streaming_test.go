@@ -209,6 +209,102 @@ func TestStreamingSessionDropsPartialsButQueuesFinalDuringTranscription(t *testi
 	}
 }
 
+// TestStreamingEmitsQueuedFinalsInOrderNotConcurrently is a regression test
+// for a race in launchTranscriptionLocked: a completing transcription goroutine
+// used to hand off to the next queued commit -- launching its transcription
+// goroutine -- BEFORE calling emit for the commit that just finished. That let
+// the newly launched goroutine run its own (possibly much faster)
+// transcription and call emit before the first goroutine got a chance to,
+// reversing the delivery order of two queued finals (muesli#711 review
+// finding). The fix moves the handoff to after emit, so the next queued
+// commit's transcription cannot even start until the current one has been
+// handed to emit. This test pins that: while the first result's emit call is
+// deliberately kept blocked, the queued second transcription must not have
+// started yet, and once everything unblocks, emit must have been called in
+// queue order.
+func TestStreamingEmitsQueuedFinalsInOrderNotConcurrently(t *testing.T) {
+	cfg := testStreamingConfig()
+	cfg.PartialInterval = 10 * time.Millisecond
+
+	started := make(chan struct{}, 1)
+	release := make(chan struct{})
+	emitPaused := make(chan struct{})
+	releaseEmit := make(chan struct{})
+
+	var calls atomic.Int64
+	var mu sync.Mutex
+	var emitOrder []string
+
+	session, err := NewStreamingSession(cfg, nil, func([]float32) (string, error) {
+		if calls.Add(1) == 1 {
+			started <- struct{}{}
+			<-release
+			return "first", nil
+		}
+		return "second", nil
+	}, func(segment StreamingSegment, err error) {
+		mu.Lock()
+		emitOrder = append(emitOrder, segment.Text)
+		mu.Unlock()
+		if segment.Text == "first" {
+			close(emitPaused)
+			<-releaseEmit
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Start the first (in-flight) transcription.
+	session.Feed(pcm(10, 0.5))
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("first transcription did not start")
+	}
+
+	// Trigger a final while the first is still in flight; this must be
+	// queued rather than dropped (muesli#711 defect 3).
+	session.Feed(pcm(20, 0)) // silence -> finalize -> queued behind the first
+
+	// Let the first transcription's transcribe() return, so its goroutine
+	// reaches the point where it either hands off to the queued commit or
+	// (correctly) emits first.
+	close(release)
+
+	select {
+	case <-emitPaused:
+	case <-time.After(time.Second):
+		t.Fatal("emit for the first result was not reached")
+	}
+
+	// Give a wrongly-launched second transcription goroutine ample real
+	// time to run to completion (its fake transcribe does no blocking work
+	// at all) before checking. This is only to make catching a regression
+	// reliable; it does not weaken the assertion below for correct code,
+	// where the handoff is gated on emit(first) returning -- a real
+	// synchronization point, not a timing race -- so calls cannot advance
+	// here no matter how long we wait.
+	time.Sleep(5 * time.Millisecond)
+
+	// While emit for the first result is still blocked inside the handler,
+	// the queued second commit's transcription must not have started: the
+	// handoff to it may only happen after the first has been emitted.
+	if got := calls.Load(); got != 1 {
+		t.Fatalf("second transcription started before first was emitted: calls=%d, want 1", got)
+	}
+
+	close(releaseEmit)
+	session.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	want := []string{"first", "second"}
+	if !reflect.DeepEqual(emitOrder, want) {
+		t.Fatalf("emit order = %v, want %v (queued finals must be delivered in order)", emitOrder, want)
+	}
+}
+
 func TestStreamingSessionsDoNotCrossContaminate(t *testing.T) {
 	cfg := testStreamingConfig()
 	cfg.PartialInterval = time.Second
