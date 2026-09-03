@@ -4,7 +4,7 @@
 # Produces the real bundle into internal/adminui/dist, which the Go build embeds
 # via //go:embed dist. (The repo ships placeholder fixtures there; this overwrites
 # them inside the image only.)
-FROM node:22-slim AS admin
+FROM node:26-slim AS admin
 WORKDIR /app/web/admin
 # Install deps first for better layer caching.
 COPY web/admin/package.json web/admin/package-lock.json ./
