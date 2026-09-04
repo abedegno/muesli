@@ -17,7 +17,7 @@ RUN npm run build
 # After build, /app/internal/adminui/dist holds the real bundle.
 
 # ---- Stage 2: build the Go server -------------------------------------------
-FROM golang:1.25 AS build
+FROM golang:1.27 AS build
 WORKDIR /src
 # Module graph first for caching.
 COPY go.mod go.sum ./
