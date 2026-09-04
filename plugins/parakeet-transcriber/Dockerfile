@@ -1,5 +1,5 @@
 # CPU-default image. For GPU, see README (CUDA base + PARAKEET_DEVICE=cuda).
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # NeMo / torch often needs libgomp at runtime. The plugin itself only uses a
 # temp file per request and pure Python HTTP clients.
