@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { muesli } from '@/api'
-import type { Note, SearchMatch, SmartList, Folder } from '../../../shared/types'
+import type { Note, SearchMatch, SmartList, Folder, RuleGroup, RuleNode } from '../../../shared/types'
+import { isRuleGroup } from '../../../shared/types'
 import { tagIndex, type TagCount } from '@/lib/tagIndex'
 import { evaluateList, countList } from '@/lib/smartList'
 import { countFolder, descendantIds } from '@/lib/folders'
 import { suggestRecurring } from '@/lib/recurring'
 import { useSidebarPrefs } from '@/lib/sidebarPrefs'
 import { sortNotesPinnedFirst } from '@/lib/noteOrdering'
-import type { RuleGroup } from '../../../shared/types'
 import { RuleEditor } from '@/components/RuleEditor'
 import { FolderDialog } from '@/components/FolderDialog'
 import { TagRenameDialog } from '@/components/TagRenameDialog'
@@ -32,6 +32,50 @@ function reorderById<T extends { id: string }>(items: T[], movedId: string, afte
   const next = rest.slice()
   next.splice(afterIndex + 1, 0, moved)
   return next
+}
+
+// FOLDER_RESOLVE_BATCH_SIZE mirrors the server's /api/folders/resolve cap so
+// the renderer never assumes an unverified total rule-node limit; larger
+// rule-derived id sets are simply split into more FIFO-queued batches.
+const FOLDER_RESOLVE_BATCH_SIZE = 100
+// FOLDER_RESOLVE_CONCURRENCY bounds in-flight resolver requests per editor
+// opening (see the accepted spec's editor-local FIFO scheduler ruling).
+const FOLDER_RESOLVE_CONCURRENCY = 2
+
+// extractFolderConditionIds recursively collects unique, non-empty string
+// values from every `folder` condition in a rule, in traversal (document)
+// order. Used only to know which ids might need resolving — it never inspects
+// or offers an id belonging to a different condition.
+function extractFolderConditionIds(rule: RuleGroup): string[] {
+  const seen = new Set<string>()
+  const ids: string[] = []
+  const visit = (node: RuleNode) => {
+    if (isRuleGroup(node)) {
+      node.children.forEach(visit)
+      return
+    }
+    if (node.field === 'folder' && typeof node.value === 'string' && node.value !== '' && !seen.has(node.value)) {
+      seen.add(node.value)
+      ids.push(node.value)
+    }
+  }
+  visit(rule)
+  return ids
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = []
+  for (let i = 0; i < items.length; i += size) out.push(items.slice(i, i + size))
+  return out
+}
+
+// mergeFoldersById folds newly-resolved rows into the running resolvedFolders
+// collection, replacing any prior row for the same id (a later resolver
+// response reflects a more current deleted_at than an earlier one).
+function mergeFoldersById(current: Folder[], next: Folder[]): Folder[] {
+  const byID = new Map(current.map((f) => [f.id, f] as const))
+  for (const f of next) byID.set(f.id, f)
+  return Array.from(byID.values())
 }
 
 export function AppLayout() {
@@ -61,6 +105,11 @@ export function AppLayout() {
   // moved on to query B (see the query-change race test in AppLayout.test.tsx).
   const latestSearchKeyRef = useRef('')
   const [folderNotesLoaded, setFolderNotesLoaded] = useState(true)
+  // Live folders as of the most recent render, read (never subscribed to) by
+  // the folder-resolution effect below so a normal `folders` refresh neither
+  // restarts nor discards an in-progress resolution for the open editor.
+  const foldersRef = useRef<Folder[]>(folders)
+  foldersRef.current = folders
   const { width, collapsed, setWidth, toggleCollapsed } = useSidebarPrefs()
   const { notify } = useToast()
   const navigate = useNavigate()
@@ -106,6 +155,43 @@ export function AppLayout() {
     void muesli.listTags().then(setSidebarTags).catch(() => {})
   }, [notify, view])
   useEffect(() => { refresh() }, [refresh, location.pathname])
+
+  // Per-editor-opening folder-reference resolution (issue #11): when an
+  // existing smart list is opened, resolve any folder-condition ids missing
+  // from the live `folders` snapshot so RuleEditor can label a trashed or
+  // purged reference instead of silently blanking it. `editorGenerationRef`
+  // is bumped on every `editing` change (including close, i.e. becoming
+  // null) so a late response from a superseded opening is always discarded.
+  const [resolvedFolders, setResolvedFolders] = useState<Folder[]>([])
+  const editorGenerationRef = useRef(0)
+  useEffect(() => {
+    const generation = ++editorGenerationRef.current
+    setResolvedFolders([])
+    if (!editing?.list) return // new/seeded editors have no stored references to resolve
+    const knownIDs = new Set(foldersRef.current.map((f) => f.id))
+    const missing = extractFolderConditionIds(editing.list.rule).filter((id) => !knownIDs.has(id))
+    if (missing.length === 0) return
+    const queue = chunk(missing, FOLDER_RESOLVE_BATCH_SIZE)
+    let notified = false
+    const worker = async () => {
+      while (queue.length > 0) {
+        if (editorGenerationRef.current !== generation) return
+        const batch = queue.shift()!
+        try {
+          const rows = await muesli.resolveFolders(batch)
+          if (editorGenerationRef.current !== generation) return
+          setResolvedFolders((cur) => mergeFoldersById(cur, rows))
+        } catch {
+          if (editorGenerationRef.current !== generation) return
+          if (!notified) {
+            notified = true
+            notify('Folder names could not be loaded', 'error')
+          }
+        }
+      }
+    }
+    for (let i = 0; i < FOLDER_RESOLVE_CONCURRENCY; i++) void worker()
+  }, [editing, notify])
 
   const { promptEvent, acceptPrompt, dismissPrompt } = useMeetingDetectionLoop({
     navigate,
@@ -355,6 +441,7 @@ export function AppLayout() {
           initial={editing.list ?? (editing.seed ? ({ id: '', created_at: '', name: editing.seed.name, rule: editing.seed.rule } as SmartList) : undefined)}
           knownTags={tags.map((t) => t.name)}
           knownFolders={folders}
+          resolvedFolders={resolvedFolders}
           onSave={async (name, rule) => {
             try {
               if (editing.list) await muesli.updateSmartList(editing.list.id, name, rule)

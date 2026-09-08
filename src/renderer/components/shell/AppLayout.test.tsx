@@ -9,6 +9,9 @@ import { NotesListScreen } from '../NotesListScreen'
 // Mock the preload bridge: AppLayout imports `muesli` from '@/api'.
 // We replace the module so listNotes is fully controllable.
 const listNotes = vi.fn<() => Promise<import('../../../shared/types').Note[]>>()
+const listSmartLists = vi.fn<() => Promise<import('../../../shared/types').SmartList[]>>().mockResolvedValue([])
+const listFolders = vi.fn<() => Promise<import('../../../shared/types').Folder[]>>().mockResolvedValue([])
+const resolveFolders = vi.fn<(ids: string[]) => Promise<import('../../../shared/types').Folder[]>>().mockResolvedValue([])
 const listTags = vi.fn<() => Promise<{ id: string; name: string; count: number }[]>>().mockResolvedValue([])
 const renameTag = vi.fn<(id: string, name: string) => Promise<{ id: string; name: string }>>()
   .mockResolvedValue({ id: 't1', name: 'renamed' })
@@ -37,8 +40,9 @@ function emitAutoRecord(payload: { noteId: string }) {
 vi.mock('@/api', () => ({
   muesli: {
     listNotes: () => listNotes(),
-    listSmartLists: vi.fn().mockResolvedValue([]),
-    listFolders: vi.fn().mockResolvedValue([]),
+    listSmartLists: () => listSmartLists(),
+    listFolders: () => listFolders(),
+    resolveFolders: (ids: string[]) => resolveFolders(ids),
     listTags: () => listTags(),
     renameTag: (id: string, name: string) => renameTag(id, name),
     search: (q: string, opts?: { from?: string; to?: string }) => search(q, opts),
@@ -89,6 +93,12 @@ function renderLayout() {
 afterEach(() => {
   cleanup()
   listNotes.mockReset()
+  listSmartLists.mockReset()
+  listSmartLists.mockResolvedValue([])
+  listFolders.mockReset()
+  listFolders.mockResolvedValue([])
+  resolveFolders.mockReset()
+  resolveFolders.mockResolvedValue([])
   listTags.mockReset()
   listTags.mockResolvedValue([])
   renameTag.mockReset()
@@ -548,5 +558,227 @@ describe('AppLayout — responsive container setup (UX06)', () => {
     // Node.DOCUMENT_POSITION_FOLLOWING means main comes after aside in the DOM,
     // which gives the correct visual order when flex-direction: column is applied.
     expect(aside!.compareDocumentPosition(main!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  })
+})
+
+describe('AppLayout — smart-list folder reference resolution (issue #11)', () => {
+  type Folder = import('../../../shared/types').Folder
+  type SmartList = import('../../../shared/types').SmartList
+  type RuleGroup = import('../../../shared/types').RuleGroup
+
+  function folderCondition(id: string) {
+    return { field: 'folder' as const, operator: 'is' as const, value: id }
+  }
+
+  function deferred<T>() {
+    let resolve!: (v: T) => void
+    let reject!: (e: unknown) => void
+    const promise = new Promise<T>((res, rej) => { resolve = res; reject = rej })
+    return { promise, resolve, reject }
+  }
+
+  function makeFolder(id: string, over: Partial<Folder> = {}): Folder {
+    return { id, name: `Folder ${id}`, parent_id: null, created_at: '2026-01-01T00:00:00Z', deleted_at: null, ...over }
+  }
+
+  async function editListViaContextMenu(name: string) {
+    const label = await screen.findByText(name, { selector: 'span.block.truncate' })
+    const button = label.closest('button')
+    if (!button) throw new Error(`no row button found for ${name}`)
+    fireEvent.contextMenu(button)
+    await userEvent.click(await screen.findByText('Edit rule…'))
+    await waitFor(() => expect(screen.getByLabelText('List name')).toBeTruthy())
+  }
+
+  async function openList(list: SmartList) {
+    listSmartLists.mockResolvedValue([list])
+    listNotes.mockResolvedValue([])
+    renderLayout()
+    await editListViaContextMenu(list.name)
+  }
+
+  it('extracts folder ids recursively, de-dupes, excludes live ids, and requests only what is missing', async () => {
+    const rule: RuleGroup = {
+      op: 'and',
+      children: [
+        folderCondition('live-1'),
+        { op: 'or', children: [folderCondition('missing-1'), folderCondition('missing-1')] },
+        folderCondition('missing-2'),
+      ],
+    }
+    listFolders.mockResolvedValue([makeFolder('live-1')])
+    await openList({ id: 'l1', name: 'Nested rule list', rule, created_at: '' })
+    await waitFor(() => expect(resolveFolders).toHaveBeenCalledTimes(1))
+    expect(resolveFolders).toHaveBeenCalledWith(['missing-1', 'missing-2'])
+  })
+
+  it('does not request resolution for a new (unsaved) smart list', async () => {
+    listFolders.mockResolvedValue([])
+    listSmartLists.mockResolvedValue([])
+    listNotes.mockResolvedValue([])
+    renderLayout()
+    await waitFor(() => expect(screen.getByRole('button', { name: /new smart list/i })).toBeTruthy())
+    await userEvent.click(screen.getByRole('button', { name: /new smart list/i }))
+    await waitFor(() => expect(screen.getByLabelText('List name')).toBeTruthy())
+    expect(resolveFolders).not.toHaveBeenCalled()
+  })
+
+  it('does not request resolution when every referenced folder is already live', async () => {
+    const rule: RuleGroup = { op: 'and', children: [folderCondition('live-1')] }
+    listFolders.mockResolvedValue([makeFolder('live-1')])
+    await openList({ id: 'l1', name: 'All-live list', rule, created_at: '' })
+    // Give any accidental async dispatch a chance to fire before asserting it didn't.
+    await new Promise((r) => setTimeout(r, 0))
+    expect(resolveFolders).not.toHaveBeenCalled()
+  })
+
+  it('batches 301 ids into groups of 100 with at most two in flight, dispatching queued batches FIFO as calls complete', async () => {
+    const ids = Array.from({ length: 301 }, (_, i) => `id-${String(i).padStart(3, '0')}`)
+    const rule: RuleGroup = { op: 'and', children: ids.map(folderCondition) }
+    listFolders.mockResolvedValue([])
+    const pending: ReturnType<typeof deferred<Folder[]>>[] = []
+    resolveFolders.mockImplementation((batch: string[]) => {
+      const d = deferred<Folder[]>()
+      pending.push(d)
+      void batch
+      return d.promise
+    })
+    await openList({ id: 'l1', name: 'Huge list', rule, created_at: '' })
+
+    await waitFor(() => expect(resolveFolders).toHaveBeenCalledTimes(2))
+    expect(resolveFolders.mock.calls[0][0]).toHaveLength(100)
+    expect(resolveFolders.mock.calls[1][0]).toHaveLength(100)
+    expect(resolveFolders.mock.calls[0][0]).toEqual(ids.slice(0, 100))
+    expect(resolveFolders.mock.calls[1][0]).toEqual(ids.slice(100, 200))
+
+    // No third call starts while both are pending.
+    await new Promise((r) => setTimeout(r, 0))
+    expect(resolveFolders).toHaveBeenCalledTimes(2)
+
+    // Completing call 1 starts batch 3 (201-300) before batch 4 (301).
+    await act(async () => { pending[0].resolve([]) })
+    await waitFor(() => expect(resolveFolders).toHaveBeenCalledTimes(3))
+    expect(resolveFolders.mock.calls[2][0]).toEqual(ids.slice(200, 300))
+
+    // Completing another in-flight call starts the final single-id batch.
+    await act(async () => { pending[1].resolve([]) })
+    await waitFor(() => expect(resolveFolders).toHaveBeenCalledTimes(4))
+    expect(resolveFolders.mock.calls[3][0]).toEqual([ids[300]])
+
+    await act(async () => { pending[2].resolve([]); pending[3].resolve([]) })
+  })
+
+  it('renders an in-flight (not-yet-resolved) reference as missing, then swaps in the label once resolved without changing the selected id', async () => {
+    const missingID = 'zzzzzzzz-0000-0000-0000-000000000000'
+    const rule: RuleGroup = { op: 'and', children: [folderCondition(missingID)] }
+    listFolders.mockResolvedValue([])
+    const d = deferred<Folder[]>()
+    resolveFolders.mockImplementation(() => d.promise)
+    await openList({ id: 'l1', name: 'Pending list', rule, created_at: '' })
+
+    const select = screen.getByLabelText('condition value') as HTMLSelectElement
+    expect(select.value).toBe(missingID)
+    expect(within(select).getByRole('option', { name: `Missing folder (${missingID})` })).toBeTruthy()
+
+    await act(async () => { d.resolve([makeFolder(missingID, { name: 'Acme', deleted_at: null })]) })
+    await waitFor(() => expect(within(select).queryByRole('option', { name: 'Acme' })).toBeTruthy())
+    expect(select.value).toBe(missingID)
+  })
+
+  it('labels a resolved soft-deleted folder as trashed and a resolved live-but-stale folder by its plain name', async () => {
+    const trashedID = 'aaaaaaaa-0000-0000-0000-000000000000'
+    const staleLiveID = 'bbbbbbbb-0000-0000-0000-000000000000'
+    const rule: RuleGroup = { op: 'and', children: [folderCondition(trashedID), folderCondition(staleLiveID)] }
+    listFolders.mockResolvedValue([])
+    resolveFolders.mockResolvedValue([
+      makeFolder(trashedID, { name: 'Trashed Client', deleted_at: '2026-02-01T00:00:00Z' }),
+      makeFolder(staleLiveID, { name: 'Fresh Client', deleted_at: null }),
+    ])
+    await openList({ id: 'l1', name: 'Mixed list', rule, created_at: '' })
+
+    const [selectA, selectB] = screen.getAllByLabelText('condition value') as HTMLSelectElement[]
+    await waitFor(() => expect(within(selectA).getByRole('option', { name: 'Trashed Client (trashed)' })).toBeTruthy())
+    expect(within(selectB).getByRole('option', { name: 'Fresh Client' })).toBeTruthy()
+  })
+
+  it('notifies once per opening on resolver failure, keeps missing options and Save usable, and retries fresh on reopen', async () => {
+    const missingID = 'cccccccc-0000-0000-0000-000000000000'
+    const rule: RuleGroup = { op: 'and', children: [folderCondition(missingID)] }
+    listFolders.mockResolvedValue([])
+    resolveFolders.mockRejectedValue(new Error('network down'))
+    await openList({ id: 'l1', name: 'Failing list', rule, created_at: '' })
+
+    await waitFor(() => expect(mockNotify).toHaveBeenCalledWith('Folder names could not be loaded', 'error'))
+    expect(mockNotify.mock.calls.filter((c) => c[0] === 'Folder names could not be loaded')).toHaveLength(1)
+    const select = screen.getByLabelText('condition value') as HTMLSelectElement
+    expect(within(select).getByRole('option', { name: `Missing folder (${missingID})` })).toBeTruthy()
+    expect(screen.getByRole('button', { name: /^save$/i })).not.toBeDisabled()
+
+    // Close and reopen: a fresh opening gets its own once-only notification.
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }))
+    mockNotify.mockClear()
+    resolveFolders.mockClear()
+    await editListViaContextMenu('Failing list')
+    await waitFor(() => expect(resolveFolders).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(mockNotify).toHaveBeenCalledWith('Folder names could not be loaded', 'error'))
+    expect(mockNotify.mock.calls.filter((c) => c[0] === 'Folder names could not be loaded')).toHaveLength(1)
+  })
+
+  it('discards a late resolution after the editor is closed before it completes', async () => {
+    const missingID = 'dddddddd-0000-0000-0000-000000000000'
+    const rule: RuleGroup = { op: 'and', children: [folderCondition(missingID)] }
+    listFolders.mockResolvedValue([])
+    const d = deferred<Folder[]>()
+    resolveFolders.mockImplementation(() => d.promise)
+    await openList({ id: 'l1', name: 'Closed-early list', rule, created_at: '' })
+
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }))
+    await act(async () => { d.reject(new Error('too late')) })
+    await new Promise((r) => setTimeout(r, 0))
+    expect(mockNotify).not.toHaveBeenCalledWith('Folder names could not be loaded', 'error')
+  })
+
+  it('does not let a still-resolving list A leak its fallback into a subsequently opened list B', async () => {
+    const idA = 'eeeeeeee-0000-0000-0000-000000000000'
+    const idB = 'ffffffff-0000-0000-0000-000000000000'
+    const listA: SmartList = { id: 'lA', name: 'List A', rule: { op: 'and', children: [folderCondition(idA)] }, created_at: '' }
+    const listB: SmartList = { id: 'lB', name: 'List B', rule: { op: 'and', children: [folderCondition(idB)] }, created_at: '' }
+    listFolders.mockResolvedValue([])
+    listSmartLists.mockResolvedValue([listA, listB])
+    listNotes.mockResolvedValue([])
+    const dA = deferred<Folder[]>()
+    resolveFolders.mockImplementation((batch: string[]) => (batch[0] === idA ? dA.promise : Promise.resolve([makeFolder(idB, { name: 'B Folder' })])))
+    renderLayout()
+    await editListViaContextMenu('List A')
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }))
+
+    await editListViaContextMenu('List B')
+    const select = screen.getByLabelText('condition value') as HTMLSelectElement
+    await waitFor(() => expect(within(select).getByRole('option', { name: 'B Folder' })).toBeTruthy())
+
+    // A's stale resolution lands after B is open; it must not affect B or notify.
+    await act(async () => { dA.resolve([makeFolder(idA, { name: 'A Folder' })]) })
+    expect(within(select).queryByRole('option', { name: 'A Folder' })).toBeNull()
+    expect(select.value).toBe(idB)
+    expect(mockNotify).not.toHaveBeenCalledWith('Folder names could not be loaded', 'error')
+  })
+
+  it('replacing an open editor with a new/seeded one discards a still-resolving prior opening', async () => {
+    const idA = 'a1111111-9999-0000-0000-000000000000'
+    const listA: SmartList = { id: 'lA', name: 'List A', rule: { op: 'and', children: [folderCondition(idA)] }, created_at: '' }
+    listFolders.mockResolvedValue([])
+    const dA = deferred<Folder[]>()
+    resolveFolders.mockImplementation(() => dA.promise)
+    await openList(listA)
+
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }))
+    await waitFor(() => expect(screen.getByRole('button', { name: /new smart list/i })).toBeTruthy())
+    await userEvent.click(screen.getByRole('button', { name: /new smart list/i }))
+    await waitFor(() => expect(screen.getByLabelText('List name')).toBeTruthy())
+
+    await act(async () => { dA.resolve([makeFolder(idA, { name: 'A Folder' })]) })
+    expect(mockNotify).not.toHaveBeenCalledWith('Folder names could not be loaded', 'error')
+    // The new editor has no folder condition yet, so there is nothing to leak into.
+    expect(screen.queryByLabelText('condition value')).toBeNull()
   })
 })
