@@ -666,7 +666,7 @@ describe('AppLayout — smart-list folder reference resolution (issue #11)', () 
     expect(resolveFolders.mock.calls[3][0]).toEqual([ids[300]])
 
     await act(async () => { pending[2].resolve([]); pending[3].resolve([]) })
-  })
+  }, 20000) // heavy: mounts a 301-condition RuleEditor and re-renders it across 4 batch resolutions; local runs take ~2.5s, so give slower/contended CI machines real headroom over the 5s default.
 
   it('renders an in-flight (not-yet-resolved) reference as missing, then swaps in the label once resolved without changing the selected id', async () => {
     const missingID = 'zzzzzzzz-0000-0000-0000-000000000000'

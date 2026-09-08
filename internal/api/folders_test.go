@@ -472,7 +472,12 @@ func TestFolderNoteCountInAPI(t *testing.T) {
 
 func TestResolveFoldersAPI(t *testing.T) {
 	t.Parallel()
-	srv, _ := newTestServer(t)
+	// newTestServer's /api/setup only ever provisions the FIRST account (see
+	// auth_test.go: a second /api/setup call returns 409, so it would never
+	// have created "rslv-other@example.com"). The second owner is created
+	// directly through the store and authenticated with a real session
+	// token, matching the authHeaderForUser pattern used by action_items_test.go.
+	srv, st := newTestServer(t)
 	_ = doJSON(t, srv, http.MethodPost, "/api/setup",
 		map[string]string{"email": "rslv@example.com", "password": "password123"}, nil)
 	rec := doJSON(t, srv, http.MethodPost, "/api/login",
@@ -483,15 +488,7 @@ func TestResolveFoldersAPI(t *testing.T) {
 	_ = json.Unmarshal(rec.Body.Bytes(), &login)
 	hdr := map[string]string{"Authorization": "Bearer " + login.Token}
 
-	_ = doJSON(t, srv, http.MethodPost, "/api/setup",
-		map[string]string{"email": "rslv-other@example.com", "password": "password123"}, nil)
-	otherLogin := doJSON(t, srv, http.MethodPost, "/api/login",
-		map[string]string{"email": "rslv-other@example.com", "password": "password123"}, nil)
-	var otherTok struct {
-		Token string `json:"token"`
-	}
-	_ = json.Unmarshal(otherLogin.Body.Bytes(), &otherTok)
-	otherHdr := map[string]string{"Authorization": "Bearer " + otherTok.Token}
+	otherHdr, _ := authHeaderForUser(t, st, "rslv-other@example.com")
 
 	mkFolder := func(h map[string]string, name string, parentID *string) string {
 		body := map[string]any{"name": name}
