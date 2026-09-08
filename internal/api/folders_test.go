@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestFoldersCRUDAPI(t *testing.T) {
@@ -465,5 +467,187 @@ func TestFolderNoteCountInAPI(t *testing.T) {
 	}
 	if got := counts[child2.ID]; got != 0 {
 		t.Errorf("child2 note_count via API: want 0, got %d", got)
+	}
+}
+
+func TestResolveFoldersAPI(t *testing.T) {
+	t.Parallel()
+	srv, _ := newTestServer(t)
+	_ = doJSON(t, srv, http.MethodPost, "/api/setup",
+		map[string]string{"email": "rslv@example.com", "password": "password123"}, nil)
+	rec := doJSON(t, srv, http.MethodPost, "/api/login",
+		map[string]string{"email": "rslv@example.com", "password": "password123"}, nil)
+	var login struct {
+		Token string `json:"token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &login)
+	hdr := map[string]string{"Authorization": "Bearer " + login.Token}
+
+	_ = doJSON(t, srv, http.MethodPost, "/api/setup",
+		map[string]string{"email": "rslv-other@example.com", "password": "password123"}, nil)
+	otherLogin := doJSON(t, srv, http.MethodPost, "/api/login",
+		map[string]string{"email": "rslv-other@example.com", "password": "password123"}, nil)
+	var otherTok struct {
+		Token string `json:"token"`
+	}
+	_ = json.Unmarshal(otherLogin.Body.Bytes(), &otherTok)
+	otherHdr := map[string]string{"Authorization": "Bearer " + otherTok.Token}
+
+	mkFolder := func(h map[string]string, name string, parentID *string) string {
+		body := map[string]any{"name": name}
+		if parentID != nil {
+			body["parent_id"] = *parentID
+		}
+		r := doJSON(t, srv, http.MethodPost, "/api/folders", body, h)
+		if r.Code != http.StatusCreated {
+			t.Fatalf("create %s=%d body=%s", name, r.Code, r.Body.String())
+		}
+		var f struct {
+			ID string `json:"id"`
+		}
+		_ = json.Unmarshal(r.Body.Bytes(), &f)
+		return f.ID
+	}
+
+	live := mkFolder(hdr, "Live", nil)
+	root := mkFolder(hdr, "Root", nil)
+	child := mkFolder(hdr, "Child", &root)
+	theirs := mkFolder(otherHdr, "Theirs", nil)
+
+	if d := doJSON(t, srv, http.MethodDelete, "/api/folders/"+root, nil, hdr); d.Code != http.StatusOK {
+		t.Fatalf("trash root=%d body=%s", d.Code, d.Body.String())
+	}
+
+	unknown := "00000000-0000-0000-0000-000000000000"
+	res := doJSON(t, srv, http.MethodPost, "/api/folders/resolve",
+		map[string]any{"ids": []string{live, live, root, child, theirs, unknown}}, hdr)
+	if res.Code != http.StatusOK {
+		t.Fatalf("resolve=%d body=%s", res.Code, res.Body.String())
+	}
+	var got []struct {
+		ID        string  `json:"id"`
+		Name      string  `json:"name"`
+		ParentID  *string `json:"parent_id"`
+		CreatedAt string  `json:"created_at"`
+		DeletedAt *string `json:"deleted_at"`
+	}
+	if err := json.Unmarshal(res.Body.Bytes(), &got); err != nil {
+		t.Fatalf("unmarshal: %v body=%s", err, res.Body.String())
+	}
+	if len(got) != 3 {
+		t.Fatalf("want 3 rows (dedup + omit unknown/other-owner), got %d: %+v", len(got), got)
+	}
+	byID := map[string]struct {
+		ID        string  `json:"id"`
+		Name      string  `json:"name"`
+		ParentID  *string `json:"parent_id"`
+		CreatedAt string  `json:"created_at"`
+		DeletedAt *string `json:"deleted_at"`
+	}{}
+	for _, f := range got {
+		byID[f.ID] = f
+	}
+	if _, ok := byID[theirs]; ok {
+		t.Errorf("other-owner folder present in response: %+v", got)
+	}
+	if _, ok := byID[unknown]; ok {
+		t.Errorf("unknown folder present in response: %+v", got)
+	}
+	l, ok := byID[live]
+	if !ok || l.DeletedAt != nil || l.Name != "Live" || l.CreatedAt == "" {
+		t.Errorf("live folder row wrong: %+v (ok=%v)", l, ok)
+	}
+	r, ok := byID[root]
+	if !ok || r.DeletedAt == nil {
+		t.Errorf("trashed root row wrong: %+v (ok=%v)", r, ok)
+	}
+	c, ok := byID[child]
+	if !ok || c.DeletedAt == nil || c.ParentID == nil || *c.ParentID != root {
+		t.Errorf("auto-trashed descendant row wrong: %+v (ok=%v)", c, ok)
+	}
+
+	// Unauthenticated.
+	unauth := doJSON(t, srv, http.MethodPost, "/api/folders/resolve", map[string]any{"ids": []string{live}}, nil)
+	if unauth.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated: want 401 got %d", unauth.Code)
+	}
+
+	// Malformed JSON bytes.
+	malformed := doRaw(t, srv, http.MethodPost, "/api/folders/resolve", "{not json", hdr)
+	if malformed.Code != http.StatusBadRequest {
+		t.Fatalf("malformed json: want 400 got %d", malformed.Code)
+	}
+
+	// Missing ids field.
+	missing := doJSON(t, srv, http.MethodPost, "/api/folders/resolve", map[string]any{}, hdr)
+	if missing.Code != http.StatusBadRequest {
+		t.Fatalf("missing ids: want 400 got %d body=%s", missing.Code, missing.Body.String())
+	}
+
+	// Null ids.
+	nullIDs := doRaw(t, srv, http.MethodPost, "/api/folders/resolve", `{"ids":null}`, hdr)
+	if nullIDs.Code != http.StatusBadRequest {
+		t.Fatalf("null ids: want 400 got %d body=%s", nullIDs.Code, nullIDs.Body.String())
+	}
+
+	// Non-array ids.
+	nonArray := doRaw(t, srv, http.MethodPost, "/api/folders/resolve", `{"ids":"nope"}`, hdr)
+	if nonArray.Code != http.StatusBadRequest {
+		t.Fatalf("non-array ids: want 400 got %d body=%s", nonArray.Code, nonArray.Body.String())
+	}
+
+	// Non-string item.
+	nonString := doJSON(t, srv, http.MethodPost, "/api/folders/resolve", map[string]any{"ids": []any{live, 5}}, hdr)
+	if nonString.Code != http.StatusBadRequest {
+		t.Fatalf("non-string item: want 400 got %d body=%s", nonString.Code, nonString.Body.String())
+	}
+
+	// Empty string item.
+	emptyString := doJSON(t, srv, http.MethodPost, "/api/folders/resolve", map[string]any{"ids": []string{""}}, hdr)
+	if emptyString.Code != http.StatusBadRequest {
+		t.Fatalf("empty string item: want 400 got %d body=%s", emptyString.Code, emptyString.Body.String())
+	}
+
+	// Invalid UUID.
+	invalidUUID := doJSON(t, srv, http.MethodPost, "/api/folders/resolve", map[string]any{"ids": []string{"not-a-uuid"}}, hdr)
+	if invalidUUID.Code != http.StatusBadRequest {
+		t.Fatalf("invalid uuid: want 400 got %d body=%s", invalidUUID.Code, invalidUUID.Body.String())
+	}
+
+	// Empty array is valid -> [].
+	emptyArr := doJSON(t, srv, http.MethodPost, "/api/folders/resolve", map[string]any{"ids": []string{}}, hdr)
+	if emptyArr.Code != http.StatusOK {
+		t.Fatalf("empty array: want 200 got %d body=%s", emptyArr.Code, emptyArr.Body.String())
+	}
+	var emptyGot []any
+	if err := json.Unmarshal(emptyArr.Body.Bytes(), &emptyGot); err != nil {
+		t.Fatalf("empty array unmarshal: %v body=%s", err, emptyArr.Body.String())
+	}
+	if len(emptyGot) != 0 {
+		t.Fatalf("empty array result: want [], got %v", emptyGot)
+	}
+
+	// 100 unique ids succeeds.
+	hundred := make([]string, 100)
+	for i := range hundred {
+		hundred[i] = uuid.NewString()
+	}
+	ok100 := doJSON(t, srv, http.MethodPost, "/api/folders/resolve", map[string]any{"ids": hundred}, hdr)
+	if ok100.Code != http.StatusOK {
+		t.Fatalf("100 unique ids: want 200 got %d body=%s", ok100.Code, ok100.Body.String())
+	}
+
+	// 101 unique ids rejected.
+	hundredOne := append(append([]string{}, hundred...), uuid.NewString())
+	rej101 := doJSON(t, srv, http.MethodPost, "/api/folders/resolve", map[string]any{"ids": hundredOne}, hdr)
+	if rej101.Code != http.StatusBadRequest {
+		t.Fatalf("101 unique ids: want 400 got %d body=%s", rej101.Code, rej101.Body.String())
+	}
+
+	// 101 entries deduplicating to 100 unique succeeds.
+	dedupTo100 := append(append([]string{}, hundred...), hundred[0])
+	ok101dedup := doJSON(t, srv, http.MethodPost, "/api/folders/resolve", map[string]any{"ids": dedupTo100}, hdr)
+	if ok101dedup.Code != http.StatusOK {
+		t.Fatalf("101 entries deduped to 100: want 200 got %d body=%s", ok101dedup.Code, ok101dedup.Body.String())
 	}
 }

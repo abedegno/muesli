@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/store"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -927,4 +929,87 @@ func TestReorderFolder_EdgeCases(t *testing.T) {
 			t.Errorf("trashed folder reorder: want ErrNotFound, got %v", err)
 		}
 	})
+}
+
+// TestResolveFolders exercises the owner-scoped exact-id folder resolver: a
+// live folder, a soft-deleted root and its auto-trashed descendant (trashed
+// via DeleteFolder, so the child inherits deleted_at without its own delete
+// call), another owner's folder, and a fresh unknown id.
+func TestResolveFolders(t *testing.T) {
+	t.Parallel()
+	st, ownerID, _ := newStoreWithOwner(t)
+	other := addUser(t, st)
+	ctx := context.Background()
+
+	live, err := st.CreateFolder(ctx, ownerID, "Live", nil)
+	if err != nil {
+		t.Fatalf("create live: %v", err)
+	}
+	root, err := st.CreateFolder(ctx, ownerID, "Root", nil)
+	if err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+	child, err := st.CreateFolder(ctx, ownerID, "Child", &root.ID)
+	if err != nil {
+		t.Fatalf("create child: %v", err)
+	}
+	if err := st.DeleteFolder(ctx, ownerID, root.ID); err != nil {
+		t.Fatalf("trash root: %v", err)
+	}
+	theirs, err := st.CreateFolder(ctx, other, "Theirs", nil)
+	if err != nil {
+		t.Fatalf("create other's folder: %v", err)
+	}
+
+	ids := []string{live.ID, live.ID, root.ID, child.ID, theirs.ID, uuid.NewString()}
+	got, err := st.ResolveFolders(ctx, ownerID, ids)
+	if err != nil {
+		t.Fatalf("resolve: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("want 3 distinct owned rows, got %d: %+v", len(got), got)
+	}
+	byID := map[string]model.Folder{}
+	for _, f := range got {
+		byID[f.ID] = f
+	}
+	if _, ok := byID[theirs.ID]; ok {
+		t.Errorf("other-owner folder leaked into result: %+v", byID)
+	}
+
+	l, ok := byID[live.ID]
+	if !ok {
+		t.Fatalf("live folder missing from result: %+v", byID)
+	}
+	if l.DeletedAt != nil {
+		t.Errorf("live folder DeletedAt = %v, want nil", l.DeletedAt)
+	}
+	if l.Name != "Live" || l.CreatedAt.IsZero() {
+		t.Errorf("live folder fields wrong: %+v", l)
+	}
+
+	r, ok := byID[root.ID]
+	if !ok {
+		t.Fatalf("trashed root missing from result: %+v", byID)
+	}
+	if r.DeletedAt == nil {
+		t.Errorf("trashed root DeletedAt = nil, want non-nil")
+	}
+	if r.ParentID != nil {
+		t.Errorf("root ParentID = %v, want nil", r.ParentID)
+	}
+
+	c, ok := byID[child.ID]
+	if !ok {
+		t.Fatalf("auto-trashed descendant missing from result: %+v", byID)
+	}
+	if c.DeletedAt == nil {
+		t.Errorf("auto-trashed descendant DeletedAt = nil, want non-nil")
+	}
+	if c.ParentID == nil || *c.ParentID != root.ID {
+		t.Errorf("child ParentID = %v, want %s", c.ParentID, root.ID)
+	}
+	if c.Name != "Child" || c.CreatedAt.IsZero() {
+		t.Errorf("child fields wrong: %+v", c)
+	}
 }
