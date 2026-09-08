@@ -703,6 +703,27 @@ describe('MuesliClient', () => {
     expect(withParent).toMatchObject({ url: 'http://x/api/folders', method: 'POST', body: { name: 'X', parent_id: 'p1' } })
   })
 
+  it('resolveFolders posts all ids and returns the actual live/trashed endpoint shapes', async () => {
+    const calls: Array<{ url: string; method?: string; body?: unknown }> = []
+    const fetchMock: FetchLike = async (url, init) => {
+      calls.push({ url: String(url), method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      return new Response(
+        JSON.stringify([
+          { id: 'f1', name: 'Live', parent_id: null, created_at: '2026-07-10T00:00:00Z', deleted_at: null },
+          { id: 'f2', name: 'Trashed', parent_id: null, created_at: '2026-07-09T00:00:00Z', deleted_at: '2026-07-11T00:00:00Z' },
+        ]),
+        { status: 200 },
+      )
+    }
+    const c = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
+    const rows = await c.resolveFolders(['f1', 'f2'])
+    expect(calls[0]).toMatchObject({ url: 'http://x/api/folders/resolve', method: 'POST', body: { ids: ['f1', 'f2'] } })
+    expect(rows).toEqual([
+      { id: 'f1', name: 'Live', parent_id: null, created_at: '2026-07-10T00:00:00Z', deleted_at: null },
+      { id: 'f2', name: 'Trashed', parent_id: null, created_at: '2026-07-09T00:00:00Z', deleted_at: '2026-07-11T00:00:00Z' },
+    ])
+  })
+
   it('reorderFolder PUTs /api/folders/{id}/reorder with after_id (sibling and null)', async () => {
     const calls: Array<{ url: string; method?: string; body?: unknown }> = []
     const fetchMock: FetchLike = async (url, init) => {

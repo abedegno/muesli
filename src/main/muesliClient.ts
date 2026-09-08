@@ -371,6 +371,9 @@ export class MuesliClient {
   async listTrashedFolders(): Promise<Folder[]> {
     return this.json<Folder[]>('GET', '/api/folders/trash')
   }
+  async resolveFolders(ids: string[]): Promise<Folder[]> {
+    return this.json<Folder[]>('POST', '/api/folders/resolve', { ids })
+  }
   async restoreFolder(id: string): Promise<void> {
     await this.json('POST', `/api/folders/${id}/restore`)
   }

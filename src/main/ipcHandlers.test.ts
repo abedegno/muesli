@@ -844,6 +844,30 @@ describe('ipc handlers', () => {
     expect(seen.some((s) => s.startsWith('DELETE') && s.endsWith('/api/notes/n1/folders/f1'))).toBe(true)
   })
 
+  it('resolveFolders reaches the endpoint and returns rows, not just a URL', async () => {
+    const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
+      const path = new URL(String(url)).pathname
+      if (path === '/api/folders/resolve' && (init?.method ?? 'GET').toUpperCase() === 'POST') {
+        const body = JSON.parse(String(init?.body)) as { ids: string[] }
+        return new Response(
+          JSON.stringify(
+            body.ids.map((id) => ({ id, name: `Folder ${id}`, parent_id: null, created_at: '', deleted_at: id === 'trashed' ? '2026-07-11T00:00:00Z' : null })),
+          ),
+          { status: 200 },
+        )
+      }
+      return new Response('unexpected', { status: 500 })
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    const rows = await handlers.resolveFolders(['live', 'trashed'])
+    expect(rows).toEqual([
+      { id: 'live', name: 'Folder live', parent_id: null, created_at: '', deleted_at: null },
+      { id: 'trashed', name: 'Folder trashed', parent_id: null, created_at: '', deleted_at: '2026-07-11T00:00:00Z' },
+    ])
+  })
+
   it('reorderNoteInFolder calls the client endpoint', async () => {
     const seen: string[] = []
     const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {

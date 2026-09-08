@@ -99,6 +99,7 @@ interface Handlers {
   reorderFolder(id: string, afterId: string | null): Promise<void>
   reorderNoteInFolder(folderId: string, noteId: string, afterId: string | null): Promise<void>
   listTrashedFolders(): Promise<Folder[]>
+  resolveFolders(ids: string[]): Promise<Folder[]>
   restoreFolder(id: string): Promise<void>
   permanentDeleteFolder(id: string): Promise<void>
   addNoteFolder(noteId: string, folderId: string): Promise<void>
@@ -627,6 +628,9 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     },
     async listTrashedFolders() {
       return authedClient().listTrashedFolders()
+    },
+    async resolveFolders(ids) {
+      return authedClient().resolveFolders(ids)
     },
     async restoreFolder(id) {
       await authedClient().restoreFolder(id)

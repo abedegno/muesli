@@ -402,6 +402,7 @@ app.whenReady().then(async () => {
     ipcMain.handle(IPC.reorderFolder, (_e, id: string, afterId: string | null) => handlers.reorderFolder(id, afterId))
     ipcMain.handle(IPC.reorderNoteInFolder, (_e, folderId: string, noteId: string, afterId: string | null) => handlers.reorderNoteInFolder(folderId, noteId, afterId))
     ipcMain.handle(IPC.listTrashedFolders, () => handlers.listTrashedFolders())
+    ipcMain.handle(IPC.resolveFolders, (_e, ids: string[]) => handlers.resolveFolders(ids))
     ipcMain.handle(IPC.restoreFolder, (_e, id: string) => handlers.restoreFolder(id))
     ipcMain.handle(IPC.permanentDeleteFolder, (_e, id: string) => handlers.permanentDeleteFolder(id))
     ipcMain.handle(IPC.addNoteFolder, (_e, noteId: string, folderId: string) => handlers.addNoteFolder(noteId, folderId))

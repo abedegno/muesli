@@ -89,6 +89,7 @@ export const IPC = {
   reorderFolder: 'muesli:reorderFolder',
   reorderNoteInFolder: 'muesli:reorderNoteInFolder',
   listTrashedFolders: 'muesli:listTrashedFolders',
+  resolveFolders: 'muesli:resolveFolders',
   restoreFolder: 'muesli:restoreFolder',
   permanentDeleteFolder: 'muesli:permanentDeleteFolder',
   addNoteFolder: 'muesli:addNoteFolder',
@@ -410,6 +411,7 @@ export interface MuesliBridge {
   reorderFolder(id: string, afterId: string | null): Promise<void>
   reorderNoteInFolder(folderId: string, noteId: string, afterId: string | null): Promise<void>
   listTrashedFolders(): Promise<Folder[]>
+  resolveFolders(ids: string[]): Promise<Folder[]>
   restoreFolder(id: string): Promise<void>
   permanentDeleteFolder(id: string): Promise<void>
   addNoteFolder(noteId: string, folderId: string): Promise<void>
