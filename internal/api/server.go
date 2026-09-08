@@ -204,6 +204,11 @@ func (s *Server) routes() {
 		r.Post("/api/folders/{id}/restore", s.handleRestoreFolder)
 		r.Delete("/api/folders/{id}/permanent", s.handlePurgeFolder)
 
+		// Issue #12: explicit, owner-granted read-only folder membership.
+		r.Post("/api/folders/{id}/members", s.handleUpsertFolderMember)
+		r.Get("/api/folders/{id}/members", s.handleListFolderMembers)
+		r.Delete("/api/folders/{id}/members/{user_id}", s.handleDeleteFolderMember)
+
 		r.Get("/api/people", s.handleListPeople)
 		r.Get("/api/people/{id}", s.handleGetPerson)
 		r.Patch("/api/people/{id}", s.handleUpdatePerson)
