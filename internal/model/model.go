@@ -96,6 +96,10 @@ type SharedFolder struct {
 	OwnerEmail string `json:"owner_email"`
 	NoteCount  int    `json:"note_count"`
 	CountScope string `json:"count_scope"`
+	// GrantedAt is the folder_members.created_at of the grant this row was
+	// discovered through -- the keyset pagination cursor field. Not part of
+	// the public response shape.
+	GrantedAt time.Time `json:"-"`
 }
 
 type Note struct {

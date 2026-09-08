@@ -635,3 +635,72 @@ func (s *Store) foldersForNotes(ctx context.Context, noteIDs []string) (map[stri
 	}
 	return out, rows.Err()
 }
+
+// GetReadableFolder returns one live folder the requester may see: either
+// they own it, or they hold an explicit folder_members grant on that exact
+// folder. This is the sole authorization checkpoint for every viewer path
+// that touches a folder (shared discovery, exact-folder note listing) --
+// note the predicate is `deleted_at IS NULL` inside THIS query, not applied
+// afterward, so a stale membership on a trashed folder cannot authorize
+// anything.
+func (s *Store) GetReadableFolder(ctx context.Context, requesterID, folderID string) (model.Folder, error) {
+	var f model.Folder
+	err := s.pool.QueryRow(ctx,
+		`SELECT f.id, f.name, f.parent_id, f.created_at
+		 FROM folders f
+		 WHERE f.id=$1 AND f.deleted_at IS NULL
+		   AND (f.owner_id=$2 OR EXISTS(
+		     SELECT 1 FROM folder_members fm WHERE fm.folder_id=f.id AND fm.user_id=$2))`,
+		folderID, requesterID).Scan(&f.ID, &f.Name, &f.ParentID, &f.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.Folder{}, ErrNotFound
+	}
+	return f, err
+}
+
+// ListSharedFolders returns up to limit live folders the requester can see
+// SOLELY through an explicit folder_members grant (never through
+// ownership), ordered by (folder_members.created_at, folder_id). Each row's
+// NoteCount is the number of distinct live notes directly assigned to that
+// exact folder -- it never traverses descendants, unlike the owner tree's
+// recursive counts in ListFolders. Callers pass limit+1 to detect a next
+// page.
+func (s *Store) ListSharedFolders(ctx context.Context, requesterID string, limit int, afterCreatedAt time.Time, afterFolderID string) ([]model.SharedFolder, error) {
+	args := []any{requesterID}
+	where := "fm.user_id=$1 AND f.owner_id <> $1"
+	if afterFolderID != "" {
+		args = append(args, afterCreatedAt, afterFolderID)
+		where += fmt.Sprintf(" AND (fm.created_at, f.id) > ($%d,$%d)", len(args)-1, len(args))
+	}
+	args = append(args, limit)
+
+	query := fmt.Sprintf(`
+		SELECT f.id, f.name, f.owner_id, u.email, fm.created_at,
+		       COUNT(DISTINCT n.id) AS note_count
+		FROM folder_members fm
+		JOIN folders f ON f.id = fm.folder_id AND f.deleted_at IS NULL
+		JOIN users u ON u.id = f.owner_id
+		LEFT JOIN note_folders nf ON nf.folder_id = f.id
+		LEFT JOIN notes n ON n.id = nf.note_id AND n.deleted_at IS NULL
+		WHERE %s
+		GROUP BY f.id, f.name, f.owner_id, u.email, fm.created_at
+		ORDER BY fm.created_at, f.id
+		LIMIT $%d`, where, len(args))
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []model.SharedFolder{}
+	for rows.Next() {
+		var sf model.SharedFolder
+		if err := rows.Scan(&sf.ID, &sf.Name, &sf.OwnerID, &sf.OwnerEmail, &sf.GrantedAt, &sf.NoteCount); err != nil {
+			return nil, err
+		}
+		sf.CountScope = "direct"
+		out = append(out, sf)
+	}
+	return out, rows.Err()
+}

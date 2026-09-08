@@ -196,6 +196,8 @@ func (s *Server) routes() {
 
 		r.Get("/api/folders", s.handleListFolders)
 		r.Get("/api/folders/trash", s.handleListTrashedFolders)
+		// Registered before the parameterized /api/folders/{id} routes below.
+		r.Get("/api/folders/shared", s.handleListSharedFolders)
 		r.Post("/api/folders", s.handleCreateFolder)
 		r.Put("/api/folders/{id}", s.handleUpdateFolder)
 		r.Put("/api/folders/{id}/reorder", s.handleReorderFolder)
