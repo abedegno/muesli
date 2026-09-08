@@ -339,9 +339,12 @@ export function Sidebar({
               <ul className="flex flex-col">{renderFolders(null, 0)}</ul>
             </>
           ) : (
-            <button onClick={onNewFolder} className={cn(section, 'flex w-full items-center gap-1 hover:text-primary')}>
-              <Plus size={12} /> New folder
-            </button>
+            <div className={section}>
+              <button onClick={onNewFolder} className="flex w-full items-center gap-1 hover:text-primary">
+                <Plus size={12} /> New folder
+              </button>
+              <p className="mt-1 px-0 text-xs font-normal normal-case tracking-normal text-muted-foreground">Folders are for notes you&apos;ll file yourself.</p>
+            </div>
           )}
 
           {lists.length > 0 ? (
@@ -401,9 +404,12 @@ export function Sidebar({
               </ul>
             </>
           ) : (
-            <button onClick={onNewList} className={cn(section, 'flex w-full items-center gap-1 hover:text-primary')}>
-              <Plus size={12} /> New smart list
-            </button>
+            <div className={section}>
+              <button onClick={onNewList} className="flex w-full items-center gap-1 hover:text-primary">
+                <Plus size={12} /> New smart list
+              </button>
+              <p className="mt-1 px-0 text-xs font-normal normal-case tracking-normal text-muted-foreground">Smart lists are saved searches that update on their own.</p>
+            </div>
           )}
 
           {tags.length > 0 && (

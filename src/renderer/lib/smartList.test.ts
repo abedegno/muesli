@@ -57,6 +57,27 @@ describe('matchesRule', () => {
     const r: RuleGroup = { op: 'and', children: [{ field: 'folder', operator: 'isNot', value: 'folder-abc' }] }
     expect(matchesRule(note({ folder_ids: undefined }), r)).toBe(true)
   })
+
+  it('folder lifecycle: a soft-deleted folder preserves note_folders, so the note-side folder_ids snapshot is unchanged (is true, isNot false)', () => {
+    // DeleteFolder soft-deletes the folder row but never touches note_folders,
+    // so a note fetched after the trash still reports the same folder_ids.
+    const isRule: RuleGroup = { op: 'and', children: [{ field: 'folder', operator: 'is', value: 'folder-abc' }] }
+    const isNotRule: RuleGroup = { op: 'and', children: [{ field: 'folder', operator: 'isNot', value: 'folder-abc' }] }
+    const noteAfterSoftDelete = note({ folder_ids: ['folder-abc'] })
+    expect(matchesRule(noteAfterSoftDelete, isRule)).toBe(true)
+    expect(matchesRule(noteAfterSoftDelete, isNotRule)).toBe(false)
+  })
+
+  it('folder lifecycle: a purged folder cascades and removes the membership, so a later note snapshot lacks it (is false, isNot true)', () => {
+    // PurgeFolder/PurgeExpiredFolders hard-delete the row; the FK cascade
+    // removes note_folders rows too, so a note fetched after the purge no
+    // longer lists that id in folder_ids.
+    const isRule: RuleGroup = { op: 'and', children: [{ field: 'folder', operator: 'is', value: 'folder-abc' }] }
+    const isNotRule: RuleGroup = { op: 'and', children: [{ field: 'folder', operator: 'isNot', value: 'folder-abc' }] }
+    const noteAfterPurge = note({ folder_ids: [] })
+    expect(matchesRule(noteAfterPurge, isRule)).toBe(false)
+    expect(matchesRule(noteAfterPurge, isNotRule)).toBe(true)
+  })
 })
 
 describe('describeRule', () => {
