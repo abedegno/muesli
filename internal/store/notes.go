@@ -967,3 +967,152 @@ func (s *Store) SetNotePartialTranscriptIfCurrent(ctx context.Context, noteID st
 	}
 	return nil
 }
+
+// GetReadableNote returns one live note the requester may see: either they
+// own it, or the note is directly assigned (note_folders) to at least one
+// live folder they hold an explicit folder_members grant on. This is the
+// sole authorization checkpoint for viewer note-display paths; unlike
+// GetNote it must never gate a sensitive or mutating operation.
+func (s *Store) GetReadableNote(ctx context.Context, requesterID, noteID string) (model.Note, error) {
+	var n model.Note
+	var audioKey, retention *string
+	err := s.pool.QueryRow(ctx,
+		`SELECT n.id, n.owner_id, n.title, n.status, n.pinned, n.started_at, n.ended_at,
+		        n.partial_transcript, n.audio_object_key, n.retention_state, n.created_at, n.updated_at, n.event_id
+		 FROM notes n
+		 WHERE n.id=$1 AND n.deleted_at IS NULL
+		   AND (n.owner_id=$2 OR EXISTS(
+		     SELECT 1 FROM note_folders nf
+		     JOIN folders f ON f.id = nf.folder_id AND f.deleted_at IS NULL
+		     JOIN folder_members fm ON fm.folder_id = f.id AND fm.user_id=$2
+		     WHERE nf.note_id = n.id))`,
+		noteID, requesterID).
+		Scan(&n.ID, &n.OwnerID, &n.Title, &n.Status, &n.Pinned, &n.StartedAt, &n.EndedAt,
+			&n.PartialTranscript, &audioKey, &retention, &n.CreatedAt, &n.UpdatedAt, &n.EventID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.Note{}, ErrNotFound
+	}
+	if err != nil {
+		return model.Note{}, err
+	}
+	if audioKey != nil {
+		n.AudioObjectKey = *audioKey
+	}
+	if retention != nil {
+		n.RetentionState = *retention
+	}
+	return n, nil
+}
+
+// readableFolderIDsForNotes batch-computes, for each of noteIDs, the set of
+// folder ids that are BOTH (a) live and (b) independently visible to
+// requesterID (owned by them, or granted via folder_members on that exact
+// folder) and (c) actually contain a still-live note. It never falls back to
+// the unscoped foldersForNotes -- a note shared only through folder A must
+// never leak that it also sits in the requester's-invisible folder B.
+func (s *Store) readableFolderIDsForNotes(ctx context.Context, requesterID string, noteIDs []string) (map[string][]string, error) {
+	out := map[string][]string{}
+	if len(noteIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT nf.note_id, nf.folder_id
+		 FROM note_folders nf
+		 JOIN notes n ON n.id = nf.note_id AND n.deleted_at IS NULL
+		 JOIN folders f ON f.id = nf.folder_id AND f.deleted_at IS NULL
+		 WHERE nf.note_id = ANY($1)
+		   AND (f.owner_id = $2 OR EXISTS(
+		     SELECT 1 FROM folder_members fm WHERE fm.folder_id = f.id AND fm.user_id = $2))`,
+		noteIDs, requesterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var nid, fid string
+		if err := rows.Scan(&nid, &fid); err != nil {
+			return nil, err
+		}
+		out[nid] = append(out[nid], fid)
+	}
+	return out, rows.Err()
+}
+
+// ReadableNoteFolderIDs returns the live, independently-visible folder ids
+// noteID is directly assigned to, from requesterID's perspective. A note
+// shared through folder A but also privately filed in folder B by its owner
+// returns only A for a viewer of A; a soft-deleted A or B never appears.
+// Always a non-nil (possibly empty) slice.
+func (s *Store) ReadableNoteFolderIDs(ctx context.Context, requesterID, noteID string) ([]string, error) {
+	m, err := s.readableFolderIDsForNotes(ctx, requesterID, []string{noteID})
+	if err != nil {
+		return nil, err
+	}
+	if ids := m[noteID]; ids != nil {
+		return ids, nil
+	}
+	return []string{}, nil
+}
+
+// ListReadableNotes returns every live note directly assigned to exactly
+// folderID, ordered the same way the owner-tree folder view already orders
+// them (pinned first, then note_folders.position, then recency). The
+// caller MUST have already authorized folderID for requesterID via
+// GetReadableFolder -- this method does not re-check folder visibility, and
+// deliberately accepts no other filter, so it can never be used to
+// authorize through a different folder than the one already checked.
+func (s *Store) ListReadableNotes(ctx context.Context, requesterID, folderID string) ([]model.Note, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT n.id, n.owner_id, n.title, n.status, n.pinned, n.started_at, n.ended_at,
+		        n.partial_transcript, n.created_at, n.updated_at, COALESCE(nb.content, ''), n.event_id
+		 FROM notes n
+		 JOIN note_folders nf ON nf.note_id = n.id AND nf.folder_id = $1
+		 LEFT JOIN note_bodies nb ON nb.note_id = n.id
+		 WHERE n.deleted_at IS NULL
+		 ORDER BY n.pinned DESC, nf.position, n.created_at DESC, n.id`, folderID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []model.Note
+	for rows.Next() {
+		var n model.Note
+		var body string
+		if err := rows.Scan(&n.ID, &n.OwnerID, &n.Title, &n.Status, &n.Pinned,
+			&n.StartedAt, &n.EndedAt, &n.PartialTranscript, &n.CreatedAt, &n.UpdatedAt, &body, &n.EventID); err != nil {
+			return nil, err
+		}
+		n.Snippet = snippet(body)
+		out = append(out, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	ids := make([]string, len(out))
+	for i := range out {
+		ids[i] = out[i].ID
+	}
+	tagMap, err := s.tagsForNotes(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	folderMap, err := s.readableFolderIDsForNotes(ctx, requesterID, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if tags := tagMap[out[i].ID]; tags != nil {
+			out[i].Tags = tags
+		} else {
+			out[i].Tags = []string{}
+		}
+		if fids := folderMap[out[i].ID]; fids != nil {
+			out[i].FolderIDs = fids
+		} else {
+			out[i].FolderIDs = []string{}
+		}
+	}
+	return out, nil
+}

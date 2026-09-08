@@ -176,13 +176,21 @@ func (s *Server) handleDuplicateNote(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, n)
 }
 
+// handleGetNote is GET /api/notes/{id} -- viewer-readable (issue #12): an
+// explicit folder member may open a note directly assigned to a live folder
+// they are granted on, not just the owner. It is display-only; every
+// sensitive or mutating note operation stays on GetNote (owner-only). Its
+// folder_ids come from ReadableNoteFolderIDs, never the unscoped
+// NoteFolderIDs, so a note shared through folder A never reveals a private
+// folder B it also happens to sit in.
 func (s *Server) handleGetNote(w http.ResponseWriter, r *http.Request) {
 	uid, _ := userIDFromContext(r.Context())
-	if !validNoteID(chi.URLParam(r, "id")) {
+	noteID := chi.URLParam(r, "id")
+	if !validNoteID(noteID) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	n, err := s.deps.Store.GetNote(r.Context(), uid, chi.URLParam(r, "id"))
+	n, err := s.deps.Store.GetReadableNote(r.Context(), uid, noteID)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
@@ -193,9 +201,12 @@ func (s *Server) handleGetNote(w http.ResponseWriter, r *http.Request) {
 	if n.Tags == nil {
 		n.Tags = []string{}
 	}
-	if n.FolderIDs == nil {
-		n.FolderIDs = []string{}
+	folderIDs, err := s.deps.Store.ReadableNoteFolderIDs(r.Context(), uid, noteID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
 	}
+	n.FolderIDs = folderIDs
 	writeJSON(w, http.StatusOK, n)
 }
 
@@ -214,13 +225,34 @@ func (s *Server) handleListNotes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An explicit folder_id is authorized through GetReadableFolder (owner OR
+	// exact folder_members grant), then listed with the exact-folder
+	// viewer-safe path -- issue #12. This intentionally does not combine with
+	// tag/status filters: a folder-scoped list is always exact-folder-only, so
+	// a private or trashed folder id can never be used as a filter, by owner
+	// or viewer alike.
 	if folderIDStr := q.Get("folder_id"); folderIDStr != "" {
 		if _, err := uuid.Parse(folderIDStr); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid folder_id")
 			return
 		}
-		f.FolderID = folderIDStr
-		f.FolderIDSet = true
+		if _, err := s.deps.Store.GetReadableFolder(r.Context(), uid, folderIDStr); errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		} else if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		notes, err := s.deps.Store.ListReadableNotes(r.Context(), uid, folderIDStr)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if notes == nil {
+			notes = []model.Note{}
+		}
+		writeJSON(w, http.StatusOK, notes)
+		return
 	}
 
 	notes, err := s.deps.Store.ListNotes(r.Context(), uid, f)
