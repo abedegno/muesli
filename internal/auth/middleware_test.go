@@ -236,3 +236,150 @@ func TestMiddleware_HashPassedToResolver(t *testing.T) {
 		t.Error("resolver received raw token instead of its hash — secrets would be stored unhashed")
 	}
 }
+
+// ── RequireRole tests ──────────────────────────────────────────────────
+
+// testRoleResolver implements RoleResolver via a function field.
+type testRoleResolver struct {
+	fn func(ctx context.Context, userID string) (string, error)
+}
+
+func (r *testRoleResolver) GetUserRole(ctx context.Context, userID string) (string, error) {
+	return r.fn(ctx, userID)
+}
+
+func TestRequireRole_NoUserInContext(t *testing.T) {
+	resolver := &testRoleResolver{fn: func(_ context.Context, _ string) (string, error) {
+		t.Fatal("resolver should not be called when no user is in context")
+		return "", nil
+	}}
+	get := func(ctx context.Context) (string, bool) { return "", false }
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+
+	mw := RequireRole(resolver, get, "admin")(next)
+	req, _ := http.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+	mw.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rr.Code)
+	}
+}
+
+func TestRequireRole_AdminAllowed(t *testing.T) {
+	resolver := &testRoleResolver{fn: func(_ context.Context, uid string) (string, error) {
+		if uid != "u1" {
+			t.Errorf("resolver called with %q, want u1", uid)
+		}
+		return "admin", nil
+	}}
+	get := func(ctx context.Context) (string, bool) { return "u1", true }
+	nextCalled := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nextCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mw := RequireRole(resolver, get, "admin")(next)
+	req, _ := http.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+	mw.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("status = %d, want 200", rr.Code)
+	}
+	if !nextCalled {
+		t.Error("expected next handler to be called for a matching role")
+	}
+}
+
+func TestRequireRole_MemberForbidden(t *testing.T) {
+	resolver := &testRoleResolver{fn: func(_ context.Context, _ string) (string, error) {
+		return "member", nil
+	}}
+	get := func(ctx context.Context) (string, bool) { return "u1", true }
+	nextCalled := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nextCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	mw := RequireRole(resolver, get, "admin")(next)
+	req, _ := http.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+	mw.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", rr.Code)
+	}
+	if nextCalled {
+		t.Error("next handler must not be called for a mismatched role")
+	}
+}
+
+func TestRequireRole_UnknownUser(t *testing.T) {
+	resolver := &testRoleResolver{fn: func(_ context.Context, _ string) (string, error) {
+		return "", store.ErrNotFound
+	}}
+	get := func(ctx context.Context) (string, bool) { return "ghost", true }
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+
+	mw := RequireRole(resolver, get, "admin")(next)
+	req, _ := http.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+	mw.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d, want 401", rr.Code)
+	}
+}
+
+func TestRequireRole_ResolverError(t *testing.T) {
+	resolver := &testRoleResolver{fn: func(_ context.Context, _ string) (string, error) {
+		return "", errors.New("db down")
+	}}
+	get := func(ctx context.Context) (string, bool) { return "u1", true }
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+
+	mw := RequireRole(resolver, get, "admin")(next)
+	req, _ := http.NewRequest("GET", "/", nil)
+	rr := httptest.NewRecorder()
+	mw.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("status = %d, want 503", rr.Code)
+	}
+}
+
+// TestRequireRole_NoCache proves the role is loaded fresh on every request:
+// two requests through the SAME middleware instance for the SAME user see
+// different outcomes once the backing "database" (a mutable var the fake
+// resolver reads) changes between them -- there is no package-level or
+// per-middleware cache to go stale.
+func TestRequireRole_NoCache(t *testing.T) {
+	currentRole := "member"
+	resolver := &testRoleResolver{fn: func(_ context.Context, _ string) (string, error) {
+		return currentRole, nil
+	}}
+	get := func(ctx context.Context) (string, bool) { return "u1", true }
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	mw := RequireRole(resolver, get, "admin")(next)
+
+	req1, _ := http.NewRequest("GET", "/", nil)
+	rr1 := httptest.NewRecorder()
+	mw.ServeHTTP(rr1, req1)
+	if rr1.Code != http.StatusForbidden {
+		t.Fatalf("first request status = %d, want 403 (member)", rr1.Code)
+	}
+
+	// The user's role changes in the database between the two requests --
+	// e.g. an admin just promoted them via PATCH /api/admin/users/{id}.
+	currentRole = "admin"
+
+	req2, _ := http.NewRequest("GET", "/", nil)
+	rr2 := httptest.NewRecorder()
+	mw.ServeHTTP(rr2, req2)
+	if rr2.Code != http.StatusOK {
+		t.Fatalf("second request status = %d, want 200 (promoted to admin, no cache)", rr2.Code)
+	}
+}

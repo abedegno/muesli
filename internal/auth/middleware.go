@@ -53,3 +53,44 @@ func bearerToken(r *http.Request) string {
 	}
 	return ""
 }
+
+// RoleResolver loads a user's current role.
+type RoleResolver interface {
+	GetUserRole(ctx context.Context, userID string) (string, error)
+}
+
+// CtxGetter reads a previously-injected user ID back out of a request
+// context (the inverse of CtxSetter).
+type CtxGetter func(ctx context.Context) (string, bool)
+
+// RequireRole returns middleware that responds 403 unless the authenticated
+// request's user currently holds exactly `role`. It must run after
+// Middleware (which resolves and injects the user ID). The role is loaded
+// from the database on every request -- there is no cache, so a role change
+// takes effect on the very next request, not the next login.
+func RequireRole(resolver RoleResolver, get CtxGetter, role string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			uid, ok := get(r.Context())
+			if !ok {
+				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+				return
+			}
+			got, err := resolver.GetUserRole(r.Context(), uid)
+			if errors.Is(err, store.ErrNotFound) {
+				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+				return
+			}
+			if err != nil {
+				slog.ErrorContext(r.Context(), "resolve user role", "error", err)
+				http.Error(w, `{"error":"service unavailable"}`, http.StatusServiceUnavailable)
+				return
+			}
+			if got != role {
+				http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(r.Context()))
+		})
+	}
+}

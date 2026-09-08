@@ -13,6 +13,7 @@ import (
 	"github.com/abedegno/muesli/internal/crypto"
 	"github.com/abedegno/muesli/internal/embed"
 	"github.com/abedegno/muesli/internal/embedded"
+	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/ratelimit"
 	"github.com/abedegno/muesli/internal/storage"
 	"github.com/abedegno/muesli/internal/store"
@@ -124,6 +125,8 @@ func (s *Server) routes() {
 	s.router.Get("/api/setup/status", s.handleSetupStatus)
 	s.router.With(limitBody, ratelimit.NewIPLimiter(s.deps.Config.RateLoginRPS, s.deps.Config.RateLoginBurst)).Post("/api/login", s.handleLogin)
 	s.router.With(ratelimit.NewIPLimiter(s.deps.Config.RateSharedRPS, s.deps.Config.RateSharedBurst)).Get("/api/shared/{token}", s.handleGetSharedNote)
+	s.router.Get("/api/invites/{token}", s.handleGetInvite)
+	s.router.With(limitBody).Post("/api/invites/{token}/accept", s.handleAcceptInvite)
 
 	// Embedded admin SPA (static assets + SPA fallback). No auth at the
 	// transport layer; the SPA authenticates against /api/* like any client.
@@ -145,6 +148,7 @@ func (s *Server) routes() {
 		r.Get("/api/search", s.handleSearch)
 		r.Get("/api/insights", s.handleInsights)
 		r.Get("/api/capabilities", s.handleCapabilities)
+		r.Get("/api/users", s.handleListUsers)
 		r.Get("/api/notes/{id}", s.handleGetNote)
 		r.Delete("/api/notes/{id}", s.handleDeleteNote)
 		r.Post("/api/notes/{id}/duplicate", s.handleDuplicateNote)
@@ -250,45 +254,18 @@ func (s *Server) routes() {
 
 		r.Post("/api/audio/dedup-check", s.handleAudioDedupCheck)
 
-		r.Get("/api/admin/jobs", s.handleListJobs)
-		r.Post("/api/admin/jobs/{id}/retry", s.handleRetryJob)
-		r.Post("/api/admin/jobs/{id}/cancel", s.handleCancelJob)
-		r.Post("/api/admin/jobs/{id}/process-next", s.handleProcessNextJob)
-		r.Get("/api/admin/notes/{id}/jobs", s.handleListNoteJobs)
-		r.Get("/api/admin/webhook-deliveries", s.handleListWebhookDeliveries)
-		r.Post("/api/admin/webhook-deliveries/{id}/retry", s.handleRetryWebhookDelivery)
-		r.Get("/api/admin/plugins", s.handleListPlugins)
-		r.Post("/api/admin/plugins", s.handleCreatePlugin)
-		r.Patch("/api/admin/plugins/{id}", s.handlePatchPlugin)
-		r.Delete("/api/admin/plugins/{id}", s.handleDeletePlugin)
-		// Static convenience route must be registered before the parameterized route.
-		r.Get("/api/admin/plugins/default-transcriber/status", s.handleGetDefaultTranscriberStatus)
-		r.Get("/api/admin/plugins/{id}/status", s.handleGetPluginStatus)
-		r.Post("/api/admin/plugins/{id}/health", s.handleCheckPluginHealth)
+	})
 
-		// BAK01: in-app Postgres backup. No restore endpoint by design — restore
-		// stays the documented manual pg_restore/psql procedure (docs/BACKUP.md).
-		r.Post("/api/admin/backup", s.handleCreateBackup)
-		r.Get("/api/admin/backups", s.handleListBackups)
-		r.Get("/api/admin/backups/{filename}", s.handleDownloadBackup)
-		r.Get("/api/admin/backups/{filename}/verify", s.handleVerifyBackup)
-
-		// EMB01: embeddings status (read-only config + state).
-		r.Get("/api/admin/embeddings", s.handleAdminEmbeddingsStatus)
-
-		// EMB02: on-demand admin re-embed-all (live done/total + trigger),
-		// distinct from EMB01's static config-status endpoint above.
-		r.Get("/api/admin/embeddings/status", s.handleAdminReembedStatus)
-		r.Post("/api/admin/embeddings/reembed", s.handleAdminReembedAll)
-
-		// ADM05: aggregated admin health panel (server info, per-plugin
-		// probes, job-queue depth, embedding coverage, storage disk usage).
-		// Always 200 - per-section failures are captured inline.
-		r.Get("/api/admin/health", s.handleAdminHealth)
-
-		// ADM06: read-only, redacted effective-configuration view (MUESLI_*
-		// fields only, secret-shaped values collapsed to "(set)"/"(unset)").
-		r.Get("/api/admin/config", s.handleAdminConfig)
+	// Every /api/admin/* JSON route (issue #12): mounted behind RequireRole
+	// "admin" on top of the same session auth + body-limit middleware the rest
+	// of the authenticated group uses, so a member gets 403 rather than
+	// reaching any admin handler. adminRoutes registers the routes with paths
+	// relative to this mount.
+	s.router.Route("/api/admin", func(r chi.Router) {
+		r.Use(auth.Middleware(s.deps.Store, withUserID))
+		r.Use(limitBody)
+		r.Use(auth.RequireRole(s.deps.Store, userIDFromContext, model.RoleAdmin))
+		s.adminRoutes(r)
 	})
 
 	// OAuth browser flows are the one place the system browser needs a
@@ -307,6 +284,58 @@ func (s *Server) routes() {
 		r.With(ratelimit.NewIPLimiter(s.deps.Config.RateUploadRPS, s.deps.Config.RateUploadBurst)).Post("/api/notes/{id}/audio-upload-url", s.handleAudioUploadURL)
 		r.Post("/api/notes/{id}/audio-uploaded", s.handleAudioUploaded)
 	})
+}
+
+// adminRoutes registers every /api/admin/* JSON handler with paths relative
+// to that mount point (see routes(), which wraps this group in
+// auth.RequireRole("admin")). Keeping registration in one place makes the
+// admin surface auditable: anything reachable under /api/admin/* is listed
+// here exactly once.
+func (s *Server) adminRoutes(r chi.Router) {
+	r.Get("/jobs", s.handleListJobs)
+	r.Post("/jobs/{id}/retry", s.handleRetryJob)
+	r.Post("/jobs/{id}/cancel", s.handleCancelJob)
+	r.Post("/jobs/{id}/process-next", s.handleProcessNextJob)
+	r.Get("/notes/{id}/jobs", s.handleListNoteJobs)
+	r.Get("/webhook-deliveries", s.handleListWebhookDeliveries)
+	r.Post("/webhook-deliveries/{id}/retry", s.handleRetryWebhookDelivery)
+	r.Get("/plugins", s.handleListPlugins)
+	r.Post("/plugins", s.handleCreatePlugin)
+	r.Patch("/plugins/{id}", s.handlePatchPlugin)
+	r.Delete("/plugins/{id}", s.handleDeletePlugin)
+	// Static convenience route must be registered before the parameterized route.
+	r.Get("/plugins/default-transcriber/status", s.handleGetDefaultTranscriberStatus)
+	r.Get("/plugins/{id}/status", s.handleGetPluginStatus)
+	r.Post("/plugins/{id}/health", s.handleCheckPluginHealth)
+
+	// BAK01: in-app Postgres backup. No restore endpoint by design — restore
+	// stays the documented manual pg_restore/psql procedure (docs/BACKUP.md).
+	r.Post("/backup", s.handleCreateBackup)
+	r.Get("/backups", s.handleListBackups)
+	r.Get("/backups/{filename}", s.handleDownloadBackup)
+	r.Get("/backups/{filename}/verify", s.handleVerifyBackup)
+
+	// EMB01: embeddings status (read-only config + state).
+	r.Get("/embeddings", s.handleAdminEmbeddingsStatus)
+
+	// EMB02: on-demand admin re-embed-all (live done/total + trigger),
+	// distinct from EMB01's static config-status endpoint above.
+	r.Get("/embeddings/status", s.handleAdminReembedStatus)
+	r.Post("/embeddings/reembed", s.handleAdminReembedAll)
+
+	// ADM05: aggregated admin health panel (server info, per-plugin
+	// probes, job-queue depth, embedding coverage, storage disk usage).
+	// Always 200 - per-section failures are captured inline.
+	r.Get("/health", s.handleAdminHealth)
+
+	// ADM06: read-only, redacted effective-configuration view (MUESLI_*
+	// fields only, secret-shaped values collapsed to "(set)"/"(unset)").
+	r.Get("/config", s.handleAdminConfig)
+
+	// Issue #12: deployment user administration.
+	r.Get("/users", s.handleAdminListUsers)
+	r.Patch("/users/{id}", s.handleAdminSetUserRole)
+	r.Post("/users/invites", s.handleCreateInvite)
 }
 
 // Handler exposes the router for tests and embedding.
