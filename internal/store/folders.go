@@ -558,6 +558,31 @@ func (s *Store) PurgeExpiredFolders(ctx context.Context, olderThan time.Duration
 	return int(ct.RowsAffected()), nil
 }
 
+// ResolveFolders returns the owner's live and soft-deleted folders matching any
+// of ids. Non-recursive, exposes no memberships, and does not filter deleted_at
+// so callers can distinguish live from trashed rows. Unknown, purged, and
+// other-owner ids are silently omitted. Callers are responsible for bounding
+// and de-duplicating ids.
+func (s *Store) ResolveFolders(ctx context.Context, ownerID string, ids []string) ([]model.Folder, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, name, parent_id, created_at, deleted_at
+		 FROM folders
+		 WHERE owner_id=$1 AND id = ANY($2)`, ownerID, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []model.Folder{}
+	for rows.Next() {
+		var f model.Folder
+		if err := rows.Scan(&f.ID, &f.Name, &f.ParentID, &f.CreatedAt, &f.DeletedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
 // AddNoteFolder adds a note to a folder (idempotent). Both must belong to the owner.
 func (s *Store) AddNoteFolder(ctx context.Context, ownerID, noteID, folderID string) error {
 	tx, err := s.pool.Begin(ctx)

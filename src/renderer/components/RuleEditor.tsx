@@ -16,13 +16,17 @@ const STATUSES = ['draft', 'recording', 'uploaded', 'transcribing', 'summarizing
 const newCondition = (): RuleCondition => ({ field: 'title', operator: 'contains', value: '' })
 
 export function RuleEditor({
-  open, title, initial, knownTags, knownFolders, onSave, onClose, onDelete,
+  open, title, initial, knownTags, knownFolders, resolvedFolders, onSave, onClose, onDelete,
 }: {
   open: boolean
   title: string
   initial?: SmartList
   knownTags: string[]
   knownFolders?: Folder[]
+  // Live or soft-deleted folders resolved by exact id for folder conditions whose
+  // stored value isn't in knownFolders (see ConditionEditor). Never expands the
+  // general picker — scoping to "this condition's own value" happens there.
+  resolvedFolders?: Folder[]
   onSave: (name: string, rule: RuleGroup) => Promise<void>
   onClose: () => void
   onDelete?: () => void
@@ -39,7 +43,7 @@ export function RuleEditor({
         <Input id="rule-editor-name" aria-label="List name" value={name} onChange={(e) => setName(e.target.value)} />
       </label>
       <div className="mb-4 max-h-72 overflow-y-auto rounded-[var(--radius)] border border-border p-3">
-        <GroupEditor group={rule} onChange={setRule} knownTags={knownTags} knownFolders={knownFolders} />
+        <GroupEditor group={rule} onChange={setRule} knownTags={knownTags} knownFolders={knownFolders} resolvedFolders={resolvedFolders} />
       </div>
       <div className="flex items-center justify-between">
         {onDelete ? <Button variant="destructive" size="sm" onClick={onDelete}>Delete</Button> : <span />}
@@ -65,13 +69,30 @@ export function RuleEditor({
   )
 }
 
+// folderConditionOptions builds the selectable options for a single folder
+// condition: every live folder from knownFolders, plus — only when the
+// condition's own current value is non-empty and absent from knownFolders —
+// exactly one fallback option derived solely from that value, never from any
+// other id referenced elsewhere in the rule. This is the ONLY place resolver
+// data reaches the UI; it never expands the general picker.
+function folderConditionOptions(value: string | number, knownFolders: Folder[], resolvedFolders?: Folder[]): { id: string; name: string }[] {
+  const known = knownFolders.map((f) => ({ id: f.id, name: f.name }))
+  const currentId = String(value)
+  if (!currentId || known.some((f) => f.id === currentId)) return known
+  const resolved = (resolvedFolders ?? []).find((f) => f.id === currentId)
+  const fallback = resolved
+    ? { id: currentId, name: resolved.deleted_at ? `${resolved.name} (trashed)` : resolved.name }
+    : { id: currentId, name: `Missing folder (${currentId})` }
+  return [...known, fallback]
+}
+
 function ruleIsComplete(node: RuleNode): boolean {
   if (isRuleGroup(node)) return node.children.length === 0 || node.children.every(ruleIsComplete)
   if (node.field === 'created') return Number(node.value) > 0
   return String(node.value).trim().length > 0
 }
 
-function GroupEditor({ group, onChange, knownTags, knownFolders }: { group: RuleGroup; onChange: (g: RuleGroup) => void; knownTags: string[]; knownFolders?: Folder[] }) {
+function GroupEditor({ group, onChange, knownTags, knownFolders, resolvedFolders }: { group: RuleGroup; onChange: (g: RuleGroup) => void; knownTags: string[]; knownFolders?: Folder[]; resolvedFolders?: Folder[] }) {
   const setChild = (i: number, n: RuleNode) => onChange({ ...group, children: group.children.map((c, j) => (j === i ? n : c)) })
   const remove = (i: number) => onChange({ ...group, children: group.children.filter((_, j) => j !== i) })
   return (
@@ -88,8 +109,8 @@ function GroupEditor({ group, onChange, knownTags, knownFolders }: { group: Rule
       {group.children.map((child, i) => (
         <div key={i} className="flex items-start gap-2">
           {isRuleGroup(child)
-            ? <div className="flex-1 rounded border border-border p-2"><GroupEditor group={child} onChange={(g) => setChild(i, g)} knownTags={knownTags} knownFolders={knownFolders} /></div>
-            : <ConditionEditor cond={child} onChange={(c) => setChild(i, c)} knownTags={knownTags} knownFolders={knownFolders} />}
+            ? <div className="flex-1 rounded border border-border p-2"><GroupEditor group={child} onChange={(g) => setChild(i, g)} knownTags={knownTags} knownFolders={knownFolders} resolvedFolders={resolvedFolders} /></div>
+            : <ConditionEditor cond={child} onChange={(c) => setChild(i, c)} knownTags={knownTags} knownFolders={knownFolders} resolvedFolders={resolvedFolders} />}
           <button aria-label="remove" onClick={() => remove(i)} className="text-xs text-muted-foreground hover:text-destructive">✕</button>
         </div>
       ))}
@@ -101,8 +122,9 @@ function GroupEditor({ group, onChange, knownTags, knownFolders }: { group: Rule
   )
 }
 
-function ConditionEditor({ cond, onChange, knownTags, knownFolders }: { cond: RuleCondition; onChange: (c: RuleCondition) => void; knownTags: string[]; knownFolders?: Folder[] }) {
+function ConditionEditor({ cond, onChange, knownTags, knownFolders, resolvedFolders }: { cond: RuleCondition; onChange: (c: RuleCondition) => void; knownTags: string[]; knownFolders?: Folder[]; resolvedFolders?: Folder[] }) {
   const ops = FIELD_OPS[cond.field]
+  const folderOptions = cond.field === 'folder' ? folderConditionOptions(cond.value, knownFolders ?? [], resolvedFolders) : []
   return (
     <div className="flex flex-1 flex-wrap items-center gap-1 text-sm">
       <select aria-label="condition field" value={cond.field}
@@ -122,7 +144,7 @@ function ConditionEditor({ cond, onChange, knownTags, knownFolders }: { cond: Ru
         ? <input aria-label="condition value" type="number" min={1} step={1} value={cond.value === '' ? '' : Number(cond.value)} onChange={(e) => onChange({ ...cond, value: e.target.value === '' ? '' : Math.trunc(Number(e.target.value)) })} className="w-16 rounded border border-input bg-background px-1 py-0.5" placeholder="days" />
         : cond.field === 'folder'
         ? <select aria-label="condition value" value={String(cond.value)} onChange={(e) => onChange({ ...cond, value: e.target.value })} className="rounded border border-input bg-background px-1 py-0.5">
-            <option value="">—</option>{(knownFolders ?? []).map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
+            <option value="">—</option>{folderOptions.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
           </select>
         : <input aria-label="condition value" list={cond.field === 'tag' ? 're-tags' : undefined} value={String(cond.value)} onChange={(e) => onChange({ ...cond, value: e.target.value })} className="min-w-24 flex-1 rounded border border-input bg-background px-1 py-0.5" placeholder="value" />}
       {cond.field === 'tag' && <datalist id="re-tags">{knownTags.map((t) => <option key={t} value={t} />)}</datalist>}

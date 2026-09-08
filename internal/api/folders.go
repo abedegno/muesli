@@ -9,11 +9,63 @@ import (
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/store"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 )
+
+// maxResolveFolderIDs bounds a single /api/folders/resolve request to a small,
+// constant-cost lookup regardless of how large the calling rule tree is; the
+// renderer batches larger rule-derived id sets across multiple requests.
+const maxResolveFolderIDs = 100
 
 type folderRequest struct {
 	Name     string  `json:"name"`
 	ParentID *string `json:"parent_id"`
+}
+
+func (s *Server) handleResolveFolders(w http.ResponseWriter, r *http.Request) {
+	uid, _ := userIDFromContext(r.Context())
+	var req struct {
+		IDs *[]any `json:"ids"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if req.IDs == nil {
+		writeError(w, http.StatusBadRequest, "ids is required")
+		return
+	}
+	seen := make(map[string]bool, len(*req.IDs))
+	ids := make([]string, 0, len(*req.IDs))
+	for _, raw := range *req.IDs {
+		idStr, ok := raw.(string)
+		if !ok || idStr == "" {
+			writeError(w, http.StatusBadRequest, "ids must be non-empty strings")
+			return
+		}
+		if _, err := uuid.Parse(idStr); err != nil {
+			writeError(w, http.StatusBadRequest, "ids must be valid uuids")
+			return
+		}
+		if !seen[idStr] {
+			seen[idStr] = true
+			ids = append(ids, idStr)
+		}
+	}
+	if len(ids) > maxResolveFolderIDs {
+		writeError(w, http.StatusBadRequest, "too many ids")
+		return
+	}
+	folders, err := s.deps.Store.ResolveFolders(r.Context(), uid, ids)
+	if err != nil {
+		log.Printf("handleResolveFolders: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if folders == nil {
+		folders = []model.Folder{}
+	}
+	writeJSON(w, http.StatusOK, folders)
 }
 
 func (s *Server) handleListFolders(w http.ResponseWriter, r *http.Request) {

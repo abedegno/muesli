@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest'
-import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { Sidebar } from './Sidebar'
@@ -698,5 +698,31 @@ describe('Sidebar', () => {
     handle.focus()
     fireEvent.keyDown(handle, { key: 'ArrowRight' })
     expect(onResize).toHaveBeenCalledWith(420) // clamped to max
+  })
+})
+
+describe('Sidebar — lists-vs-folders guidance (issue #11)', () => {
+  it('shows the folder guidance line grouped immediately below the New folder action when there are no folders', () => {
+    renderSidebar({ folders: [] })
+    const newFolderButton = screen.getByRole('button', { name: /new folder/i })
+    const group = newFolderButton.closest('div')!
+    expect(within(group).getByText("Folders are for notes you'll file yourself.")).toBeInTheDocument()
+  })
+
+  it('shows the smart-list guidance line grouped immediately below the New smart list action when there are no lists', () => {
+    renderSidebar({ lists: [] })
+    const newListButton = screen.getByRole('button', { name: /new smart list/i })
+    const group = newListButton.closest('div')!
+    expect(within(group).getByText('Smart lists are saved searches that update on their own.')).toBeInTheDocument()
+  })
+
+  it('hides the folder guidance once folders exist', () => {
+    renderSidebar({ folders: [{ id: 'f1', name: 'Clients', parent_id: null, created_at: '', deleted_at: null }] })
+    expect(screen.queryByText("Folders are for notes you'll file yourself.")).not.toBeInTheDocument()
+  })
+
+  it('hides the smart-list guidance once lists exist', () => {
+    renderSidebar()
+    expect(screen.queryByText('Smart lists are saved searches that update on their own.')).not.toBeInTheDocument()
   })
 })
