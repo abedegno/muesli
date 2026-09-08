@@ -41,11 +41,61 @@ type TagCount struct {
 	Count int    `json:"count"`
 }
 
+// Deployment roles (issue #12). Every user in a deployment belongs to that
+// one team; there is no workspace/organization layer. RoleAdmin can manage
+// users and reach /api/admin/*; RoleMember cannot.
+const (
+	RoleAdmin  = "admin"
+	RoleMember = "member"
+)
+
 type User struct {
 	ID           string    `json:"id"`
 	Email        string    `json:"email"`
 	PasswordHash string    `json:"-"`
+	Role         string    `json:"role"`
 	CreatedAt    time.Time `json:"created_at"`
+}
+
+// UserInvite is an admin-issued, single-use invitation to join the
+// deployment. Only TokenHash is persisted -- the raw token is shown to the
+// issuing admin once, in the issue response, and never stored or logged.
+type UserInvite struct {
+	ID         string     `json:"id"`
+	TokenHash  string     `json:"-"`
+	Role       string     `json:"role"`
+	CreatedBy  string     `json:"created_by"`
+	ExpiresAt  time.Time  `json:"expires_at"`
+	ConsumedAt *time.Time `json:"consumed_at,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+}
+
+// FolderRoleViewer is the only role folder_members currently supports:
+// explicit, non-inherited, read-only access to one exact folder.
+const FolderRoleViewer = "viewer"
+
+// FolderMember is an explicit read-only grant of one folder to one user.
+// It authorizes exactly (FolderID, UserID) -- never ancestors, descendants,
+// or any other folder that happens to contain the same notes.
+type FolderMember struct {
+	FolderID  string    `json:"folder_id"`
+	UserID    string    `json:"user_id"`
+	Email     string    `json:"email"`
+	Role      string    `json:"role"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// SharedFolder is one row of GET /api/folders/shared: a live folder the
+// requester can see solely through an explicit folder_members grant (never
+// through ownership). CountScope is always "direct" -- shared counts never
+// traverse descendants, unlike the owner tree's recursive counts.
+type SharedFolder struct {
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	OwnerID    string `json:"owner_id"`
+	OwnerEmail string `json:"owner_email"`
+	NoteCount  int    `json:"note_count"`
+	CountScope string `json:"count_scope"`
 }
 
 type Note struct {
