@@ -257,6 +257,59 @@ func (s *Store) GetSummaries(ctx context.Context, noteID string) ([]model.Summar
 	return out, rows.Err()
 }
 
+// GetReadableSummaries returns noteID's summaries for requesterID,
+// authorizing within the same query: ownership or an explicit grant on a
+// live folder the note is directly assigned to. Uses a LEFT JOIN from
+// notes (not summaries) so a visible note with zero summaries yields one
+// placeholder row it can tell apart from zero rows for an invisible note --
+// the former returns an empty (non-nil) slice, the latter ErrNotFound.
+func (s *Store) GetReadableSummaries(ctx context.Context, requesterID, noteID string) ([]model.Summary, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT s.id, COALESCE(s.template_id::text,''), COALESCE(t.name,''),
+		        COALESCE(s.agent_plugin,''), COALESCE(s.model,''),
+		        COALESCE(s.content->>'status', $3), COALESCE(s.content->'sections','[]'::jsonb),
+		        COALESCE((s.content->>'truncated')::boolean, false)
+		 FROM notes n
+		 LEFT JOIN summaries s ON s.note_id = n.id
+		 LEFT JOIN templates t ON t.id = s.template_id
+		 WHERE n.id=$1 AND n.deleted_at IS NULL AND `+readableNoteJoin+`
+		 ORDER BY t.name`,
+		noteID, requesterID, model.SummaryReady)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []model.Summary{}
+	sawRow := false
+	for rows.Next() {
+		sawRow = true
+		var sid *string
+		var sm model.Summary
+		var sectionsJSON []byte
+		if err := rows.Scan(&sid, &sm.TemplateID, &sm.TemplateName,
+			&sm.AgentPlugin, &sm.Model, &sm.Status, &sectionsJSON, &sm.Truncated); err != nil {
+			return nil, err
+		}
+		if sid == nil {
+			continue // the note's own placeholder row -- no summaries yet
+		}
+		sm.ID = *sid
+		sm.NoteID = noteID
+		if err := json.Unmarshal(sectionsJSON, &sm.Sections); err != nil {
+			return nil, err
+		}
+		out = append(out, sm)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if !sawRow {
+		return nil, ErrNotFound
+	}
+	return out, nil
+}
+
 // deleteNoteTemplateSummary removes the single summary row (if any) for a specific
 // (noteID, templateID) pair, leaving the note's other summaries untouched. Scoped by
 // owner via the notes join so callers don't need a separate ownership check here.

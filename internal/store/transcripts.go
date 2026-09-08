@@ -682,3 +682,89 @@ func isUUIDSyntaxError(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "22P02"
 }
+
+// readableNoteJoin is the authorization predicate shared by every viewer
+// component read in this file and its siblings (summaries.go, tags.go,
+// notes.go's GetReadableNoteBody): the requester owns the note, or the note
+// is directly assigned to at least one live folder they hold an explicit
+// folder_members grant on. It is always evaluated as part of the query that
+// returns the data, never as a separate pre-check, so a stale membership
+// cannot authorize a later fetch.
+const readableNoteJoin = `(n.owner_id = $2 OR EXISTS(
+	SELECT 1 FROM note_folders nf
+	JOIN folders f ON f.id = nf.folder_id AND f.deleted_at IS NULL
+	JOIN folder_members fm ON fm.folder_id = f.id AND fm.user_id = $2
+	WHERE nf.note_id = n.id))`
+
+// GetReadableTranscript returns noteID's transcript (with segments and
+// gaps) for requesterID, authorizing within the same query that reads the
+// transcript row: ownership or an explicit grant on a live folder the note
+// is directly assigned to. Returns ErrNotFound both when the note is
+// invisible to requesterID and when it is visible but has no transcript yet
+// -- the same "not found" GetTranscript already returns for the latter, so
+// existing empty-transcript handling in callers needs no change.
+func (s *Store) GetReadableTranscript(ctx context.Context, requesterID, noteID string) (model.Transcript, error) {
+	var tr model.Transcript
+	err := s.pool.QueryRow(ctx,
+		`SELECT tr.id, tr.note_id, tr.transcriber_plugin, tr.model, tr.review_state, tr.stream_id, tr.sealed, tr.generation
+		 FROM transcripts tr
+		 JOIN notes n ON n.id = tr.note_id AND n.deleted_at IS NULL
+		 WHERE tr.note_id=$1 AND `+readableNoteJoin,
+		noteID, requesterID).
+		Scan(&tr.ID, &tr.NoteID, &tr.TranscriberPlugin, &tr.Model, &tr.ReviewState, &tr.StreamID, &tr.Sealed, &tr.Generation)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.Transcript{}, ErrNotFound
+	}
+	if err != nil {
+		return model.Transcript{}, err
+	}
+
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, start_ms, end_ms, text, source, COALESCE(speaker,''), words, confidence,
+		        provisional, COALESCE(boundary,'')
+		 FROM transcript_segments WHERE transcript_id=$1 ORDER BY start_ms`, tr.ID)
+	if err != nil {
+		return model.Transcript{}, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var seg model.Segment
+		var wordsJSON []byte
+		var confidence *float64
+		if err := rows.Scan(&seg.ID, &seg.StartMS, &seg.EndMS, &seg.Text, &seg.Source, &seg.Speaker, &wordsJSON, &confidence,
+			&seg.Provisional, &seg.Boundary); err != nil {
+			return model.Transcript{}, err
+		}
+		seg.Confidence = confidence
+		if len(wordsJSON) > 0 {
+			if err := json.Unmarshal(wordsJSON, &seg.Words); err != nil {
+				return model.Transcript{}, err
+			}
+		}
+		tr.Segments = append(tr.Segments, seg)
+	}
+	if err := rows.Err(); err != nil {
+		return model.Transcript{}, err
+	}
+
+	gapRows, err := s.pool.Query(ctx,
+		`SELECT id, stream_id, start_sample, dropped_samples, origin
+		   FROM transcript_gaps WHERE transcript_id=$1 ORDER BY start_sample`, tr.ID)
+	if err != nil {
+		return model.Transcript{}, err
+	}
+	defer gapRows.Close()
+	for gapRows.Next() {
+		var g model.TranscriptGap
+		if err := gapRows.Scan(&g.ID, &g.StreamID, &g.StartSample, &g.DroppedSamples, &g.Origin); err != nil {
+			return model.Transcript{}, err
+		}
+		g.TranscriptID = tr.ID
+		tr.Gaps = append(tr.Gaps, g)
+	}
+	if err := gapRows.Err(); err != nil {
+		return model.Transcript{}, err
+	}
+
+	return tr, nil
+}

@@ -1116,3 +1116,60 @@ func (s *Store) ListReadableNotes(ctx context.Context, requesterID, folderID str
 	}
 	return out, nil
 }
+
+// GetReadableNoteBody returns noteID's body content for requesterID,
+// authorizing within the same query: ownership or an explicit grant on a
+// live folder the note is directly assigned to.
+func (s *Store) GetReadableNoteBody(ctx context.Context, requesterID, noteID string) (string, error) {
+	var body string
+	err := s.pool.QueryRow(ctx,
+		`SELECT nb.content
+		 FROM note_bodies nb
+		 JOIN notes n ON n.id = nb.note_id AND n.deleted_at IS NULL
+		 WHERE nb.note_id=$1 AND `+readableNoteJoin,
+		noteID, requesterID).Scan(&body)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return body, err
+}
+
+// GetReadableNoteTags returns noteID's tag names for requesterID,
+// authorizing within the same query. Uses a LEFT JOIN from notes so a
+// visible note with zero tags yields one placeholder row, distinguishing it
+// from zero rows for an invisible note: the former returns an empty
+// (non-nil) slice, the latter ErrNotFound.
+func (s *Store) GetReadableNoteTags(ctx context.Context, requesterID, noteID string) ([]string, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT t.name
+		 FROM notes n
+		 LEFT JOIN note_tags nt ON nt.note_id = n.id
+		 LEFT JOIN tags t ON t.id = nt.tag_id
+		 WHERE n.id=$1 AND n.deleted_at IS NULL AND `+readableNoteJoin+`
+		 ORDER BY lower(t.name)`,
+		noteID, requesterID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	out := []string{}
+	sawRow := false
+	for rows.Next() {
+		sawRow = true
+		var name *string
+		if err := rows.Scan(&name); err != nil {
+			return nil, err
+		}
+		if name != nil {
+			out = append(out, *name)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if !sawRow {
+		return nil, ErrNotFound
+	}
+	return out, nil
+}
