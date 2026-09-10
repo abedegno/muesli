@@ -1013,3 +1013,655 @@ func TestResolveFolders(t *testing.T) {
 		t.Errorf("child fields wrong: %+v", c)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Issue #12: deployment team boundary + shared folders.
+// ---------------------------------------------------------------------------
+
+func TestListFoldersOwnedAndSharedVisibility(t *testing.T) {
+	t.Parallel()
+	st, ownerID, _ := newStoreWithOwner(t)
+	other := addUser(t, st)
+	ctx := context.Background()
+
+	mine, err := st.CreateFolder(ctx, ownerID, "Mine", nil)
+	if err != nil {
+		t.Fatalf("create mine: %v", err)
+	}
+	if mine.Visibility != model.FolderPrivate || !mine.IsOwner || mine.OwnerID != ownerID {
+		t.Fatalf("new folder should be private+owned: %+v", mine)
+	}
+
+	theirsPrivate, err := st.CreateFolder(ctx, other, "TheirsPrivate", nil)
+	if err != nil {
+		t.Fatalf("create theirs private: %v", err)
+	}
+	theirsShared, err := st.CreateFolder(ctx, other, "TheirsShared", nil)
+	if err != nil {
+		t.Fatalf("create theirs shared: %v", err)
+	}
+	if _, err := st.SetFolderVisibility(ctx, other, theirsShared.ID, model.FolderShared); err != nil {
+		t.Fatalf("share theirs: %v", err)
+	}
+	theirsTrashedShared, err := st.CreateFolder(ctx, other, "TheirsTrashedShared", nil)
+	if err != nil {
+		t.Fatalf("create theirs trashed shared: %v", err)
+	}
+	if _, err := st.SetFolderVisibility(ctx, other, theirsTrashedShared.ID, model.FolderShared); err != nil {
+		t.Fatalf("share theirs trashed: %v", err)
+	}
+	if err := st.DeleteFolder(ctx, other, theirsTrashedShared.ID); err != nil {
+		t.Fatalf("trash theirs shared: %v", err)
+	}
+
+	got, err := st.ListFolders(ctx, ownerID)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	byID := map[string]model.Folder{}
+	for _, f := range got {
+		byID[f.ID] = f
+	}
+	if _, ok := byID[theirsPrivate.ID]; ok {
+		t.Errorf("private non-owned folder leaked into list: %+v", byID)
+	}
+	if _, ok := byID[theirsTrashedShared.ID]; ok {
+		t.Errorf("trashed shared folder leaked into list: %+v", byID)
+	}
+	m, ok := byID[mine.ID]
+	if !ok || !m.IsOwner {
+		t.Fatalf("owned private folder missing or IsOwner false: %+v", byID)
+	}
+	ts, ok := byID[theirsShared.ID]
+	if !ok {
+		t.Fatalf("live shared non-owned folder missing from list: %+v", byID)
+	}
+	if ts.IsOwner {
+		t.Errorf("shared non-owned folder IsOwner = true, want false")
+	}
+	if ts.OwnerID != other {
+		t.Errorf("shared folder owner_id = %q, want %q", ts.OwnerID, other)
+	}
+}
+
+func TestListFoldersSanitizesInvisibleAncestryAndRetainsVisible(t *testing.T) {
+	t.Parallel()
+	st, ownerID, _ := newStoreWithOwner(t)
+	other := addUser(t, st)
+	ctx := context.Background()
+
+	// other: private root -> shared child. Requester can see the child (shared)
+	// but not the root (private), so the response must promote the child to a
+	// null parent WITHOUT mutating the stored parent_id.
+	privateRoot, err := st.CreateFolder(ctx, other, "PrivateRoot", nil)
+	if err != nil {
+		t.Fatalf("create root: %v", err)
+	}
+	sharedChild, err := st.CreateFolder(ctx, other, "SharedChild", &privateRoot.ID)
+	if err != nil {
+		t.Fatalf("create child: %v", err)
+	}
+	if _, err := st.SetFolderVisibility(ctx, other, sharedChild.ID, model.FolderShared); err != nil {
+		t.Fatalf("share child: %v", err)
+	}
+
+	// other: shared root -> shared grandchild. Both visible -> real relationship kept.
+	sharedRoot, err := st.CreateFolder(ctx, other, "SharedRoot", nil)
+	if err != nil {
+		t.Fatalf("create shared root: %v", err)
+	}
+	if _, err := st.SetFolderVisibility(ctx, other, sharedRoot.ID, model.FolderShared); err != nil {
+		t.Fatalf("share root: %v", err)
+	}
+	sharedGrandchild, err := st.CreateFolder(ctx, other, "SharedGrandchild", &sharedRoot.ID)
+	if err != nil {
+		t.Fatalf("create grandchild: %v", err)
+	}
+	if _, err := st.SetFolderVisibility(ctx, other, sharedGrandchild.ID, model.FolderShared); err != nil {
+		t.Fatalf("share grandchild: %v", err)
+	}
+
+	got, err := st.ListFolders(ctx, ownerID)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	byID := map[string]model.Folder{}
+	for _, f := range got {
+		byID[f.ID] = f
+	}
+	if _, ok := byID[privateRoot.ID]; ok {
+		t.Fatalf("private root should not be visible: %+v", byID)
+	}
+	sc, ok := byID[sharedChild.ID]
+	if !ok {
+		t.Fatalf("shared child missing: %+v", byID)
+	}
+	if sc.ParentID != nil {
+		t.Errorf("promoted shared child ParentID = %v, want nil (invisible ancestor)", *sc.ParentID)
+	}
+	sg, ok := byID[sharedGrandchild.ID]
+	if !ok {
+		t.Fatalf("shared grandchild missing: %+v", byID)
+	}
+	if sg.ParentID == nil || *sg.ParentID != sharedRoot.ID {
+		t.Errorf("shared grandchild ParentID = %v, want %s (both visible)", sg.ParentID, sharedRoot.ID)
+	}
+
+	// Stored parent_id must be untouched by the response sanitization.
+	stored, err := st.GetFolder(ctx, other, sharedChild.ID)
+	if err != nil {
+		t.Fatalf("owner re-read: %v", err)
+	}
+	if stored.ParentID == nil || *stored.ParentID != privateRoot.ID {
+		t.Errorf("stored parent_id changed by list sanitization: got %v, want %s", stored.ParentID, privateRoot.ID)
+	}
+}
+
+func TestListFoldersCountsDirectMembershipOnly(t *testing.T) {
+	t.Parallel()
+	st, ownerID, _ := newStoreWithOwner(t)
+	other := addUser(t, st)
+	ctx := context.Background()
+
+	shared, err := st.CreateFolder(ctx, ownerID, "Shared", nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := st.SetFolderVisibility(ctx, ownerID, shared.ID, model.FolderShared); err != nil {
+		t.Fatalf("share: %v", err)
+	}
+	mine, err := st.CreateNote(ctx, ownerID, "Mine")
+	if err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	if err := st.AddNoteFolder(ctx, ownerID, mine.ID, shared.ID); err != nil {
+		t.Fatalf("file mine: %v", err)
+	}
+	theirs, err := st.CreateNote(ctx, other, "Theirs")
+	if err != nil {
+		t.Fatalf("create their note: %v", err)
+	}
+	if err := st.AddNoteFolder(ctx, other, theirs.ID, shared.ID); err != nil {
+		t.Fatalf("file theirs: %v", err)
+	}
+
+	// Both the folder owner and the contributor see the same count: 2.
+	for _, requester := range []string{ownerID, other} {
+		got, err := st.ListFolders(ctx, requester)
+		if err != nil {
+			t.Fatalf("list as %s: %v", requester, err)
+		}
+		var f *model.Folder
+		for i := range got {
+			if got[i].ID == shared.ID {
+				f = &got[i]
+			}
+		}
+		if f == nil {
+			t.Fatalf("shared folder missing for requester %s", requester)
+		}
+		if f.NoteCount != 2 {
+			t.Errorf("requester %s: note_count = %d, want 2", requester, f.NoteCount)
+		}
+	}
+}
+
+func TestSetFolderVisibilityValuesAndAuthorization(t *testing.T) {
+	t.Parallel()
+	st, ownerID, _ := newStoreWithOwner(t)
+	other := addUser(t, st)
+	ctx := context.Background()
+
+	f, err := st.CreateFolder(ctx, ownerID, "F", nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if _, err := st.SetFolderVisibility(ctx, ownerID, f.ID, "public"); err == nil {
+		t.Error("invalid visibility value should error")
+	}
+
+	shared, err := st.SetFolderVisibility(ctx, ownerID, f.ID, model.FolderShared)
+	if err != nil {
+		t.Fatalf("set shared: %v", err)
+	}
+	if shared.Visibility != model.FolderShared || !shared.IsOwner {
+		t.Fatalf("set shared result: %+v", shared)
+	}
+
+	back, err := st.SetFolderVisibility(ctx, ownerID, f.ID, model.FolderPrivate)
+	if err != nil {
+		t.Fatalf("set private: %v", err)
+	}
+	if back.Visibility != model.FolderPrivate {
+		t.Fatalf("set private result: %+v", back)
+	}
+
+	// Private non-owner: ErrNotFound (invisible).
+	if _, err := st.SetFolderVisibility(ctx, other, f.ID, model.FolderShared); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("private foreign: want ErrNotFound, got %v", err)
+	}
+
+	// Shared non-owner: ErrForbidden (visible, not theirs to change).
+	if _, err := st.SetFolderVisibility(ctx, ownerID, f.ID, model.FolderShared); err != nil {
+		t.Fatalf("re-share: %v", err)
+	}
+	if _, err := st.SetFolderVisibility(ctx, other, f.ID, model.FolderPrivate); !errors.Is(err, store.ErrForbidden) {
+		t.Errorf("shared foreign: want ErrForbidden, got %v", err)
+	}
+}
+
+func TestFolderOwnerOnlyMutationsDistinguishForbiddenFromNotFound(t *testing.T) {
+	t.Parallel()
+	st, ownerID, _ := newStoreWithOwner(t)
+	other := addUser(t, st)
+	ctx := context.Background()
+
+	private, err := st.CreateFolder(ctx, ownerID, "Private", nil)
+	if err != nil {
+		t.Fatalf("create private: %v", err)
+	}
+	shared, err := st.CreateFolder(ctx, ownerID, "Shared", nil)
+	if err != nil {
+		t.Fatalf("create shared: %v", err)
+	}
+	if _, err := st.SetFolderVisibility(ctx, ownerID, shared.ID, model.FolderShared); err != nil {
+		t.Fatalf("share: %v", err)
+	}
+
+	// UpdateFolder
+	if _, err := st.UpdateFolder(ctx, other, private.ID, "X", nil); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("update private foreign: want ErrNotFound, got %v", err)
+	}
+	if _, err := st.UpdateFolder(ctx, other, shared.ID, "X", nil); !errors.Is(err, store.ErrForbidden) {
+		t.Errorf("update shared foreign: want ErrForbidden, got %v", err)
+	}
+
+	// ReorderFolder
+	if err := st.ReorderFolder(ctx, other, private.ID, nil); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("reorder private foreign: want ErrNotFound, got %v", err)
+	}
+	if err := st.ReorderFolder(ctx, other, shared.ID, nil); !errors.Is(err, store.ErrForbidden) {
+		t.Errorf("reorder shared foreign: want ErrForbidden, got %v", err)
+	}
+
+	// DeleteFolder (trash)
+	if err := st.DeleteFolder(ctx, other, private.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("trash private foreign: want ErrNotFound, got %v", err)
+	}
+	if err := st.DeleteFolder(ctx, other, shared.ID); !errors.Is(err, store.ErrForbidden) {
+		t.Errorf("trash shared foreign: want ErrForbidden, got %v", err)
+	}
+
+	// Owner can still proceed on the shared one.
+	if err := st.DeleteFolder(ctx, ownerID, shared.ID); err != nil {
+		t.Fatalf("owner trash shared: %v", err)
+	}
+}
+
+func TestValidateParentRejectsCrossOwnerEvenWhenShared(t *testing.T) {
+	t.Parallel()
+	st, ownerID, _ := newStoreWithOwner(t)
+	other := addUser(t, st)
+	ctx := context.Background()
+
+	theirShared, err := st.CreateFolder(ctx, other, "TheirShared", nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := st.SetFolderVisibility(ctx, other, theirShared.ID, model.FolderShared); err != nil {
+		t.Fatalf("share: %v", err)
+	}
+
+	// A shared parent is still not usable cross-owner: same-owner nesting only.
+	if _, err := st.CreateFolder(ctx, ownerID, "Child", &theirShared.ID); !errors.Is(err, store.ErrInvalidParent) {
+		t.Errorf("create under foreign shared parent: want ErrInvalidParent, got %v", err)
+	}
+
+	mine, err := st.CreateFolder(ctx, ownerID, "Mine", nil)
+	if err != nil {
+		t.Fatalf("create mine: %v", err)
+	}
+	if _, err := st.UpdateFolder(ctx, ownerID, mine.ID, "Mine", &theirShared.ID); !errors.Is(err, store.ErrInvalidParent) {
+		t.Errorf("reparent under foreign shared parent: want ErrInvalidParent, got %v", err)
+	}
+}
+
+func TestAddNoteFolderFilingMatrix(t *testing.T) {
+	t.Parallel()
+	st, ownerID, _ := newStoreWithOwner(t)
+	other := addUser(t, st)
+	ctx := context.Background()
+
+	theirShared, err := st.CreateFolder(ctx, other, "TheirShared", nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := st.SetFolderVisibility(ctx, other, theirShared.ID, model.FolderShared); err != nil {
+		t.Fatalf("share: %v", err)
+	}
+	theirPrivate, err := st.CreateFolder(ctx, other, "TheirPrivate", nil)
+	if err != nil {
+		t.Fatalf("create private: %v", err)
+	}
+
+	myNote, err := st.CreateNote(ctx, ownerID, "Mine")
+	if err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+
+	// Own note into someone else's shared folder: succeeds.
+	if err := st.AddNoteFolder(ctx, ownerID, myNote.ID, theirShared.ID); err != nil {
+		t.Fatalf("file own note into shared folder: %v", err)
+	}
+
+	// Own note into someone else's private folder: invisible -> ErrNotFound.
+	if err := st.AddNoteFolder(ctx, ownerID, myNote.ID, theirPrivate.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("file into private foreign folder: want ErrNotFound, got %v", err)
+	}
+
+	// Someone else's note into my folder: I don't own the note -> visible note
+	// (it's now readable via theirShared membership) but forbidden to add.
+	mine, err := st.CreateFolder(ctx, ownerID, "Mine", nil)
+	if err != nil {
+		t.Fatalf("create mine: %v", err)
+	}
+	if _, err := st.SetFolderVisibility(ctx, ownerID, mine.ID, model.FolderShared); err != nil {
+		t.Fatalf("share mine: %v", err)
+	}
+	theirNote, err := st.CreateNote(ctx, other, "Theirs")
+	if err != nil {
+		t.Fatalf("create their note: %v", err)
+	}
+	// their note is not yet visible to ownerID (not filed anywhere shared) -> ErrNotFound.
+	if err := st.AddNoteFolder(ctx, ownerID, theirNote.ID, mine.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("add invisible foreign note: want ErrNotFound, got %v", err)
+	}
+	// File their note into their own shared folder, making it readable to ownerID...
+	if err := st.AddNoteFolder(ctx, other, theirNote.ID, theirShared.ID); err != nil {
+		t.Fatalf("owner files own note: %v", err)
+	}
+	// ...now it's visible to ownerID but still not theirs to file -> ErrForbidden.
+	if err := st.AddNoteFolder(ctx, ownerID, theirNote.ID, mine.ID); !errors.Is(err, store.ErrForbidden) {
+		t.Errorf("add now-visible foreign note: want ErrForbidden, got %v", err)
+	}
+}
+
+func TestRemoveNoteFolderFilingMatrix(t *testing.T) {
+	t.Parallel()
+	st, ownerID, _ := newStoreWithOwner(t)
+	other := addUser(t, st)
+	ctx := context.Background()
+
+	folder, err := st.CreateFolder(ctx, ownerID, "Shared", nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := st.SetFolderVisibility(ctx, ownerID, folder.ID, model.FolderShared); err != nil {
+		t.Fatalf("share: %v", err)
+	}
+	contributed, err := st.CreateNote(ctx, other, "Contributed")
+	if err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	if err := st.AddNoteFolder(ctx, other, contributed.ID, folder.ID); err != nil {
+		t.Fatalf("contribute: %v", err)
+	}
+
+	// Folder owner removes a teammate's contribution: allowed.
+	if err := st.RemoveNoteFolder(ctx, ownerID, contributed.ID, folder.ID); err != nil {
+		t.Fatalf("folder owner removes teammate note: %v", err)
+	}
+
+	// Re-file, then have the note owner remove their own contribution: allowed.
+	if err := st.AddNoteFolder(ctx, other, contributed.ID, folder.ID); err != nil {
+		t.Fatalf("re-contribute: %v", err)
+	}
+	if err := st.RemoveNoteFolder(ctx, other, contributed.ID, folder.ID); err != nil {
+		t.Fatalf("note owner removes own note: %v", err)
+	}
+
+	// A third party (neither note owner nor folder owner) cannot remove.
+	third := addUser(t, st)
+	if err := st.AddNoteFolder(ctx, other, contributed.ID, folder.ID); err != nil {
+		t.Fatalf("re-contribute 2: %v", err)
+	}
+	if err := st.RemoveNoteFolder(ctx, third, contributed.ID, folder.ID); !errors.Is(err, store.ErrForbidden) {
+		t.Errorf("third party remove: want ErrForbidden, got %v", err)
+	}
+}
+
+func TestReorderNoteInFolderIsFolderOwnerOnly(t *testing.T) {
+	t.Parallel()
+	st, ownerID, _ := newStoreWithOwner(t)
+	other := addUser(t, st)
+	ctx := context.Background()
+
+	folder, err := st.CreateFolder(ctx, ownerID, "Shared", nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if _, err := st.SetFolderVisibility(ctx, ownerID, folder.ID, model.FolderShared); err != nil {
+		t.Fatalf("share: %v", err)
+	}
+	mine, err := st.CreateNote(ctx, ownerID, "Mine")
+	if err != nil {
+		t.Fatalf("create mine: %v", err)
+	}
+	if err := st.AddNoteFolder(ctx, ownerID, mine.ID, folder.ID); err != nil {
+		t.Fatalf("file mine: %v", err)
+	}
+	theirs, err := st.CreateNote(ctx, other, "Theirs")
+	if err != nil {
+		t.Fatalf("create theirs: %v", err)
+	}
+	if err := st.AddNoteFolder(ctx, other, theirs.ID, folder.ID); err != nil {
+		t.Fatalf("contribute: %v", err)
+	}
+
+	// Folder owner may reorder a teammate's note alongside their own.
+	if err := st.ReorderNoteInFolder(ctx, ownerID, folder.ID, theirs.ID, &mine.ID); err != nil {
+		t.Fatalf("folder owner reorders teammate note: %v", err)
+	}
+
+	// The contributor (note owner, not folder owner) may not reorder.
+	if err := st.ReorderNoteInFolder(ctx, other, folder.ID, mine.ID, nil); !errors.Is(err, store.ErrForbidden) {
+		t.Errorf("non-folder-owner reorder: want ErrForbidden, got %v", err)
+	}
+}
+
+func TestGetReadableNoteSharedAccessAndRevocation(t *testing.T) {
+	t.Parallel()
+	st, ownerID, _ := newStoreWithOwner(t)
+	other := addUser(t, st)
+	ctx := context.Background()
+
+	note, err := st.CreateNote(ctx, ownerID, "Standup")
+	if err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	folderA, err := st.CreateFolder(ctx, ownerID, "A", nil)
+	if err != nil {
+		t.Fatalf("create folder a: %v", err)
+	}
+	folderB, err := st.CreateFolder(ctx, ownerID, "B", nil)
+	if err != nil {
+		t.Fatalf("create folder b: %v", err)
+	}
+	privateFolder, err := st.CreateFolder(ctx, ownerID, "Private", nil)
+	if err != nil {
+		t.Fatalf("create private folder: %v", err)
+	}
+
+	// Not readable before any sharing.
+	if err := st.AddNoteFolder(ctx, ownerID, note.ID, privateFolder.ID); err != nil {
+		t.Fatalf("file private: %v", err)
+	}
+	if _, err := st.GetReadableNote(ctx, other, note.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("before sharing: want ErrNotFound, got %v", err)
+	}
+
+	if _, err := st.SetFolderVisibility(ctx, ownerID, folderA.ID, model.FolderShared); err != nil {
+		t.Fatalf("share a: %v", err)
+	}
+	if _, err := st.SetFolderVisibility(ctx, ownerID, folderB.ID, model.FolderShared); err != nil {
+		t.Fatalf("share b: %v", err)
+	}
+	if err := st.AddNoteFolder(ctx, ownerID, note.ID, folderA.ID); err != nil {
+		t.Fatalf("file a: %v", err)
+	}
+	if err := st.AddNoteFolder(ctx, ownerID, note.ID, folderB.ID); err != nil {
+		t.Fatalf("file b: %v", err)
+	}
+
+	readable, err := st.GetReadableNote(ctx, other, note.ID)
+	if err != nil {
+		t.Fatalf("read via shared folder: %v", err)
+	}
+	if readable.IsOwner == nil || *readable.IsOwner {
+		t.Errorf("shared reader IsOwner = %v, want false", readable.IsOwner)
+	}
+	// folder_ids filtered: private folder membership must not leak to the shared reader.
+	for _, id := range readable.FolderIDs {
+		if id == privateFolder.ID {
+			t.Errorf("private folder id leaked to shared reader: %v", readable.FolderIDs)
+		}
+	}
+
+	// Two shared memberships: removing one still leaves it readable.
+	if err := st.RemoveNoteFolder(ctx, ownerID, note.ID, folderA.ID); err != nil {
+		t.Fatalf("remove a: %v", err)
+	}
+	if _, err := st.GetReadableNote(ctx, other, note.ID); err != nil {
+		t.Errorf("after removing one of two memberships: want readable, got %v", err)
+	}
+
+	// Removing the last shared membership revokes access.
+	if err := st.RemoveNoteFolder(ctx, ownerID, note.ID, folderB.ID); err != nil {
+		t.Fatalf("remove b: %v", err)
+	}
+	if _, err := st.GetReadableNote(ctx, other, note.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("after removing last membership: want ErrNotFound, got %v", err)
+	}
+
+	// Re-file and prove privatizing the folder revokes access.
+	if err := st.AddNoteFolder(ctx, ownerID, note.ID, folderA.ID); err != nil {
+		t.Fatalf("re-file a: %v", err)
+	}
+	if _, err := st.GetReadableNote(ctx, other, note.ID); err != nil {
+		t.Fatalf("re-shared: want readable, got %v", err)
+	}
+	if _, err := st.SetFolderVisibility(ctx, ownerID, folderA.ID, model.FolderPrivate); err != nil {
+		t.Fatalf("privatize a: %v", err)
+	}
+	if _, err := st.GetReadableNote(ctx, other, note.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("after privatizing: want ErrNotFound, got %v", err)
+	}
+
+	// Re-share, then prove trashing the folder revokes access.
+	if _, err := st.SetFolderVisibility(ctx, ownerID, folderA.ID, model.FolderShared); err != nil {
+		t.Fatalf("re-share a: %v", err)
+	}
+	if _, err := st.GetReadableNote(ctx, other, note.ID); err != nil {
+		t.Fatalf("re-shared 2: want readable, got %v", err)
+	}
+	if err := st.DeleteFolder(ctx, ownerID, folderA.ID); err != nil {
+		t.Fatalf("trash a: %v", err)
+	}
+	if _, err := st.GetReadableNote(ctx, other, note.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("after trashing folder: want ErrNotFound, got %v", err)
+	}
+}
+
+func TestGetReadableNoteRevokedByNoteTrash(t *testing.T) {
+	t.Parallel()
+	st, ownerID, _ := newStoreWithOwner(t)
+	other := addUser(t, st)
+	ctx := context.Background()
+
+	note, err := st.CreateNote(ctx, ownerID, "Standup")
+	if err != nil {
+		t.Fatalf("create note: %v", err)
+	}
+	folder, err := st.CreateFolder(ctx, ownerID, "Shared", nil)
+	if err != nil {
+		t.Fatalf("create folder: %v", err)
+	}
+	if _, err := st.SetFolderVisibility(ctx, ownerID, folder.ID, model.FolderShared); err != nil {
+		t.Fatalf("share: %v", err)
+	}
+	if err := st.AddNoteFolder(ctx, ownerID, note.ID, folder.ID); err != nil {
+		t.Fatalf("file: %v", err)
+	}
+	if _, err := st.GetReadableNote(ctx, other, note.ID); err != nil {
+		t.Fatalf("before trash: want readable, got %v", err)
+	}
+	if err := st.DeleteNote(ctx, ownerID, note.ID); err != nil {
+		t.Fatalf("trash note: %v", err)
+	}
+	if _, err := st.GetReadableNote(ctx, other, note.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("after note trash: want ErrNotFound, got %v", err)
+	}
+}
+
+func TestListReadableNotesFolderVisibilityAndOwnership(t *testing.T) {
+	t.Parallel()
+	st, ownerID, _ := newStoreWithOwner(t)
+	other := addUser(t, st)
+	ctx := context.Background()
+
+	shared, err := st.CreateFolder(ctx, ownerID, "Shared", nil)
+	if err != nil {
+		t.Fatalf("create shared: %v", err)
+	}
+	if _, err := st.SetFolderVisibility(ctx, ownerID, shared.ID, model.FolderShared); err != nil {
+		t.Fatalf("share: %v", err)
+	}
+	private, err := st.CreateFolder(ctx, ownerID, "Private", nil)
+	if err != nil {
+		t.Fatalf("create private: %v", err)
+	}
+
+	mine, err := st.CreateNote(ctx, ownerID, "Mine")
+	if err != nil {
+		t.Fatalf("create mine: %v", err)
+	}
+	if err := st.AddNoteFolder(ctx, ownerID, mine.ID, shared.ID); err != nil {
+		t.Fatalf("file mine: %v", err)
+	}
+	contributed, err := st.CreateNote(ctx, other, "Contributed")
+	if err != nil {
+		t.Fatalf("create contributed: %v", err)
+	}
+	if err := st.AddNoteFolder(ctx, other, contributed.ID, shared.ID); err != nil {
+		t.Fatalf("file contributed: %v", err)
+	}
+
+	// A teammate listing the shared folder sees both notes, correctly attributed.
+	got, err := st.ListReadableNotes(ctx, other, store.ListNotesFilter{FolderID: shared.ID, FolderIDSet: true})
+	if err != nil {
+		t.Fatalf("list readable: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 notes, got %d: %+v", len(got), got)
+	}
+	for _, n := range got {
+		if n.IsOwner == nil {
+			t.Fatalf("IsOwner not populated: %+v", n)
+		}
+		want := n.ID == contributed.ID
+		if *n.IsOwner != want {
+			t.Errorf("note %s IsOwner = %v, want %v", n.ID, *n.IsOwner, want)
+		}
+	}
+
+	// Listing a private foreign folder is ErrNotFound.
+	if _, err := st.ListReadableNotes(ctx, other, store.ListNotesFilter{FolderID: private.ID, FolderIDSet: true}); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("list private foreign folder: want ErrNotFound, got %v", err)
+	}
+
+	// The folder owner listing their own private folder still works normally.
+	if _, err := st.ListReadableNotes(ctx, ownerID, store.ListNotesFilter{FolderID: private.ID, FolderIDSet: true}); err != nil {
+		t.Errorf("owner list own private folder: %v", err)
+	}
+}
