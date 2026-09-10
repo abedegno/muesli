@@ -945,11 +945,19 @@ func (s *Store) foldersForNotes(ctx context.Context, noteIDs []string) (map[stri
 // the shared-readable note-list route without per-note leakage of private
 // filing structure (issue #12).
 func (s *Store) readableFoldersForNotes(ctx context.Context, requesterID string, noteIDs []string) (map[string][]string, error) {
+	return readableFoldersForNotesTx(ctx, s.pool, requesterID, noteIDs)
+}
+
+// readableFoldersForNotesTx is readableFoldersForNotes against an explicit
+// executor (pool or tx) so guarded multi-part reads (e.g. ListReadableNotes)
+// can load the batch readable-folder-id map inside the same
+// transaction/snapshot as their authorization check (issue #12).
+func readableFoldersForNotesTx(ctx context.Context, q txQuerier, requesterID string, noteIDs []string) (map[string][]string, error) {
 	out := map[string][]string{}
 	if len(noteIDs) == 0 {
 		return out, nil
 	}
-	rows, err := s.pool.Query(ctx,
+	rows, err := q.Query(ctx,
 		`SELECT nf.note_id, nf.folder_id
 		 FROM note_folders nf
 		 JOIN folders f ON f.id = nf.folder_id

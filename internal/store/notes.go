@@ -901,6 +901,16 @@ func readableNoteFilterSQL(folderID string, f ListNotesFilter) (string, []any) {
 	return strings.Join(where, " AND "), args
 }
 
+// testHookAfterListReadableNotesRowsLoaded runs inside ListReadableNotes'
+// RepeatableRead transaction, after the authorization-guarded note rows have
+// been loaded (and the transaction's snapshot is therefore already fixed)
+// but before the tag and readable-folder-id reads that complete the payload.
+// It is nil in production and exists so a test can pause here while a
+// concurrent unshare/membership-removal commits, proving the later reads
+// still observe the pre-revocation snapshot rather than racing the write
+// (issue #12).
+var testHookAfterListReadableNotesRowsLoaded func()
+
 // ListReadableNotes is the widened counterpart to ListNotes for the
 // folder-filtered list route (f.FolderIDSet must be true): it returns live
 // notes filed directly in f.FolderID when that folder is readable by the
@@ -957,11 +967,24 @@ func (s *Store) ListReadableNotes(ctx context.Context, requesterID string, f Lis
 		 WHERE %s ORDER BY %s`,
 		requesterIDPos, where, notesOrderClause(true))
 
-	rows, err := s.pool.Query(ctx, query, args...)
+	// The note-row load, tag load, and readable-folder-id load all run
+	// inside one RepeatableRead transaction (issue #12), the same pattern
+	// GetReadableNote/GetReadableNoteFull use: every read in this call
+	// therefore observes the SAME consistent snapshot as the authorization
+	// predicate embedded in the query above, so an unshare or membership
+	// removal that commits after this transaction's snapshot is taken can
+	// never cause the later tag/folder-id reads to disagree with (or leak
+	// beyond) what the note-row query already authorized.
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer tx.Rollback(ctx)
+
+	rows, err := tx.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
 
 	var out []model.Note
 	for rows.Next() {
@@ -969,6 +992,7 @@ func (s *Store) ListReadableNotes(ctx context.Context, requesterID string, f Lis
 		var body string
 		if err := rows.Scan(&n.ID, &n.OwnerID, &n.Title, &n.Status, &n.Pinned,
 			&n.StartedAt, &n.EndedAt, &n.PartialTranscript, &n.CreatedAt, &n.UpdatedAt, &body, &n.EventID); err != nil {
+			rows.Close()
 			return nil, err
 		}
 		n.Snippet = snippet(body)
@@ -976,14 +1000,21 @@ func (s *Store) ListReadableNotes(ctx context.Context, requesterID string, f Lis
 		n.IsOwner = &isOwner
 		out = append(out, n)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	rowsErr := rows.Err()
+	rows.Close()
+	if rowsErr != nil {
+		return nil, rowsErr
 	}
+
+	if testHookAfterListReadableNotesRowsLoaded != nil {
+		testHookAfterListReadableNotesRowsLoaded()
+	}
+
 	ids := make([]string, len(out))
 	for i := range out {
 		ids[i] = out[i].ID
 	}
-	tagMap, err := s.tagsForNotes(ctx, ids)
+	tagMap, err := tagsForNotesTx(ctx, tx, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -994,7 +1025,7 @@ func (s *Store) ListReadableNotes(ctx context.Context, requesterID string, f Lis
 			out[i].Tags = []string{}
 		}
 	}
-	folderMap, err := s.readableFoldersForNotes(ctx, requesterID, ids)
+	folderMap, err := readableFoldersForNotesTx(ctx, tx, requesterID, ids)
 	if err != nil {
 		return nil, err
 	}
@@ -1005,7 +1036,7 @@ func (s *Store) ListReadableNotes(ctx context.Context, requesterID string, f Lis
 			out[i].FolderIDs = []string{}
 		}
 	}
-	return out, nil
+	return out, tx.Commit(ctx)
 }
 
 // ListTrash returns the owner's trashed notes, most-recently-trashed first, with the

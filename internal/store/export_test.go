@@ -23,3 +23,11 @@ func SetTestHookAfterDeleteNoteSummariesGenerationCheck(f func()) func() {
 	testHookAfterDeleteNoteSummariesGenerationCheck = f
 	return func() { testHookAfterDeleteNoteSummariesGenerationCheck = prev }
 }
+
+// SetTestHookAfterListReadableNotesRowsLoaded installs the hook for tests in
+// package store_test and returns a restore function.
+func SetTestHookAfterListReadableNotesRowsLoaded(f func()) func() {
+	prev := testHookAfterListReadableNotesRowsLoaded
+	testHookAfterListReadableNotesRowsLoaded = f
+	return func() { testHookAfterListReadableNotesRowsLoaded = prev }
+}
