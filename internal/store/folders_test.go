@@ -1380,6 +1380,38 @@ func TestFolderOwnerOnlyMutationsDistinguishForbiddenFromNotFound(t *testing.T) 
 	}
 }
 
+// Issue #12 repair: UpdateFolder must authorize the target folder before
+// validating the requester-supplied name/parent, so a non-owner updating a
+// live shared folder gets ErrForbidden even when their input is otherwise
+// invalid (e.g. a self-referential parent_id) rather than
+// ValidationError/ErrInvalidParent leaking input-shape feedback.
+func TestUpdateFolderAuthorizationPrecedesInputValidation(t *testing.T) {
+	t.Parallel()
+	st, ownerID, _ := newStoreWithOwner(t)
+	other := addUser(t, st)
+	ctx := context.Background()
+
+	shared, err := st.CreateFolder(ctx, ownerID, "Shared", nil)
+	if err != nil {
+		t.Fatalf("create shared: %v", err)
+	}
+	if _, err := st.SetFolderVisibility(ctx, ownerID, shared.ID, model.FolderShared); err != nil {
+		t.Fatalf("share: %v", err)
+	}
+
+	// Non-owner supplies an invalid name (blank) and an invalid parent (the
+	// folder itself) for the live shared folder. Authorization must win over
+	// input validation: ErrForbidden, not ValidationError/ErrInvalidParent.
+	if _, err := st.UpdateFolder(ctx, other, shared.ID, "", &shared.ID); !errors.Is(err, store.ErrForbidden) {
+		t.Errorf("non-owner invalid input on shared folder: want ErrForbidden, got %v", err)
+	}
+
+	// Same invalid parent_id from the owner is a genuine ErrInvalidParent.
+	if _, err := st.UpdateFolder(ctx, ownerID, shared.ID, "Shared", &shared.ID); !errors.Is(err, store.ErrInvalidParent) {
+		t.Errorf("owner self-parent: want ErrInvalidParent, got %v", err)
+	}
+}
+
 func TestValidateParentRejectsCrossOwnerEvenWhenShared(t *testing.T) {
 	t.Parallel()
 	st, ownerID, _ := newStoreWithOwner(t)

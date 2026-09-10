@@ -288,21 +288,25 @@ func (s *Store) GetFolder(ctx context.Context, ownerID, id string) (model.Folder
 }
 
 func (s *Store) UpdateFolder(ctx context.Context, requesterID, id, name string, parentID *string) (model.Folder, error) {
-	name, err := validateFolderName(name)
-	if err != nil {
-		return model.Folder{}, err
-	}
-	if err := s.validateParent(ctx, requesterID, id, parentID); err != nil {
-		return model.Folder{}, err
-	}
-
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return model.Folder{}, err
 	}
 	defer tx.Rollback(ctx)
 
+	// Authorization must precede validation of the requester-supplied name/parent:
+	// a non-owner must get ErrForbidden (or ErrNotFound) even when their input is
+	// otherwise invalid, not a ValidationError/ErrInvalidParent that would leak
+	// input-shape feedback to someone unauthorized to make the change.
 	if err := authorizeLiveFolderOwnerMutation(ctx, tx, requesterID, id); err != nil {
+		return model.Folder{}, err
+	}
+
+	name, err = validateFolderName(name)
+	if err != nil {
+		return model.Folder{}, err
+	}
+	if err := s.validateParent(ctx, requesterID, id, parentID); err != nil {
 		return model.Folder{}, err
 	}
 
