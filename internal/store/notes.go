@@ -202,6 +202,65 @@ func (s *Store) GetNote(ctx context.Context, ownerID, noteID string) (model.Note
 }
 
 // SetNoteAudio records the uploaded audio key and advances status to uploaded.
+
+// canReadNoteSQL is embedded into GetReadableNote/ListReadableNotes payload
+// queries as the CanReadNote(requester, note) predicate (issue #12): a note
+// is requester-readable when the requester owns it, or when it has a live
+// note_folders membership to at least one live folder with visibility=
+// 'shared'. Evaluated in the same query that loads the note so an unshare
+// between check and load can never leak content afterward. %[1]s is the
+// notes-table alias (n) and %[2]s the requester-id placeholder ($N).
+const canReadNoteSQL = `(%[1]s.owner_id = %[2]s OR EXISTS (
+	SELECT 1 FROM note_folders nf JOIN folders f ON f.id = nf.folder_id
+	WHERE nf.note_id = %[1]s.id AND f.visibility = 'shared' AND f.deleted_at IS NULL
+))`
+
+// GetReadableNote is the widened counterpart to GetNote for the note-detail
+// route: it returns a live note the requester owns OR can read via a live
+// shared folder membership (CanReadNote), with IsOwner and FolderIDs (folder
+// memberships filtered to what the requester can see) populated. Returns
+// ErrNotFound when the note is absent, trashed, or neither owned nor
+// shared-readable.
+func (s *Store) GetReadableNote(ctx context.Context, requesterID, noteID string) (model.Note, error) {
+	var n model.Note
+	var audioKey, retention *string
+	query := fmt.Sprintf(
+		`SELECT n.id, n.owner_id, n.title, n.status, n.pinned, n.started_at, n.ended_at, n.partial_transcript,
+		        n.audio_object_key, n.retention_state, n.created_at, n.updated_at, n.event_id
+		 FROM notes n WHERE n.id=$1 AND n.deleted_at IS NULL AND %s`, fmt.Sprintf(canReadNoteSQL, "n", "$2"))
+	err := s.pool.QueryRow(ctx, query, noteID, requesterID).
+		Scan(&n.ID, &n.OwnerID, &n.Title, &n.Status, &n.Pinned, &n.StartedAt, &n.EndedAt, &n.PartialTranscript, &audioKey, &retention, &n.CreatedAt, &n.UpdatedAt, &n.EventID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.Note{}, ErrNotFound
+	}
+	if err != nil {
+		return model.Note{}, err
+	}
+	if audioKey != nil {
+		n.AudioObjectKey = *audioKey
+	}
+	if retention != nil {
+		n.RetentionState = *retention
+	}
+	isOwner := n.OwnerID == requesterID
+	n.IsOwner = &isOwner
+
+	tags, err := s.NoteTags(ctx, noteID)
+	if err != nil {
+		return model.Note{}, err
+	}
+	n.Tags = tags
+
+	folderIDs, err := s.readableNoteFolderIDs(ctx, requesterID, noteID)
+	if err != nil {
+		return model.Note{}, err
+	}
+	n.FolderIDs = folderIDs
+
+	return n, nil
+}
+
+// SetNoteAudio records the uploaded audio key and advances status to uploaded.
 func (s *Store) SetNoteAudio(ctx context.Context, ownerID, noteID, audioKey string) error {
 	ct, err := s.pool.Exec(ctx,
 		`UPDATE notes SET audio_object_key=$1, status=$2, updated_at=now()
@@ -699,6 +758,123 @@ func (s *Store) ListNotes(ctx context.Context, ownerID string, f ListNotesFilter
 		}
 	}
 	folderMap, err := s.foldersForNotes(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if fids := folderMap[out[i].ID]; fids != nil {
+			out[i].FolderIDs = fids
+		} else {
+			out[i].FolderIDs = []string{}
+		}
+	}
+	return out, nil
+}
+
+// readableNoteFilterSQL builds the WHERE/args for ListReadableNotes. Unlike
+// noteFilterSQL it never restricts to one owner — the folder join itself is
+// the authorization (see ListReadableNotes) — but still applies the caller's
+// optional Tag/Status/CreatedFrom/CreatedTo filters, each of which already
+// scopes itself to the row's own owner_id dynamically.
+func readableNoteFilterSQL(folderID string, f ListNotesFilter) (string, []any) {
+	where := []string{"n.deleted_at IS NULL"}
+	args := []any{folderID}
+	if f.Tag != "" {
+		args = append(args, f.Tag)
+		where = append(where, fmt.Sprintf(`EXISTS (SELECT 1 FROM note_tags nt JOIN tags t ON t.id = nt.tag_id
+			WHERE nt.note_id = n.id AND lower(t.name) = lower($%d) AND t.owner_id = n.owner_id)`, len(args)))
+	}
+	if f.Status != "" {
+		args = append(args, f.Status)
+		where = append(where, fmt.Sprintf("n.status = $%d", len(args)))
+	}
+	if f.CreatedFrom != nil {
+		args = append(args, *f.CreatedFrom)
+		where = append(where, fmt.Sprintf("n.created_at >= $%d", len(args)))
+	}
+	if f.CreatedTo != nil {
+		args = append(args, *f.CreatedTo)
+		where = append(where, fmt.Sprintf("n.created_at <= $%d", len(args)))
+	}
+	return strings.Join(where, " AND "), args
+}
+
+// ListReadableNotes is the widened counterpart to ListNotes for the
+// folder-filtered list route (f.FolderIDSet must be true): it returns live
+// notes filed directly in f.FolderID when that folder is readable by the
+// requester (owned, or live and shared). A live shared folder's membership is
+// itself CanReadNote-sufficient for every note filed there regardless of who
+// filed it, so no further per-note ownership check is applied; a private
+// folder can, by the filing invariants, only ever contain the requester's own
+// notes. Returns ErrNotFound when the folder is absent, trashed, or private
+// and not owned by the requester. IsOwner and FolderIDs (filtered to what the
+// requester can see) are populated on every returned note.
+func (s *Store) ListReadableNotes(ctx context.Context, requesterID string, f ListNotesFilter) ([]model.Note, error) {
+	if !f.FolderIDSet {
+		return nil, ErrNotFound
+	}
+	var folderOwnerID, folderVisibility string
+	err := s.pool.QueryRow(ctx,
+		`SELECT owner_id, visibility FROM folders WHERE id=$1 AND deleted_at IS NULL`, f.FolderID).
+		Scan(&folderOwnerID, &folderVisibility)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if folderOwnerID != requesterID && folderVisibility != model.FolderShared {
+		return nil, ErrNotFound
+	}
+
+	where, args := readableNoteFilterSQL(f.FolderID, f)
+	query := fmt.Sprintf(
+		`SELECT n.id, n.owner_id, n.title, n.status, n.pinned, n.started_at, n.ended_at,
+		        n.partial_transcript, n.created_at, n.updated_at, COALESCE(nb.content, ''), n.event_id
+		 FROM notes n
+		 JOIN note_folders nf ON nf.note_id = n.id AND nf.folder_id = $1
+		 LEFT JOIN note_bodies nb ON nb.note_id = n.id
+		 WHERE %s ORDER BY %s`,
+		where, notesOrderClause(true))
+
+	rows, err := s.pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var out []model.Note
+	for rows.Next() {
+		var n model.Note
+		var body string
+		if err := rows.Scan(&n.ID, &n.OwnerID, &n.Title, &n.Status, &n.Pinned,
+			&n.StartedAt, &n.EndedAt, &n.PartialTranscript, &n.CreatedAt, &n.UpdatedAt, &body, &n.EventID); err != nil {
+			return nil, err
+		}
+		n.Snippet = snippet(body)
+		isOwner := n.OwnerID == requesterID
+		n.IsOwner = &isOwner
+		out = append(out, n)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	ids := make([]string, len(out))
+	for i := range out {
+		ids[i] = out[i].ID
+	}
+	tagMap, err := s.tagsForNotes(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if tags := tagMap[out[i].ID]; tags != nil {
+			out[i].Tags = tags
+		} else {
+			out[i].Tags = []string{}
+		}
+	}
+	folderMap, err := s.readableFoldersForNotes(ctx, requesterID, ids)
 	if err != nil {
 		return nil, err
 	}

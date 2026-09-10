@@ -195,6 +195,7 @@ func (s *Server) routes() {
 		r.Post("/api/folders/resolve", s.handleResolveFolders)
 		r.Post("/api/folders", s.handleCreateFolder)
 		r.Put("/api/folders/{id}", s.handleUpdateFolder)
+		r.Put("/api/folders/{id}/visibility", s.handleSetFolderVisibility)
 		r.Put("/api/folders/{id}/reorder", s.handleReorderFolder)
 		r.Put("/api/folders/{folderID}/notes/{noteID}/reorder", s.handleReorderNoteInFolder)
 		r.Delete("/api/folders/{id}", s.handleDeleteFolder)

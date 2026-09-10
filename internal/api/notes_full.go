@@ -21,7 +21,10 @@ type fullNoteResponse struct {
 }
 
 // handleGetNoteFull returns the full note (metadata + body + transcript +
-// summaries) the desktop client polls. Owner-scoped via GetNote.
+// summaries) the desktop client polls. One of the three shared-readable
+// routes (issue #12): GetReadableNote returns a note the requester owns OR
+// can read via a live shared folder membership (CanReadNote), with is_owner
+// and folder_ids (filtered to what the requester can see) populated.
 // Speaker labels in transcript segments are substituted with user-defined
 // aliases at read time; the stored transcript_segments rows are never modified.
 func (s *Server) handleGetNoteFull(w http.ResponseWriter, r *http.Request) {
@@ -32,7 +35,7 @@ func (s *Server) handleGetNoteFull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	note, err := s.deps.Store.GetNote(r.Context(), uid, noteID)
+	note, err := s.deps.Store.GetReadableNote(r.Context(), uid, noteID)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
@@ -40,20 +43,12 @@ func (s *Server) handleGetNoteFull(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-
-	tags, err := s.deps.Store.NoteTags(r.Context(), noteID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
+	if note.Tags == nil {
+		note.Tags = []string{}
 	}
-	note.Tags = tags // NoteTags returns [] (non-nil) when empty
-
-	folderIDs, err := s.deps.Store.NoteFolderIDs(r.Context(), noteID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
+	if note.FolderIDs == nil {
+		note.FolderIDs = []string{}
 	}
-	note.FolderIDs = folderIDs // NoteFolderIDs returns [] (non-nil) when empty
 
 	body, err := s.deps.Store.NoteBody(r.Context(), noteID)
 	if err != nil {

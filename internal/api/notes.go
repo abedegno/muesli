@@ -176,13 +176,18 @@ func (s *Server) handleDuplicateNote(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, n)
 }
 
+// handleGetNote implements GET /api/notes/{id} — one of the three
+// shared-readable routes (issue #12): it returns a note the requester owns OR
+// can read via a live shared folder membership (CanReadNote), via
+// GetReadableNote. IsOwner and folder_ids (filtered to what the requester can
+// see) are populated by the store; every other note route stays owner-only.
 func (s *Server) handleGetNote(w http.ResponseWriter, r *http.Request) {
 	uid, _ := userIDFromContext(r.Context())
 	if !validNoteID(chi.URLParam(r, "id")) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	n, err := s.deps.Store.GetNote(r.Context(), uid, chi.URLParam(r, "id"))
+	n, err := s.deps.Store.GetReadableNote(r.Context(), uid, chi.URLParam(r, "id"))
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
@@ -223,7 +228,21 @@ func (s *Server) handleListNotes(w http.ResponseWriter, r *http.Request) {
 		f.FolderIDSet = true
 	}
 
-	notes, err := s.deps.Store.ListNotes(r.Context(), uid, f)
+	// folder_id is the only shared-readable list filter (issue #12): a live
+	// shared folder's contents are readable by any authenticated user, so
+	// that one case is routed to ListReadableNotes; every other list (no
+	// folder filter, or an owned folder) stays the owner-scoped ListNotes.
+	var notes []model.Note
+	var err error
+	if f.FolderIDSet {
+		notes, err = s.deps.Store.ListReadableNotes(r.Context(), uid, f)
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "not found")
+			return
+		}
+	} else {
+		notes, err = s.deps.Store.ListNotes(r.Context(), uid, f)
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return

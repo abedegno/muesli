@@ -36,8 +36,43 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
+// queryRower is satisfied by both *pgxpool.Pool and pgx.Tx, so authorization
+// helpers can run either standalone or inside an already-open transaction.
+type queryRower interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// authorizeLiveFolderOwnerMutation enforces the mutation-authorization order
+// named by the design (issue #12) for every owner-only operation on a LIVE
+// folder: an absent, trashed, or private non-owned folder is ErrNotFound (so a
+// guessed id is never an existence oracle); a live shared non-owned folder is
+// ErrForbidden (the folder is visible but the requester lacks authority); an
+// owned folder proceeds (nil). Trashed-folder operations (restore/purge) do
+// not use this helper — a trashed folder is never shared-visible.
+func authorizeLiveFolderOwnerMutation(ctx context.Context, q queryRower, requesterID, folderID string) error {
+	var ownerID, visibility string
+	err := q.QueryRow(ctx,
+		`SELECT owner_id, visibility FROM folders WHERE id=$1 AND deleted_at IS NULL`, folderID).
+		Scan(&ownerID, &visibility)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if ownerID == requesterID {
+		return nil
+	}
+	if visibility == model.FolderShared {
+		return ErrForbidden
+	}
+	return ErrNotFound
+}
+
 // validateParent checks a proposed parent for folder `id` (id may be "" on create).
 // Returns ErrInvalidParent on missing/not-owned parent, cycle, or depth overflow.
+// The parent must be owned by ownerID even when it is shared — nesting stays
+// same-owner regardless of visibility (issue #12).
 func (s *Store) validateParent(ctx context.Context, ownerID, id string, parentID *string) error {
 	if parentID == nil {
 		return nil
@@ -144,45 +179,44 @@ func (s *Store) CreateFolder(ctx context.Context, ownerID, name string, parentID
 		 VALUES ($1,$2,$3,$4, COALESCE(
 		   (SELECT max(position)+1 FROM folders
 		    WHERE owner_id=$2 AND parent_id IS NOT DISTINCT FROM $4 AND deleted_at IS NULL), 0))
-		 RETURNING id, name, parent_id, created_at`,
-		uuid.NewString(), ownerID, name, parentID).Scan(&f.ID, &f.Name, &f.ParentID, &f.CreatedAt)
+		 RETURNING id, owner_id, name, parent_id, visibility, created_at`,
+		uuid.NewString(), ownerID, name, parentID).
+		Scan(&f.ID, &f.OwnerID, &f.Name, &f.ParentID, &f.Visibility, &f.CreatedAt)
 	if isUniqueViolation(err) {
 		return model.Folder{}, ErrDuplicate
 	}
-	return f, err
+	if err != nil {
+		return model.Folder{}, err
+	}
+	f.IsOwner = true
+	return f, nil
 }
 
-func (s *Store) ListFolders(ctx context.Context, ownerID string) ([]model.Folder, error) {
-	// Recursive CTE: for each folder, count all live notes in its subtree.
+// ListFolders returns every live folder the requester can see: folders they
+// own (any visibility) plus every other live folder with visibility='shared'.
+// NoteCount is the number of live notes filed directly in that folder (not
+// recursive over descendants) — for a shared folder this counts every live
+// membership regardless of who filed the note, because filing into a shared
+// folder is itself what makes a note readable to everyone (see CanReadNote);
+// for an owned folder every filed note is necessarily the requester's own
+// (filing requires folder ownership or the target folder already being
+// shared), so no separate leakage check is needed. ParentID is nulled in the
+// response (never in storage) when the requester cannot see the parent, so a
+// promoted shared descendant never references a missing node client-side.
+func (s *Store) ListFolders(ctx context.Context, requesterID string) ([]model.Folder, error) {
 	rows, err := s.pool.Query(ctx, `
-		WITH RECURSIVE descendants AS (
-		  -- anchor: each live folder is its own descendant
-		  SELECT id AS root_id, id AS descendant_id
-		  FROM folders
-		  WHERE owner_id = $1 AND deleted_at IS NULL
-		  UNION ALL
-		  -- recurse: add children of already-found descendants
-		  SELECT d.root_id, f.id
-		  FROM folders f
-		  JOIN descendants d ON f.parent_id = d.descendant_id
-		  WHERE f.owner_id = $1 AND f.deleted_at IS NULL
-		),
-		folder_note_counts AS (
-		  SELECT d.root_id AS folder_id, COUNT(n.id) AS note_count
-		  FROM descendants d
-		  LEFT JOIN note_folders nf ON nf.folder_id = d.descendant_id
-		  LEFT JOIN notes n ON n.id = nf.note_id
-		                    AND n.deleted_at IS NULL
-		                    AND n.owner_id = $1
-		  GROUP BY d.root_id
-		)
-		SELECT f.id, f.name, f.parent_id, f.created_at,
-		       COALESCE(fnc.note_count, 0) AS note_count
+		SELECT f.id, f.owner_id, f.name, f.parent_id, f.visibility, f.created_at,
+		       COALESCE(nc.note_count, 0) AS note_count
 		FROM folders f
-		LEFT JOIN folder_note_counts fnc ON fnc.folder_id = f.id
-		WHERE f.owner_id = $1 AND f.deleted_at IS NULL
+		LEFT JOIN (
+		  SELECT nf.folder_id, COUNT(*) AS note_count
+		  FROM note_folders nf
+		  JOIN notes n ON n.id = nf.note_id AND n.deleted_at IS NULL
+		  GROUP BY nf.folder_id
+		) nc ON nc.folder_id = f.id
+		WHERE f.deleted_at IS NULL AND (f.owner_id = $1 OR f.visibility = 'shared')
 		ORDER BY f.position, lower(f.name)
-	`, ownerID)
+	`, requesterID)
 	if err != nil {
 		return nil, err
 	}
@@ -190,64 +224,88 @@ func (s *Store) ListFolders(ctx context.Context, ownerID string) ([]model.Folder
 	out := []model.Folder{}
 	for rows.Next() {
 		var f model.Folder
-		if err := rows.Scan(&f.ID, &f.Name, &f.ParentID, &f.CreatedAt, &f.NoteCount); err != nil {
+		if err := rows.Scan(&f.ID, &f.OwnerID, &f.Name, &f.ParentID, &f.Visibility, &f.CreatedAt, &f.NoteCount); err != nil {
 			return nil, err
 		}
 		out = append(out, f)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	visible := make(map[string]bool, len(out))
+	for _, f := range out {
+		visible[f.ID] = true
+	}
+	for i := range out {
+		out[i].IsOwner = out[i].OwnerID == requesterID
+		if out[i].ParentID != nil && !visible[*out[i].ParentID] {
+			out[i].ParentID = nil
+		}
+	}
+	return out, nil
 }
 
 // GetFolder returns one live folder owned by ownerID.
 func (s *Store) GetFolder(ctx context.Context, ownerID, id string) (model.Folder, error) {
 	var f model.Folder
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, name, parent_id, created_at
+		`SELECT id, owner_id, name, parent_id, visibility, created_at
 		 FROM folders
 		 WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL`,
-		id, ownerID).Scan(&f.ID, &f.Name, &f.ParentID, &f.CreatedAt)
+		id, ownerID).Scan(&f.ID, &f.OwnerID, &f.Name, &f.ParentID, &f.Visibility, &f.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return model.Folder{}, ErrNotFound
 	}
-	return f, err
+	if err != nil {
+		return model.Folder{}, err
+	}
+	f.IsOwner = true
+	return f, nil
 }
 
-func (s *Store) UpdateFolder(ctx context.Context, ownerID, id, name string, parentID *string) (model.Folder, error) {
+func (s *Store) UpdateFolder(ctx context.Context, requesterID, id, name string, parentID *string) (model.Folder, error) {
 	name, err := validateFolderName(name)
 	if err != nil {
 		return model.Folder{}, err
 	}
-	if err := s.validateParent(ctx, ownerID, id, parentID); err != nil {
+	if err := s.validateParent(ctx, requesterID, id, parentID); err != nil {
 		return model.Folder{}, err
 	}
-	// Load the current parent so we can detect a re-parent. If the folder is
-	// absent/trashed the UPDATE below will match 0 rows → ErrNotFound.
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return model.Folder{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	if err := authorizeLiveFolderOwnerMutation(ctx, tx, requesterID, id); err != nil {
+		return model.Folder{}, err
+	}
+
+	// Load the current parent so we can detect a re-parent.
 	var curParent *string
-	parentKnown := true
-	if err := s.pool.QueryRow(ctx,
-		`SELECT parent_id FROM folders WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL`, id, ownerID).
-		Scan(&curParent); errors.Is(err, pgx.ErrNoRows) {
-		parentKnown = false
-	} else if err != nil {
+	if err := tx.QueryRow(ctx,
+		`SELECT parent_id FROM folders WHERE id=$1 AND deleted_at IS NULL`, id).
+		Scan(&curParent); err != nil {
 		return model.Folder{}, err
 	}
 	// When the parent changes, the folder lands at the end of its new parent's
 	// sibling list; otherwise its position is left untouched.
-	reparented := parentKnown && !samePtr(curParent, parentID)
+	reparented := !samePtr(curParent, parentID)
 	var f model.Folder
 	if reparented {
-		err = s.pool.QueryRow(ctx,
+		err = tx.QueryRow(ctx,
 			`UPDATE folders SET name=$1, parent_id=$2,
 			   position = COALESCE((SELECT max(position)+1 FROM folders
 			     WHERE owner_id=$4 AND parent_id IS NOT DISTINCT FROM $2 AND deleted_at IS NULL AND id<>$3), 0)
 			 WHERE id=$3 AND owner_id=$4 AND deleted_at IS NULL
-			 RETURNING id, name, parent_id, created_at`, name, parentID, id, ownerID).
-			Scan(&f.ID, &f.Name, &f.ParentID, &f.CreatedAt)
+			 RETURNING id, owner_id, name, parent_id, visibility, created_at`, name, parentID, id, requesterID).
+			Scan(&f.ID, &f.OwnerID, &f.Name, &f.ParentID, &f.Visibility, &f.CreatedAt)
 	} else {
-		err = s.pool.QueryRow(ctx,
+		err = tx.QueryRow(ctx,
 			`UPDATE folders SET name=$1, parent_id=$2 WHERE id=$3 AND owner_id=$4 AND deleted_at IS NULL
-			 RETURNING id, name, parent_id, created_at`, name, parentID, id, ownerID).
-			Scan(&f.ID, &f.Name, &f.ParentID, &f.CreatedAt)
+			 RETURNING id, owner_id, name, parent_id, visibility, created_at`, name, parentID, id, requesterID).
+			Scan(&f.ID, &f.OwnerID, &f.Name, &f.ParentID, &f.Visibility, &f.CreatedAt)
 	}
 	if isUniqueViolation(err) {
 		return model.Folder{}, ErrDuplicate
@@ -259,7 +317,8 @@ func (s *Store) UpdateFolder(ctx context.Context, ownerID, id, name string, pare
 	if err != nil {
 		return model.Folder{}, err
 	}
-	return f, nil
+	f.IsOwner = true
+	return f, tx.Commit(ctx)
 }
 
 // samePtr reports whether two *string parent pointers refer to the same value
@@ -271,30 +330,68 @@ func samePtr(a, b *string) bool {
 	return *a == *b
 }
 
+// SetFolderVisibility sets a folder's visibility to "private" or "shared".
+// Owner-only: an absent/trashed/private-foreign folder is ErrNotFound; a live
+// shared folder owned by someone else is ErrForbidden (visible, not theirs to
+// change); an unknown visibility value is a ValidationError.
+func (s *Store) SetFolderVisibility(ctx context.Context, requesterID, folderID, visibility string) (model.Folder, error) {
+	if visibility != model.FolderPrivate && visibility != model.FolderShared {
+		return model.Folder{}, ValidationError("invalid visibility")
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return model.Folder{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	if err := authorizeLiveFolderOwnerMutation(ctx, tx, requesterID, folderID); err != nil {
+		return model.Folder{}, err
+	}
+
+	var f model.Folder
+	err = tx.QueryRow(ctx,
+		`UPDATE folders SET visibility=$1 WHERE id=$2 AND owner_id=$3 AND deleted_at IS NULL
+		 RETURNING id, owner_id, name, parent_id, visibility, created_at`,
+		visibility, folderID, requesterID).
+		Scan(&f.ID, &f.OwnerID, &f.Name, &f.ParentID, &f.Visibility, &f.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.Folder{}, ErrNotFound
+	}
+	if err != nil {
+		return model.Folder{}, err
+	}
+	f.IsOwner = true
+	return f, tx.Commit(ctx)
+}
+
 // ReorderFolder moves folder id among its current siblings (same parent) so it
 // sits immediately after afterID (afterID == nil → first). Sibling positions are
-// rewritten sequentially. Returns ErrNotFound if id is absent/trashed/not owned,
-// and ErrInvalidParent if afterID is non-nil but not a sibling of id (or == id).
-func (s *Store) ReorderFolder(ctx context.Context, ownerID, id string, afterID *string) error {
+// rewritten sequentially. Returns ErrNotFound if id is absent/trashed/private and
+// not owned, ErrForbidden if id is live and shared but not owned, and
+// ErrInvalidParent if afterID is non-nil but not a sibling of id (or == id).
+func (s *Store) ReorderFolder(ctx context.Context, requesterID, id string, afterID *string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 
+	if err := authorizeLiveFolderOwnerMutation(ctx, tx, requesterID, id); err != nil {
+		return err
+	}
+
 	var parentID *string
 	if err := tx.QueryRow(ctx,
-		`SELECT parent_id FROM folders WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL`, id, ownerID).
-		Scan(&parentID); errors.Is(err, pgx.ErrNoRows) {
-		return ErrNotFound
-	} else if err != nil {
+		`SELECT parent_id FROM folders WHERE id=$1 AND deleted_at IS NULL`, id).
+		Scan(&parentID); err != nil {
 		return err
 	}
 
 	rows, err := tx.Query(ctx,
 		`SELECT id FROM folders
 		 WHERE owner_id=$1 AND parent_id IS NOT DISTINCT FROM $2 AND deleted_at IS NULL
-		 ORDER BY position, lower(name)`, ownerID, parentID)
+		 ORDER BY position, lower(name)`, requesterID, parentID)
 	if err != nil {
 		return err
 	}
@@ -345,24 +442,31 @@ func (s *Store) ReorderFolder(ctx context.Context, ownerID, id string, afterID *
 
 	for pos, sid := range order {
 		if _, err := tx.Exec(ctx,
-			`UPDATE folders SET position=$1 WHERE id=$2 AND owner_id=$3`, pos, sid, ownerID); err != nil {
+			`UPDATE folders SET position=$1 WHERE id=$2 AND owner_id=$3`, pos, sid, requesterID); err != nil {
 			return err
 		}
 	}
 	return tx.Commit(ctx)
 }
 
-// ReorderNoteInFolder moves noteID among the notes currently in folderID so it
-// sits immediately after afterID (afterID == nil → first). Sibling positions are
-// rewritten sequentially. Returns ErrNotFound if the note-folder membership is
-// absent or not owned/live, and ErrInvalidParent if afterID is non-nil but not a
-// sibling in the same folder (or == noteID).
-func (s *Store) ReorderNoteInFolder(ctx context.Context, ownerID, folderID, noteID string, afterID *string) error {
+// ReorderNoteInFolder moves noteID among the notes currently filed in folderID so
+// it sits immediately after afterID (afterID == nil → first). Sibling positions
+// are rewritten sequentially. Authority is folder-owner-only (issue #12): the
+// requester need not own every note in the folder, only the folder itself, so a
+// folder owner may reorder a teammate's contributed note alongside their own.
+// Returns ErrNotFound if id is absent/trashed/private and not owned, ErrForbidden
+// if id is live and shared but not owned, and ErrInvalidParent if afterID is
+// non-nil but not a sibling in the same folder (or == noteID).
+func (s *Store) ReorderNoteInFolder(ctx context.Context, requesterID, folderID, noteID string, afterID *string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
+
+	if err := authorizeLiveFolderOwnerMutation(ctx, tx, requesterID, folderID); err != nil {
+		return err
+	}
 
 	var ok bool
 	if err := tx.QueryRow(ctx,
@@ -370,12 +474,10 @@ func (s *Store) ReorderNoteInFolder(ctx context.Context, ownerID, folderID, note
 		   SELECT 1
 		   FROM note_folders nf
 		   JOIN notes n ON n.id = nf.note_id
-		   JOIN folders f ON f.id = nf.folder_id
 		   WHERE nf.note_id=$1
 		     AND nf.folder_id=$2
-		     AND n.owner_id=$3 AND n.deleted_at IS NULL
-		     AND f.owner_id=$3 AND f.deleted_at IS NULL
-		 )`, noteID, folderID, ownerID).Scan(&ok); err != nil {
+		     AND n.deleted_at IS NULL
+		 )`, noteID, folderID).Scan(&ok); err != nil {
 		return err
 	}
 	if !ok {
@@ -386,11 +488,9 @@ func (s *Store) ReorderNoteInFolder(ctx context.Context, ownerID, folderID, note
 		`SELECT nf.note_id
 		 FROM note_folders nf
 		 JOIN notes n ON n.id = nf.note_id
-		 JOIN folders f ON f.id = nf.folder_id
 		 WHERE nf.folder_id=$1
-		   AND n.owner_id=$2 AND n.deleted_at IS NULL
-		   AND f.owner_id=$2 AND f.deleted_at IS NULL
-		 ORDER BY nf.position, n.created_at DESC, nf.note_id`, folderID, ownerID)
+		   AND n.deleted_at IS NULL
+		 ORDER BY nf.position, n.created_at DESC, nf.note_id`, folderID)
 	if err != nil {
 		return err
 	}
@@ -450,31 +550,43 @@ func (s *Store) ReorderNoteInFolder(ctx context.Context, ownerID, folderID, note
 // DeleteFolder soft-deletes the folder and its entire subtree (descendants),
 // stamping deleted_at=now(). Notes and note_folders memberships are preserved
 // (FK cascades fire only on hard delete). Returns ErrNotFound when the root is
-// absent, not owned, or already trashed.
-func (s *Store) DeleteFolder(ctx context.Context, ownerID, id string) error {
-	ct, err := s.pool.Exec(ctx,
+// absent, private and not owned, or already trashed, and ErrForbidden when the
+// root is live, shared, and not owned.
+func (s *Store) DeleteFolder(ctx context.Context, requesterID, id string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	if err := authorizeLiveFolderOwnerMutation(ctx, tx, requesterID, id); err != nil {
+		return err
+	}
+
+	ct, err := tx.Exec(ctx,
 		`WITH RECURSIVE sub AS (
 		   SELECT id FROM folders WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL
 		   UNION ALL
 		   SELECT f.id FROM folders f JOIN sub ON f.parent_id = sub.id WHERE f.owner_id=$2
 		 )
 		 UPDATE folders SET deleted_at=now() WHERE id IN (SELECT id FROM sub) AND deleted_at IS NULL`,
-		id, ownerID)
+		id, requesterID)
 	if err != nil {
 		return err
 	}
 	if ct.RowsAffected() == 0 {
 		return ErrNotFound
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 // ListTrashedFolders returns only the trash roots (folders whose parent is null
 // or not itself trashed) — i.e. the folders the user actually deleted, not their
-// auto-trashed descendants. Most-recently trashed first.
+// auto-trashed descendants. Most-recently trashed first. Owner-only: trashed
+// folders are never shared-visible regardless of their pre-trash visibility.
 func (s *Store) ListTrashedFolders(ctx context.Context, ownerID string) ([]model.Folder, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT f.id, f.name, f.parent_id, f.created_at, f.deleted_at
+		`SELECT f.id, f.owner_id, f.name, f.parent_id, f.visibility, f.created_at, f.deleted_at
 		 FROM folders f
 		 WHERE f.owner_id=$1 AND f.deleted_at IS NOT NULL
 		   AND (f.parent_id IS NULL
@@ -487,9 +599,10 @@ func (s *Store) ListTrashedFolders(ctx context.Context, ownerID string) ([]model
 	out := []model.Folder{}
 	for rows.Next() {
 		var f model.Folder
-		if err := rows.Scan(&f.ID, &f.Name, &f.ParentID, &f.CreatedAt, &f.DeletedAt); err != nil {
+		if err := rows.Scan(&f.ID, &f.OwnerID, &f.Name, &f.ParentID, &f.Visibility, &f.CreatedAt, &f.DeletedAt); err != nil {
 			return nil, err
 		}
+		f.IsOwner = true
 		out = append(out, f)
 	}
 	return out, rows.Err()
@@ -498,6 +611,7 @@ func (s *Store) ListTrashedFolders(ctx context.Context, ownerID string) ([]model
 // RestoreFolder un-trashes the subtree rooted at id (in a transaction). If the
 // restored root's parent is not live, the root is moved to top level so it
 // reappears in the tree. Returns ErrNotFound when nothing was restored.
+// Owner-only, unaffected by sharing: a trashed folder is never shared-visible.
 func (s *Store) RestoreFolder(ctx context.Context, ownerID, id string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -532,7 +646,7 @@ func (s *Store) RestoreFolder(ctx context.Context, ownerID, id string) error {
 
 // PurgeFolder permanently deletes a trashed folder; FK cascades remove its
 // descendants and note_folders memberships. Returns ErrNotFound when the folder
-// is absent, not owned, or not trashed.
+// is absent, not owned, or not trashed. Owner-only, unaffected by sharing.
 func (s *Store) PurgeFolder(ctx context.Context, ownerID, id string) error {
 	ct, err := s.pool.Exec(ctx,
 		`DELETE FROM folders WHERE id=$1 AND owner_id=$2 AND deleted_at IS NOT NULL`, id, ownerID)
@@ -562,10 +676,11 @@ func (s *Store) PurgeExpiredFolders(ctx context.Context, olderThan time.Duration
 // of ids. Non-recursive, exposes no memberships, and does not filter deleted_at
 // so callers can distinguish live from trashed rows. Unknown, purged, and
 // other-owner ids are silently omitted. Callers are responsible for bounding
-// and de-duplicating ids.
+// and de-duplicating ids. Owner-only by design — rule-tree folder references
+// resolve only within the requester's own folders.
 func (s *Store) ResolveFolders(ctx context.Context, ownerID string, ids []string) ([]model.Folder, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, name, parent_id, created_at, deleted_at
+		`SELECT id, owner_id, name, parent_id, visibility, created_at, deleted_at
 		 FROM folders
 		 WHERE owner_id=$1 AND id = ANY($2)`, ownerID, ids)
 	if err != nil {
@@ -575,32 +690,90 @@ func (s *Store) ResolveFolders(ctx context.Context, ownerID string, ids []string
 	out := []model.Folder{}
 	for rows.Next() {
 		var f model.Folder
-		if err := rows.Scan(&f.ID, &f.Name, &f.ParentID, &f.CreatedAt, &f.DeletedAt); err != nil {
+		if err := rows.Scan(&f.ID, &f.OwnerID, &f.Name, &f.ParentID, &f.Visibility, &f.CreatedAt, &f.DeletedAt); err != nil {
 			return nil, err
 		}
+		f.IsOwner = true
 		out = append(out, f)
 	}
 	return out, rows.Err()
 }
 
-// AddNoteFolder adds a note to a folder (idempotent). Both must belong to the owner.
-func (s *Store) AddNoteFolder(ctx context.Context, ownerID, noteID, folderID string) error {
+// noteFolderAuthContext loads what AddNoteFolder/RemoveNoteFolder need to
+// authorize a filing mutation: the note's live/owner/CanReadNote-readable
+// state and the folder's live/owner/visibility state.
+type noteFolderAuthContext struct {
+	noteExists       bool
+	noteOwnerID      string
+	noteReadable     bool
+	folderExists     bool
+	folderOwnerID    string
+	folderVisibility string
+}
+
+func (c noteFolderAuthContext) noteVisible(requesterID string) bool {
+	return c.noteExists && (c.noteOwnerID == requesterID || c.noteReadable)
+}
+
+func (c noteFolderAuthContext) folderVisible(requesterID string) bool {
+	return c.folderExists && (c.folderOwnerID == requesterID || c.folderVisibility == model.FolderShared)
+}
+
+func loadNoteFolderAuthContext(ctx context.Context, tx pgx.Tx, requesterID, noteID, folderID string) (noteFolderAuthContext, error) {
+	var c noteFolderAuthContext
+	err := tx.QueryRow(ctx,
+		`SELECT n.owner_id,
+		        n.owner_id = $2 OR EXISTS (
+		          SELECT 1 FROM note_folders nf JOIN folders f ON f.id = nf.folder_id
+		          WHERE nf.note_id = n.id AND f.visibility = 'shared' AND f.deleted_at IS NULL)
+		 FROM notes n WHERE n.id=$1 AND n.deleted_at IS NULL`,
+		noteID, requesterID).Scan(&c.noteOwnerID, &c.noteReadable)
+	if errors.Is(err, pgx.ErrNoRows) {
+		c.noteExists = false
+	} else if err != nil {
+		return c, err
+	} else {
+		c.noteExists = true
+	}
+
+	err = tx.QueryRow(ctx,
+		`SELECT owner_id, visibility FROM folders WHERE id=$1 AND deleted_at IS NULL`, folderID).
+		Scan(&c.folderOwnerID, &c.folderVisibility)
+	if errors.Is(err, pgx.ErrNoRows) {
+		c.folderExists = false
+	} else if err != nil {
+		return c, err
+	} else {
+		c.folderExists = true
+	}
+
+	return c, nil
+}
+
+// AddNoteFolder files a note into a folder (idempotent). The requester must
+// own the live note; the target folder must be owned by the requester or be
+// live and shared — any authenticated user may file their own note into any
+// shared folder (issue #12). Returns ErrNotFound when either resource is
+// invisible to the requester, ErrForbidden when both are visible but the
+// requester does not own the note.
+func (s *Store) AddNoteFolder(ctx context.Context, requesterID, noteID, folderID string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
 
-	var ok bool
-	if err := tx.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM notes WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL)
-		    AND EXISTS(SELECT 1 FROM folders WHERE id=$3 AND owner_id=$2 AND deleted_at IS NULL)`,
-		noteID, ownerID, folderID).Scan(&ok); err != nil {
+	c, err := loadNoteFolderAuthContext(ctx, tx, requesterID, noteID, folderID)
+	if err != nil {
 		return err
 	}
-	if !ok {
+	if !c.noteVisible(requesterID) || !c.folderVisible(requesterID) {
 		return ErrNotFound
 	}
+	if c.noteOwnerID != requesterID {
+		return ErrForbidden
+	}
+
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO note_folders (note_id, folder_id, position)
 		 VALUES ($1,$2, COALESCE((SELECT max(position)+1 FROM note_folders WHERE folder_id=$2), 0))
@@ -611,19 +784,67 @@ func (s *Store) AddNoteFolder(ctx context.Context, ownerID, noteID, folderID str
 	return tx.Commit(ctx)
 }
 
-// RemoveNoteFolder removes a note from a folder (no-op if absent). Owner-scoped.
-func (s *Store) RemoveNoteFolder(ctx context.Context, ownerID, noteID, folderID string) error {
-	_, err := s.pool.Exec(ctx,
-		`DELETE FROM note_folders WHERE note_id=$1 AND folder_id=$2
-		   AND note_id IN (SELECT id FROM notes WHERE owner_id=$3)`,
-		noteID, folderID, ownerID)
-	return err
+// RemoveNoteFolder removes a note from a folder (idempotent no-op if the
+// membership is already absent). Allowed when the requester owns the live
+// note, or owns the live folder — a folder owner may remove any note from
+// their own folder, including a teammate's contribution (issue #12). Returns
+// ErrNotFound when either resource is invisible to the requester, ErrForbidden
+// when both are visible but the requester has neither authority.
+func (s *Store) RemoveNoteFolder(ctx context.Context, requesterID, noteID, folderID string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	c, err := loadNoteFolderAuthContext(ctx, tx, requesterID, noteID, folderID)
+	if err != nil {
+		return err
+	}
+	if !c.noteVisible(requesterID) || !c.folderVisible(requesterID) {
+		return ErrNotFound
+	}
+	if c.noteOwnerID != requesterID && c.folderOwnerID != requesterID {
+		return ErrForbidden
+	}
+
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM note_folders WHERE note_id=$1 AND folder_id=$2`, noteID, folderID); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
-// NoteFolderIDs returns one note's folder ids.
+// NoteFolderIDs returns one note's complete folder ids (unfiltered — callers
+// needing the shared-read-safe filtered view use readableNoteFolderIDs).
 func (s *Store) NoteFolderIDs(ctx context.Context, noteID string) ([]string, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT folder_id FROM note_folders WHERE note_id=$1`, noteID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// readableNoteFolderIDs returns noteID's folder memberships filtered to
+// folders the requester can see (owned or live shared) — so a shared reader
+// never learns the note owner's private filing structure (issue #12).
+func (s *Store) readableNoteFolderIDs(ctx context.Context, requesterID, noteID string) ([]string, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT nf.folder_id
+		 FROM note_folders nf
+		 JOIN folders f ON f.id = nf.folder_id
+		 WHERE nf.note_id=$1 AND f.deleted_at IS NULL AND (f.owner_id = $2 OR f.visibility = 'shared')`,
+		noteID, requesterID)
 	if err != nil {
 		return nil, err
 	}
@@ -647,6 +868,35 @@ func (s *Store) foldersForNotes(ctx context.Context, noteIDs []string) (map[stri
 	}
 	rows, err := s.pool.Query(ctx,
 		`SELECT note_id, folder_id FROM note_folders WHERE note_id = ANY($1)`, noteIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var nid, fid string
+		if err := rows.Scan(&nid, &fid); err != nil {
+			return nil, err
+		}
+		out[nid] = append(out[nid], fid)
+	}
+	return out, rows.Err()
+}
+
+// readableFoldersForNotes is foldersForNotes filtered per-note to folders the
+// requester can see (owned or live shared) — used to populate FolderIDs on
+// the shared-readable note-list route without per-note leakage of private
+// filing structure (issue #12).
+func (s *Store) readableFoldersForNotes(ctx context.Context, requesterID string, noteIDs []string) (map[string][]string, error) {
+	out := map[string][]string{}
+	if len(noteIDs) == 0 {
+		return out, nil
+	}
+	rows, err := s.pool.Query(ctx,
+		`SELECT nf.note_id, nf.folder_id
+		 FROM note_folders nf
+		 JOIN folders f ON f.id = nf.folder_id
+		 WHERE nf.note_id = ANY($1) AND f.deleted_at IS NULL AND (f.owner_id = $2 OR f.visibility = 'shared')`,
+		noteIDs, requesterID)
 	if err != nil {
 		return nil, err
 	}

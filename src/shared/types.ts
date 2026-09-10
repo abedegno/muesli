@@ -35,6 +35,10 @@ export interface Note {
   partial_transcript: boolean
   /** Id of the calendar event this note is linked to, if any (CALLNK01/02). */
   event_id?: string
+  /** Present only on the three shared-readable routes (folder-filtered list,
+   * detail, full) — true when the current user owns the note, false for a
+   * shared-folder reader. Absent on owner-only routes. */
+  is_owner?: boolean
 }
 
 /** Server-persisted directed edge between two notes, consumed as a snapshot by renderer. */
@@ -254,13 +258,24 @@ export interface SmartList {
   deleted_at?: string | null
 }
 
-/** Server folder snapshot; null/omitted parent is a root folder. */
+/** Folder visibility (issue #12): 'private' (default) or 'shared' (whole-deployment, read-only). */
+export type FolderVisibility = 'private' | 'shared'
+
+/** Server folder snapshot; null/omitted parent is a root folder (or, for a
+ * promoted shared descendant the requester cannot see the ancestor of, an
+ * intentionally-nulled response parent — stored parent_id is unchanged). */
 export interface Folder {
   id: string
+  owner_id: string
   name: string
   parent_id?: string | null
+  visibility: FolderVisibility
   created_at: string
   deleted_at?: string | null
+  note_count?: number
+  /** True when the current user owns this folder; authoritative for showing
+   * mutation controls (rename/move/reorder/trash/visibility). */
+  is_owner: boolean
 }
 
 /** Renderer-authored summary heading and model instruction sent through main. */

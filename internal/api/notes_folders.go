@@ -28,6 +28,9 @@ func (s *Server) handleAddNoteFolder(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
+	} else if errors.Is(err, store.ErrForbidden) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
 	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -35,6 +38,10 @@ func (s *Server) handleAddNoteFolder(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// handleRemoveNoteFolder implements DELETE /api/notes/{id}/folders/{folderID}.
+// Allowed when the requester owns the live note or owns the live folder
+// (issue #12): a folder owner may remove any note from their own folder,
+// including a teammate's contribution.
 func (s *Server) handleRemoveNoteFolder(w http.ResponseWriter, r *http.Request) {
 	uid, _ := userIDFromContext(r.Context())
 	if !validNoteID(chi.URLParam(r, "id")) || !validNoteID(chi.URLParam(r, "folderID")) {
@@ -42,7 +49,13 @@ func (s *Server) handleRemoveNoteFolder(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	err := s.deps.Store.RemoveNoteFolder(r.Context(), uid, chi.URLParam(r, "id"), chi.URLParam(r, "folderID"))
-	if err != nil {
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if errors.Is(err, store.ErrForbidden) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
