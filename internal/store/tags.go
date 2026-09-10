@@ -107,7 +107,14 @@ func (s *Store) RemoveNoteTag(ctx context.Context, ownerID, noteID, name string)
 
 // NoteTags returns one note's tag names, sorted case-insensitively.
 func (s *Store) NoteTags(ctx context.Context, noteID string) ([]string, error) {
-	rows, err := s.pool.Query(ctx,
+	return noteTagsTx(ctx, s.pool, noteID)
+}
+
+// noteTagsTx is NoteTags against an explicit executor (pool or tx) so guarded
+// multi-part reads (e.g. GetReadableNote) can load tags inside the same
+// transaction/snapshot as their authorization check (issue #12).
+func noteTagsTx(ctx context.Context, q txQuerier, noteID string) ([]string, error) {
+	rows, err := q.Query(ctx,
 		`SELECT t.name FROM note_tags nt JOIN tags t ON t.id = nt.tag_id
 		 WHERE nt.note_id=$1 ORDER BY lower(t.name)`, noteID)
 	if err != nil {
@@ -221,11 +228,19 @@ func (s *Store) DeleteTag(ctx context.Context, ownerID, tagID string) error {
 
 // tagsForNotes returns tag names per note id in one query (avoids N+1).
 func (s *Store) tagsForNotes(ctx context.Context, noteIDs []string) (map[string][]string, error) {
+	return tagsForNotesTx(ctx, s.pool, noteIDs)
+}
+
+// tagsForNotesTx is tagsForNotes against an explicit executor (pool or tx) so
+// guarded multi-part reads (e.g. ListReadableNotes) can load the batch tag
+// map inside the same transaction/snapshot as their authorization check
+// (issue #12).
+func tagsForNotesTx(ctx context.Context, q txQuerier, noteIDs []string) (map[string][]string, error) {
 	out := map[string][]string{}
 	if len(noteIDs) == 0 {
 		return out, nil
 	}
-	rows, err := s.pool.Query(ctx,
+	rows, err := q.Query(ctx,
 		`SELECT nt.note_id, t.name FROM note_tags nt JOIN tags t ON t.id = nt.tag_id
 		 WHERE nt.note_id = ANY($1) ORDER BY lower(t.name)`, noteIDs)
 	if err != nil {

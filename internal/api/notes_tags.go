@@ -81,8 +81,20 @@ func (s *Server) handleDeleteTag(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleAddNoteTag(w http.ResponseWriter, r *http.Request) {
 	uid, _ := userIDFromContext(r.Context())
-	if !validNoteID(chi.URLParam(r, "id")) {
+	id := chi.URLParam(r, "id")
+	if !validNoteID(id) {
 		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	// Ownership is checked before request-body decode/validation (issue
+	// #12): a non-owner must get 404 regardless of whether their request
+	// body is otherwise well-formed, so a validation error can never leak
+	// that a note exists but isn't theirs.
+	if _, err := s.deps.Store.GetNote(r.Context(), uid, id); errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	var req addTagRequest
@@ -94,7 +106,7 @@ func (s *Server) handleAddNoteTag(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "tag name required")
 		return
 	}
-	tag, err := s.deps.Store.AddNoteTag(r.Context(), uid, chi.URLParam(r, "id"), req.Name)
+	tag, err := s.deps.Store.AddNoteTag(r.Context(), uid, id, req.Name)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
@@ -110,8 +122,20 @@ func (s *Server) handleAddNoteTag(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleRemoveNoteTag(w http.ResponseWriter, r *http.Request) {
 	uid, _ := userIDFromContext(r.Context())
-	if !validNoteID(chi.URLParam(r, "id")) {
+	id := chi.URLParam(r, "id")
+	if !validNoteID(id) {
 		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	// Ownership/visibility is checked before request validation (issue #12): a
+	// non-owner must get 404 regardless of whether their request body/query is
+	// otherwise well-formed, so a validation error can never leak that a note
+	// exists but isn't theirs.
+	if _, err := s.deps.Store.GetNote(r.Context(), uid, id); errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	name := strings.TrimSpace(r.URL.Query().Get("name"))
@@ -119,7 +143,7 @@ func (s *Server) handleRemoveNoteTag(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "tag name required")
 		return
 	}
-	err := s.deps.Store.RemoveNoteTag(r.Context(), uid, chi.URLParam(r, "id"), name)
+	err := s.deps.Store.RemoveNoteTag(r.Context(), uid, id, name)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return

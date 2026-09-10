@@ -40,4 +40,45 @@ describe('FolderDialog', () => {
     render(<FolderDialog open title="New folder" onSave={vi.fn()} onClose={() => {}} />)
     expect(screen.queryByRole('button', { name: 'Move to Trash' })).not.toBeInTheDocument()
   })
+
+  it('hides the visibility toggle by default (foreign folder or single-user deployment)', () => {
+    render(<FolderDialog open title="Edit folder" initialName="Clients" onSave={vi.fn()} onClose={() => {}} />)
+    expect(screen.queryByLabelText('Shared with team')).not.toBeInTheDocument()
+  })
+
+  it('shows the visibility toggle for an owned folder and calls onSetVisibility', async () => {
+    const onSetVisibility = vi.fn().mockResolvedValue(undefined)
+    render(
+      <FolderDialog
+        open
+        title="Edit folder"
+        initialName="Clients"
+        onSave={vi.fn()}
+        onClose={() => {}}
+        visibility="private"
+        showVisibilityToggle
+        onSetVisibility={onSetVisibility}
+      />,
+    )
+    const toggle = screen.getByLabelText('Shared with team')
+    expect(toggle).not.toBeChecked()
+    await userEvent.click(toggle)
+    expect(onSetVisibility).toHaveBeenCalledWith('shared')
+  })
+
+  it('reflects an already-shared folder as checked', () => {
+    render(
+      <FolderDialog
+        open
+        title="Edit folder"
+        initialName="Team"
+        onSave={vi.fn()}
+        onClose={() => {}}
+        visibility="shared"
+        showVisibilityToggle
+        onSetVisibility={vi.fn()}
+      />,
+    )
+    expect(screen.getByLabelText('Shared with team')).toBeChecked()
+  })
 })

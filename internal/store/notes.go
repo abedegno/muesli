@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/abedegno/muesli/internal/model"
@@ -199,6 +200,160 @@ func (s *Store) GetNote(ctx context.Context, ownerID, noteID string) (model.Note
 		n.RetentionState = *retention
 	}
 	return n, err
+}
+
+// SetNoteAudio records the uploaded audio key and advances status to uploaded.
+
+// canReadNoteSQL is embedded into GetReadableNote/ListReadableNotes payload
+// queries as the CanReadNote(requester, note) predicate (issue #12): a note
+// is requester-readable when the requester owns it, or when it has a live
+// note_folders membership to at least one live folder with visibility=
+// 'shared'. Evaluated in the same query that loads the note so an unshare
+// between check and load can never leak content afterward. %[1]s is the
+// notes-table alias (n) and %[2]s the requester-id placeholder ($N).
+const canReadNoteSQL = `(%[1]s.owner_id = %[2]s OR EXISTS (
+	SELECT 1 FROM note_folders nf JOIN folders f ON f.id = nf.folder_id
+	WHERE nf.note_id = %[1]s.id AND f.visibility = 'shared' AND f.deleted_at IS NULL
+))`
+
+// GetReadableNote is the widened counterpart to GetNote for the note-detail
+// route: it returns a live note the requester owns OR can read via a live
+// shared folder membership (CanReadNote), with IsOwner and FolderIDs (folder
+// memberships filtered to what the requester can see) populated. Returns
+// ErrNotFound when the note is absent, trashed, or neither owned nor
+// shared-readable.
+//
+// The authorization check and every subsequent payload read (tags, readable
+// folder ids) run inside one RepeatableRead transaction (issue #12), so they
+// all observe the same consistent snapshot: an unshare that commits after
+// this transaction's snapshot is taken cannot cause the later reads to
+// disagree with the authorization check that already passed.
+func (s *Store) GetReadableNote(ctx context.Context, requesterID, noteID string) (model.Note, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		return model.Note{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	n, err := getReadableNoteTx(ctx, tx, requesterID, noteID)
+	if err != nil {
+		return model.Note{}, err
+	}
+
+	tags, err := noteTagsTx(ctx, tx, noteID)
+	if err != nil {
+		return model.Note{}, err
+	}
+	n.Tags = tags
+
+	folderIDs, err := readableNoteFolderIDsTx(ctx, tx, requesterID, noteID)
+	if err != nil {
+		return model.Note{}, err
+	}
+	n.FolderIDs = folderIDs
+
+	return n, tx.Commit(ctx)
+}
+
+// getReadableNoteTx is the CanReadNote-guarded note row load against an
+// explicit executor (pool or tx), shared by GetReadableNote and
+// GetReadableNoteFull so both compose the same authorization query.
+func getReadableNoteTx(ctx context.Context, q queryRower, requesterID, noteID string) (model.Note, error) {
+	var n model.Note
+	var audioKey, retention *string
+	query := fmt.Sprintf(
+		`SELECT n.id, n.owner_id, n.title, n.status, n.pinned, n.started_at, n.ended_at, n.partial_transcript,
+		        n.audio_object_key, n.retention_state, n.created_at, n.updated_at, n.event_id
+		 FROM notes n WHERE n.id=$1 AND n.deleted_at IS NULL AND %s`, fmt.Sprintf(canReadNoteSQL, "n", "$2"))
+	err := q.QueryRow(ctx, query, noteID, requesterID).
+		Scan(&n.ID, &n.OwnerID, &n.Title, &n.Status, &n.Pinned, &n.StartedAt, &n.EndedAt, &n.PartialTranscript, &audioKey, &retention, &n.CreatedAt, &n.UpdatedAt, &n.EventID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.Note{}, ErrNotFound
+	}
+	if err != nil {
+		return model.Note{}, err
+	}
+	if audioKey != nil {
+		n.AudioObjectKey = *audioKey
+	}
+	if retention != nil {
+		n.RetentionState = *retention
+	}
+	isOwner := n.OwnerID == requesterID
+	n.IsOwner = &isOwner
+	return n, nil
+}
+
+// NoteFullPayload is the full-note-read result composed by GetReadableNoteFull:
+// the note itself plus every payload the "full" note route (GET
+// /api/notes/{id}/full) returns. Transcript is nil when the note has none.
+type NoteFullPayload struct {
+	Note       model.Note
+	Body       string
+	Transcript *model.Transcript
+	AliasMap   map[string]string
+	Summaries  []model.Summary
+}
+
+// GetReadableNoteFull loads the entire payload for the "full" note route
+// (issue #12): the CanReadNote authorization check, the note row, its body,
+// transcript, speaker-alias map, and summaries, all inside one RepeatableRead
+// transaction. Every read in this call therefore observes the SAME
+// consistent snapshot as the authorization check, so an unshare that commits
+// after this transaction's snapshot is taken can never cause a later read in
+// this call to expose content the check would otherwise have rejected.
+// Returns ErrNotFound when the note is absent, trashed, or neither owned nor
+// shared-readable.
+func (s *Store) GetReadableNoteFull(ctx context.Context, requesterID, noteID string) (NoteFullPayload, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		return NoteFullPayload{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	n, err := getReadableNoteTx(ctx, tx, requesterID, noteID)
+	if err != nil {
+		return NoteFullPayload{}, err
+	}
+	tags, err := noteTagsTx(ctx, tx, noteID)
+	if err != nil {
+		return NoteFullPayload{}, err
+	}
+	n.Tags = tags
+	folderIDs, err := readableNoteFolderIDsTx(ctx, tx, requesterID, noteID)
+	if err != nil {
+		return NoteFullPayload{}, err
+	}
+	n.FolderIDs = folderIDs
+
+	body, err := noteBodyTx(ctx, tx, noteID)
+	if err != nil {
+		return NoteFullPayload{}, err
+	}
+
+	payload := NoteFullPayload{Note: n, Body: body, Summaries: []model.Summary{}}
+
+	tr, err := getTranscriptTx(ctx, tx, noteID)
+	if err == nil {
+		payload.Transcript = &tr
+		aliasMap, aliasErr := speakerAliasMapTx(ctx, tx, requesterID, noteID)
+		if aliasErr != nil {
+			return NoteFullPayload{}, aliasErr
+		}
+		payload.AliasMap = aliasMap
+	} else if !errors.Is(err, ErrNotFound) {
+		return NoteFullPayload{}, err
+	}
+
+	sums, err := getSummariesTx(ctx, tx, noteID)
+	if err != nil {
+		return NoteFullPayload{}, err
+	}
+	if sums != nil {
+		payload.Summaries = sums
+	}
+
+	return payload, tx.Commit(ctx)
 }
 
 // SetNoteAudio records the uploaded audio key and advances status to uploaded.
@@ -639,8 +794,15 @@ func (s *Store) SetRetentionStateDiscardedIfCurrent(ctx context.Context, noteID 
 
 // NoteBody returns the user's live-typed Markdown for a note.
 func (s *Store) NoteBody(ctx context.Context, noteID string) (string, error) {
+	return noteBodyTx(ctx, s.pool, noteID)
+}
+
+// noteBodyTx is NoteBody against an explicit executor (pool or tx) so guarded
+// multi-part reads (e.g. GetReadableNoteFull) can load the body inside the
+// same transaction/snapshot as their authorization check (issue #12).
+func noteBodyTx(ctx context.Context, q queryRower, noteID string) (string, error) {
 	var body string
-	err := s.pool.QueryRow(ctx, `SELECT content FROM note_bodies WHERE note_id=$1`, noteID).Scan(&body)
+	err := q.QueryRow(ctx, `SELECT content FROM note_bodies WHERE note_id=$1`, noteID).Scan(&body)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -710,6 +872,196 @@ func (s *Store) ListNotes(ctx context.Context, ownerID string, f ListNotesFilter
 		}
 	}
 	return out, nil
+}
+
+// readableNoteFilterSQL builds the WHERE/args for ListReadableNotes. Unlike
+// noteFilterSQL it never restricts to one owner — the folder join itself is
+// the authorization (see ListReadableNotes) — but still applies the caller's
+// optional Tag/Status/CreatedFrom/CreatedTo filters, each of which already
+// scopes itself to the row's own owner_id dynamically.
+func readableNoteFilterSQL(folderID string, f ListNotesFilter) (string, []any) {
+	where := []string{"n.deleted_at IS NULL"}
+	args := []any{folderID}
+	if f.Tag != "" {
+		args = append(args, f.Tag)
+		where = append(where, fmt.Sprintf(`EXISTS (SELECT 1 FROM note_tags nt JOIN tags t ON t.id = nt.tag_id
+			WHERE nt.note_id = n.id AND lower(t.name) = lower($%d) AND t.owner_id = n.owner_id)`, len(args)))
+	}
+	if f.Status != "" {
+		args = append(args, f.Status)
+		where = append(where, fmt.Sprintf("n.status = $%d", len(args)))
+	}
+	if f.CreatedFrom != nil {
+		args = append(args, *f.CreatedFrom)
+		where = append(where, fmt.Sprintf("n.created_at >= $%d", len(args)))
+	}
+	if f.CreatedTo != nil {
+		args = append(args, *f.CreatedTo)
+		where = append(where, fmt.Sprintf("n.created_at <= $%d", len(args)))
+	}
+	return strings.Join(where, " AND "), args
+}
+
+// testHookAfterListReadableNotesRowsLoaded runs inside ListReadableNotes'
+// RepeatableRead transaction, after the authorization-guarded note rows have
+// been loaded (and the transaction's snapshot is therefore already fixed)
+// but before the tag and readable-folder-id reads that complete the payload.
+// It is nil in production and exists so a test can pause here while a
+// concurrent unshare/membership-removal commits, proving the later reads
+// still observe the pre-revocation snapshot rather than racing the write
+// (issue #12).
+//
+// The hook is package-global (every ListReadableNotes call in the process
+// goes through runTestHookAfterListReadableNotesRowsLoaded), so it is guarded
+// by testHookAfterListReadableNotesRowsLoadedMu for safe concurrent
+// get/set/call — required because store tests run with t.Parallel() and this
+// hook is itself invoked from concurrent goroutines. It is also handed the
+// calling requesterID and is expected to no-op for any requesterID it does
+// not recognize, so a test that arms this hook for its own requester never
+// blocks/interferes with an unrelated ListReadableNotes call made by a
+// different, concurrently-running test.
+var (
+	testHookAfterListReadableNotesRowsLoadedMu sync.Mutex
+	testHookAfterListReadableNotesRowsLoaded   func(requesterID string)
+)
+
+// runTestHookAfterListReadableNotesRowsLoaded reads the hook under
+// testHookAfterListReadableNotesRowsLoadedMu and, if set, invokes it outside
+// the lock (so a test hook that blocks doesn't hold the mutex and stall
+// unrelated ListReadableNotes calls trying to read/re-arm the hook).
+func runTestHookAfterListReadableNotesRowsLoaded(requesterID string) {
+	testHookAfterListReadableNotesRowsLoadedMu.Lock()
+	hook := testHookAfterListReadableNotesRowsLoaded
+	testHookAfterListReadableNotesRowsLoadedMu.Unlock()
+	if hook != nil {
+		hook(requesterID)
+	}
+}
+
+// ListReadableNotes is the widened counterpart to ListNotes for the
+// folder-filtered list route (f.FolderIDSet must be true): it returns live
+// notes filed directly in f.FolderID when that folder is readable by the
+// requester (owned, or live and shared). A live shared folder's membership is
+// itself CanReadNote-sufficient for every note filed there regardless of who
+// filed it, so no further per-note ownership check is applied; a private
+// folder can, by the filing invariants, only ever contain the requester's own
+// notes. Returns ErrNotFound when the folder is absent, trashed, or private
+// and not owned by the requester. IsOwner and FolderIDs (filtered to what the
+// requester can see) are populated on every returned note.
+func (s *Store) ListReadableNotes(ctx context.Context, requesterID string, f ListNotesFilter) ([]model.Note, error) {
+	if !f.FolderIDSet {
+		return nil, ErrNotFound
+	}
+	// Preliminary existence/visibility check: only used to distinguish a
+	// wholly-invisible folder (404) from a visible-but-empty one (200, []).
+	// It is deliberately NOT relied on to gate the note rows below — the
+	// load query re-states the same live-owned-or-shared predicate itself
+	// (issue #12), so an unshare landing between this check and the load can
+	// only ever narrow the result to empty, never leak stale content.
+	var folderOwnerID, folderVisibility string
+	err := s.pool.QueryRow(ctx,
+		`SELECT owner_id, visibility FROM folders WHERE id=$1 AND deleted_at IS NULL`, f.FolderID).
+		Scan(&folderOwnerID, &folderVisibility)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if folderOwnerID != requesterID && folderVisibility != model.FolderShared {
+		return nil, ErrNotFound
+	}
+
+	where, args := readableNoteFilterSQL(f.FolderID, f)
+	// requesterIDPos is computed before appending requesterID so the JOIN
+	// predicate below references the right placeholder regardless of how
+	// many optional filter args readableNoteFilterSQL already added.
+	requesterIDPos := len(args) + 1
+	args = append(args, requesterID)
+	// The folders JOIN below re-checks live owned-or-shared visibility as
+	// part of the SAME statement that loads the note rows (issue #12): the
+	// authorization predicate and the payload load are one query, so a
+	// folder that goes private between the preliminary check above and this
+	// query can never still yield rows.
+	query := fmt.Sprintf(
+		`SELECT n.id, n.owner_id, n.title, n.status, n.pinned, n.started_at, n.ended_at,
+		        n.partial_transcript, n.created_at, n.updated_at, COALESCE(nb.content, ''), n.event_id
+		 FROM notes n
+		 JOIN note_folders nf ON nf.note_id = n.id AND nf.folder_id = $1
+		 JOIN folders f ON f.id = nf.folder_id AND f.deleted_at IS NULL
+		   AND (f.owner_id = $%d OR f.visibility = 'shared')
+		 LEFT JOIN note_bodies nb ON nb.note_id = n.id
+		 WHERE %s ORDER BY %s`,
+		requesterIDPos, where, notesOrderClause(true))
+
+	// The note-row load, tag load, and readable-folder-id load all run
+	// inside one RepeatableRead transaction (issue #12), the same pattern
+	// GetReadableNote/GetReadableNoteFull use: every read in this call
+	// therefore observes the SAME consistent snapshot as the authorization
+	// predicate embedded in the query above, so an unshare or membership
+	// removal that commits after this transaction's snapshot is taken can
+	// never cause the later tag/folder-id reads to disagree with (or leak
+	// beyond) what the note-row query already authorized.
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+
+	rows, err := tx.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+
+	var out []model.Note
+	for rows.Next() {
+		var n model.Note
+		var body string
+		if err := rows.Scan(&n.ID, &n.OwnerID, &n.Title, &n.Status, &n.Pinned,
+			&n.StartedAt, &n.EndedAt, &n.PartialTranscript, &n.CreatedAt, &n.UpdatedAt, &body, &n.EventID); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		n.Snippet = snippet(body)
+		isOwner := n.OwnerID == requesterID
+		n.IsOwner = &isOwner
+		out = append(out, n)
+	}
+	rowsErr := rows.Err()
+	rows.Close()
+	if rowsErr != nil {
+		return nil, rowsErr
+	}
+
+	runTestHookAfterListReadableNotesRowsLoaded(requesterID)
+
+	ids := make([]string, len(out))
+	for i := range out {
+		ids[i] = out[i].ID
+	}
+	tagMap, err := tagsForNotesTx(ctx, tx, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if tags := tagMap[out[i].ID]; tags != nil {
+			out[i].Tags = tags
+		} else {
+			out[i].Tags = []string{}
+		}
+	}
+	folderMap, err := readableFoldersForNotesTx(ctx, tx, requesterID, ids)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if fids := folderMap[out[i].ID]; fids != nil {
+			out[i].FolderIDs = fids
+		} else {
+			out[i].FolderIDs = []string{}
+		}
+	}
+	return out, tx.Commit(ctx)
 }
 
 // ListTrash returns the owner's trashed notes, most-recently-trashed first, with the

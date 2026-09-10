@@ -109,6 +109,19 @@ func (s *Server) handleUpdateFolder(w http.ResponseWriter, r *http.Request) {
 	if !validID(w, r, id) {
 		return
 	}
+	// Ownership is checked before request-body decode/validation (issue
+	// #12): a non-owner must get the same 404/403 denial regardless of
+	// whether their body is otherwise well-formed.
+	if err := s.deps.Store.CheckFolderOwnerMutation(r.Context(), uid, id); errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if errors.Is(err, store.ErrForbidden) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 	var req folderRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
@@ -117,6 +130,9 @@ func (s *Server) handleUpdateFolder(w http.ResponseWriter, r *http.Request) {
 	f, err := s.deps.Store.UpdateFolder(r.Context(), uid, id, req.Name, req.ParentID)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if errors.Is(err, store.ErrForbidden) {
+		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	} else if errors.Is(err, store.ErrDuplicate) {
 		writeError(w, http.StatusConflict, "a folder with that name already exists")
@@ -141,6 +157,19 @@ func (s *Server) handleReorderFolder(w http.ResponseWriter, r *http.Request) {
 	if !validID(w, r, id) {
 		return
 	}
+	// Ownership is checked before request-body decode/validation (issue
+	// #12): a non-owner must get the same 404/403 denial regardless of
+	// whether their body is otherwise well-formed.
+	if err := s.deps.Store.CheckFolderOwnerMutation(r.Context(), uid, id); errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if errors.Is(err, store.ErrForbidden) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 	var req struct {
 		AfterID *string `json:"after_id"`
 	}
@@ -151,6 +180,9 @@ func (s *Server) handleReorderFolder(w http.ResponseWriter, r *http.Request) {
 	err := s.deps.Store.ReorderFolder(r.Context(), uid, id, req.AfterID)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if errors.Is(err, store.ErrForbidden) {
+		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	} else if errors.Is(err, store.ErrInvalidParent) {
 		writeError(w, http.StatusBadRequest, "invalid sibling")
@@ -171,6 +203,9 @@ func (s *Server) handleDeleteFolder(w http.ResponseWriter, r *http.Request) {
 	err := s.deps.Store.DeleteFolder(r.Context(), uid, id)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if errors.Is(err, store.ErrForbidden) {
+		writeError(w, http.StatusForbidden, "forbidden")
 		return
 	} else if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -222,4 +257,67 @@ func (s *Server) handlePurgeFolder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "deleted"})
+}
+
+// folderVisibilityRequest is the strict body for PUT /api/folders/{id}/visibility:
+// exactly {"visibility":"private"} or {"visibility":"shared"} — unknown fields
+// and unknown/missing values are rejected (400).
+type folderVisibilityRequest struct {
+	Visibility string `json:"visibility"`
+}
+
+// handleSetFolderVisibility implements PUT /api/folders/{id}/visibility (issue
+// #12). The body is decoded strictly: unknown fields and trailing content
+// after the JSON value are both 400, matching the "complete body" contract in
+// the design doc.
+func (s *Server) handleSetFolderVisibility(w http.ResponseWriter, r *http.Request) {
+	uid, _ := userIDFromContext(r.Context())
+	id := chi.URLParam(r, "id")
+	if !validID(w, r, id) {
+		return
+	}
+	// Ownership is checked before request-body decode/validation (issue
+	// #12): a non-owner must get the same 404/403 denial regardless of
+	// whether their body is otherwise well-formed.
+	if err := s.deps.Store.CheckFolderOwnerMutation(r.Context(), uid, id); errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if errors.Is(err, store.ErrForbidden) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	var req folderVisibilityRequest
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if dec.More() {
+		writeError(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if req.Visibility != model.FolderPrivate && req.Visibility != model.FolderShared {
+		writeError(w, http.StatusBadRequest, "invalid visibility")
+		return
+	}
+	f, err := s.deps.Store.SetFolderVisibility(r.Context(), uid, id, req.Visibility)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if errors.Is(err, store.ErrForbidden) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	} else if ve := (store.ValidationError("")); errors.As(err, &ve) {
+		writeError(w, http.StatusBadRequest, ve.Error())
+		return
+	} else if err != nil {
+		log.Printf("handleSetFolderVisibility: %v", err)
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, f)
 }

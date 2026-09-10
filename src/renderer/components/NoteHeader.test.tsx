@@ -419,3 +419,41 @@ describe('NoteHeader calendar link (CALLNK02)', () => {
     await waitFor(() => expect(screen.getByText(/linked event/i)).toBeInTheDocument())
   })
 })
+
+describe('NoteHeader read-only (shared note, issue #12)', () => {
+  const baseProps = {
+    noteId: 'n1',
+    title: 'Standup',
+    recordState: 'idle' as const,
+    elapsedMs: 0,
+    onStart: vi.fn(),
+    onStop: vi.fn(),
+    onTitleSaved: vi.fn(),
+    onDeleteNote: vi.fn(),
+    onDuplicate: vi.fn(),
+    onExport: vi.fn(),
+    pinned: false,
+    onTogglePinned: vi.fn(),
+    onLinkEvent: vi.fn(),
+    onUnlinkEvent: vi.fn(),
+  }
+
+  it('renders the title as static text, not an editable input', () => {
+    render(<NoteHeader {...baseProps} readOnly />)
+    expect(screen.queryByLabelText('Note title')).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Standup' })).toBeInTheDocument()
+  })
+
+  it('hides the record control, event link, and actions menu', () => {
+    render(<NoteHeader {...baseProps} readOnly />)
+    expect(screen.queryByRole('button', { name: /link to calendar event/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /note actions/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /start recording/i })).not.toBeInTheDocument()
+  })
+
+  it('shows all of these when readOnly is false (default)', () => {
+    render(<NoteHeader {...baseProps} />)
+    expect(screen.getByLabelText('Note title')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /note actions/i })).toBeInTheDocument()
+  })
+})

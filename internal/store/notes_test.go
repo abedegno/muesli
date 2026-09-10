@@ -1006,3 +1006,116 @@ func TestMarkNoteReadyConcurrent(t *testing.T) {
 		t.Fatalf("won count = %d, want exactly 1 of %d racing calls", wonCount, races)
 	}
 }
+
+// TestListReadableNotesConcurrentUnshareIsSingleSnapshot is the store-level
+// regression test for the ListReadableNotes mixed-snapshot bug (issue #12
+// round-1 review finding): the authorization-guarded note-row query and the
+// later tag / readable-folder-id reads that complete the payload must all
+// observe the SAME transaction snapshot. It pauses ListReadableNotes (via
+// testHookAfterListReadableNotesRowsLoaded) right after the guarded note
+// rows have been loaded but before the tag/folder-id reads, lets a
+// concurrent unshare of the folder commit in that window, then asserts the
+// full returned payload (row + tags + folder_ids) still matches the
+// pre-unshare, shared state. A buggy implementation that loads tags/folder
+// ids via separate pool queries issued AFTER the guarded query completes
+// would instead observe the post-unshare state for the folder-id read (the
+// requester no longer owns or can see the now-private folder), producing a
+// mixed-snapshot payload: the note row present, but FolderIDs empty.
+//
+// The hook is package-global (issue #12 round-2 review finding), so this
+// test's closure gates on requesterID == other.ID before doing anything:
+// any OTHER test's concurrent (t.Parallel()) ListReadableNotes call — for a
+// different requester — hits the same global hook but is a same-signature
+// no-op for it, so it never blocks or observes this test's channels. The
+// close is also sync.Once-guarded and the hook is explicitly uninstalled
+// before the second (post-unshare) call below, so even a second matching
+// invocation from this same test can't double-close or re-block.
+func TestListReadableNotesConcurrentUnshareIsSingleSnapshot(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.New(testutil.NewPool(t))
+
+	owner, _ := st.CreateUser(ctx, "lrn-owner@example.com", "h")
+	other, _ := st.CreateUser(ctx, "lrn-other@example.com", "h")
+
+	folder, err := st.CreateFolder(ctx, owner.ID, "Shared", nil)
+	if err != nil {
+		t.Fatalf("CreateFolder: %v", err)
+	}
+	if _, err := st.SetFolderVisibility(ctx, owner.ID, folder.ID, model.FolderShared); err != nil {
+		t.Fatalf("SetFolderVisibility(shared): %v", err)
+	}
+
+	n, err := st.CreateNote(ctx, owner.ID, "Shared note")
+	if err != nil {
+		t.Fatalf("CreateNote: %v", err)
+	}
+	if err := st.AddNoteFolder(ctx, owner.ID, n.ID, folder.ID); err != nil {
+		t.Fatalf("AddNoteFolder: %v", err)
+	}
+	if _, err := st.AddNoteTag(ctx, owner.ID, n.ID, "important"); err != nil {
+		t.Fatalf("AddNoteTag: %v", err)
+	}
+
+	reachedRowsLoaded := make(chan struct{})
+	releaseRowsLoaded := make(chan struct{})
+	var closeReachedOnce sync.Once
+	restore := store.SetTestHookAfterListReadableNotesRowsLoaded(func(requesterID string) {
+		if requesterID != other.ID {
+			// Some other, concurrently-running test's ListReadableNotes call
+			// hit the shared package-global hook — not this test's call, so
+			// leave it alone entirely.
+			return
+		}
+		closeReachedOnce.Do(func() { close(reachedRowsLoaded) })
+		<-releaseRowsLoaded
+	})
+
+	type listResult struct {
+		notes []model.Note
+		err   error
+	}
+	resultCh := make(chan listResult, 1)
+	go func() {
+		notes, err := st.ListReadableNotes(ctx, other.ID, store.ListNotesFilter{FolderID: folder.ID, FolderIDSet: true})
+		resultCh <- listResult{notes, err}
+	}()
+
+	<-reachedRowsLoaded // the guarded query ran and its RepeatableRead snapshot is now fixed
+
+	// Concurrent revocation landing squarely in the window the finding
+	// flagged: between the guarded note-row query and the later tag/
+	// folder-id reads.
+	if _, err := st.SetFolderVisibility(ctx, owner.ID, folder.ID, model.FolderPrivate); err != nil {
+		t.Fatalf("SetFolderVisibility(private): %v", err)
+	}
+
+	close(releaseRowsLoaded)
+
+	res := <-resultCh
+	// Uninstall the hook now that this test's one intentional call has
+	// completed — the sanity-check call below reuses other.ID as requester
+	// and must not re-trip it.
+	restore()
+
+	if res.err != nil {
+		t.Fatalf("ListReadableNotes: %v", res.err)
+	}
+	if len(res.notes) != 1 || res.notes[0].ID != n.ID {
+		t.Fatalf("unexpected notes: %+v", res.notes)
+	}
+	got := res.notes[0]
+	if len(got.Tags) != 1 || got.Tags[0] != "important" {
+		t.Fatalf("tags do not match the pre-unshare snapshot (mixed snapshot?): %+v", got.Tags)
+	}
+	if len(got.FolderIDs) != 1 || got.FolderIDs[0] != folder.ID {
+		t.Fatalf("folder_ids do not match the pre-unshare snapshot (mixed snapshot?): %+v", got.FolderIDs)
+	}
+
+	// Sanity check that the revocation really did land (i.e. this test is
+	// exercising a genuine race, not racing past a no-op): once the unshare
+	// has settled, a fresh call sees the revoked state.
+	if _, err := st.ListReadableNotes(ctx, other.ID, store.ListNotesFilter{FolderID: folder.ID, FolderIDSet: true}); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound once the unshare has settled, got %v", err)
+	}
+}

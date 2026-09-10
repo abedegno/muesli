@@ -88,3 +88,17 @@ describe('FolderBar', () => {
     expect(screen.getByLabelText('New folder name')).toBeInTheDocument()
   })
 })
+
+describe('FolderBar readOnly (shared note, issue #12)', () => {
+  it('shows folder chips without add/remove controls', () => {
+    render(<FolderBar folders={folders} memberIds={['f1']} onAdd={vi.fn()} onCreate={vi.fn()} onRemove={vi.fn()} readOnly />)
+    expect(screen.getByText('Clients')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /remove clients/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /add to folder/i })).not.toBeInTheDocument()
+  })
+
+  it('renders nothing when the note is filed nowhere the requester can see', () => {
+    const { container } = render(<FolderBar folders={folders} memberIds={[]} onAdd={vi.fn()} onCreate={vi.fn()} onRemove={vi.fn()} readOnly />)
+    expect(container).toBeEmptyDOMElement()
+  })
+})

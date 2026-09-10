@@ -77,6 +77,7 @@ const bridge: MuesliBridge = {
   listFolders: () => ipcRenderer.invoke(IPC.listFolders),
   createFolder: (name, parentId) => ipcRenderer.invoke(IPC.createFolder, name, parentId),
   updateFolder: (id, name, parentId) => ipcRenderer.invoke(IPC.updateFolder, id, name, parentId),
+  setFolderVisibility: (id, visibility) => ipcRenderer.invoke(IPC.setFolderVisibility, id, visibility),
   deleteFolder: (id) => ipcRenderer.invoke(IPC.deleteFolder, id),
   reorderFolder: (id, afterId) => ipcRenderer.invoke(IPC.reorderFolder, id, afterId),
   reorderNoteInFolder: (folderId, noteId, afterId) => ipcRenderer.invoke(IPC.reorderNoteInFolder, folderId, noteId, afterId),

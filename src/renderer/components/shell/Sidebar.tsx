@@ -66,6 +66,14 @@ export function Sidebar({
   useEffect(() => () => dragCleanupRef.current(), [])
   // Seeded from localStorage (filtered to existing folders so stale ids drop off)
   // and persisted on change, so collapse state survives remount/navigation/reload.
+  // Owned hierarchy renders under "Folders" (unchanged); non-owned live
+  // shared folders render under a separate top-level "Shared" section
+  // (issue #12). A folder missing is_owner (older fixtures / pre-sharing
+  // responses) is treated as owned, matching pre-issue-#12 behavior where
+  // every listed folder was the requester's own.
+  const ownedFolders = folders.filter((f) => f.is_owner !== false)
+  const sharedFolders = folders.filter((f) => f.is_owner === false)
+
   const [folderCollapsed, setFolderCollapsed] = useState<Set<string>>(() =>
     readStoredFolderCollapsed(folders.map((f) => f.id)),
   )
@@ -93,7 +101,7 @@ export function Sidebar({
   const showFolderMore = (id: string) => hoveredFolderId === id || openFolderDropdownId === id || focusedFolderId === id
 
   const isFolderDrag = (e: React.DragEvent) => e.dataTransfer.types.includes('text/folder-id')
-  const childrenOf = (pid: string | null) => folders.filter((f) => (f.parent_id ?? null) === pid)
+  const childrenOf = (list: Folder[], pid: string | null) => list.filter((f) => (f.parent_id ?? null) === pid)
   // Selecting a view always returns to the main list pane (so it shows even when a
   // note detail is open), then applies the filter.
   const selectView = (v: ActiveView) => { navigate('/notes'); onSelectView(v) }
@@ -102,7 +110,12 @@ export function Sidebar({
   const idle = 'text-foreground hover:bg-muted'
   const section = 'px-1 pb-1 pt-3 text-xs font-medium uppercase tracking-wide text-muted-foreground'
 
-  const renderFolders = (parent: string | null, depth: number) => {
+  // renderFolders renders one folder tree. `interactive` gates every
+  // owner-only affordance (drag-to-reparent/reorder, the "…" menu, rename via
+  // double-click): the owned tree passes true, the non-owned "Shared" tree
+  // (issue #12) passes false so a teammate's folder shows navigation and
+  // note-drop ("Add my note") only, matching the design doc.
+  const renderFolders = (list: Folder[], interactive: boolean, parent: string | null, depth: number) => {
     // A thin (~6px) drop target between sibling rows. Dropping a same-parent
     // folder here reorders it to sit immediately after `afterId` (null = first).
     // Cross-parent drops are ignored so reparenting stays the drag-onto-row path.
@@ -120,104 +133,115 @@ export function Sidebar({
             setDragOverGap((cur) => (cur === key ? null : cur))
             const draggedId = e.dataTransfer.getData('text/folder-id')
             if (!draggedId) return
-            const dragged = folders.find((x) => x.id === draggedId)
+            const dragged = list.find((x) => x.id === draggedId)
             if (!dragged) return
             if ((dragged.parent_id ?? null) === parent) {
               // Same-parent: reorder to sit immediately after `afterId`.
               if (draggedId !== afterId) onReorderFolder(draggedId, afterId)
-            } else if (draggedId !== parent && !(parent != null && descendantIds(folders, draggedId).has(parent))) {
+            } else if (draggedId !== parent && !(parent != null && descendantIds(list, draggedId).has(parent))) {
               // Cross-parent: re-parent into this group (lands at the end), cycle-guarded.
               onReparentFolder(draggedId, parent)
             }
           }} />
       )
     }
-    const rows = childrenOf(parent).map((f) => {
-      const kids = childrenOf(f.id)
+    const rows = childrenOf(list, parent).map((f) => {
+      const kids = childrenOf(list, f.id)
       const isCollapsed = folderCollapsed.has(f.id)
+      const row = (
+        <div
+          draggable={interactive}
+          onDragStart={interactive ? (e) => { e.dataTransfer.setData('text/folder-id', f.id); e.dataTransfer.effectAllowed = 'move' } : undefined}
+          onDragEnd={interactive ? () => { setDragOverFolder(null); setDragOverGap(null) } : undefined}
+          className={cn(rowBase,
+            activeView.type === 'folder' && activeView.id === f.id ? active : idle,
+            dragOverFolder === f.id && 'ring-1 ring-primary')}
+          style={{ paddingLeft: depth * 12 + 8 }}
+          onDragOver={(e) => { e.preventDefault(); setDragOverFolder(f.id) }}
+          onDragLeave={() => setDragOverFolder((cur) => (cur === f.id ? null : cur))}
+          onDrop={(e) => {
+            setDragOverFolder(null)
+            if (interactive) {
+              const folderId = e.dataTransfer.getData('text/folder-id')
+              if (folderId) {
+                if (folderId !== f.id && !descendantIds(list, folderId).has(f.id)) onReparentFolder(folderId, f.id)
+                return
+              }
+            }
+            // Filing a note ("Add my note") is allowed on both owned and
+            // shared folders — the note owner may file into any shared
+            // folder regardless of who owns it (issue #12).
+            const noteId = e.dataTransfer.getData('text/note-id')
+            if (noteId) onDropNote(f.id, noteId)
+          }}>
+          {kids.length > 0 ? (
+            <button
+              aria-label={isCollapsed ? `Expand ${f.name}` : `Collapse ${f.name}`}
+              onClick={(e) => { e.stopPropagation(); setFolderCollapsed((c) => { const n = new Set(c); if (n.has(f.id)) n.delete(f.id); else n.add(f.id); return n }) }}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter' && e.key !== ' ') return
+                e.preventDefault()
+                e.stopPropagation()
+                setFolderCollapsed((c) => { const n = new Set(c); if (n.has(f.id)) n.delete(f.id); else n.add(f.id); return n })
+              }}
+              className="mr-1 shrink-0 text-muted-foreground hover:text-foreground">
+              {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
+            </button>
+          ) : <span className="mr-1 inline-block w-3 shrink-0" />}
+          <button
+            onClick={() => selectView({ type: 'folder', id: f.id })}
+            onDoubleClick={interactive ? () => onEditFolder(f) : undefined}
+            className="flex min-w-0 flex-1 items-center justify-between text-left">
+            <span className="truncate">{f.name}</span>
+            <span className="ml-2 shrink-0 text-xs text-muted-foreground">{folderCount(f)}</span>
+          </button>
+          {interactive && showFolderMore(f.id) && (
+            <DropdownMenu onOpenChange={(open) => setOpenFolderDropdownId(open ? f.id : null)}>
+              <DropdownMenuTrigger asChild>
+                <button
+                  aria-label={`More actions for ${f.name}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="ml-1 shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground">
+                  <MoreHorizontal size={14} />
+                </button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => onNewSubfolder(f.id)}>New subfolder…</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => onEditFolder(f)}>Rename…</DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setExportFolderTarget(f)}>Export folder…</DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem destructive onSelect={() => onDeleteFolder(f.id)}>Move to Trash</DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          )}
+        </div>
+      )
       return (
         <li key={f.id}
           onMouseEnter={() => setHoveredFolderId(f.id)}
           onMouseLeave={() => setHoveredFolderId((cur) => (cur === f.id ? null : cur))}
           onFocus={() => setFocusedFolderId(f.id)}
           onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setFocusedFolderId(null) }}>
-          <ContextMenu>
-          <ContextMenuTrigger asChild>
-          <div
-            draggable
-            onDragStart={(e) => { e.dataTransfer.setData('text/folder-id', f.id); e.dataTransfer.effectAllowed = 'move' }}
-            onDragEnd={() => { setDragOverFolder(null); setDragOverGap(null) }}
-            className={cn(rowBase,
-              activeView.type === 'folder' && activeView.id === f.id ? active : idle,
-              dragOverFolder === f.id && 'ring-1 ring-primary')}
-            style={{ paddingLeft: depth * 12 + 8 }}
-            onDragOver={(e) => { e.preventDefault(); setDragOverFolder(f.id) }}
-            onDragLeave={() => setDragOverFolder((cur) => (cur === f.id ? null : cur))}
-            onDrop={(e) => {
-              setDragOverFolder(null)
-              const folderId = e.dataTransfer.getData('text/folder-id')
-              if (folderId) {
-                if (folderId !== f.id && !descendantIds(folders, folderId).has(f.id)) onReparentFolder(folderId, f.id)
-                return
-              }
-              const noteId = e.dataTransfer.getData('text/note-id')
-              if (noteId) onDropNote(f.id, noteId)
-            }}>
-            {kids.length > 0 ? (
-              <button
-                aria-label={isCollapsed ? `Expand ${f.name}` : `Collapse ${f.name}`}
-                onClick={(e) => { e.stopPropagation(); setFolderCollapsed((c) => { const n = new Set(c); if (n.has(f.id)) n.delete(f.id); else n.add(f.id); return n }) }}
-                onKeyDown={(e) => {
-                  if (e.key !== 'Enter' && e.key !== ' ') return
-                  e.preventDefault()
-                  e.stopPropagation()
-                  setFolderCollapsed((c) => { const n = new Set(c); if (n.has(f.id)) n.delete(f.id); else n.add(f.id); return n })
-                }}
-                className="mr-1 shrink-0 text-muted-foreground hover:text-foreground">
-                {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-              </button>
-            ) : <span className="mr-1 inline-block w-3 shrink-0" />}
-            <button
-              onClick={() => selectView({ type: 'folder', id: f.id })}
-              onDoubleClick={() => onEditFolder(f)}
-              className="flex min-w-0 flex-1 items-center justify-between text-left">
-              <span className="truncate">{f.name}</span>
-              <span className="ml-2 shrink-0 text-xs text-muted-foreground">{folderCount(f)}</span>
-            </button>
-            {showFolderMore(f.id) && (
-              <DropdownMenu onOpenChange={(open) => setOpenFolderDropdownId(open ? f.id : null)}>
-                <DropdownMenuTrigger asChild>
-                  <button
-                    aria-label={`More actions for ${f.name}`}
-                    onClick={(e) => e.stopPropagation()}
-                    className="ml-1 shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground">
-                    <MoreHorizontal size={14} />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onSelect={() => onNewSubfolder(f.id)}>New subfolder…</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => onEditFolder(f)}>Rename…</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => setExportFolderTarget(f)}>Export folder…</DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem destructive onSelect={() => onDeleteFolder(f.id)}>Move to Trash</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-          </div>
-          </ContextMenuTrigger>
-          <ContextMenuContent>
-            <ContextMenuItem onSelect={() => onNewSubfolder(f.id)}>New subfolder…</ContextMenuItem>
-            <ContextMenuItem onSelect={() => onEditFolder(f)}>Rename…</ContextMenuItem>
-            <ContextMenuItem onSelect={() => setExportFolderTarget(f)}>Export folder…</ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem destructive onSelect={() => onDeleteFolder(f.id)}>Move to Trash</ContextMenuItem>
-          </ContextMenuContent>
-          </ContextMenu>
-          {!isCollapsed && kids.length > 0 && <ul className="flex flex-col">{renderFolders(f.id, depth + 1)}</ul>}
+          {interactive ? (
+            <ContextMenu>
+            <ContextMenuTrigger asChild>
+            {row}
+            </ContextMenuTrigger>
+            <ContextMenuContent>
+              <ContextMenuItem onSelect={() => onNewSubfolder(f.id)}>New subfolder…</ContextMenuItem>
+              <ContextMenuItem onSelect={() => onEditFolder(f)}>Rename…</ContextMenuItem>
+              <ContextMenuItem onSelect={() => setExportFolderTarget(f)}>Export folder…</ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem destructive onSelect={() => onDeleteFolder(f.id)}>Move to Trash</ContextMenuItem>
+            </ContextMenuContent>
+            </ContextMenu>
+          ) : row}
+          {!isCollapsed && kids.length > 0 && <ul className="flex flex-col">{renderFolders(list, interactive, f.id, depth + 1)}</ul>}
         </li>
       )
     })
-    const kids = childrenOf(parent)
+    if (!interactive) return rows
+    const kids = childrenOf(list, parent)
     // Interleave drop-gaps: gap(first), row0, gap(after row0), row1, …
     return [
       gap(null, 'reorder gap first'),
@@ -322,7 +346,7 @@ export function Sidebar({
             <span className="flex items-center gap-2"><FileText size={14} /> All notes</span>
           </NavLink>
 
-          {folders.length > 0 ? (
+          {ownedFolders.length > 0 ? (
             <>
               <div
                 className={cn(section, 'flex items-center justify-between rounded-[var(--radius)]', dragOverFolder === '' && 'ring-1 ring-primary')}
@@ -336,7 +360,7 @@ export function Sidebar({
                 <span><FolderIcon size={12} className="mr-1 inline" /> Folders</span>
                 <button aria-label="New folder" onClick={onNewFolder} className="hover:text-primary"><Plus size={12} /></button>
               </div>
-              <ul className="flex flex-col">{renderFolders(null, 0)}</ul>
+              <ul className="flex flex-col">{renderFolders(ownedFolders, true, null, 0)}</ul>
             </>
           ) : (
             <div className={section}>
@@ -345,6 +369,15 @@ export function Sidebar({
               </button>
               <p className="mt-1 px-0 text-xs font-normal normal-case tracking-normal text-muted-foreground">Folders are for notes you&apos;ll file yourself.</p>
             </div>
+          )}
+
+          {sharedFolders.length > 0 && (
+            <>
+              <div className={section}>
+                <span><Users size={12} className="mr-1 inline" /> Shared</span>
+              </div>
+              <ul className="flex flex-col">{renderFolders(sharedFolders, false, null, 0)}</ul>
+            </>
           )}
 
           {lists.length > 0 ? (

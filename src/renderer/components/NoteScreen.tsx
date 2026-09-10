@@ -1220,9 +1220,17 @@ export function NoteScreen() {
     )
   }
 
+  // True for a note the current user does not own (a shared-folder read):
+  // gates every control whose endpoint remains owner-only (issue #12).
+  // full.note.is_owner is undefined only for pre-issue-#12 fixtures/mocks
+  // that never populated it; treat that as owned (matches every note before
+  // sharing existed).
+  const readOnly = full.note.is_owner === false
+
   return (
     <div className="flex h-full flex-col">
       <NoteHeader
+        readOnly={readOnly}
         autoFocusTitle={capture}
         noteId={id}
         title={full.note.title}
@@ -1362,6 +1370,7 @@ export function NoteScreen() {
         suggestions={tagIndex(allNotes).map((t) => t.name)}
         onAdd={(name) => refreshAfterTagMutation(() => muesli.addTag(id, name), 'Could not add tag')}
         onRemove={(name) => refreshAfterTagMutation(() => muesli.removeTag(id, name), 'Could not remove tag')}
+        readOnly={readOnly}
       />
       <FolderBar
         folders={folders}
@@ -1378,7 +1387,9 @@ export function NoteScreen() {
           try { await muesli.removeNoteFolder(id, folderId); setFull(await muesli.getFull(id)); refresh() }
           catch (err) { notify(err instanceof Error ? err.message : 'Could not remove from folder', 'error') }
         }}
+        readOnly={readOnly}
       />
+      {!readOnly && (
       <div className="border-b border-border">
         <button
           type="button"
@@ -1410,10 +1421,11 @@ export function NoteScreen() {
           </div>
         )}
       </div>
+      )}
       <div className="flex-1 overflow-y-auto px-6 py-4">
         {capture || full.note.status === 'recording' ? (
           <Suspense fallback={<div className="p-4 text-sm text-muted-foreground">Loading editor…</div>}>
-            <NoteEditor initialMarkdown={full.body_markdown} onSave={(md) => muesli.updateBody(id, md)} />
+            <NoteEditor initialMarkdown={full.body_markdown} onSave={(md) => muesli.updateBody(id, md)} editable={!readOnly} />
           </Suspense>
         ) : (
           <>
@@ -1434,7 +1446,7 @@ export function NoteScreen() {
               initialSegmentId={initialSegmentId}
               initialSegmentIndex={initialSegmentIndex}
               onSaveBody={(md) => muesli.updateBody(id, md)}
-              onRenameSpeaker={async () => {
+              onRenameSpeaker={readOnly ? undefined : async () => {
                 try {
                   setFull(await muesli.getFull(id))
                   refresh()
@@ -1442,9 +1454,10 @@ export function NoteScreen() {
                   notify(err instanceof Error ? err.message : 'Could not refresh note', 'error')
                 }
               }}
-              templates={templates}
-              onRegenerateTemplate={regenerateTemplate}
+              templates={readOnly ? undefined : templates}
+              onRegenerateTemplate={readOnly ? undefined : regenerateTemplate}
               regeneratingTemplateId={regeneratingTemplateId}
+              readOnly={readOnly}
             />
           </>
         )}

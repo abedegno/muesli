@@ -9,7 +9,15 @@ import (
 // ListSpeakerAliases returns all speaker aliases for the given note, scoped to
 // the owner. Returns an empty (non-nil) slice when no aliases exist.
 func (s *Store) ListSpeakerAliases(ctx context.Context, ownerID, noteID string) ([]model.SpeakerAlias, error) {
-	rows, err := s.pool.Query(ctx,
+	return listSpeakerAliasesTx(ctx, s.pool, ownerID, noteID)
+}
+
+// listSpeakerAliasesTx is ListSpeakerAliases against an explicit executor
+// (pool or tx) so guarded multi-part reads (e.g. GetReadableNoteFull) can
+// load aliases inside the same transaction/snapshot as their authorization
+// check (issue #12).
+func listSpeakerAliasesTx(ctx context.Context, q txQuerier, ownerID, noteID string) ([]model.SpeakerAlias, error) {
+	rows, err := q.Query(ctx,
 		`SELECT note_id, person_id, speaker_label, alias_name
 		 FROM note_speaker_aliases
 		 WHERE owner_id = $1 AND note_id = $2
@@ -99,7 +107,15 @@ func (s *Store) SetSpeakerAliasPerson(ctx context.Context, ownerID, noteID, spea
 // note, scoped to the owner. Used by the full-note read path for read-time
 // substitution without modifying the stored transcript_segments rows.
 func (s *Store) SpeakerAliasMap(ctx context.Context, ownerID, noteID string) (map[string]string, error) {
-	aliases, err := s.ListSpeakerAliases(ctx, ownerID, noteID)
+	return speakerAliasMapTx(ctx, s.pool, ownerID, noteID)
+}
+
+// speakerAliasMapTx is SpeakerAliasMap against an explicit executor (pool or
+// tx) so guarded multi-part reads (e.g. GetReadableNoteFull) can load the
+// alias map inside the same transaction/snapshot as their authorization
+// check (issue #12).
+func speakerAliasMapTx(ctx context.Context, q txQuerier, ownerID, noteID string) (map[string]string, error) {
+	aliases, err := listSpeakerAliasesTx(ctx, q, ownerID, noteID)
 	if err != nil {
 		return nil, err
 	}

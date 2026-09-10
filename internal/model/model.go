@@ -70,6 +70,10 @@ type Note struct {
 	// populated on list + full responses, empty elsewhere. Not a stored column.
 	Tags []string `json:"tags"`
 	// FolderIDs are the ids of folders the note is in. Always an array (never null).
+	// On the three shared-readable routes (folder-filtered list, detail, full)
+	// this is filtered to folders the requester can see (owned or live
+	// shared) so a shared reader never learns the owner's private filing
+	// structure; elsewhere it is the note's complete membership set.
 	FolderIDs []string `json:"folder_ids"`
 	// PartialTranscript is true when the note's transcript is incomplete because a
 	// mid-stream chunk failed during transcription. False after a successful retry.
@@ -77,6 +81,11 @@ type Note struct {
 	PartialTranscript bool `json:"partial_transcript"`
 	// EventID is the id of the calendar event this note is linked to, if any.
 	EventID *string `json:"event_id,omitempty"`
+	// IsOwner is populated only on the shared-readable note routes (folder-
+	// filtered list, detail, full) -- true when the requester owns the note,
+	// false for a shared-folder reader. Nil (and omitted from JSON) on the
+	// owner-only routes, which never expose a foreign note in the first place.
+	IsOwner *bool `json:"is_owner,omitempty"`
 }
 
 // NoteLink is an explicit directed link between two notes.
@@ -286,16 +295,33 @@ type Summary struct {
 	Truncated bool `json:"truncated"`
 }
 
-// Folder is an owner-scoped named container for notes.
+// Folder visibility values (see issue #12: deployment team boundary and
+// shared folders). Private is the database default and matches every
+// pre-existing row; shared makes the folder's directly-filed live notes
+// readable (not writable) by every authenticated user on the deployment.
+const (
+	FolderPrivate = "private"
+	FolderShared  = "shared"
+)
+
+// Folder is a named container for notes, owned by one account. A folder is
+// private to its owner unless explicitly shared (Visibility == FolderShared).
 type Folder struct {
-	ID        string     `json:"id"`
-	Name      string     `json:"name"`
-	ParentID  *string    `json:"parent_id"`
-	CreatedAt time.Time  `json:"created_at"`
-	DeletedAt *time.Time `json:"deleted_at,omitempty"`
-	// NoteCount is the total number of live (non-deleted) notes in this folder
-	// and all of its descendants, computed server-side by ListFolders.
+	ID       string  `json:"id"`
+	OwnerID  string  `json:"owner_id"`
+	Name     string  `json:"name"`
+	ParentID *string `json:"parent_id"`
+	// Visibility is "private" (default) or "shared". See FolderPrivate/FolderShared.
+	Visibility string     `json:"visibility"`
+	CreatedAt  time.Time  `json:"created_at"`
+	DeletedAt  *time.Time `json:"deleted_at,omitempty"`
+	// NoteCount is the number of live (non-deleted) notes filed directly in
+	// this folder (not recursive over descendants), computed server-side by
+	// ListFolders from memberships the requester can read.
 	NoteCount int `json:"note_count"`
+	// IsOwner is true when the requester owns this folder. Authoritative for
+	// showing mutation controls client-side; always populated by folder reads.
+	IsOwner bool `json:"is_owner"`
 }
 
 // SmartList is a saved rule-based note view. Rule is an opaque JSON boolean tree

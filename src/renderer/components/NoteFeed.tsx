@@ -23,6 +23,12 @@ export function FeedNoteRow({
   const { notify } = useToast()
   const pinned = Boolean(note.pinned)
   const agentConfigured = useAgentCapability()
+  // A note the current user does not own — a shared-folder read (issue
+  // #12). undefined (pre-issue-#12 fixtures/routes that never set it) is
+  // treated as owned. Pin, trash, filing, and resummarize are all
+  // owner-only, so a foreign note gets no floating pin button and no
+  // context menu at all.
+  const readOnly = note.is_owner === false
 
   const run = async (fn: () => Promise<void>) => {
     try {
@@ -34,33 +40,41 @@ export function FeedNoteRow({
     }
   }
 
+  const row = (
+    <div
+      className="group relative w-full text-left"
+      draggable
+      onDragStart={(e) => e.dataTransfer.setData('text/note-id', note.id)}
+    >
+      <button
+        type="button"
+        className="w-full text-left"
+        onClick={onOpen}
+      >
+        <NoteListItem note={note} folders={folders} />
+      </button>
+      {!readOnly && (
+        <button
+          type="button"
+          aria-label={pinned ? 'Unpin note' : 'Pin note'}
+          onClick={(e) => {
+            e.stopPropagation()
+            void run(() => (pinned ? muesli.unpinNote(note.id) : muesli.pinNote(note.id)))
+          }}
+          className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground opacity-0 transition hover:bg-muted hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100"
+        >
+          <Pin size={14} />
+        </button>
+      )}
+    </div>
+  )
+
+  if (readOnly) return row
+
   return (
     <ContextMenu>
       <ContextMenuTrigger asChild>
-        <div
-          className="group relative w-full text-left"
-          draggable
-          onDragStart={(e) => e.dataTransfer.setData('text/note-id', note.id)}
-        >
-          <button
-            type="button"
-            className="w-full text-left"
-            onClick={onOpen}
-          >
-            <NoteListItem note={note} folders={folders} />
-          </button>
-          <button
-            type="button"
-            aria-label={pinned ? 'Unpin note' : 'Pin note'}
-            onClick={(e) => {
-              e.stopPropagation()
-              void run(() => (pinned ? muesli.unpinNote(note.id) : muesli.pinNote(note.id)))
-            }}
-            className="absolute right-2 top-1/2 -translate-y-1/2 rounded p-1 text-muted-foreground opacity-0 transition hover:bg-muted hover:text-foreground group-hover:opacity-100 group-focus-within:opacity-100"
-          >
-            <Pin size={14} />
-          </button>
-        </div>
+        {row}
       </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuItem destructive onSelect={() => run(() => muesli.deleteNote(note.id))}>

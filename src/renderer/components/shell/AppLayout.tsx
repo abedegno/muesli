@@ -19,6 +19,7 @@ import { ActivityFeed } from '@/components/ActivityFeed'
 import { Sidebar } from './Sidebar'
 import { MeetingRecordPrompt } from './MeetingRecordPrompt'
 import { useMeetingDetectionLoop } from '@/hooks/useMeetingDetectionLoop'
+import { useTeamSharingAvailable } from '@/lib/teamSharing'
 
 export type ActiveView = { type: 'all' } | { type: 'tag'; tag: string } | { type: 'list'; id: string } | { type: 'folder'; id: string }
 
@@ -111,6 +112,7 @@ export function AppLayout() {
   const foldersRef = useRef<Folder[]>(folders)
   foldersRef.current = folders
   const { width, collapsed, setWidth, toggleCollapsed } = useSidebarPrefs()
+  const teamSharingAvailable = useTeamSharingAvailable()
   const { notify } = useToast()
   const navigate = useNavigate()
   const location = useLocation()
@@ -397,9 +399,21 @@ export function AppLayout() {
           initialName={editingFolder.folder?.name}
           initialParentId={editingFolder.folder?.parent_id ?? editingFolder.parentId ?? null}
           parentOptions={(() => {
-            const excluded = editingFolder.folder ? descendantIds(folders, editingFolder.folder.id) : new Set<string>()
-            return folders.filter((f) => !excluded.has(f.id)).map((f) => ({ id: f.id, name: f.name }))
+            // Same-owner nesting only (issue #12): a supplied parent must be
+            // owned by the requester even when a non-owned shared folder is
+            // also visible in the sidebar.
+            const ownedFolders = folders.filter((f) => f.is_owner !== false)
+            const excluded = editingFolder.folder ? descendantIds(ownedFolders, editingFolder.folder.id) : new Set<string>()
+            return ownedFolders.filter((f) => !excluded.has(f.id)).map((f) => ({ id: f.id, name: f.name }))
           })()}
+          visibility={editingFolder.folder?.visibility}
+          showVisibilityToggle={Boolean(editingFolder.folder) && editingFolder.folder?.is_owner !== false && teamSharingAvailable}
+          onSetVisibility={editingFolder.folder ? async (visibility) => {
+            try {
+              await muesli.setFolderVisibility(editingFolder.folder!.id, visibility)
+              refresh()
+            } catch (err) { notify(err instanceof Error ? err.message : 'Could not update sharing', 'error'); throw err }
+          } : undefined}
           onSave={async (name, parentId) => {
             try {
               if (editingFolder.folder) await muesli.updateFolder(editingFolder.folder.id, name, parentId)

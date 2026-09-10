@@ -1,4 +1,4 @@
-import type { ActionItem, ActionItemStatus, AudioUrlGrant, CalendarEvent, ChatSource, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, EmbeddedStartupStatus, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, Plugin, PluginHealth, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchResult, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from './types'
+import type { ActionItem, ActionItemStatus, AudioUrlGrant, CalendarEvent, ChatSource, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, EmbeddedStartupStatus, Folder, FolderVisibility, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, Plugin, PluginHealth, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchResult, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from './types'
 import type { UploadProgress } from '../main/uploadMachine'
 import type { MicStatus } from '../main/micPermission'
 import type { SystemAudioFormat } from '../main/systemAudioHelper'
@@ -85,6 +85,7 @@ export const IPC = {
   listFolders: 'muesli:listFolders',
   createFolder: 'muesli:createFolder',
   updateFolder: 'muesli:updateFolder',
+  setFolderVisibility: 'muesli:setFolderVisibility',
   deleteFolder: 'muesli:deleteFolder',
   reorderFolder: 'muesli:reorderFolder',
   reorderNoteInFolder: 'muesli:reorderNoteInFolder',
@@ -351,7 +352,7 @@ export interface MuesliBridge {
   listPeople(): Promise<PersonWithCompany[]>
   listCompanies(): Promise<CompanyWithCount[]>
   getInsights(from?: string, to?: string): Promise<InsightsResponse>
-  getCapabilities(): Promise<{ agentConfigured: boolean }>
+  getCapabilities(): Promise<{ agentConfigured: boolean; teamSharingAvailable: boolean }>
   listNoteActionItems(noteId: string): Promise<ListNoteActionItemsResponse>
   listNoteLinks(id: string): Promise<NoteLinksResponse>
   listRelatedNotes(id: string): Promise<RelatedNote[]>
@@ -407,6 +408,7 @@ export interface MuesliBridge {
   listFolders(): Promise<Folder[]>
   createFolder(name: string, parentId?: string | null): Promise<Folder>
   updateFolder(id: string, name: string, parentId?: string | null): Promise<Folder>
+  setFolderVisibility(id: string, visibility: FolderVisibility): Promise<Folder>
   deleteFolder(id: string): Promise<void>
   reorderFolder(id: string, afterId: string | null): Promise<void>
   reorderNoteInFolder(folderId: string, noteId: string, afterId: string | null): Promise<void>

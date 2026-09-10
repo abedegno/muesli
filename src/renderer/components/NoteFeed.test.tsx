@@ -63,3 +63,31 @@ describe('GroupedNoteSections', () => {
     expect(onOpenNote).toHaveBeenCalledExactlyOnceWith(selected)
   })
 })
+
+describe('FeedNoteRow read-only (shared note, issue #12)', () => {
+  it('hides the pin button and context menu for a non-owned note', () => {
+    const shared: Note = { ...note('1', 'Teammate note'), is_owner: false }
+    render(
+      <GroupedNoteSections
+        groups={[{ label: 'Shared', notes: [shared] }]}
+        folders={[]}
+        refresh={vi.fn()}
+        onOpenNote={vi.fn()}
+      />,
+    )
+    expect(screen.queryByRole('button', { name: /pin note/i })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /unpin note/i })).not.toBeInTheDocument()
+  })
+
+  it('shows the pin button for an owned note (is_owner true or unset)', () => {
+    render(
+      <GroupedNoteSections
+        groups={[{ label: 'Mine', notes: [note('1', 'My note')] }]}
+        folders={[]}
+        refresh={vi.fn()}
+        onOpenNote={vi.fn()}
+      />,
+    )
+    expect(screen.getByRole('button', { name: /pin note/i })).toBeInTheDocument()
+  })
+})

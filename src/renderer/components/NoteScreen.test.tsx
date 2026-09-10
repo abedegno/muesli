@@ -61,6 +61,13 @@ const fullNoteById: Record<string, FullNote> = {
     transcript: null,
     summaries: [],
   },
+  n3: {
+    // A shared-folder read (issue #12): is_owner: false.
+    note: { id: 'n3', title: 'Shared standup', status: 'ready', created_at: '', updated_at: '', partial_transcript: false, is_owner: false },
+    body_markdown: 'From a teammate',
+    transcript: null,
+    summaries: [],
+  },
 }
 
 vi.mock('@/api', () => ({
@@ -113,10 +120,11 @@ vi.mock('../capture/electronCapture', () => ({ ElectronCapture: class {} }))
 // Child components reduced to inert stand-ins. NoteHeader exposes the start/stop
 // and duplicate callbacks as buttons so the test can drive the lifecycle.
 vi.mock('./NoteHeader', () => ({
-  NoteHeader: (props: { title: string; onStart: () => void; onStop: () => void; onDeleteNote: () => void; onDuplicate: () => void; onExportWithOptions?: () => void; disabledReason?: string }) => (
+  NoteHeader: (props: { title: string; onStart: () => void; onStop: () => void; onDeleteNote: () => void; onDuplicate: () => void; onExportWithOptions?: () => void; disabledReason?: string; readOnly?: boolean }) => (
     <div>
       <span data-testid="note-title">{props.title}</span>
       <span data-testid="record-disabled-reason">{props.disabledReason ?? ''}</span>
+      <span data-testid="header-read-only">{String(Boolean(props.readOnly))}</span>
       <button onClick={props.onStart}>start-rec</button>
       <button onClick={props.onStop}>stop-rec</button>
       <button onClick={props.onDeleteNote}>delete-note</button>
@@ -127,17 +135,22 @@ vi.mock('./NoteHeader', () => ({
 }))
 vi.mock('./ProcessingBanner', () => ({ ProcessingBanner: () => null }))
 vi.mock('./TagBar', () => ({
-  TagBar: (props: { onAdd?: (name: string) => void; onRemove?: (name: string) => void }) => (
+  TagBar: (props: { onAdd?: (name: string) => void; onRemove?: (name: string) => void; readOnly?: boolean }) => (
     <div>
+      <span data-testid="tagbar-read-only">{String(Boolean(props.readOnly))}</span>
       <button onClick={() => props.onAdd?.('urgent')}>add-tag</button>
       <button onClick={() => props.onRemove?.('urgent')}>remove-tag</button>
     </div>
   ),
 }))
-vi.mock('./FolderBar', () => ({ FolderBar: () => null }))
+vi.mock('./FolderBar', () => ({
+  FolderBar: (props: { readOnly?: boolean }) => <span data-testid="folderbar-read-only">{String(Boolean(props.readOnly))}</span>,
+}))
 vi.mock('./NoteView', () => ({
-  NoteView: (props: { onRegenerateTemplate?: (templateId: string) => void; regeneratingTemplateId?: string | null; initialSegmentId?: string }) => (
+  NoteView: (props: { onRegenerateTemplate?: (templateId: string) => void; regeneratingTemplateId?: string | null; initialSegmentId?: string; readOnly?: boolean; onRenameSpeaker?: unknown; templates?: unknown }) => (
     <div>
+      <span data-testid="noteview-read-only">{String(Boolean(props.readOnly))}</span>
+      <span data-testid="noteview-has-rename-speaker">{String(props.onRenameSpeaker !== undefined)}</span>
       {props.onRegenerateTemplate && (
         <button
           onClick={() => props.onRegenerateTemplate?.('tpl-1')}
@@ -518,5 +531,36 @@ describe('NoteScreen — regenerateTemplate (TPL01)', () => {
     await user.click(btn)
     await waitFor(() => expect(mockNotify).toHaveBeenCalledWith('boom', 'error'))
     await waitFor(() => expect(screen.getByTestId('regenerating-template-id')).toHaveTextContent(''))
+  })
+})
+
+describe('NoteScreen — read-only for a shared (non-owned) note (issue #12)', () => {
+  it('threads readOnly through NoteHeader/TagBar/FolderBar/NoteView and hides Details', async () => {
+    testState.currentNoteId = 'n3'
+    render(<NoteScreen />)
+    await screen.findByTestId('note-title')
+
+    expect(screen.getByTestId('header-read-only')).toHaveTextContent('true')
+    expect(screen.getByTestId('tagbar-read-only')).toHaveTextContent('true')
+    expect(screen.getByTestId('folderbar-read-only')).toHaveTextContent('true')
+    expect(screen.getByTestId('noteview-read-only')).toHaveTextContent('true')
+    // Owner-only ancillary controls (shares/links/related/action-items) live
+    // behind the Details disclosure, which is entirely absent for a
+    // read-only note.
+    expect(screen.queryByRole('button', { name: /details/i })).not.toBeInTheDocument()
+    // onRenameSpeaker is owner-only (speaker aliases) and must not be passed.
+    expect(screen.getByTestId('noteview-has-rename-speaker')).toHaveTextContent('false')
+  })
+
+  it('does not thread readOnly for an owned note', async () => {
+    testState.currentNoteId = 'n1'
+    render(<NoteScreen />)
+    await screen.findByTestId('note-title')
+
+    expect(screen.getByTestId('header-read-only')).toHaveTextContent('false')
+    expect(screen.getByTestId('tagbar-read-only')).toHaveTextContent('false')
+    expect(screen.getByTestId('folderbar-read-only')).toHaveTextContent('false')
+    expect(screen.getByTestId('noteview-read-only')).toHaveTextContent('false')
+    expect(screen.getByTestId('noteview-has-rename-speaker')).toHaveTextContent('true')
   })
 })

@@ -31,3 +31,11 @@ var ErrAlreadySetUp = errors.New("already set up")
 // generation that is no longer current — the transcript was replaced after the
 // caller read it. Expected generation 0 means "expected no transcript".
 var ErrGenerationMismatch = errors.New("transcript generation mismatch")
+
+// ErrForbidden is returned when a resource is visible to the requester (a live
+// shared folder, or a note readable through one) but the specific operation
+// requested requires an authority the requester does not have -- e.g. a
+// non-owner mutating a shared folder, or filing a note the requester does not
+// own. Distinct from ErrNotFound, which is returned for absent, trashed, or
+// private non-owned resources so a guessed id is never an existence oracle.
+var ErrForbidden = errors.New("forbidden")

@@ -11,12 +11,17 @@ export function FolderBar({
   onAdd,
   onCreate,
   onRemove,
+  readOnly = false,
 }: {
   folders: Folder[]
   memberIds: string[]
   onAdd: (folderId: string) => Promise<void>
   onCreate: (name: string) => Promise<void>
   onRemove: (folderId: string) => Promise<void>
+  /** True for a note the current user does not own (a shared-folder read):
+   * shows the folder chips the note is filed in without any add/remove
+   * control, since filing is owner-only (issue #12). */
+  readOnly?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [draft, setDraft] = useState('')
@@ -25,7 +30,7 @@ export function FolderBar({
   const available = folders.filter((f) => !memberIds.includes(f.id))
 
   useEffect(() => {
-    if (!open) return
+    if (readOnly || !open) return
     const onDoc = (e: MouseEvent) => {
       if (!pickerRef.current || !pickerRef.current.contains(e.target as Node)) setOpen(false)
     }
@@ -40,7 +45,20 @@ export function FolderBar({
       document.removeEventListener('mousedown', onDoc)
       document.removeEventListener('keydown', onKey)
     }
-  }, [open])
+  }, [open, readOnly])
+
+  if (readOnly) {
+    if (members.length === 0) return null
+    return (
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-6 py-2">
+        {members.map((f) => (
+          <span key={f.id} className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium">
+            {f.name}
+          </span>
+        ))}
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-border px-6 py-2">

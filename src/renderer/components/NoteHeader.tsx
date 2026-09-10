@@ -46,6 +46,7 @@ export function NoteHeader({
   autoFocusTitle,
   disabledReason,
   agentConfigured = true,
+  readOnly = false,
 }: {
   noteId: string
   title: string
@@ -78,6 +79,11 @@ export function NoteHeader({
   autoFocusTitle?: boolean
   disabledReason?: string
   agentConfigured?: boolean
+  /** True for a note the current user does not own (a shared-folder read):
+   * hides every control whose endpoint is owner-only — recording, event
+   * linking, and the "…" actions menu — and renders the title read-only
+   * (issue #12). */
+  readOnly?: boolean
 }) {
   const [value, setValue] = useState(title)
   const [isDirty, setIsDirty] = useState(false)
@@ -240,51 +246,58 @@ export function NoteHeader({
   return (
     <header className="flex items-center justify-between gap-4 border-b border-border px-6 py-4">
       <div className="min-w-0 flex-1">
-        <input
-          ref={titleInputRef}
-          aria-label="Note title"
-          value={value}
-          onChange={(e) => {
-            setValue(e.target.value)
-            setIsDirty(true)
-          }}
-          onBlur={handleTitleBlur}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
-              e.preventDefault()
-              e.currentTarget.blur()
-            } else if (e.key === 'Escape') {
-              suppressNextTitleSaveRef.current = true
-              setValue(title)
-              setIsDirty(false)
-              setTitleSaveState('idle')
-              e.currentTarget.blur()
-            }
-          }}
-          className="min-w-0 w-full bg-transparent font-serif text-2xl font-semibold focus:outline-none"
-          placeholder="Untitled meeting"
-        />
-        {titleSaveState === 'error' && (
+        {readOnly ? (
+          <h1 className="min-w-0 w-full truncate font-serif text-2xl font-semibold">{title || 'Untitled meeting'}</h1>
+        ) : (
+          <input
+            ref={titleInputRef}
+            aria-label="Note title"
+            value={value}
+            onChange={(e) => {
+              setValue(e.target.value)
+              setIsDirty(true)
+            }}
+            onBlur={handleTitleBlur}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey) {
+                e.preventDefault()
+                e.currentTarget.blur()
+              } else if (e.key === 'Escape') {
+                suppressNextTitleSaveRef.current = true
+                setValue(title)
+                setIsDirty(false)
+                setTitleSaveState('idle')
+                e.currentTarget.blur()
+              }
+            }}
+            className="min-w-0 w-full bg-transparent font-serif text-2xl font-semibold focus:outline-none"
+            placeholder="Untitled meeting"
+          />
+        )}
+        {!readOnly && titleSaveState === 'error' && (
           <p className="mt-1 text-xs text-destructive" role="alert">
             Could not save title - press Enter to retry
           </p>
         )}
       </div>
-      <RecordControl
-        state={recordState}
-        elapsedMs={elapsedMs}
-        onStart={onStart}
-        onStop={onStop}
-        onDeviceChange={onDeviceChange}
-        onGainChange={onGainChange}
-        recordingLevel={recordingLevel}
-        micError={micError}
-        onRetry={onMicRetry}
-        disabledReason={disabledReason}
-      />
-      {onLinkEvent && onUnlinkEvent && (
+      {!readOnly && (
+        <RecordControl
+          state={recordState}
+          elapsedMs={elapsedMs}
+          onStart={onStart}
+          onStop={onStop}
+          onDeviceChange={onDeviceChange}
+          onGainChange={onGainChange}
+          recordingLevel={recordingLevel}
+          micError={micError}
+          onRetry={onMicRetry}
+          disabledReason={disabledReason}
+        />
+      )}
+      {!readOnly && onLinkEvent && onUnlinkEvent && (
         <NoteEventLink eventId={eventId} onLink={onLinkEvent} onUnlink={onUnlinkEvent} />
       )}
+      {!readOnly && (
       <div className="relative" ref={menuRef}>
         <button
           ref={toggleRef}
@@ -440,6 +453,7 @@ export function NoteHeader({
           </div>
         )}
       </div>
+      )}
       {retranscribeOpen && (
         <Dialog open onOpenChange={(open) => { if (!open) setRetranscribeOpen(false) }} title="Re-transcribe note">
           <form

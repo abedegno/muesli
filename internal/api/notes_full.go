@@ -21,9 +21,16 @@ type fullNoteResponse struct {
 }
 
 // handleGetNoteFull returns the full note (metadata + body + transcript +
-// summaries) the desktop client polls. Owner-scoped via GetNote.
-// Speaker labels in transcript segments are substituted with user-defined
-// aliases at read time; the stored transcript_segments rows are never modified.
+// summaries) the desktop client polls. One of the three shared-readable
+// routes (issue #12): GetReadableNoteFull returns a note the requester owns
+// OR can read via a live shared folder membership (CanReadNote), with
+// is_owner and folder_ids (filtered to what the requester can see)
+// populated. The authorization check and every payload load (body,
+// transcript, alias map, summaries) run inside one guarded transaction in
+// the store layer, so an unshare between them can never expose content after
+// access was revoked. Speaker labels in transcript segments are substituted
+// with user-defined aliases at read time; the stored transcript_segments
+// rows are never modified.
 func (s *Server) handleGetNoteFull(w http.ResponseWriter, r *http.Request) {
 	uid, _ := userIDFromContext(r.Context())
 	noteID := chi.URLParam(r, "id")
@@ -32,7 +39,7 @@ func (s *Server) handleGetNoteFull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	note, err := s.deps.Store.GetNote(r.Context(), uid, noteID)
+	payload, err := s.deps.Store.GetReadableNoteFull(r.Context(), uid, noteID)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
@@ -40,60 +47,29 @@ func (s *Server) handleGetNoteFull(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-
-	tags, err := s.deps.Store.NoteTags(r.Context(), noteID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
+	note := payload.Note
+	if note.Tags == nil {
+		note.Tags = []string{}
 	}
-	note.Tags = tags // NoteTags returns [] (non-nil) when empty
-
-	folderIDs, err := s.deps.Store.NoteFolderIDs(r.Context(), noteID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	note.FolderIDs = folderIDs // NoteFolderIDs returns [] (non-nil) when empty
-
-	body, err := s.deps.Store.NoteBody(r.Context(), noteID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
+	if note.FolderIDs == nil {
+		note.FolderIDs = []string{}
 	}
 
-	resp := fullNoteResponse{Note: note, BodyMarkdown: body, Summaries: []model.Summary{}}
+	resp := fullNoteResponse{Note: note, BodyMarkdown: payload.Body, Summaries: payload.Summaries}
 
-	tr, err := s.deps.Store.GetTranscript(r.Context(), noteID)
-	if err == nil {
+	if payload.Transcript != nil {
 		// Build speaker alias map and apply substitution to response segments only.
 		// The transcript_segments table is never modified.
-		aliasMap, aliasErr := s.deps.Store.SpeakerAliasMap(r.Context(), uid, noteID)
-		if aliasErr != nil {
-			writeError(w, http.StatusInternalServerError, "internal error")
-			return
-		}
-		segments := make([]model.Segment, len(tr.Segments))
-		copy(segments, tr.Segments)
-		if len(aliasMap) > 0 {
+		segments := make([]model.Segment, len(payload.Transcript.Segments))
+		copy(segments, payload.Transcript.Segments)
+		if len(payload.AliasMap) > 0 {
 			for i := range segments {
-				if alias, ok := aliasMap[segments[i].Speaker]; ok {
+				if alias, ok := payload.AliasMap[segments[i].Speaker]; ok {
 					segments[i].Speaker = alias
 				}
 			}
 		}
 		resp.Transcript = &transcriptView{Segments: segments}
-	} else if !errors.Is(err, store.ErrNotFound) {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-
-	sums, err := s.deps.Store.GetSummaries(r.Context(), noteID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	if sums != nil {
-		resp.Summaries = sums
 	}
 
 	writeJSON(w, http.StatusOK, resp)

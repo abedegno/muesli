@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Dialog } from '@/components/ui/Dialog'
 import { Button } from '@/components/ui/Button'
 import { Input } from '@/components/ui/Input'
+import type { FolderVisibility } from '../../shared/types'
 
 export function FolderDialog({
   open,
@@ -12,6 +13,9 @@ export function FolderDialog({
   onSave,
   onDelete,
   onClose,
+  visibility,
+  showVisibilityToggle = false,
+  onSetVisibility,
 }: {
   open: boolean
   title: string
@@ -21,10 +25,18 @@ export function FolderDialog({
   onSave: (name: string, parentId: string | null) => Promise<void>
   onDelete?: () => Promise<void>
   onClose: () => void
+  /** Current folder visibility; only meaningful when showVisibilityToggle is true. */
+  visibility?: FolderVisibility
+  /** Show the "Shared with team" toggle. Callers gate this on the folder
+   * being owned by the current user and team_sharing_available being true
+   * (single-user deployments hide the toggle; issue #12). */
+  showVisibilityToggle?: boolean
+  onSetVisibility?: (visibility: FolderVisibility) => Promise<void>
 }) {
   const [name, setName] = useState(initialName)
   const [parentId, setParentId] = useState<string | null>(initialParentId ?? null)
   const [busy, setBusy] = useState(false)
+  const [visBusy, setVisBusy] = useState(false)
   const trimmed = name.trim()
 
   return (
@@ -45,6 +57,31 @@ export function FolderDialog({
         <option value="">None (top level)</option>
         {parentOptions.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}
       </select>
+      {showVisibilityToggle && onSetVisibility && (
+        <label className="mt-3 flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            aria-label="Shared with team"
+            checked={visibility === 'shared'}
+            disabled={visBusy}
+            onChange={async (e) => {
+              const next: FolderVisibility = e.target.checked ? 'shared' : 'private'
+              setVisBusy(true)
+              try {
+                await onSetVisibility(next)
+              } finally {
+                setVisBusy(false)
+              }
+            }}
+          />
+          Shared with team
+        </label>
+      )}
+      {showVisibilityToggle && (
+        <p className="mt-1 text-xs text-muted-foreground">
+          Notes filed directly in this folder become read-only visible to everyone on this deployment. Sharing does not grant write access.
+        </p>
+      )}
       {onDelete && (
         <p className="mt-3 text-xs text-muted-foreground">
           This folder and everything inside it move to Trash — recoverable for 30 days.
