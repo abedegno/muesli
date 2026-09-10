@@ -15,8 +15,23 @@ type addFolderRequest struct {
 
 func (s *Server) handleAddNoteFolder(w http.ResponseWriter, r *http.Request) {
 	uid, _ := userIDFromContext(r.Context())
-	if !validNoteID(chi.URLParam(r, "id")) {
+	noteID := chi.URLParam(r, "id")
+	if !validNoteID(noteID) {
 		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	// A wholly-invisible note is checked before request-body decode/
+	// validation (issue #12): AddNoteFolder always denies with ErrNotFound
+	// when the note isn't visible to the requester regardless of the target
+	// folder, so that case can be (and is) rejected before the body is even
+	// parsed. The full authorization — note ownership AND target-folder
+	// visibility together — still runs atomically inside AddNoteFolder once
+	// folder_id is known, since it is itself part of the request body.
+	if _, err := s.deps.Store.GetReadableNote(r.Context(), uid, noteID); errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	var req addFolderRequest
@@ -24,7 +39,7 @@ func (s *Server) handleAddNoteFolder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "folder_id required")
 		return
 	}
-	err := s.deps.Store.AddNoteFolder(r.Context(), uid, chi.URLParam(r, "id"), req.FolderID)
+	err := s.deps.Store.AddNoteFolder(r.Context(), uid, noteID, req.FolderID)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
@@ -68,6 +83,20 @@ func (s *Server) handleReorderNoteInFolder(w http.ResponseWriter, r *http.Reques
 	noteID := chi.URLParam(r, "noteID")
 	if !validNoteID(folderID) || !validNoteID(noteID) {
 		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	// Folder ownership (the sole authority for this route) is checked before
+	// request-body decode/validation (issue #12): a non-owner must get the
+	// same 404/403 denial regardless of whether their body is otherwise
+	// well-formed.
+	if err := s.deps.Store.CheckFolderOwnerMutation(r.Context(), uid, folderID); errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if errors.Is(err, store.ErrForbidden) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	var req struct {

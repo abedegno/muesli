@@ -42,6 +42,28 @@ type queryRower interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
+// txQuerier extends queryRower with Query, so multi-row read helpers (e.g.
+// note tags, readable folder ids) can also run either standalone or inside an
+// already-open transaction. Satisfied by both *pgxpool.Pool and pgx.Tx.
+type txQuerier interface {
+	queryRower
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+// CheckFolderOwnerMutation is the exported form of
+// authorizeLiveFolderOwnerMutation, for API handlers that must check
+// ownership BEFORE decoding/validating a mutation's request body (issue
+// #12): calling this first ensures a non-owner gets the same 404/403 denial
+// regardless of whether their body is well-formed, so an invalid body from a
+// non-owner never produces a different response than a valid one. Owner-only
+// mutation handlers that also call a store method performing this same check
+// internally (e.g. UpdateFolder, ReorderFolder) may safely call both — the
+// second check is redundant but harmless once the first has already gated
+// the body decode.
+func (s *Store) CheckFolderOwnerMutation(ctx context.Context, requesterID, folderID string) error {
+	return authorizeLiveFolderOwnerMutation(ctx, s.pool, requesterID, folderID)
+}
+
 // authorizeLiveFolderOwnerMutation enforces the mutation-authorization order
 // named by the design (issue #12) for every owner-only operation on a LIVE
 // folder: an absent, trashed, or private non-owned folder is ErrNotFound (so a
@@ -867,7 +889,15 @@ func (s *Store) NoteFolderIDs(ctx context.Context, noteID string) ([]string, err
 // folders the requester can see (owned or live shared) — so a shared reader
 // never learns the note owner's private filing structure (issue #12).
 func (s *Store) readableNoteFolderIDs(ctx context.Context, requesterID, noteID string) ([]string, error) {
-	rows, err := s.pool.Query(ctx,
+	return readableNoteFolderIDsTx(ctx, s.pool, requesterID, noteID)
+}
+
+// readableNoteFolderIDsTx is readableNoteFolderIDs against an explicit
+// executor (pool or tx) so guarded multi-part reads (e.g. GetReadableNote)
+// can load folder memberships inside the same transaction/snapshot as their
+// authorization check (issue #12).
+func readableNoteFolderIDsTx(ctx context.Context, q txQuerier, requesterID, noteID string) ([]string, error) {
+	rows, err := q.Query(ctx,
 		`SELECT nf.folder_id
 		 FROM note_folders nf
 		 JOIN folders f ON f.id = nf.folder_id

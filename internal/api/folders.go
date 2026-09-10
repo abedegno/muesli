@@ -109,6 +109,19 @@ func (s *Server) handleUpdateFolder(w http.ResponseWriter, r *http.Request) {
 	if !validID(w, r, id) {
 		return
 	}
+	// Ownership is checked before request-body decode/validation (issue
+	// #12): a non-owner must get the same 404/403 denial regardless of
+	// whether their body is otherwise well-formed.
+	if err := s.deps.Store.CheckFolderOwnerMutation(r.Context(), uid, id); errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if errors.Is(err, store.ErrForbidden) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 	var req folderRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
@@ -142,6 +155,19 @@ func (s *Server) handleReorderFolder(w http.ResponseWriter, r *http.Request) {
 	uid, _ := userIDFromContext(r.Context())
 	id := chi.URLParam(r, "id")
 	if !validID(w, r, id) {
+		return
+	}
+	// Ownership is checked before request-body decode/validation (issue
+	// #12): a non-owner must get the same 404/403 denial regardless of
+	// whether their body is otherwise well-formed.
+	if err := s.deps.Store.CheckFolderOwnerMutation(r.Context(), uid, id); errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if errors.Is(err, store.ErrForbidden) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	var req struct {
@@ -248,6 +274,19 @@ func (s *Server) handleSetFolderVisibility(w http.ResponseWriter, r *http.Reques
 	uid, _ := userIDFromContext(r.Context())
 	id := chi.URLParam(r, "id")
 	if !validID(w, r, id) {
+		return
+	}
+	// Ownership is checked before request-body decode/validation (issue
+	// #12): a non-owner must get the same 404/403 denial regardless of
+	// whether their body is otherwise well-formed.
+	if err := s.deps.Store.CheckFolderOwnerMutation(r.Context(), uid, id); errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if errors.Is(err, store.ErrForbidden) {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 	var req folderVisibilityRequest

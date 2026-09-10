@@ -374,8 +374,16 @@ func (s *Store) AppendTranscriptGap(ctx context.Context, transcriptID, streamID 
 // stream/continuity metadata (StreamID, Sealed, Generation, Gaps) every
 // consumer in spec §9 reads through this one call.
 func (s *Store) GetTranscript(ctx context.Context, noteID string) (model.Transcript, error) {
+	return getTranscriptTx(ctx, s.pool, noteID)
+}
+
+// getTranscriptTx is GetTranscript against an explicit executor (pool or tx)
+// so guarded multi-part reads (e.g. GetReadableNoteFull) can load the
+// transcript inside the same transaction/snapshot as their authorization
+// check (issue #12).
+func getTranscriptTx(ctx context.Context, q txQuerier, noteID string) (model.Transcript, error) {
 	var tr model.Transcript
-	err := s.pool.QueryRow(ctx,
+	err := q.QueryRow(ctx,
 		`SELECT id, note_id, transcriber_plugin, model, review_state, stream_id, sealed, generation
 		 FROM transcripts WHERE note_id=$1`, noteID).
 		Scan(&tr.ID, &tr.NoteID, &tr.TranscriberPlugin, &tr.Model, &tr.ReviewState, &tr.StreamID, &tr.Sealed, &tr.Generation)
@@ -385,7 +393,7 @@ func (s *Store) GetTranscript(ctx context.Context, noteID string) (model.Transcr
 	if err != nil {
 		return model.Transcript{}, err
 	}
-	rows, err := s.pool.Query(ctx,
+	rows, err := q.Query(ctx,
 		`SELECT id, start_ms, end_ms, text, source, COALESCE(speaker,''), words, confidence,
 		        provisional, COALESCE(boundary,'')
 		 FROM transcript_segments WHERE transcript_id=$1 ORDER BY start_ms`, tr.ID)
@@ -413,7 +421,7 @@ func (s *Store) GetTranscript(ctx context.Context, noteID string) (model.Transcr
 		return model.Transcript{}, err
 	}
 
-	gapRows, err := s.pool.Query(ctx,
+	gapRows, err := q.Query(ctx,
 		`SELECT id, stream_id, start_sample, dropped_samples, origin
 		   FROM transcript_gaps WHERE transcript_id=$1 ORDER BY start_sample`, tr.ID)
 	if err != nil {

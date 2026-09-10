@@ -107,7 +107,14 @@ func (s *Store) RemoveNoteTag(ctx context.Context, ownerID, noteID, name string)
 
 // NoteTags returns one note's tag names, sorted case-insensitively.
 func (s *Store) NoteTags(ctx context.Context, noteID string) ([]string, error) {
-	rows, err := s.pool.Query(ctx,
+	return noteTagsTx(ctx, s.pool, noteID)
+}
+
+// noteTagsTx is NoteTags against an explicit executor (pool or tx) so guarded
+// multi-part reads (e.g. GetReadableNote) can load tags inside the same
+// transaction/snapshot as their authorization check (issue #12).
+func noteTagsTx(ctx context.Context, q txQuerier, noteID string) ([]string, error) {
+	rows, err := q.Query(ctx,
 		`SELECT t.name FROM note_tags nt JOIN tags t ON t.id = nt.tag_id
 		 WHERE nt.note_id=$1 ORDER BY lower(t.name)`, noteID)
 	if err != nil {

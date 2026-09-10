@@ -225,7 +225,15 @@ func (s *Store) FailSummary(ctx context.Context, id string) error {
 
 // GetSummaries returns all summaries for a note, joined to template names.
 func (s *Store) GetSummaries(ctx context.Context, noteID string) ([]model.Summary, error) {
-	rows, err := s.pool.Query(ctx,
+	return getSummariesTx(ctx, s.pool, noteID)
+}
+
+// getSummariesTx is GetSummaries against an explicit executor (pool or tx) so
+// guarded multi-part reads (e.g. GetReadableNoteFull) can load summaries
+// inside the same transaction/snapshot as their authorization check (issue
+// #12).
+func getSummariesTx(ctx context.Context, q txQuerier, noteID string) ([]model.Summary, error) {
+	rows, err := q.Query(ctx,
 		`SELECT s.id, s.note_id, COALESCE(s.template_id::text,''), COALESCE(t.name,''),
 		        s.agent_plugin, s.model,
 		        COALESCE(s.content->>'status', $2), COALESCE(s.content->'sections','[]'::jsonb),
