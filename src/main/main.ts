@@ -398,6 +398,7 @@ app.whenReady().then(async () => {
     ipcMain.handle(IPC.listFolders, () => handlers.listFolders())
     ipcMain.handle(IPC.createFolder, (_e, name: string, parentId?: string | null) => handlers.createFolder(name, parentId))
     ipcMain.handle(IPC.updateFolder, (_e, id: string, name: string, parentId?: string | null) => handlers.updateFolder(id, name, parentId))
+    ipcMain.handle(IPC.setFolderVisibility, (_e, id: string, visibility: 'private' | 'shared') => handlers.setFolderVisibility(id, visibility))
     ipcMain.handle(IPC.deleteFolder, (_e, id: string) => handlers.deleteFolder(id))
     ipcMain.handle(IPC.reorderFolder, (_e, id: string, afterId: string | null) => handlers.reorderFolder(id, afterId))
     ipcMain.handle(IPC.reorderNoteInFolder, (_e, folderId: string, noteId: string, afterId: string | null) => handlers.reorderNoteInFolder(folderId, noteId, afterId))

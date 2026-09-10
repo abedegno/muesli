@@ -219,6 +219,7 @@ export function NoteView({
   regeneratingTemplateId,
   initialSegmentId,
   initialSegmentIndex,
+  readOnly = false,
 }: {
   full: FullNote
   onSaveBody: (md: string) => Promise<void>
@@ -231,6 +232,10 @@ export function NoteView({
   // The templateId currently being (re)generated, if any — disables/spinners
   // the Regenerate control so it can't be double-clicked into duplicate jobs.
   regeneratingTemplateId?: string | null
+  /** True for a note the current user does not own (a shared-folder read):
+   * disables body editing (issue #12). Rename-speaker/regenerate-template
+   * controls are already optional and simply omitted by the caller. */
+  readOnly?: boolean
   // A transcript segment id to jump to + highlight once resolvable (e.g. a
   // NotesListScreen search hit's `?segment=` param, threaded through
   // NoteScreen). Mirrors the `jumpToCitation` flow used by summary citations.
@@ -712,7 +717,7 @@ export function NoteView({
             ))}
           {tab === 'notes' && (
             <Suspense fallback={<div className="p-4 text-sm text-muted-foreground">Loading editor…</div>}>
-              <NoteEditor initialMarkdown={full.body_markdown} onSave={onSaveBody} />
+              <NoteEditor initialMarkdown={full.body_markdown} onSave={onSaveBody} editable={!readOnly} />
             </Suspense>
           )}
           {tab === 'transcript' && (

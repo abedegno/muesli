@@ -9,11 +9,16 @@ export function TagBar({
   suggestions,
   onAdd,
   onRemove,
+  readOnly = false,
 }: {
   tags: string[]
   suggestions: string[]
   onAdd: (name: string) => Promise<void>
   onRemove: (name: string) => Promise<void>
+  /** True for a note the current user does not own (a shared-folder read):
+   * shows tag chips (tags are note content and remain visible) without any
+   * add/remove control, since tag mutation is owner-only (issue #12). */
+  readOnly?: boolean
 }) {
   const [value, setValue] = useState('')
 
@@ -23,6 +28,19 @@ export function TagBar({
     if (!name) return
     if (tags.some((t) => t.toLowerCase() === name.toLowerCase())) return
     await onAdd(name)
+  }
+
+  if (readOnly) {
+    if (tags.length === 0) return null
+    return (
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-6 py-2">
+        {tags.map((t) => (
+          <span key={t} className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+            #{t}
+          </span>
+        ))}
+      </div>
+    )
   }
 
   const listId = 'tagbar-suggestions'

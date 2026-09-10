@@ -726,3 +726,95 @@ describe('Sidebar — lists-vs-folders guidance (issue #11)', () => {
     expect(screen.queryByText('Smart lists are saved searches that update on their own.')).not.toBeInTheDocument()
   })
 })
+
+describe('Sidebar — Shared folders (issue #12)', () => {
+  it('renders owned folders under "Folders" and non-owned under "Shared"', () => {
+    renderSidebar({
+      folders: [
+        { id: 'mine', name: 'Mine', parent_id: null, created_at: '', is_owner: true },
+        { id: 'theirs', name: 'Theirs', parent_id: null, created_at: '', is_owner: false },
+      ],
+    })
+    const foldersHeading = screen.getByText('Folders').closest('div')!
+    const sharedHeading = screen.getByText('Shared').closest('div')!
+    expect(within(foldersHeading.parentElement!).getByText('Mine')).toBeInTheDocument()
+    expect(within(sharedHeading.parentElement!).getByText('Theirs')).toBeInTheDocument()
+  })
+
+  it('omits the Shared section entirely when there are no non-owned folders', () => {
+    renderSidebar({ folders: [{ id: 'mine', name: 'Mine', parent_id: null, created_at: '', is_owner: true }] })
+    expect(screen.queryByText('Shared')).not.toBeInTheDocument()
+  })
+
+  it('treats a folder with no is_owner field as owned (pre-issue-#12 shape)', () => {
+    renderSidebar({ folders: [{ id: 'mine', name: 'Mine', parent_id: null, created_at: '' }] })
+    expect(screen.getByText('Folders')).toBeInTheDocument()
+    expect(screen.queryByText('Shared')).not.toBeInTheDocument()
+  })
+
+  it('retains real nesting when both a shared parent and shared child are visible', () => {
+    renderSidebar({
+      folders: [
+        { id: 'root', name: 'TeamRoot', parent_id: null, created_at: '', is_owner: false },
+        { id: 'child', name: 'TeamChild', parent_id: 'root', created_at: '', is_owner: false },
+      ],
+      folderCount: () => 0,
+    })
+    // The child appears indented under its real parent, not promoted to a
+    // separate top-level row (both are visible so the true relationship holds).
+    const childRow = screen.getByText('TeamChild').closest('div')!
+    const rootRow = screen.getByText('TeamRoot').closest('div')!
+    const childDepth = Number((childRow.style.paddingLeft || '0px').replace('px', ''))
+    const rootDepth = Number((rootRow.style.paddingLeft || '0px').replace('px', ''))
+    expect(childDepth).toBeGreaterThan(rootDepth)
+  })
+
+  it('renders a promoted shared descendant (null parent_id) as a top-level Shared row', () => {
+    // The API already sanitizes parent_id to null when the requester cannot
+    // see the ancestor (issue #12 design doc) — the client just needs to
+    // render whatever parent_id it is given without erroring.
+    renderSidebar({
+      folders: [{ id: 'promoted', name: 'Promoted', parent_id: null, created_at: '', is_owner: false }],
+    })
+    expect(screen.getByText('Promoted')).toBeInTheDocument()
+  })
+
+  it('hides owner-only menus (rename/subfolder/export/trash) for a non-owned shared folder even on hover', () => {
+    renderSidebar({
+      folders: [{ id: 'theirs', name: 'Theirs', parent_id: null, created_at: '', is_owner: false }],
+    })
+    const row = screen.getByText('Theirs').closest('li')!
+    fireEvent.mouseEnter(row)
+    // No "more actions" trigger should ever render for a non-owned row.
+    expect(screen.queryByRole('button', { name: /more actions for theirs/i })).not.toBeInTheDocument()
+  })
+
+  it('shows the owner-only menu for an owned folder on hover', () => {
+    renderSidebar({
+      folders: [{ id: 'mine', name: 'Mine', parent_id: null, created_at: '', is_owner: true }],
+    })
+    const row = screen.getByText('Mine').closest('li')!
+    fireEvent.mouseEnter(row)
+    expect(screen.getByRole('button', { name: /more actions for mine/i })).toBeInTheDocument()
+  })
+
+  it('does not make a non-owned folder row draggable (no reparent/reorder authority)', () => {
+    renderSidebar({
+      folders: [{ id: 'theirs', name: 'Theirs', parent_id: null, created_at: '', is_owner: false }],
+    })
+    const row = screen.getByText('Theirs').closest('div')!
+    expect(row).toHaveAttribute('draggable', 'false')
+  })
+
+  it('accepts a note drop ("Add my note") on a non-owned shared folder', () => {
+    const onDropNote = vi.fn()
+    renderSidebar({
+      folders: [{ id: 'theirs', name: 'Theirs', parent_id: null, created_at: '', is_owner: false }],
+      onDropNote,
+    })
+    const row = screen.getByText('Theirs').closest('div')!
+    const dataTransfer = { getData: (key: string) => (key === 'text/note-id' ? 'note-1' : '') }
+    fireEvent.drop(row, { dataTransfer })
+    expect(onDropNote).toHaveBeenCalledWith('theirs', 'note-1')
+  })
+})

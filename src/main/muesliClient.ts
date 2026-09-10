@@ -1,4 +1,4 @@
-import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, FullNote, Folder, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, Plugin, PluginHealth, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, SearchResult, Share, SmartList, SpeakerAlias, Template, TemplateSection, UploadGrant } from '../shared/types'
+import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, FullNote, Folder, FolderVisibility, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, Plugin, PluginHealth, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, SearchResult, Share, SmartList, SpeakerAlias, Template, TemplateSection, UploadGrant } from '../shared/types'
 import type { CreateConversationRequest, CreateConversationResponse, ListNoteActionItemsResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdateActionItemRequest, UpdatePersonRequest } from '../shared/ipc'
 import { buildNoteExportRequest, parseContentDispositionFilename, type ExportOptions } from '../shared/export'
 import { buildCalendarEventsPath } from '../shared/calendar'
@@ -99,9 +99,9 @@ export class MuesliClient {
     return this.json<InsightsResponse>('GET', path)
   }
 
-  async getCapabilities(): Promise<{ agentConfigured: boolean }> {
-    const result = await this.json<{ agent_configured: boolean }>('GET', '/api/capabilities')
-    return { agentConfigured: result.agent_configured }
+  async getCapabilities(): Promise<{ agentConfigured: boolean; teamSharingAvailable: boolean }> {
+    const result = await this.json<{ agent_configured: boolean; team_sharing_available: boolean }>('GET', '/api/capabilities')
+    return { agentConfigured: result.agent_configured, teamSharingAvailable: result.team_sharing_available }
   }
 
   async listNoteActionItems(id: string): Promise<ListNoteActionItemsResponse> {
@@ -358,6 +358,9 @@ export class MuesliClient {
   }
   async updateFolder(id: string, name: string, parentId?: string | null): Promise<Folder> {
     return this.json<Folder>('PUT', `/api/folders/${id}`, { name, parent_id: parentId ?? null })
+  }
+  async setFolderVisibility(id: string, visibility: FolderVisibility): Promise<Folder> {
+    return this.json<Folder>('PUT', `/api/folders/${id}/visibility`, { visibility })
   }
   async deleteFolder(id: string): Promise<void> {
     await this.json('DELETE', `/api/folders/${id}`)

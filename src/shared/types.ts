@@ -266,16 +266,23 @@ export type FolderVisibility = 'private' | 'shared'
  * intentionally-nulled response parent — stored parent_id is unchanged). */
 export interface Folder {
   id: string
-  owner_id: string
+  /** Always present on real server responses; optional here (matching this
+   * file's existing convention for always-sent fields) so hand-built test
+   * fixtures need not populate it. */
+  owner_id?: string
   name: string
   parent_id?: string | null
-  visibility: FolderVisibility
+  /** Always present on real server responses; absent treats as 'private'. */
+  visibility?: FolderVisibility
   created_at: string
   deleted_at?: string | null
   note_count?: number
   /** True when the current user owns this folder; authoritative for showing
-   * mutation controls (rename/move/reorder/trash/visibility). */
-  is_owner: boolean
+   * mutation controls (rename/move/reorder/trash/visibility). Always present
+   * on real server responses; absent treats as owned (matches every folder
+   * before issue #12, when every folder in a response was the requester's
+   * own). */
+  is_owner?: boolean
 }
 
 /** Renderer-authored summary heading and model instruction sent through main. */

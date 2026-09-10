@@ -41,3 +41,17 @@ describe('TagBar', () => {
     expect(onAdd).not.toHaveBeenCalled()
   })
 })
+
+describe('TagBar readOnly (shared note, issue #12)', () => {
+  it('shows tag chips without any add/remove control', () => {
+    render(<TagBar tags={['1on1']} suggestions={[]} onAdd={vi.fn()} onRemove={vi.fn()} readOnly />)
+    expect(screen.getByText('#1on1')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /remove 1on1/i })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText('Add tag')).not.toBeInTheDocument()
+  })
+
+  it('renders nothing when there are no tags', () => {
+    const { container } = render(<TagBar tags={[]} suggestions={[]} onAdd={vi.fn()} onRemove={vi.fn()} readOnly />)
+    expect(container).toBeEmptyDOMElement()
+  })
+})

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import JSZip from 'jszip'
 import { fullNoteToMarkdown } from '../renderer/lib/noteMarkdown'
-import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, DigestConfig, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, Plugin, PluginHealth, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchResult, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from '../shared/types'
+import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, DigestConfig, DiarizationReview, Folder, FolderVisibility, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, Plugin, PluginHealth, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchResult, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from '../shared/types'
 import type { ConnectRequest, CreateConversationRequest, CreateConversationResponse, DiarizationReviewUpdate, ExportRequestOptions, ListNoteActionItemsResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdateActionItemRequest, UpdatePersonRequest, UploadAudioRequest } from '../shared/ipc'
 import { INSECURE_CONNECTION_CODE, isInsecureRemote } from '../shared/url'
 import type { AuthInvalidatedNotice } from '../shared/ipc'
@@ -47,7 +47,7 @@ interface Handlers {
   listPeople(): Promise<PersonWithCompany[]>
   listCompanies(): Promise<CompanyWithCount[]>
   getInsights(from?: string, to?: string): Promise<InsightsResponse>
-  getCapabilities(): Promise<{ agentConfigured: boolean }>
+  getCapabilities(): Promise<{ agentConfigured: boolean; teamSharingAvailable: boolean }>
   listNoteActionItems(noteId: string): Promise<ListNoteActionItemsResponse>
   listNoteLinks(id: string): Promise<NoteLinksResponse>
   listRelatedNotes(id: string): Promise<RelatedNote[]>
@@ -95,6 +95,7 @@ interface Handlers {
   listFolders(): Promise<Folder[]>
   createFolder(name: string, parentId?: string | null): Promise<Folder>
   updateFolder(id: string, name: string, parentId?: string | null): Promise<Folder>
+  setFolderVisibility(id: string, visibility: FolderVisibility): Promise<Folder>
   deleteFolder(id: string): Promise<void>
   reorderFolder(id: string, afterId: string | null): Promise<void>
   reorderNoteInFolder(folderId: string, noteId: string, afterId: string | null): Promise<void>
@@ -616,6 +617,9 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     },
     async updateFolder(id, name, parentId) {
       return authedClient().updateFolder(id, name, parentId)
+    },
+    async setFolderVisibility(id, visibility) {
+      return authedClient().setFolderVisibility(id, visibility)
     },
     async deleteFolder(id) {
       await authedClient().deleteFolder(id)
