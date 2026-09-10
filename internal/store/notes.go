@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/abedegno/muesli/internal/model"
@@ -909,7 +910,33 @@ func readableNoteFilterSQL(folderID string, f ListNotesFilter) (string, []any) {
 // concurrent unshare/membership-removal commits, proving the later reads
 // still observe the pre-revocation snapshot rather than racing the write
 // (issue #12).
-var testHookAfterListReadableNotesRowsLoaded func()
+//
+// The hook is package-global (every ListReadableNotes call in the process
+// goes through runTestHookAfterListReadableNotesRowsLoaded), so it is guarded
+// by testHookAfterListReadableNotesRowsLoadedMu for safe concurrent
+// get/set/call — required because store tests run with t.Parallel() and this
+// hook is itself invoked from concurrent goroutines. It is also handed the
+// calling requesterID and is expected to no-op for any requesterID it does
+// not recognize, so a test that arms this hook for its own requester never
+// blocks/interferes with an unrelated ListReadableNotes call made by a
+// different, concurrently-running test.
+var (
+	testHookAfterListReadableNotesRowsLoadedMu sync.Mutex
+	testHookAfterListReadableNotesRowsLoaded   func(requesterID string)
+)
+
+// runTestHookAfterListReadableNotesRowsLoaded reads the hook under
+// testHookAfterListReadableNotesRowsLoadedMu and, if set, invokes it outside
+// the lock (so a test hook that blocks doesn't hold the mutex and stall
+// unrelated ListReadableNotes calls trying to read/re-arm the hook).
+func runTestHookAfterListReadableNotesRowsLoaded(requesterID string) {
+	testHookAfterListReadableNotesRowsLoadedMu.Lock()
+	hook := testHookAfterListReadableNotesRowsLoaded
+	testHookAfterListReadableNotesRowsLoadedMu.Unlock()
+	if hook != nil {
+		hook(requesterID)
+	}
+}
 
 // ListReadableNotes is the widened counterpart to ListNotes for the
 // folder-filtered list route (f.FolderIDSet must be true): it returns live
@@ -1006,9 +1033,7 @@ func (s *Store) ListReadableNotes(ctx context.Context, requesterID string, f Lis
 		return nil, rowsErr
 	}
 
-	if testHookAfterListReadableNotesRowsLoaded != nil {
-		testHookAfterListReadableNotesRowsLoaded()
-	}
+	runTestHookAfterListReadableNotesRowsLoaded(requesterID)
 
 	ids := make([]string, len(out))
 	for i := range out {

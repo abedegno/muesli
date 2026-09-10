@@ -1021,6 +1021,15 @@ func TestMarkNoteReadyConcurrent(t *testing.T) {
 // would instead observe the post-unshare state for the folder-id read (the
 // requester no longer owns or can see the now-private folder), producing a
 // mixed-snapshot payload: the note row present, but FolderIDs empty.
+//
+// The hook is package-global (issue #12 round-2 review finding), so this
+// test's closure gates on requesterID == other.ID before doing anything:
+// any OTHER test's concurrent (t.Parallel()) ListReadableNotes call — for a
+// different requester — hits the same global hook but is a same-signature
+// no-op for it, so it never blocks or observes this test's channels. The
+// close is also sync.Once-guarded and the hook is explicitly uninstalled
+// before the second (post-unshare) call below, so even a second matching
+// invocation from this same test can't double-close or re-block.
 func TestListReadableNotesConcurrentUnshareIsSingleSnapshot(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -1050,11 +1059,17 @@ func TestListReadableNotesConcurrentUnshareIsSingleSnapshot(t *testing.T) {
 
 	reachedRowsLoaded := make(chan struct{})
 	releaseRowsLoaded := make(chan struct{})
-	restore := store.SetTestHookAfterListReadableNotesRowsLoaded(func() {
-		close(reachedRowsLoaded)
+	var closeReachedOnce sync.Once
+	restore := store.SetTestHookAfterListReadableNotesRowsLoaded(func(requesterID string) {
+		if requesterID != other.ID {
+			// Some other, concurrently-running test's ListReadableNotes call
+			// hit the shared package-global hook — not this test's call, so
+			// leave it alone entirely.
+			return
+		}
+		closeReachedOnce.Do(func() { close(reachedRowsLoaded) })
 		<-releaseRowsLoaded
 	})
-	defer restore()
 
 	type listResult struct {
 		notes []model.Note
@@ -1078,6 +1093,11 @@ func TestListReadableNotesConcurrentUnshareIsSingleSnapshot(t *testing.T) {
 	close(releaseRowsLoaded)
 
 	res := <-resultCh
+	// Uninstall the hook now that this test's one intentional call has
+	// completed — the sanity-check call below reuses other.ID as requester
+	// and must not re-trip it.
+	restore()
+
 	if res.err != nil {
 		t.Fatalf("ListReadableNotes: %v", res.err)
 	}
