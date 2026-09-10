@@ -1206,6 +1206,87 @@ func TestListFoldersCountsDirectMembershipOnly(t *testing.T) {
 	}
 }
 
+func TestListFoldersRecursiveCountExcludesPrivateDescendantForNonOwner(t *testing.T) {
+	t.Parallel()
+	st, ownerID, _ := newStoreWithOwner(t)
+	other := addUser(t, st)
+	ctx := context.Background()
+
+	// other: shared root -> private child. The root is live-shared, but the
+	// child stays private (independent visibility within one owner's tree).
+	sharedRoot, err := st.CreateFolder(ctx, other, "SharedRoot", nil)
+	if err != nil {
+		t.Fatalf("create shared root: %v", err)
+	}
+	if _, err := st.SetFolderVisibility(ctx, other, sharedRoot.ID, model.FolderShared); err != nil {
+		t.Fatalf("share root: %v", err)
+	}
+	privateChild, err := st.CreateFolder(ctx, other, "PrivateChild", &sharedRoot.ID)
+	if err != nil {
+		t.Fatalf("create private child: %v", err)
+	}
+
+	// One note filed directly in the shared root, one filed only in the
+	// private child.
+	inRoot, err := st.CreateNote(ctx, other, "In root")
+	if err != nil {
+		t.Fatalf("create note in root: %v", err)
+	}
+	if err := st.AddNoteFolder(ctx, other, inRoot.ID, sharedRoot.ID); err != nil {
+		t.Fatalf("file in root: %v", err)
+	}
+	inPrivateChild, err := st.CreateNote(ctx, other, "In private child")
+	if err != nil {
+		t.Fatalf("create note in private child: %v", err)
+	}
+	if err := st.AddNoteFolder(ctx, other, inPrivateChild.ID, privateChild.ID); err != nil {
+		t.Fatalf("file in private child: %v", err)
+	}
+
+	// The owner sees both notes recursively (their own subtree, any visibility).
+	ownList, err := st.ListFolders(ctx, other)
+	if err != nil {
+		t.Fatalf("owner list: %v", err)
+	}
+	var ownerRoot *model.Folder
+	for i := range ownList {
+		if ownList[i].ID == sharedRoot.ID {
+			ownerRoot = &ownList[i]
+		}
+	}
+	if ownerRoot == nil {
+		t.Fatalf("owner: shared root missing from list")
+	}
+	if ownerRoot.NoteCount != 2 {
+		t.Errorf("owner recursive count = %d, want 2 (includes private child)", ownerRoot.NoteCount)
+	}
+
+	// A non-owner requester sees only the note directly in the shared root:
+	// the private child's note must not leak into the recursive count.
+	sharedReaderList, err := st.ListFolders(ctx, ownerID)
+	if err != nil {
+		t.Fatalf("non-owner list: %v", err)
+	}
+	var readerRoot *model.Folder
+	for i := range sharedReaderList {
+		if sharedReaderList[i].ID == sharedRoot.ID {
+			readerRoot = &sharedReaderList[i]
+		}
+	}
+	if readerRoot == nil {
+		t.Fatalf("non-owner: shared root missing from list")
+	}
+	if readerRoot.NoteCount != 1 {
+		t.Errorf("non-owner recursive count = %d, want 1 (private child excluded, no leak)", readerRoot.NoteCount)
+	}
+	// The private child itself must not even appear in the non-owner's list.
+	for _, f := range sharedReaderList {
+		if f.ID == privateChild.ID {
+			t.Errorf("private child leaked into non-owner list: %+v", f)
+		}
+	}
+}
+
 func TestSetFolderVisibilityValuesAndAuthorization(t *testing.T) {
 	t.Parallel()
 	st, ownerID, _ := newStoreWithOwner(t)

@@ -35,12 +35,22 @@ func TestRelatedNotesHandler(t *testing.T) {
 			t.Fatalf("invalid note id status=%d body=%s", invalid.Code, invalid.Body.String())
 		}
 
-		rec = doJSON(t, srv, http.MethodGet, "/api/notes/11111111-1111-1111-1111-111111111111/related", nil, hdr)
+		// Own note: still degrades to empty (no ownership issue) rather than
+		// erroring, since the feature is simply off.
+		ownNote := createNote(t, srv, hdr, "Own note")
+		rec = doJSON(t, srv, http.MethodGet, "/api/notes/"+ownNote+"/related", nil, hdr)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("related disabled status=%d body=%s", rec.Code, rec.Body.String())
 		}
 		if got := rec.Body.String(); got != "[]\n" {
 			t.Fatalf("related disabled body=%q, want %q", got, "[]\n")
+		}
+
+		// A note that doesn't exist stays 404 even with embeddings disabled
+		// (issue #12: owner-scoped, no existence-independent shortcut).
+		missing := doJSON(t, srv, http.MethodGet, "/api/notes/11111111-1111-1111-1111-111111111111/related", nil, hdr)
+		if missing.Code != http.StatusNotFound {
+			t.Fatalf("missing note disabled status=%d body=%s", missing.Code, missing.Body.String())
 		}
 	})
 

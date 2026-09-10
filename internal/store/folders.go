@@ -194,26 +194,50 @@ func (s *Store) CreateFolder(ctx context.Context, ownerID, name string, parentID
 
 // ListFolders returns every live folder the requester can see: folders they
 // own (any visibility) plus every other live folder with visibility='shared'.
-// NoteCount is the number of live notes filed directly in that folder (not
-// recursive over descendants) — for a shared folder this counts every live
-// membership regardless of who filed the note, because filing into a shared
-// folder is itself what makes a note readable to everyone (see CanReadNote);
-// for an owned folder every filed note is necessarily the requester's own
-// (filing requires folder ownership or the target folder already being
-// shared), so no separate leakage check is needed. ParentID is nulled in the
-// response (never in storage) when the requester cannot see the parent, so a
-// promoted shared descendant never references a missing node client-side.
+// NoteCount is recursive over each folder's descendant subtree (matching the
+// pre-sharing behavior), but scoped to notes the requester can actually
+// read: within the requester's own subtree every descendant is traversed
+// (folder ownership already authorizes seeing everything filed there,
+// including a teammate's own note contributed to a shared folder); within a
+// subtree owned by someone else, only the live-shared descendants themselves
+// contribute notes to the count, so a private folder nested under a shared
+// one never leaks its note count to a non-owner (issue #12). Nesting stays
+// same-owner throughout a subtree, so descendant traversal never crosses an
+// owner boundary. ParentID is nulled in the response (never in storage) when
+// the requester cannot see the parent, so a promoted shared descendant never
+// references a missing node client-side.
 func (s *Store) ListFolders(ctx context.Context, requesterID string) ([]model.Folder, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT f.id, f.owner_id, f.name, f.parent_id, f.visibility, f.created_at,
-		       COALESCE(nc.note_count, 0) AS note_count
-		FROM folders f
-		LEFT JOIN (
-		  SELECT nf.folder_id, COUNT(*) AS note_count
-		  FROM note_folders nf
+		WITH RECURSIVE descendants AS (
+		  -- anchor: every folder visible to the requester is a root of its own subtree
+		  SELECT id AS root_id, id AS descendant_id, owner_id, visibility
+		  FROM folders
+		  WHERE deleted_at IS NULL AND (owner_id = $1 OR visibility = 'shared')
+		  UNION ALL
+		  -- recurse: add children, staying within the same owner (same-owner nesting)
+		  SELECT d.root_id, f.id, f.owner_id, f.visibility
+		  FROM folders f
+		  JOIN descendants d ON f.parent_id = d.descendant_id
+		  WHERE f.deleted_at IS NULL AND f.owner_id = d.owner_id
+		),
+		readable_descendants AS (
+		  -- keep only descendants the requester can actually read: their own
+		  -- (whole subtree, any visibility) or anyone's live-shared folder
+		  SELECT root_id, descendant_id
+		  FROM descendants
+		  WHERE owner_id = $1 OR visibility = 'shared'
+		),
+		folder_note_counts AS (
+		  SELECT rd.root_id AS folder_id, COUNT(DISTINCT n.id) AS note_count
+		  FROM readable_descendants rd
+		  JOIN note_folders nf ON nf.folder_id = rd.descendant_id
 		  JOIN notes n ON n.id = nf.note_id AND n.deleted_at IS NULL
-		  GROUP BY nf.folder_id
-		) nc ON nc.folder_id = f.id
+		  GROUP BY rd.root_id
+		)
+		SELECT f.id, f.owner_id, f.name, f.parent_id, f.visibility, f.created_at,
+		       COALESCE(fnc.note_count, 0) AS note_count
+		FROM folders f
+		LEFT JOIN folder_note_counts fnc ON fnc.folder_id = f.id
 		WHERE f.deleted_at IS NULL AND (f.owner_id = $1 OR f.visibility = 'shared')
 		ORDER BY f.position, lower(f.name)
 	`, requesterID)

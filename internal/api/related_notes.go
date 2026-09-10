@@ -28,6 +28,17 @@ func (s *Server) handleRelatedNotes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
+	// Ownership/visibility is checked before the embedder-disabled short
+	// circuit (issue #12): related notes stays owner-only, so a non-owner must
+	// get 404 even when embeddings aren't configured and the owner would
+	// otherwise just see an empty [] result.
+	if _, err := s.deps.Store.GetNote(r.Context(), uid, noteID); errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 	if s.deps.Embedder == nil {
 		writeJSON(w, http.StatusOK, []RelatedNoteMatch{})
 		return

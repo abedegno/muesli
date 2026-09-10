@@ -48,6 +48,17 @@ func (s *Server) handleRemoveNoteLink(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
+	// Ownership/visibility is checked before request-body validation (issue
+	// #12): a non-owner must get 404 regardless of whether their body is
+	// otherwise well-formed, so a validation error can never leak that a note
+	// exists but isn't theirs.
+	if _, err := s.deps.Store.GetNote(r.Context(), uid, fromID); errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
 	var req addNoteLinkRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || !validNoteID(req.ToNoteID) {
 		writeError(w, http.StatusBadRequest, "to_note_id required")
