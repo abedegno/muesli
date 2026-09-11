@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # webrtcvad builds a C extension during pip install, so we need a C toolchain.
 RUN apt-get update && apt-get install -y --no-install-recommends build-essential \
