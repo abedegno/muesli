@@ -85,12 +85,14 @@ func buildCalendarEventSource(ev model.CalendarEvent) *plugin.GenerateSource {
 //
 // Before ever calling the plugin it verifies, in order: the payload is
 // well-formed and matches the job's own typed columns; the event still
-// exists and has not started; the template still exists, is visible to the
-// event's owner, and is still pre/auto-run; and the brief's generation still
-// matches. Any of those failing makes the pair ineligible: the worker
-// transactionally deletes the current brief (if its generation still
-// matches) and its queued jobs, then completes WITHOUT invoking the plugin --
-// this is not a job failure.
+// exists; the brief loaded by that payload's brief_id is actually the one
+// THIS job's typed event/template target names (see the binding check
+// below); the event has not started; the template still exists, is visible
+// to the event's owner, and is still pre/auto-run; and the brief's
+// generation still matches. Any of the eligibility checks failing makes the
+// pair ineligible: the worker transactionally deletes the current brief (if
+// its generation still matches) and its queued jobs, then completes WITHOUT
+// invoking the plugin -- this is not a job failure.
 func (p *Processor) runPreGenerate(ctx context.Context, job model.Job) (bool, error) {
 	kind, err := job.TargetKind()
 	if err != nil || kind != model.JobTargetCalendarEvent {
@@ -126,6 +128,42 @@ func (p *Processor) runPreGenerate(ctx context.Context, job model.Job) (bool, er
 	}
 	ownerID := event.OwnerID
 
+	brief, found, err := p.store.GetEventBriefByID(ctx, pl.BriefID)
+	if err != nil {
+		return true, err
+	}
+	if !found {
+		slog.InfoContext(ctx, "pre_generate: brief already removed, skipping", "job_id", job.ID, "brief_id", pl.BriefID)
+		return false, nil
+	}
+	// The brief loaded by unscoped id must actually be the one THIS job's
+	// typed event/template target names -- checked BEFORE any eligibility
+	// branch below, including the destructive cleanup ones. A malformed or
+	// cross-wired job could otherwise name owner A's event/template in its
+	// typed columns while its payload's brief_id names an unrelated owner
+	// B's brief; if the eligibility checks below ran first against owner A's
+	// event/template (e.g. "event has started", "template no longer
+	// eligible") they would delete owner B's brief on the strength of owner
+	// A's state -- a cross-owner leak/deletion. A legitimately-enqueued job
+	// can never disagree here (see ReconcileEventBriefPair/
+	// enqueuePreGenerateJobTx, which always set these consistently
+	// together). Treated as "no longer applicable" -- the same clean no-op
+	// as an already-removed brief or a stale generation -- rather than a
+	// terminal job error: a terminal failure would route through
+	// handlePreGenerateTerminalFailure, which (deliberately, see its own doc
+	// comment) fails the CURRENT generation of whatever brief pl.BriefID
+	// names, so turning this into an error would itself touch the very
+	// unrelated brief this check exists to protect. Never invoking the
+	// plugin and never mutating any row -- the job's own event/template, OR
+	// the mismatched brief -- is the safe outcome here regardless of how the
+	// mismatch arose.
+	if brief.EventID != job.CalendarEventID || brief.TemplateID != pl.TemplateID {
+		slog.WarnContext(ctx, "pre_generate: brief does not match job's event/template target, skipping without mutating it",
+			"job_id", job.ID, "brief_id", pl.BriefID, "job_event_id", job.CalendarEventID, "brief_event_id", brief.EventID,
+			"payload_template_id", pl.TemplateID, "brief_template_id", brief.TemplateID)
+		return false, nil
+	}
+
 	if !event.StartsAt.After(preJobClock()) {
 		if err := p.cleanupIneligiblePreBrief(ctx, job, pl.BriefID, pl.Generation, "event has started"); err != nil {
 			return true, err
@@ -150,35 +188,6 @@ func (p *Processor) runPreGenerate(ctx context.Context, job model.Job) (bool, er
 		return false, nil
 	}
 
-	brief, found, err := p.store.GetEventBriefByID(ctx, pl.BriefID)
-	if err != nil {
-		return true, err
-	}
-	if !found {
-		slog.InfoContext(ctx, "pre_generate: brief already removed, skipping", "job_id", job.ID, "brief_id", pl.BriefID)
-		return false, nil
-	}
-	// The brief loaded by unscoped id must actually be the one THIS job's
-	// typed event/template target names -- otherwise a malformed/tampered
-	// job could publish generated content from one event into an unrelated
-	// brief row (a cross-owner leak, since a brief's owner is derived
-	// entirely through its event). A legitimately-enqueued job can never
-	// disagree here (see ReconcileEventBriefPair/enqueuePreGenerateJobTx,
-	// which always set these consistently together). Treated as "no longer
-	// applicable" -- the same clean no-op as an already-removed brief or a
-	// stale generation -- rather than a terminal job error: a terminal
-	// failure would route through handlePreGenerateTerminalFailure, which
-	// (deliberately, see its own doc comment) fails the CURRENT generation
-	// of whatever brief pl.BriefID names, so turning this into an error
-	// would itself touch the very unrelated brief this check exists to
-	// protect. Never invoking the plugin and never mutating any row is the
-	// safe outcome here regardless of how the mismatch arose.
-	if brief.EventID != job.CalendarEventID || brief.TemplateID != pl.TemplateID {
-		slog.WarnContext(ctx, "pre_generate: brief does not match job's event/template target, skipping without mutating it",
-			"job_id", job.ID, "brief_id", pl.BriefID, "job_event_id", job.CalendarEventID, "brief_event_id", brief.EventID,
-			"payload_template_id", pl.TemplateID, "brief_template_id", brief.TemplateID)
-		return false, nil
-	}
 	if brief.Generation != pl.Generation {
 		slog.InfoContext(ctx, "pre_generate: stale generation superseded, skipping", "job_id", job.ID, "brief_id", pl.BriefID,
 			"job_generation", pl.Generation, "current_generation", brief.Generation)

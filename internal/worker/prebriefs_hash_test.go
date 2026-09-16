@@ -38,10 +38,12 @@ func testTemplateForHash() model.Template {
 // testAgentForHash returns a fixed agent identity plus non-secret config,
 // used as the "agent-1" baseline everywhere below.
 func testAgentForHash() preBriefAgentIdentity {
+	temp := 0.2
 	return preBriefAgentIdentity{
-		ID:     "agent-1",
-		Name:   "Agent One",
-		Config: json.RawMessage(`{"model":"llama3.2:3b","temperature":0.2}`),
+		ID:          "agent-1",
+		Name:        "Agent One",
+		Model:       "llama3.2:3b",
+		Temperature: &temp,
 	}
 }
 
@@ -151,9 +153,15 @@ func TestComputePreBriefHashChangesForEveryInput(t *testing.T) {
 		// agent's model/temperature would leave every existing brief stale
 		// forever (see the accepted spec's "resolved default-agent identity
 		// and non-secret generation configuration" hash input requirement).
-		"agent config": func() string {
+		"agent config model": func() string {
 			agent := testAgentForHash()
-			agent.Config = json.RawMessage(`{"model":"llama3.2:3b","temperature":0.9}`)
+			agent.Model = "llama3.2:70b"
+			return computePreBriefHash(testEventForHash(), testTemplateForHash(), agent)
+		},
+		"agent config temperature": func() string {
+			agent := testAgentForHash()
+			temp := 0.9
+			agent.Temperature = &temp
 			return computePreBriefHash(testEventForHash(), testTemplateForHash(), agent)
 		},
 	}
@@ -175,5 +183,48 @@ func TestComputePreBriefHashDeterministic(t *testing.T) {
 	h2 := computePreBriefHash(ev, tmpl, testAgentForHash())
 	if h1 != h2 {
 		t.Fatalf("hash not deterministic: %s != %s", h1, h2)
+	}
+}
+
+// TestExtractNonSecretPluginConfigExcludesUnknownFields proves the
+// allowlisted extraction keeps only model/temperature and silently drops
+// every other field a plugin's Config might carry -- including
+// credential-shaped ones an arbitrary plugin's own config schema could
+// define (e.g. api_key) -- per the accepted spec's "non-secret generation
+// configuration" hash input requirement.
+func TestExtractNonSecretPluginConfigExcludesUnknownFields(t *testing.T) {
+	t.Parallel()
+
+	withSecret := extractNonSecretPluginConfig(json.RawMessage(`{"model":"llama3.2:3b","temperature":0.2,"api_key":"sk-super-secret-value"}`))
+	withoutSecret := extractNonSecretPluginConfig(json.RawMessage(`{"model":"llama3.2:3b","temperature":0.2}`))
+
+	if withSecret.Model != withoutSecret.Model {
+		t.Fatalf("model mismatch: %q != %q", withSecret.Model, withoutSecret.Model)
+	}
+	if (withSecret.Temperature == nil) != (withoutSecret.Temperature == nil) || *withSecret.Temperature != *withoutSecret.Temperature {
+		t.Fatalf("temperature mismatch: %v != %v", withSecret.Temperature, withoutSecret.Temperature)
+	}
+}
+
+// TestComputePreBriefHashIgnoresSecretPluginConfigFields proves the
+// freshness hash is unaffected by a secret-shaped field appearing (or not)
+// alongside the allowlisted model/temperature fields in a plugin's raw
+// Config -- guarding the fix for the reviewed finding where the hash once
+// covered the plugin's entire decrypted Config blob (which "may include
+// secrets", per model.Plugin's doc comment) rather than only its non-secret
+// generation configuration.
+func TestComputePreBriefHashIgnoresSecretPluginConfigFields(t *testing.T) {
+	t.Parallel()
+
+	withSecretCfg := extractNonSecretPluginConfig(json.RawMessage(`{"model":"llama3.2:3b","temperature":0.2,"api_key":"sk-super-secret-value"}`))
+	withoutSecretCfg := extractNonSecretPluginConfig(json.RawMessage(`{"model":"llama3.2:3b","temperature":0.2}`))
+
+	withSecret := preBriefAgentIdentity{ID: "agent-1", Name: "Agent One", Model: withSecretCfg.Model, Temperature: withSecretCfg.Temperature}
+	withoutSecret := preBriefAgentIdentity{ID: "agent-1", Name: "Agent One", Model: withoutSecretCfg.Model, Temperature: withoutSecretCfg.Temperature}
+
+	h1 := computePreBriefHash(testEventForHash(), testTemplateForHash(), withSecret)
+	h2 := computePreBriefHash(testEventForHash(), testTemplateForHash(), withoutSecret)
+	if h1 != h2 {
+		t.Fatalf("hash changed due to a secret-only plugin config field: %s != %s", h1, h2)
 	}
 }

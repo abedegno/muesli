@@ -631,3 +631,131 @@ func TestHandlePreGenerateTerminalFailureRefusesMismatchedBrief(t *testing.T) {
 		t.Fatalf("event B's brief must be completely untouched: before=%+v after=%+v", briefB, afterB)
 	}
 }
+
+// TestRunPreGenerateCrossWiredJobStartedEventNeverDeletesUnrelatedBrief is
+// the adversarial case the earlier binding check missed: a cross-wired job
+// whose typed CalendarEventID names a REAL event that HAS started (so the
+// very first eligibility branch, "event has started", is reachable and
+// destructive), while its BriefID/payload actually name a completely
+// different, still-eligible, still-pending brief for an unrelated event.
+// Before the fix this ran the "event has started" cleanup against the
+// job's own (started) event and deleted whatever brief the payload named --
+// here, a brief that has nothing to do with that started event and remains
+// fully eligible. Proves the binding check runs BEFORE the started-event
+// cleanup branch, so the mismatched brief is left completely untouched.
+func TestRunPreGenerateCrossWiredJobStartedEventNeverDeletesUnrelatedBrief(t *testing.T) {
+	f := newPreJobFixture(t)
+	f.setDefaultAgent(t)
+	ctx := context.Background()
+
+	// The job's own typed target: a real event that will have started by
+	// the time the job runs.
+	evStarted := f.seedEvent(t, "e-started", time.Hour)
+
+	// The unrelated, still-eligible, still-pending pair the tampered
+	// payload actually names.
+	evOther := f.seedEvent(t, "e-other", 5*time.Hour)
+	tmplOther := f.createTemplate(t, "pre", true)
+	hOther := "h-other"
+	if _, err := f.st.ReconcileEventBriefPair(ctx, evOther.ID, tmplOther.ID, tmplOther.Name, &hOther); err != nil {
+		t.Fatalf("reconcile other: %v", err)
+	}
+	briefsOther, err := f.st.EventBriefsForEvents(ctx, f.owner, []string{evOther.ID})
+	if err != nil || len(briefsOther[evOther.ID]) != 1 {
+		t.Fatalf("event other briefs: %+v %v", briefsOther, err)
+	}
+	briefOther := briefsOther[evOther.ID][0]
+
+	// Move the clock so evStarted has started but evOther has not.
+	preJobClock = func() time.Time { return f.now.Add(2 * time.Hour) }
+
+	// A cross-wired job: typed CalendarEventID names the STARTED event, but
+	// BriefID/payload actually name the unrelated, still-eligible brief.
+	job := model.Job{
+		ID: "cross-wired-started", CalendarEventID: evStarted.ID, BriefID: briefOther.ID, BriefGeneration: briefOther.Generation, Type: model.JobPreGenerate,
+		Payload: json.RawMessage(`{"brief_id":"` + briefOther.ID + `","template_id":"` + tmplOther.ID + `","generation":` +
+			strconv.Itoa(briefOther.Generation) + `}`),
+	}
+
+	retryable, err := f.proc.runPreGenerate(ctx, job)
+	if err != nil || retryable {
+		t.Fatalf("expected a clean no-op for a cross-wired started-event job, got err=%v retryable=%v", err, retryable)
+	}
+	if len(f.agent.LastBody()) != 0 {
+		t.Fatal("plugin must never be called for a cross-wired job")
+	}
+
+	afterOther, found, err := f.st.GetEventBriefByID(ctx, briefOther.ID)
+	if err != nil || !found {
+		t.Fatalf("expected the unrelated, still-eligible brief to survive untouched: found=%v err=%v", found, err)
+	}
+	if afterOther.Status != briefOther.Status || afterOther.Generation != briefOther.Generation {
+		t.Fatalf("the unrelated brief must be completely untouched by the started event's cleanup: before=%+v after=%+v", briefOther, afterOther)
+	}
+}
+
+// TestRunPreGenerateCrossWiredJobIneligibleTemplateNeverDeletesUnrelatedBrief
+// is the adversarial case for the "template no longer eligible" cleanup
+// branch: a single real, eligible event has two templates -- one still
+// pre/auto-run (with a real, currently-pending brief that must survive) and
+// one that has since had auto_run disabled. A tampered job's typed
+// CalendarEventID/BriefID correctly name the GOOD pair, but its payload
+// names the BAD (ineligible) template_id. Before the fix this ran the
+// "template no longer pre/auto-run" cleanup against the payload's
+// ineligible template and deleted the good, unrelated, still-eligible
+// brief on the strength of a template it was never actually bound to.
+// Proves the binding check runs first, so the good brief is left
+// completely untouched.
+func TestRunPreGenerateCrossWiredJobIneligibleTemplateNeverDeletesUnrelatedBrief(t *testing.T) {
+	f := newPreJobFixture(t)
+	f.setDefaultAgent(t)
+	ctx := context.Background()
+
+	ev := f.seedEvent(t, "e1", 2*time.Hour)
+
+	tmplGood := f.createTemplate(t, "pre", true)
+	hGood := "h-good"
+	if _, err := f.st.ReconcileEventBriefPair(ctx, ev.ID, tmplGood.ID, tmplGood.Name, &hGood); err != nil {
+		t.Fatalf("reconcile good: %v", err)
+	}
+	briefsGood, err := f.st.EventBriefsForEvents(ctx, f.owner, []string{ev.ID})
+	if err != nil || len(briefsGood[ev.ID]) != 1 {
+		t.Fatalf("event good briefs: %+v %v", briefsGood, err)
+	}
+	briefGood := briefsGood[ev.ID][0]
+
+	// A second real template on the same event, but ineligible (auto_run
+	// disabled) -- never reconciled to a brief of its own. A distinct name
+	// avoids colliding with tmplGood's (template names are unique per
+	// owner), same as TestRunPreGenerateBriefMismatchSkipsWithoutMutating's
+	// "Pre-read 2".
+	tmplBad, err := f.st.CreateTemplate(ctx, f.owner, "Pre-read (ineligible)", "pre",
+		[]model.TemplateSection{{Heading: "Context", Instruction: "Summarize the agenda."}}, false, "", "", nil)
+	if err != nil {
+		t.Fatalf("create template bad: %v", err)
+	}
+
+	// Typed CalendarEventID/BriefID correctly name the good pair, but the
+	// payload's template_id names the unrelated, ineligible template.
+	job := model.Job{
+		ID: "cross-wired-template", CalendarEventID: ev.ID, BriefID: briefGood.ID, BriefGeneration: briefGood.Generation, Type: model.JobPreGenerate,
+		Payload: json.RawMessage(`{"brief_id":"` + briefGood.ID + `","template_id":"` + tmplBad.ID + `","generation":` +
+			strconv.Itoa(briefGood.Generation) + `}`),
+	}
+
+	retryable, err := f.proc.runPreGenerate(ctx, job)
+	if err != nil || retryable {
+		t.Fatalf("expected a clean no-op for a cross-wired ineligible-template job, got err=%v retryable=%v", err, retryable)
+	}
+	if len(f.agent.LastBody()) != 0 {
+		t.Fatal("plugin must never be called for a cross-wired job")
+	}
+
+	afterGood, found, err := f.st.GetEventBriefByID(ctx, briefGood.ID)
+	if err != nil || !found {
+		t.Fatalf("expected the good, still-eligible brief to survive untouched: found=%v err=%v", found, err)
+	}
+	if afterGood.Status != briefGood.Status || afterGood.Generation != briefGood.Generation {
+		t.Fatalf("the good brief must be completely untouched by the ineligible template's cleanup: before=%+v after=%+v", briefGood, afterGood)
+	}
+}
