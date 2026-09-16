@@ -269,9 +269,17 @@ func (s *Store) PruneEvents(ctx context.Context, sourceID string, keepExternalID
 // (template visibility, brief state). Never exposed directly by a public API
 // handler. Returns ErrNotFound if no row matches.
 func (s *Store) GetCalendarEventByID(ctx context.Context, eventID string) (model.CalendarEvent, error) {
+	return getCalendarEventByIDTx(ctx, s.pool, eventID)
+}
+
+// getCalendarEventByIDTx is GetCalendarEventByID's body, parameterized over
+// queryRower so callers that need it inside an already-open transaction
+// (e.g. RetryPreBriefJob) can read the event as part of that same
+// transaction instead of a separate pool-level round trip.
+func getCalendarEventByIDTx(ctx context.Context, q queryRower, eventID string) (model.CalendarEvent, error) {
 	var ev model.CalendarEvent
 	var attendeesRaw string
-	err := s.pool.QueryRow(ctx,
+	err := q.QueryRow(ctx,
 		`SELECT id, owner_id, source_id, external_id, title, starts_at, ends_at,
 		        description, location, conferencing_url, attendees::text, updated_at
 		 FROM calendar_events WHERE id=$1`, eventID).

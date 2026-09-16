@@ -324,9 +324,17 @@ func (s *Store) ListJobsByNoteID(ctx context.Context, noteID string) ([]model.Jo
 
 // GetJob fetches a single job by ID. Returns ErrNotFound if no row matches.
 func (s *Store) GetJob(ctx context.Context, jobID string) (model.Job, error) {
+	return getJobTx(ctx, s.pool, jobID)
+}
+
+// getJobTx is GetJob's body, parameterized over queryRower so callers that
+// need it inside an already-open transaction (e.g. RetryPreBriefJob) can
+// read the job as part of that same transaction instead of a separate
+// pool-level round trip.
+func getJobTx(ctx context.Context, q queryRower, jobID string) (model.Job, error) {
 	var j model.Job
 	var payload []byte
-	err := s.pool.QueryRow(ctx,
+	err := q.QueryRow(ctx,
 		`SELECT id, COALESCE(note_id::text,''), COALESCE(calendar_event_id::text,''), COALESCE(brief_id::text,''), COALESCE(brief_generation,0),
 		        type, status, attempts, COALESCE(last_error,''), priority, payload, started_at, finished_at
 		 FROM jobs WHERE id=$1`, jobID).

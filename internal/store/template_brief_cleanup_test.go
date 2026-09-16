@@ -113,6 +113,26 @@ func (f cleanupFixture) briefState(t *testing.T, state string) string {
 	return briefID
 }
 
+// briefIDForTemplate returns f's current brief id for (f.eventID, templateID)
+// specifically -- unlike briefState, which assumes (correctly, for every
+// other test in this file) that its event has exactly one brief total, this
+// is for tests where the same event legitimately carries briefs against
+// more than one template.
+func (f cleanupFixture) briefIDForTemplate(t *testing.T, templateID string) string {
+	t.Helper()
+	briefs, err := f.st.EventBriefsForEvents(context.Background(), f.owner, []string{f.eventID})
+	if err != nil {
+		t.Fatalf("event briefs: %v", err)
+	}
+	for _, b := range briefs[f.eventID] {
+		if b.TemplateID == templateID {
+			return b.ID
+		}
+	}
+	t.Fatalf("no brief found for event %s template %s in %+v", f.eventID, templateID, briefs[f.eventID])
+	return ""
+}
+
 func TestUpdateTemplateAutoRunDisabledRemovesBriefForEveryState(t *testing.T) {
 	t.Parallel()
 	for _, state := range []string{"pending", "ready", "failed"} {
@@ -247,5 +267,70 @@ func TestUpdateTemplateTwoOwnersCleanupIsolated(t *testing.T) {
 	}
 	if _, found, err := b.st.GetEventBriefByID(context.Background(), briefB); err != nil || !found {
 		t.Fatalf("owner B's brief must be untouched: found=%v err=%v", found, err)
+	}
+}
+
+// TestUpdateTemplateCleansUpBriefsForEveryOwnerNotJustTheMutatingOwner
+// proves template-mutation cleanup is derived from who ACTUALLY has a brief
+// for the template -- not hardcoded to the single owner performing the
+// mutation. This is what the accepted spec's "cleanup is scoped through
+// visibility records rather than assuming one owner" requirement means in
+// practice for a template visible to more than one owner (a shared/built-in
+// template in a hosted deployment): owner A's own private template here
+// stands in for that case, with a second owner's brief seeded directly
+// against A's template id (the accepted spec's own testing convention for
+// exercising cleanup/reconciliation paths -- "seed stale rows directly" --
+// covers exactly this: a row that could only exist via prior visibility, a
+// shared/built-in template, or an out-of-band change). A's own owner-scoped
+// mutation call (the only template-mutation entry point this codebase
+// exposes) must still reach and remove B's row in the same bounded
+// operation, while leaving B's own UNRELATED template/brief alone.
+func TestUpdateTemplateCleansUpBriefsForEveryOwnerNotJustTheMutatingOwner(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := store.New(testutil.NewPool(t))
+	a := newCleanupFixtureInStore(t, st)
+	b := newCleanupFixtureInStore(t, st)
+
+	briefA := a.briefState(t, "pending")
+
+	// Simulate B also having a brief against A's template (shared
+	// visibility / stale out-of-band row) -- ReconcileEventBriefPair itself
+	// enforces no ownership relationship between its eventID and
+	// templateID arguments; that predicate belongs to its callers (the
+	// reconciliation loop), which is exactly what lets a test seed this
+	// shape directly. b.eventID now legitimately carries briefs against TWO
+	// different templates (A's and, once seeded below, B's own), so this
+	// resolves the shared brief's id by TEMPLATE rather than reusing
+	// briefState/cleanupFixture's single-brief-per-event helper, which
+	// assumes (correctly, for every other test in this file) that its
+	// event has exactly one brief.
+	if _, err := b.st.ReconcileEventBriefPair(ctx, b.eventID, a.tmpl.ID, a.tmpl.Name, hashPtr("h-shared")); err != nil {
+		t.Fatalf("seed B's stale brief against A's template: %v", err)
+	}
+	sharedBriefID := b.briefIDForTemplate(t, a.tmpl.ID)
+
+	// B's own separate template/brief, seeded the same explicit way (see
+	// above -- briefState's single-brief-per-event assumption no longer
+	// holds for b.eventID once it carries two templates' briefs).
+	if _, err := b.st.ReconcileEventBriefPair(ctx, b.eventID, b.tmpl.ID, b.tmpl.Name, hashPtr("h-b-own")); err != nil {
+		t.Fatalf("seed B's own brief: %v", err)
+	}
+	briefB := b.briefIDForTemplate(t, b.tmpl.ID)
+
+	// A's own owner-scoped mutation -- the only template-mutation entry
+	// point this codebase exposes -- disables auto_run.
+	if err := a.st.UpdateTemplate(ctx, a.owner, a.tmpl.ID, a.tmpl.Name, "pre", a.tmpl.Sections, false, "", "", nil); err != nil {
+		t.Fatalf("update owner A's template: %v", err)
+	}
+
+	if _, found, err := a.st.GetEventBriefByID(ctx, briefA); err != nil || found {
+		t.Fatalf("expected owner A's own brief removed: found=%v err=%v", found, err)
+	}
+	if _, found, err := b.st.GetEventBriefByID(ctx, sharedBriefID); err != nil || found {
+		t.Fatalf("expected owner B's brief AGAINST A's template also removed (cleanup must cover every owner with a brief, not just the mutating owner): found=%v err=%v", found, err)
+	}
+	if _, found, err := b.st.GetEventBriefByID(ctx, briefB); err != nil || !found {
+		t.Fatalf("owner B's OWN unrelated template/brief must be untouched: found=%v err=%v", found, err)
 	}
 }

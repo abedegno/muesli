@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"strconv"
 	"testing"
 	"time"
 
@@ -439,5 +440,194 @@ func TestRunPreGenerateExhaustedRetriesMarksBriefFailed(t *testing.T) {
 	got := briefs[ev.ID][0]
 	if got.ID != briefID || got.Status != model.BriefFailed {
 		t.Fatalf("expected the brief marked failed after exhausting retries: %+v", got)
+	}
+}
+
+// TestCleanupIneligiblePreBriefPropagatesDBFailure proves
+// cleanupIneligiblePreBrief does not swallow a real store-level failure: it
+// returns the error, and -- because the underlying DELETE never committed --
+// the brief it was trying to clean up is left completely untouched (not
+// silently transitioned into some inconsistent state), so a subsequent
+// retry attempt (or the next reconciliation pass) sees exactly the same
+// eligible-for-cleanup row it started with.
+func TestCleanupIneligiblePreBriefPropagatesDBFailure(t *testing.T) {
+	f := newPreJobFixture(t)
+	f.setDefaultAgent(t)
+	ev, _, briefID, job := f.seedReadyPair(t, 2*time.Hour)
+	_ = ev
+
+	before, found, err := f.st.GetEventBriefByID(context.Background(), briefID)
+	if err != nil || !found {
+		t.Fatalf("expected the seeded brief to exist: found=%v err=%v", found, err)
+	}
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	cancel() // already canceled before any query runs: a real, deterministic DB-layer failure
+
+	if err := f.proc.cleanupIneligiblePreBrief(canceledCtx, job, briefID, before.Generation, "test-injected-failure"); err == nil {
+		t.Fatal("expected cleanupIneligiblePreBrief to propagate the store's error, got nil")
+	}
+
+	after, found, err := f.st.GetEventBriefByID(context.Background(), briefID)
+	if err != nil || !found {
+		t.Fatalf("expected the brief to still exist after a failed cleanup: found=%v err=%v", found, err)
+	}
+	if after.Status != before.Status || after.Generation != before.Generation {
+		t.Fatalf("a failed cleanup must leave the brief exactly as it was: before=%+v after=%+v", before, after)
+	}
+}
+
+// TestRunPreGenerateCleanupFailureIsRetryableNotSuccess proves that when the
+// ineligibility-cleanup DB call itself fails, runPreGenerate does NOT settle
+// the job as done (which would leave the brief permanently stuck, since
+// nothing would ever retry it again): it returns (retryable=true, err), the
+// same "genuinely failed, try again" contract as every other DB-error branch
+// in this function. The failure here is a real, deterministic Postgres error
+// (an invalid uuid literal), not a mock -- see the "not-a-real-uuid" brief id
+// below, which the job's own typed BriefID column is deliberately set to
+// match so it passes the earlier payload/job-column consistency check and
+// actually reaches cleanupIneligiblePreBrief.
+func TestRunPreGenerateCleanupFailureIsRetryableNotSuccess(t *testing.T) {
+	f := newPreJobFixture(t)
+	f.setDefaultAgent(t)
+	ev := f.seedEvent(t, "e1", time.Hour)
+	tmpl := f.createTemplate(t, "pre", true)
+
+	badBriefID := "not-a-real-uuid"
+	job := model.Job{
+		ID: "j1", CalendarEventID: ev.ID, BriefID: badBriefID, BriefGeneration: 1, Type: model.JobPreGenerate,
+		Payload: json.RawMessage(`{"brief_id":"` + badBriefID + `","template_id":"` + tmpl.ID + `","generation":1}`),
+	}
+	// Move the fixture clock past the event's start so runPreGenerate takes
+	// the "event has started" ineligibility-cleanup branch, which is the
+	// very first cleanup call site and requires no template/brief load
+	// first.
+	preJobClock = func() time.Time { return f.now.Add(2 * time.Hour) }
+
+	retryable, err := f.proc.runPreGenerate(context.Background(), job)
+	if err == nil {
+		t.Fatal("expected the cleanup DB failure to surface as a job error")
+	}
+	if !retryable {
+		t.Fatalf("expected a cleanup DB failure to be retryable (not settled as success), got retryable=false, err=%v", err)
+	}
+	if len(f.agent.LastBody()) != 0 {
+		t.Fatal("plugin must never be called when cleanup fails")
+	}
+}
+
+// TestRunPreGenerateBriefMismatchSkipsWithoutMutating is the adversarial
+// case for the missing brief<->event/template binding check: a job whose
+// typed CalendarEventID names event A, but whose payload brief_id actually
+// names a real brief that belongs to a DIFFERENT event B (simulating a
+// malformed or tampered job -- a legitimately-enqueued job can never
+// disagree, see ReconcileEventBriefPair/enqueuePreGenerateJobTx). Proves
+// runPreGenerate rejects it as a clean no-op -- never calls the plugin, and
+// crucially never mutates event B's real, unrelated brief -- rather than
+// publishing event A's generated content into it.
+func TestRunPreGenerateBriefMismatchSkipsWithoutMutating(t *testing.T) {
+	f := newPreJobFixture(t)
+	f.setDefaultAgent(t)
+	ctx := context.Background()
+
+	evA := f.seedEvent(t, "e1", 2*time.Hour)
+	tmplA := f.createTemplate(t, "pre", true)
+	hA := "hA"
+	if _, err := f.st.ReconcileEventBriefPair(ctx, evA.ID, tmplA.ID, tmplA.Name, &hA); err != nil {
+		t.Fatalf("reconcile A: %v", err)
+	}
+
+	evB := f.seedEvent(t, "e2", 3*time.Hour)
+	tmplB, err := f.st.CreateTemplate(ctx, f.owner, "Pre-read 2", "pre",
+		[]model.TemplateSection{{Heading: "Context", Instruction: "Summarize the agenda."}}, true, "", "", nil)
+	if err != nil {
+		t.Fatalf("create template B: %v", err)
+	}
+	hB := "hB"
+	if _, err := f.st.ReconcileEventBriefPair(ctx, evB.ID, tmplB.ID, tmplB.Name, &hB); err != nil {
+		t.Fatalf("reconcile B: %v", err)
+	}
+	briefsB, err := f.st.EventBriefsForEvents(ctx, f.owner, []string{evB.ID})
+	if err != nil || len(briefsB[evB.ID]) != 1 {
+		t.Fatalf("event B briefs: %+v %v", briefsB, err)
+	}
+	briefB := briefsB[evB.ID][0]
+
+	// A tampered job: typed CalendarEventID says A, but the payload's
+	// brief_id/template_id actually name B's real, unrelated brief/template.
+	job := model.Job{
+		ID: "tampered", CalendarEventID: evA.ID, BriefID: briefB.ID, BriefGeneration: briefB.Generation, Type: model.JobPreGenerate,
+		Payload: json.RawMessage(`{"brief_id":"` + briefB.ID + `","template_id":"` + tmplB.ID + `","generation":` +
+			strconv.Itoa(briefB.Generation) + `}`),
+	}
+
+	retryable, err := f.proc.runPreGenerate(ctx, job)
+	if err != nil || retryable {
+		t.Fatalf("expected a clean no-op for a mismatched brief, got err=%v retryable=%v", err, retryable)
+	}
+	if len(f.agent.LastBody()) != 0 {
+		t.Fatal("plugin must never be called for a mismatched brief target")
+	}
+
+	afterB, found, err := f.st.GetEventBriefByID(ctx, briefB.ID)
+	if err != nil || !found {
+		t.Fatalf("expected event B's real brief to still exist untouched: found=%v err=%v", found, err)
+	}
+	if afterB.Status != briefB.Status || afterB.Generation != briefB.Generation || len(afterB.Sections) != 0 {
+		t.Fatalf("event B's brief must be completely untouched by A's mismatched job: before=%+v after=%+v", briefB, afterB)
+	}
+}
+
+// TestHandlePreGenerateTerminalFailureRefusesMismatchedBrief proves the
+// terminal-failure path has the same binding protection as runPreGenerate's
+// own pre-execution check: it is reachable with an UNVALIDATED payload (the
+// earlier malformed-payload / job-column-mismatch checks in runPreGenerate
+// return a terminal error before ever loading a brief), so pl.BriefID here
+// may name a brief that belongs to a completely different event. This must
+// never mark that unrelated brief failed.
+func TestHandlePreGenerateTerminalFailureRefusesMismatchedBrief(t *testing.T) {
+	f := newPreJobFixture(t)
+	f.setDefaultAgent(t)
+	ctx := context.Background()
+
+	evA := f.seedEvent(t, "e1", 2*time.Hour)
+	evB := f.seedEvent(t, "e2", 3*time.Hour)
+	tmplB, err := f.st.CreateTemplate(ctx, f.owner, "Pre-read 2", "pre",
+		[]model.TemplateSection{{Heading: "Context", Instruction: "Summarize the agenda."}}, true, "", "", nil)
+	if err != nil {
+		t.Fatalf("create template B: %v", err)
+	}
+	hB := "hB"
+	if _, err := f.st.ReconcileEventBriefPair(ctx, evB.ID, tmplB.ID, tmplB.Name, &hB); err != nil {
+		t.Fatalf("reconcile B: %v", err)
+	}
+	briefsB, err := f.st.EventBriefsForEvents(ctx, f.owner, []string{evB.ID})
+	if err != nil || len(briefsB[evB.ID]) != 1 {
+		t.Fatalf("event B briefs: %+v %v", briefsB, err)
+	}
+	briefB := briefsB[evB.ID][0]
+
+	// A malformed job "belonging" to event A whose payload names B's real
+	// brief -- exactly the shape runPreGenerate's own early malformed-
+	// payload checks would reject with a terminal error before ever loading
+	// a brief (see TestRunPreGenerateMalformedPayloadNeverCallsPlugin's "j3"
+	// case), so Process would route it here with pl.BriefID still unchecked.
+	job := model.Job{
+		ID: "tampered-terminal", CalendarEventID: evA.ID, BriefID: "mismatched-typed-column", BriefGeneration: briefB.Generation, Type: model.JobPreGenerate,
+		Payload: json.RawMessage(`{"brief_id":"` + briefB.ID + `","template_id":"` + tmplB.ID + `","generation":` +
+			strconv.Itoa(briefB.Generation) + `}`),
+	}
+
+	f.proc.handlePreGenerateTerminalFailure(ctx, job)
+
+	afterB, found, err := f.st.GetEventBriefByID(ctx, briefB.ID)
+	if err != nil || !found {
+		t.Fatalf("expected event B's real brief to still exist untouched: found=%v err=%v", found, err)
+	}
+	if afterB.Status == model.BriefFailed {
+		t.Fatalf("a mismatched terminal-failure job must never mark an unrelated brief failed: %+v", afterB)
+	}
+	if afterB.Status != briefB.Status || afterB.Generation != briefB.Generation {
+		t.Fatalf("event B's brief must be completely untouched: before=%+v after=%+v", briefB, afterB)
 	}
 }

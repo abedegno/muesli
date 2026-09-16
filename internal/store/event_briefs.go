@@ -220,6 +220,86 @@ func deleteQueuedPreJobsForBriefs(ctx context.Context, tx pgx.Tx, briefIDs []str
 	return err
 }
 
+// templateCleanupOwnerBatchSize bounds affectedOwnersForTemplateBatch's page
+// size, matching the accepted spec/plan's "keyset-page 100 affected
+// rows/owners" ruling (the same 100 used by ReconcilePreBriefs' event
+// batches).
+const templateCleanupOwnerBatchSize = 100
+
+// affectedOwnersForTemplateBatch returns up to limit distinct owner ids that
+// currently have an event_brief for templateID, in a fixed UUID-keyset page
+// ordered by owner_id, strictly after afterOwnerID (nil for the first page
+// -- an empty string is NOT a valid uuid and must never be bound as one, see
+// UpcomingEventsForSourceBatch's identical convention). Runs inside tx so
+// template-mutation cleanup sees a consistent snapshot with the mutation
+// itself.
+func affectedOwnersForTemplateBatch(ctx context.Context, tx pgx.Tx, templateID string, afterOwnerID *string, limit int) ([]string, error) {
+	if limit <= 0 {
+		limit = templateCleanupOwnerBatchSize
+	}
+	rows, err := tx.Query(ctx,
+		`SELECT DISTINCT e.owner_id
+		 FROM event_briefs b
+		 JOIN calendar_events e ON e.id = b.event_id
+		 WHERE b.template_id = $1 AND ($2::uuid IS NULL OR e.owner_id > $2::uuid)
+		 ORDER BY e.owner_id
+		 LIMIT $3`,
+		templateID, afterOwnerID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var owners []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		owners = append(owners, id)
+	}
+	return owners, rows.Err()
+}
+
+// cleanupBriefsForTemplateAllOwners deletes, in bounded (keyset page size
+// templateCleanupOwnerBatchSize) batches within tx, every current brief row
+// for templateID across EVERY owner who currently has one -- not just a
+// single caller-supplied owner -- together with their still-queued
+// pre_generate jobs. This is what makes template-mutation cleanup correct
+// for a template visible to many owners (a shared/built-in template in a
+// hosted deployment), not only an owner-private one: the affected-owner set
+// is derived from who actually has a brief (i.e. who could see this
+// template as pre+auto-run at generation time), not assumed to be exactly
+// one owner. For an owner-private template this always resolves to exactly
+// that owner (nobody else could ever have generated a brief against a
+// template invisible to them), so behavior for the common case is
+// unchanged. See the accepted spec's "cleanup is scoped through visibility
+// records rather than assuming one owner" requirement and the plan's
+// "Keyset-page 100 affected rows/owners" ruling. Returns the total number of
+// brief rows deleted across all pages.
+func cleanupBriefsForTemplateAllOwners(ctx context.Context, s *Store, tx pgx.Tx, templateID string) (int, error) {
+	var total int
+	var afterOwnerID *string
+	for {
+		owners, err := affectedOwnersForTemplateBatch(ctx, tx, templateID, afterOwnerID, templateCleanupOwnerBatchSize)
+		if err != nil {
+			return total, err
+		}
+		if len(owners) == 0 {
+			return total, nil
+		}
+		n, err := s.DeleteEventBriefsForTemplate(ctx, tx, templateID, owners)
+		if err != nil {
+			return total, err
+		}
+		total += n
+		if len(owners) < templateCleanupOwnerBatchSize {
+			return total, nil
+		}
+		last := owners[len(owners)-1]
+		afterOwnerID = &last
+	}
+}
+
 // ReconcileEventBriefPair transactionally compares hash against the current
 // event_briefs row for (eventID, templateID). hash nil means "no default
 // agent is configured" (see the accepted spec's missing-default-agent
@@ -344,7 +424,15 @@ func enqueuePreGenerateJobTx(ctx context.Context, tx pgx.Tx, eventID, briefID, t
 // EventBrief and no error) when no row matches, distinguishing "already
 // removed" from a real error for the worker's ineligibility-cleanup paths.
 func (s *Store) GetEventBriefByID(ctx context.Context, briefID string) (model.EventBrief, bool, error) {
-	row := s.pool.QueryRow(ctx, `SELECT `+eventBriefColumns+` FROM event_briefs b WHERE b.id=$1`, briefID)
+	return getEventBriefByIDTx(ctx, s.pool, briefID)
+}
+
+// getEventBriefByIDTx is GetEventBriefByID's body, parameterized over
+// queryRower so callers that need it inside an already-open transaction
+// (e.g. RetryPreBriefJob) can read the brief as part of that same
+// transaction instead of a separate pool-level round trip.
+func getEventBriefByIDTx(ctx context.Context, q queryRower, briefID string) (model.EventBrief, bool, error) {
+	row := q.QueryRow(ctx, `SELECT `+eventBriefColumns+` FROM event_briefs b WHERE b.id=$1`, briefID)
 	b, err := scanEventBrief(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return model.EventBrief{}, false, nil
@@ -432,17 +520,28 @@ func (s *Store) CleanupIneligibleEventBriefIfCurrent(ctx context.Context, briefI
 var RetryPreBriefClock = time.Now
 
 // RetryPreBriefJob re-enqueues a fresh pre_generate job for jobID's own
-// (brief, generation), starting from the job id alone: one transaction loads
+// (brief, generation), starting from the job id alone: ONE transaction loads
 // the job, joins its calendar event to derive the authoritative owner_id,
 // and uses that owner for every subsequent event/brief/template-visibility
-// check, so a global admin action can never leak a cross-owner join. Returns
-// the new job's id on success. Returns ErrNotFound when the job (or its
-// event/brief/template) no longer exists or the job does not target a
-// calendar event, and ErrIneligible when the pair still exists but the
+// check -- every read below runs inside this same transaction (via the
+// tx-scoped get*Tx siblings of GetJob/GetCalendarEventByID/GetTemplate/
+// GetEventBriefByID), not as separate pool-level round trips beforehand, so
+// a global admin action can never leak a cross-owner join and never acts on
+// a torn read of concurrently-changing state. Returns the new job's id on
+// success. Returns ErrNotFound when the job (or its event/brief/template) no
+// longer exists, the job does not target a calendar event, or the loaded
+// brief does not actually belong to this job's event/template (see the
+// binding check below), and ErrIneligible when the pair still exists but the
 // event has started, the template is no longer pre/auto-run/visible, or the
 // job's generation is no longer the brief's current one.
 func (s *Store) RetryPreBriefJob(ctx context.Context, jobID string) (string, error) {
-	job, err := s.GetJob(ctx, jobID)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+
+	job, err := getJobTx(ctx, tx, jobID)
 	if err != nil {
 		return "", err
 	}
@@ -459,7 +558,7 @@ func (s *Store) RetryPreBriefJob(ctx context.Context, jobID string) (string, err
 		return "", ErrNotFound
 	}
 
-	event, err := s.GetCalendarEventByID(ctx, job.CalendarEventID)
+	event, err := getCalendarEventByIDTx(ctx, tx, job.CalendarEventID)
 	if errors.Is(err, ErrNotFound) {
 		return "", ErrNotFound
 	}
@@ -472,7 +571,7 @@ func (s *Store) RetryPreBriefJob(ctx context.Context, jobID string) (string, err
 		return "", ErrIneligible
 	}
 
-	tmpl, err := s.GetTemplate(ctx, ownerID, pl.TemplateID)
+	tmpl, err := getTemplateTx(ctx, tx, ownerID, pl.TemplateID)
 	if errors.Is(err, ErrNotFound) {
 		return "", ErrNotFound
 	}
@@ -483,22 +582,27 @@ func (s *Store) RetryPreBriefJob(ctx context.Context, jobID string) (string, err
 		return "", ErrIneligible
 	}
 
-	brief, found, err := s.GetEventBriefByID(ctx, pl.BriefID)
+	brief, found, err := getEventBriefByIDTx(ctx, tx, pl.BriefID)
 	if err != nil {
 		return "", err
 	}
 	if !found {
 		return "", ErrNotFound
 	}
+	// The brief loaded by unscoped id must actually be the one THIS job's
+	// typed event/template target names -- otherwise a malformed or
+	// tampered job (or a payload whose brief_id happens to name an
+	// unrelated event's brief) could re-enqueue generation that later
+	// publishes into a brief that has nothing to do with this job's event,
+	// leaking that other event's owner's brief content across the mismatch.
+	// This mirrors the same binding the worker's own runPreGenerate holds
+	// before ever calling the plugin (see prebrief_job.go).
+	if brief.EventID != job.CalendarEventID || brief.TemplateID != pl.TemplateID {
+		return "", ErrNotFound
+	}
 	if brief.Generation != pl.Generation {
 		return "", ErrIneligible
 	}
-
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return "", err
-	}
-	defer tx.Rollback(ctx)
 
 	if _, err := tx.Exec(ctx,
 		`UPDATE event_briefs SET status=$1, updated_at=now() WHERE id=$2 AND generation=$3`,

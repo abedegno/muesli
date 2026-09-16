@@ -6,6 +6,7 @@ package store_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"sync"
 	"testing"
@@ -495,5 +496,112 @@ func TestEventBriefsForEventsJoinDoesNotAmbiguateSharedColumns(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected seeded event in ListEvents result: %+v", evs)
+	}
+}
+
+// TestRetryPreBriefJobRejectsMismatchedBriefWithoutTouchingIt is the
+// store-level adversarial case for the missing brief<->event/template
+// binding check: a failed job whose typed CalendarEventID names owner A's
+// event, but whose PAYLOAD has been tampered to name a real brief that
+// belongs to an entirely different owner B's event/template (a
+// legitimately-enqueued job can never disagree here -- see
+// enqueuePreGenerateJobTx). Proves RetryPreBriefJob rejects it as not found
+// rather than re-enqueuing generation that would later publish owner A's
+// event content into owner B's unrelated brief, and -- just as importantly
+// -- never mutates owner B's brief as a side effect of even attempting the
+// retry (no status flip to pending, no new job against it). Both owners
+// live in ONE store/pool (mirroring TestAdminRetryPreGenerateJobTwoOwnersNoCrossOwnerJoin
+// in internal/api), since two independent testutil.NewPool fixtures are
+// isolated into separate schemas and could never actually share rows.
+func TestRetryPreBriefJobRejectsMismatchedBriefWithoutTouchingIt(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	f := newBriefTestFixture(t)
+
+	eventA := f.seedEvent(t, "e1", 2*time.Hour)
+	tmplA := f.createTemplate(t, "Pre-read A", "pre", true)
+	if _, err := f.st.ReconcileEventBriefPair(ctx, eventA, tmplA.ID, tmplA.Name, hashPtr("hA")); err != nil {
+		t.Fatalf("reconcile A: %v", err)
+	}
+	jobA, ok, err := f.st.ClaimJob(ctx, time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("claim A: ok=%v err=%v", ok, err)
+	}
+	if err := f.st.FailJob(ctx, jobA.ID, "injected", false); err != nil {
+		t.Fatalf("fail A: %v", err)
+	}
+
+	// A second, unrelated owner/event/template/brief in the SAME store.
+	ownerB, err := f.st.CreateUser(ctx, "brief-owner-b-"+uniqueSuffix()+"@example.com", "h")
+	if err != nil {
+		t.Fatalf("create owner B: %v", err)
+	}
+	srcB, err := f.st.CreateSource(ctx, ownerB.ID, "ics", "Cal B", "sealed")
+	if err != nil {
+		t.Fatalf("create source B: %v", err)
+	}
+	startsB := f.now.Add(2 * time.Hour)
+	if err := f.st.UpsertEvents(ctx, ownerB.ID, srcB.ID, []calendar.NormalizedEvent{
+		{ExternalID: "e1", Title: "Meeting B", StartsAt: startsB, EndsAt: startsB.Add(30 * time.Minute)},
+	}); err != nil {
+		t.Fatalf("upsert event B: %v", err)
+	}
+	evsB, err := f.st.ListEvents(ctx, ownerB.ID, startsB.Add(-time.Minute), startsB.Add(time.Minute))
+	if err != nil || len(evsB) != 1 {
+		t.Fatalf("list event B: %+v %v", evsB, err)
+	}
+	eventB := evsB[0].ID
+	tmplB, err := f.st.CreateTemplate(ctx, ownerB.ID, "Pre-read B", "pre",
+		[]model.TemplateSection{{Heading: "Context", Instruction: "Summarize."}}, true, "", "", nil)
+	if err != nil {
+		t.Fatalf("create template B: %v", err)
+	}
+	if _, err := f.st.ReconcileEventBriefPair(ctx, eventB, tmplB.ID, tmplB.Name, hashPtr("hB")); err != nil {
+		t.Fatalf("reconcile B: %v", err)
+	}
+	briefsB, err := f.st.EventBriefsForEvents(ctx, ownerB.ID, []string{eventB})
+	if err != nil || len(briefsB[eventB]) != 1 {
+		t.Fatalf("event B briefs: %+v %v", briefsB, err)
+	}
+	briefB := briefsB[eventB][0]
+
+	// Reconciling B's own pair above also legitimately enqueued B's own
+	// pre_generate job; drain it so the later "no new job enqueued" check
+	// below is only sensitive to a job created BY the mismatched retry
+	// attempt, not this unrelated pre-existing one.
+	if bOwnJob, ok, err := f.st.ClaimJob(ctx, time.Minute); err != nil || !ok {
+		t.Fatalf("claim B's own job: ok=%v err=%v", ok, err)
+	} else if err := f.st.CompleteJob(ctx, bOwnJob.ID); err != nil {
+		t.Fatalf("complete B's own job: %v", err)
+	}
+
+	// Tamper job A's payload directly at the row level: its typed
+	// calendar_event_id stays pointed at event A, and template_id stays A's
+	// OWN visible/pre/auto-run template (so the pre-existing
+	// template-visibility check alone would happily pass this) -- only
+	// brief_id is swapped to B's real brief, which actually belongs to a
+	// different event AND a different template. This isolates the NEW
+	// brief<->event/template binding check: without it, a payload naming
+	// A's own valid template_id but an unrelated brief_id would otherwise
+	// sail through every other guard.
+	tamperedPayload := `{"brief_id":"` + briefB.ID + `","template_id":"` + tmplA.ID + `","generation":` +
+		strconv.Itoa(briefB.Generation) + `}`
+	if _, err := f.st.Pool().Exec(ctx, `UPDATE jobs SET payload=$1::jsonb WHERE id=$2`, tamperedPayload, jobA.ID); err != nil {
+		t.Fatalf("tamper job payload: %v", err)
+	}
+
+	if _, err := f.st.RetryPreBriefJob(ctx, jobA.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("expected ErrNotFound for a mismatched brief target, got %v", err)
+	}
+
+	afterB, found, err := f.st.GetEventBriefByID(ctx, briefB.ID)
+	if err != nil || !found {
+		t.Fatalf("expected owner B's real brief to still exist untouched: found=%v err=%v", found, err)
+	}
+	if afterB.Status != briefB.Status || afterB.Generation != briefB.Generation {
+		t.Fatalf("owner B's brief must be completely untouched by A's mismatched retry attempt: before=%+v after=%+v", briefB, afterB)
+	}
+	if _, ok, err := f.st.ClaimJob(ctx, 30*time.Second); err != nil || ok {
+		t.Fatalf("expected no new job enqueued against owner B's brief: ok=%v err=%v", ok, err)
 	}
 }

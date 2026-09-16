@@ -251,11 +251,19 @@ func (s *Store) ListTemplates(ctx context.Context, ownerID string) ([]model.Temp
 // either a built-in (owner_id NULL) or owned by ownerID. Returns ErrNotFound
 // otherwise (including cross-owner lookups).
 func (s *Store) GetTemplate(ctx context.Context, ownerID, id string) (model.Template, error) {
+	return getTemplateTx(ctx, s.pool, ownerID, id)
+}
+
+// getTemplateTx is GetTemplate's body, parameterized over queryRower so
+// callers that need it inside an already-open transaction (e.g.
+// RetryPreBriefJob) can read the template as part of that same transaction
+// instead of a separate pool-level round trip.
+func getTemplateTx(ctx context.Context, q queryRower, ownerID, id string) (model.Template, error) {
 	var tm model.Template
 	var sectionsJSON []byte
 	var systemPrompt, modelName *string
 	var temperature *float64
-	err := s.pool.QueryRow(ctx,
+	err := q.QueryRow(ctx,
 		`SELECT id, name, phase, sections, (owner_id IS NULL) AS built_in, auto_run,
 		        system_prompt, model, temperature
 		   FROM templates WHERE id=$1 AND (owner_id IS NULL OR owner_id=$2)`,
@@ -362,12 +370,16 @@ func (s *Store) CreateTemplate(ctx context.Context, ownerID, name, phase string,
 // If the update makes the template ineligible for pre-meeting-brief
 // generation (phase changes away from "pre", or auto_run is disabled -- it
 // was previously pre+auto-run), this transactionally cleans up every current
-// brief this owner has for the template, together with their still-queued
-// pre jobs, in the SAME transaction as the mutation (see
-// DeleteEventBriefsForTemplate). An owner-scoped template only ever affects
-// its own owner; calendar reconciliation is the backstop for shared
-// (built-in) templates and any missed/concurrent/out-of-band change (see the
-// accepted spec).
+// brief for the template ACROSS EVERY OWNER THAT HAS ONE -- not only the
+// mutating owner -- together with their still-queued pre jobs, in the SAME
+// transaction as the mutation and in bounded batches (see
+// cleanupBriefsForTemplateAllOwners). This mutation itself is always
+// owner-scoped (id+owner_id must both match), but the resulting cleanup is
+// not: it is correct whether the template turns out to be owner-private
+// (where it always resolves to exactly this one owner) or -- were a shared/
+// built-in template ever mutated through some future path -- visible to
+// many. Calendar reconciliation remains the backstop for any
+// missed/concurrent/out-of-band change (see the accepted spec).
 func (s *Store) UpdateTemplate(ctx context.Context, ownerID, id, name, phase string, sections []model.TemplateSection, autoRun bool, systemPrompt, modelName string, temperature *float64) error {
 	phase = normalizeTemplatePhase(phase)
 	if err := validateTemplate(name, sections); err != nil {
@@ -425,7 +437,7 @@ func (s *Store) UpdateTemplate(ctx context.Context, ownerID, id, name, phase str
 	wasPreAutoRun := oldPhase == templatePhasePre && oldAutoRun
 	nowPreAutoRun := phase == templatePhasePre && autoRun
 	if wasPreAutoRun && !nowPreAutoRun {
-		if _, err := s.DeleteEventBriefsForTemplate(ctx, tx, id, []string{ownerID}); err != nil {
+		if _, err := cleanupBriefsForTemplateAllOwners(ctx, s, tx, id); err != nil {
 			return err
 		}
 	}
@@ -434,13 +446,21 @@ func (s *Store) UpdateTemplate(ctx context.Context, ownerID, id, name, phase str
 }
 
 // DeleteTemplate deletes an owner-scoped template and, in the same
-// transaction, every current pre-meeting brief this owner has for it plus
-// their still-queued pre jobs (see DeleteEventBriefsForTemplate). Running
-// jobs are left intact; guarded publication makes them harmless once their
-// brief is gone. Deleting the brief rows and their jobs BEFORE the template
-// row matters: event_briefs.template_id cascades on template deletion, but
-// jobs.brief_id deliberately has no FK (see the pre_meeting_briefs
-// migration), so their still-queued jobs would otherwise survive orphaned.
+// transaction, every current pre-meeting brief for it ACROSS EVERY OWNER
+// THAT HAS ONE plus their still-queued pre jobs, in bounded batches (see
+// cleanupBriefsForTemplateAllOwners's doc comment -- the same reasoning as
+// UpdateTemplate's applies here). Running jobs are left intact; guarded
+// publication makes them harmless once their brief is gone. Ownership is
+// verified FIRST (a locking row lookup, mirroring UpdateTemplate's own "FOR
+// UPDATE" ownership check) so a non-owner's delete attempt on someone else's
+// template id is rejected before any cleanup work runs, rather than being
+// merely rolled back after the fact -- though the whole operation is one
+// transaction either way, so an unauthorized attempt is never visible even
+// if this ordering were reversed. Deleting the brief rows and their jobs
+// BEFORE the template row matters: event_briefs.template_id cascades on
+// template deletion, but jobs.brief_id deliberately has no FK (see the
+// pre_meeting_briefs migration), so their still-queued jobs would otherwise
+// survive orphaned.
 func (s *Store) DeleteTemplate(ctx context.Context, ownerID, id string) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -448,7 +468,18 @@ func (s *Store) DeleteTemplate(ctx context.Context, ownerID, id string) error {
 	}
 	defer tx.Rollback(ctx)
 
-	if _, err := s.DeleteEventBriefsForTemplate(ctx, tx, id, []string{ownerID}); err != nil {
+	var exists bool
+	err = tx.QueryRow(ctx,
+		`SELECT true FROM templates WHERE id=$1 AND owner_id=$2 FOR UPDATE`,
+		id, ownerID).Scan(&exists)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+
+	if _, err := cleanupBriefsForTemplateAllOwners(ctx, s, tx, id); err != nil {
 		return err
 	}
 

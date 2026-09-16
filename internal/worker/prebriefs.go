@@ -37,10 +37,12 @@ func ReconcilePreBriefs(ctx context.Context, st *store.Store, cr *crypto.Crypto,
 	}
 
 	// Resolve the owner's default agent ONCE per source, not per event: its
-	// identity is part of every pair's hash, so a later default-agent change
-	// (including "none -> configured") naturally advances every pair's hash on
-	// the next reconciliation pass.
-	agentID, hasAgent := resolveDefaultAgentIdentity(ctx, st, cr)
+	// identity AND its own non-secret generation config (model, temperature,
+	// etc, as currently set on the plugin) are part of every pair's hash, so
+	// a later default-agent change -- swapping which plugin is default, or
+	// editing the current default's config -- naturally advances every
+	// pair's hash on the next reconciliation pass.
+	agent, hasAgent := resolveDefaultAgentIdentity(ctx, st, cr)
 
 	var afterID *string
 	for {
@@ -69,7 +71,7 @@ func ReconcilePreBriefs(ctx context.Context, st *store.Store, cr *crypto.Crypto,
 				for _, tmpl := range eligibleTemplates {
 					var hash *string
 					if hasAgent {
-						h := computePreBriefHash(ev, tmpl, agentID)
+						h := computePreBriefHash(ev, tmpl, agent)
 						hash = &h
 					}
 					if _, err := st.ReconcileEventBriefPair(ctx, ev.ID, tmpl.ID, tmpl.Name, hash); err != nil {
@@ -87,28 +89,53 @@ func ReconcilePreBriefs(ctx context.Context, st *store.Store, cr *crypto.Crypto,
 	}
 }
 
+// preBriefAgentIdentity is the resolved default agent input to the
+// freshness hash: which plugin is default, plus that plugin's own current
+// non-secret generation configuration (e.g. model, temperature -- whatever
+// the plugin's admin-set Config holds). It deliberately excludes Token (the
+// server->plugin bearer credential, model.Plugin's one explicitly-secret
+// field, never included in any hash). Config itself is the plaintext form
+// already decrypted by DefaultPlugin (see model.Plugin's doc comment: it
+// "may include secrets" for some plugin kinds even though it is not a
+// credential) -- it is safe to fold into this hash because the hash is a
+// one-way SHA-256 digest that is never exposed by any API (event_briefs'
+// input_hash column is internal-only, per the accepted spec's API section),
+// so nothing about Config's plaintext content is recoverable from it.
+type preBriefAgentIdentity struct {
+	ID     string
+	Name   string
+	Config json.RawMessage
+}
+
 // resolveDefaultAgentIdentity resolves the owner's default agent plugin and
-// returns a stable, non-secret identity string for it plus whether one
-// exists. A lookup error (including "not configured") is treated the same as
-// "no agent" -- see the accepted spec's missing-default-agent ruling: briefs
-// go to failed with a null hash rather than blocking reconciliation.
-func resolveDefaultAgentIdentity(ctx context.Context, st *store.Store, cr *crypto.Crypto) (string, bool) {
+// returns its identity plus non-secret config, and whether one exists. A
+// lookup error (including "not configured") is treated the same as "no
+// agent" -- see the accepted spec's missing-default-agent ruling: briefs go
+// to failed with a null hash rather than blocking reconciliation.
+func resolveDefaultAgentIdentity(ctx context.Context, st *store.Store, cr *crypto.Crypto) (preBriefAgentIdentity, bool) {
 	plug, err := st.DefaultPlugin(ctx, cr, model.PluginAgent)
 	if err != nil {
-		return "", false
+		return preBriefAgentIdentity{}, false
 	}
-	return plug.ID + "|" + plug.Name, true
+	return preBriefAgentIdentity{ID: plug.ID, Name: plug.Name, Config: plug.Config}, true
 }
 
 // preBriefHashInput is exactly what ComputePreBriefHash hashes: normalized
 // event fields (attendees stably ordered), the effective template
-// definition, and the resolved default-agent identity. Deliberately excludes
-// anything secret (plugin Config/Token are never included -- only the
-// resolved agent's stable identity is).
+// definition, and the resolved default-agent identity plus its own
+// non-secret generation config. Deliberately excludes anything credential-
+// shaped (plugin Token is never included -- only the resolved agent's
+// identity and Config are, per preBriefAgentIdentity's doc comment).
 type preBriefHashInput struct {
 	Event    hashedCalendarEvent `json:"event"`
 	Template hashedTemplate      `json:"template"`
-	AgentID  string              `json:"agent_id"`
+	Agent    hashedAgent         `json:"agent"`
+}
+
+type hashedAgent struct {
+	ID     string          `json:"id"`
+	Name   string          `json:"name"`
+	Config json.RawMessage `json:"config,omitempty"`
 }
 
 type hashedCalendarEvent struct {
@@ -140,7 +167,7 @@ type hashedTemplate struct {
 // no-op (see ReconcileEventBriefPair). Attendees are sorted by (email, name)
 // so reordering the same attendee set on an upstream sync never changes the
 // hash.
-func computePreBriefHash(ev model.CalendarEvent, tmpl model.Template, agentID string) string {
+func computePreBriefHash(ev model.CalendarEvent, tmpl model.Template, agent preBriefAgentIdentity) string {
 	attendees := make([]hashedAttendee, len(ev.Attendees))
 	for i, a := range ev.Attendees {
 		attendees[i] = hashedAttendee{Name: a.Name, Email: a.Email, Response: a.Response}
@@ -169,7 +196,7 @@ func computePreBriefHash(ev model.CalendarEvent, tmpl model.Template, agentID st
 			Model:        tmpl.Model,
 			Temperature:  tmpl.Temperature,
 		},
-		AgentID: agentID,
+		Agent: hashedAgent{ID: agent.ID, Name: agent.Name, Config: agent.Config},
 	}
 	// Marshal errors are impossible here (every field is a plain string/slice/
 	// pointer-to-float64) -- and even if one occurred, an empty sum would still

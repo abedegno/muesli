@@ -127,20 +127,26 @@ func (p *Processor) runPreGenerate(ctx context.Context, job model.Job) (bool, er
 	ownerID := event.OwnerID
 
 	if !event.StartsAt.After(preJobClock()) {
-		p.cleanupIneligiblePreBrief(ctx, job, pl.BriefID, pl.Generation, "event has started")
+		if err := p.cleanupIneligiblePreBrief(ctx, job, pl.BriefID, pl.Generation, "event has started"); err != nil {
+			return true, err
+		}
 		return false, nil
 	}
 
 	tmpl, err := p.store.GetTemplate(ctx, ownerID, pl.TemplateID)
 	if errors.Is(err, store.ErrNotFound) {
-		p.cleanupIneligiblePreBrief(ctx, job, pl.BriefID, pl.Generation, "template no longer visible")
+		if err := p.cleanupIneligiblePreBrief(ctx, job, pl.BriefID, pl.Generation, "template no longer visible"); err != nil {
+			return true, err
+		}
 		return false, nil
 	}
 	if err != nil {
 		return true, err
 	}
 	if tmpl.Phase != "pre" || !tmpl.AutoRun {
-		p.cleanupIneligiblePreBrief(ctx, job, pl.BriefID, pl.Generation, "template no longer pre/auto-run")
+		if err := p.cleanupIneligiblePreBrief(ctx, job, pl.BriefID, pl.Generation, "template no longer pre/auto-run"); err != nil {
+			return true, err
+		}
 		return false, nil
 	}
 
@@ -150,6 +156,27 @@ func (p *Processor) runPreGenerate(ctx context.Context, job model.Job) (bool, er
 	}
 	if !found {
 		slog.InfoContext(ctx, "pre_generate: brief already removed, skipping", "job_id", job.ID, "brief_id", pl.BriefID)
+		return false, nil
+	}
+	// The brief loaded by unscoped id must actually be the one THIS job's
+	// typed event/template target names -- otherwise a malformed/tampered
+	// job could publish generated content from one event into an unrelated
+	// brief row (a cross-owner leak, since a brief's owner is derived
+	// entirely through its event). A legitimately-enqueued job can never
+	// disagree here (see ReconcileEventBriefPair/enqueuePreGenerateJobTx,
+	// which always set these consistently together). Treated as "no longer
+	// applicable" -- the same clean no-op as an already-removed brief or a
+	// stale generation -- rather than a terminal job error: a terminal
+	// failure would route through handlePreGenerateTerminalFailure, which
+	// (deliberately, see its own doc comment) fails the CURRENT generation
+	// of whatever brief pl.BriefID names, so turning this into an error
+	// would itself touch the very unrelated brief this check exists to
+	// protect. Never invoking the plugin and never mutating any row is the
+	// safe outcome here regardless of how the mismatch arose.
+	if brief.EventID != job.CalendarEventID || brief.TemplateID != pl.TemplateID {
+		slog.WarnContext(ctx, "pre_generate: brief does not match job's event/template target, skipping without mutating it",
+			"job_id", job.ID, "brief_id", pl.BriefID, "job_event_id", job.CalendarEventID, "brief_event_id", brief.EventID,
+			"payload_template_id", pl.TemplateID, "brief_template_id", brief.TemplateID)
 		return false, nil
 	}
 	if brief.Generation != pl.Generation {
@@ -191,25 +218,60 @@ func (p *Processor) runPreGenerate(ctx context.Context, job model.Job) (bool, er
 
 // cleanupIneligiblePreBrief performs the worker-side half of ineligibility
 // cleanup (the transactional deletion of the current brief and its queued
-// jobs, generation-guarded) and logs why. It never fails the job -- the pair
-// simply no longer applies, which is not a generation failure.
-func (p *Processor) cleanupIneligiblePreBrief(ctx context.Context, job model.Job, briefID string, generation int, reason string) {
+// jobs, generation-guarded) and logs why. On success it returns nil -- the
+// pair simply no longer applies, which is not a generation failure, so the
+// caller completes the job without invoking the plugin. It returns the
+// store's error on a DB failure rather than swallowing it: the caller MUST
+// treat that as retryable (not job success), because if cleanup didn't
+// actually run, the brief's current row is left stuck at whatever status it
+// was already in (most commonly "pending") with nothing left to ever retry
+// it once this job's lease is released as done. Retrying gives the next
+// attempt (or the next calendar-sync reconciliation pass, which repeats the
+// same cleanup as a backstop) another chance to complete it.
+func (p *Processor) cleanupIneligiblePreBrief(ctx context.Context, job model.Job, briefID string, generation int, reason string) error {
 	deleted, err := p.store.CleanupIneligibleEventBriefIfCurrent(ctx, briefID, generation)
 	if err != nil {
 		slog.ErrorContext(ctx, "pre_generate: ineligibility cleanup failed", "error", err, "job_id", job.ID, "brief_id", briefID, "reason", reason)
-		return
+		return err
 	}
 	slog.InfoContext(ctx, "pre_generate: pair no longer eligible, cleaned up", "job_id", job.ID, "brief_id", briefID, "reason", reason, "deleted", deleted)
+	return nil
 }
 
 // handlePreGenerateTerminalFailure marks the pre_generate job's matching
 // current generation failed once its attempts are exhausted (or the failure
 // was non-retryable), mirroring handleTerminalFailure's summarize branch.
 // Malformed payloads that never reach a real brief id are simply logged.
+//
+// This can be reached with a payload that was never validated against the
+// job's own typed columns -- e.g. runPreGenerate's very first checks (an
+// unparseable payload, or one whose brief_id/generation disagree with the
+// job's own BriefID/BriefGeneration) return a terminal error BEFORE ever
+// loading a brief, so pl.BriefID here may name a brief that belongs to a
+// completely unrelated event (and owner). Failing that brief on the
+// strength of an unchecked payload field would be exactly the cross-owner
+// mutation finding this pre-execution binding check exists to prevent (see
+// runPreGenerate's own "does not match job target" check) -- so this loads
+// the named brief and verifies it actually belongs to this job's event
+// before ever calling FailEventBriefIfCurrent, and silently does nothing
+// otherwise (there is no brief this job legitimately owns to fail).
 func (p *Processor) handlePreGenerateTerminalFailure(ctx context.Context, job model.Job) {
 	var pl prebriefPayload
 	if err := json.Unmarshal(job.Payload, &pl); err != nil || pl.BriefID == "" || pl.Generation <= 0 {
 		slog.WarnContext(ctx, "terminal pre_generate: no brief to fail (malformed payload)", "job_id", job.ID)
+		return
+	}
+	brief, found, err := p.store.GetEventBriefByID(ctx, pl.BriefID)
+	if err != nil {
+		slog.ErrorContext(ctx, "terminal pre_generate: load brief", "error", err, "job_id", job.ID, "brief_id", pl.BriefID)
+		return
+	}
+	if !found {
+		return
+	}
+	if brief.EventID != job.CalendarEventID || (pl.TemplateID != "" && brief.TemplateID != pl.TemplateID) {
+		slog.WarnContext(ctx, "terminal pre_generate: brief does not match job's event/template target, not failing it",
+			"job_id", job.ID, "brief_id", pl.BriefID, "job_event_id", job.CalendarEventID, "brief_event_id", brief.EventID)
 		return
 	}
 	if _, err := p.store.FailEventBriefIfCurrent(ctx, pl.BriefID, pl.Generation); err != nil {
