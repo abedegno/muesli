@@ -43,6 +43,24 @@ func (s *Server) handleRetryJob(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if job.Type == model.JobPreGenerate {
+		newJobID, rerr := s.deps.Store.RetryPreBriefJob(r.Context(), jobID)
+		if errors.Is(rerr, store.ErrNotFound) {
+			writeError(w, http.StatusNotFound, "job, event, brief, or template not found")
+			return
+		}
+		if errors.Is(rerr, store.ErrIneligible) {
+			writeError(w, http.StatusConflict, "pair is stale or no longer applicable")
+			return
+		}
+		if rerr != nil {
+			writeError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		writeJSON(w, http.StatusAccepted, map[string]string{"status": "queued", "job_id": newJobID})
+		return
+	}
+
 	if _, err = s.deps.Store.GetNoteAdmin(r.Context(), job.NoteID); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, "note not found")

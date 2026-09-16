@@ -331,3 +331,170 @@ func enqueuePreGenerateJobTx(ctx context.Context, tx pgx.Tx, eventID, briefID, t
 		id, eventID, briefID, generation, model.JobPreGenerate, model.JobPending, string(payload))
 	return id, err
 }
+
+// GetEventBriefByID returns one brief row by id, unscoped by owner (ownership
+// is derived through its event_id -- callers that need an owner check load
+// the event separately and compare). found is false (with a zero-value
+// EventBrief and no error) when no row matches, distinguishing "already
+// removed" from a real error for the worker's ineligibility-cleanup paths.
+func (s *Store) GetEventBriefByID(ctx context.Context, briefID string) (model.EventBrief, bool, error) {
+	row := s.pool.QueryRow(ctx, `SELECT `+eventBriefColumns+` FROM event_briefs WHERE id=$1`, briefID)
+	b, err := scanEventBrief(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.EventBrief{}, false, nil
+	}
+	if err != nil {
+		return model.EventBrief{}, false, err
+	}
+	return b, true, nil
+}
+
+// PublishEventBrief guardedly marks a brief ready with its generated
+// sections: WHERE id=briefID AND generation=generation, so a stale worker
+// attempt (superseded by a newer reconciliation, or whose brief no longer
+// exists) can never overwrite newer state. Returns published=false (no
+// error) when zero rows matched -- the caller's output is discarded, not an
+// error condition.
+func (s *Store) PublishEventBrief(ctx context.Context, briefID string, generation int, agentPlugin, modelName string, sections []model.SummarySection) (bool, error) {
+	secJSON, err := json.Marshal(sections)
+	if err != nil {
+		return false, err
+	}
+	ct, err := s.pool.Exec(ctx,
+		`UPDATE event_briefs
+		 SET status=$1, agent_plugin=$2, model=$3, sections=$4::jsonb, updated_at=now()
+		 WHERE id=$5 AND generation=$6`,
+		model.BriefReady, agentPlugin, modelName, string(secJSON), briefID, generation)
+	if err != nil {
+		return false, err
+	}
+	return ct.RowsAffected() > 0, nil
+}
+
+// FailEventBriefIfCurrent guardedly marks the matching current generation
+// failed, e.g. after plugin retries are exhausted. Idempotent: calling it
+// again for the same (already failed) generation is a harmless no-op update,
+// which is what keeps a settled job from ever leaving a brief permanently
+// pending. A generation mismatch (superseded or removed) affects zero rows
+// and is not an error.
+func (s *Store) FailEventBriefIfCurrent(ctx context.Context, briefID string, generation int) (bool, error) {
+	ct, err := s.pool.Exec(ctx,
+		`UPDATE event_briefs SET status=$1, updated_at=now() WHERE id=$2 AND generation=$3`,
+		model.BriefFailed, briefID, generation)
+	if err != nil {
+		return false, err
+	}
+	return ct.RowsAffected() > 0, nil
+}
+
+// CleanupIneligibleEventBriefIfCurrent transactionally deletes the brief row
+// (and its queued pre jobs) if, and only if, its generation still matches --
+// used when the worker discovers mid-flight that the pair it was about to
+// generate for has become ineligible (event started, template no longer
+// pre/auto-run/visible). A generation mismatch means a newer reconciliation
+// already moved past this attempt, so this is a no-op: the newer writer owns
+// the row now. Returns deleted=true only when this call performed the
+// deletion.
+func (s *Store) CleanupIneligibleEventBriefIfCurrent(ctx context.Context, briefID string, generation int) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+
+	ct, err := tx.Exec(ctx, `DELETE FROM event_briefs WHERE id=$1 AND generation=$2`, briefID, generation)
+	if err != nil {
+		return false, err
+	}
+	if ct.RowsAffected() == 0 {
+		return false, tx.Commit(ctx)
+	}
+	if err := deleteQueuedPreJobsForBriefs(ctx, tx, []string{briefID}); err != nil {
+		return false, err
+	}
+	return true, tx.Commit(ctx)
+}
+
+// RetryPreBriefJob re-enqueues a fresh pre_generate job for jobID's own
+// (brief, generation), starting from the job id alone: one transaction loads
+// the job, joins its calendar event to derive the authoritative owner_id,
+// and uses that owner for every subsequent event/brief/template-visibility
+// check, so a global admin action can never leak a cross-owner join. Returns
+// the new job's id on success. Returns ErrNotFound when the job (or its
+// event/brief/template) no longer exists or the job does not target a
+// calendar event, and ErrIneligible when the pair still exists but the
+// event has started, the template is no longer pre/auto-run/visible, or the
+// job's generation is no longer the brief's current one.
+func (s *Store) RetryPreBriefJob(ctx context.Context, jobID string) (string, error) {
+	job, err := s.GetJob(ctx, jobID)
+	if err != nil {
+		return "", err
+	}
+	kind, err := job.TargetKind()
+	if err != nil || kind != model.JobTargetCalendarEvent {
+		return "", ErrNotFound
+	}
+	var pl struct {
+		BriefID    string `json:"brief_id"`
+		TemplateID string `json:"template_id"`
+		Generation int    `json:"generation"`
+	}
+	if err := json.Unmarshal(job.Payload, &pl); err != nil || pl.BriefID == "" || pl.TemplateID == "" || pl.Generation <= 0 {
+		return "", ErrNotFound
+	}
+
+	event, err := s.GetCalendarEventByID(ctx, job.CalendarEventID)
+	if errors.Is(err, ErrNotFound) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	ownerID := event.OwnerID
+
+	if !event.StartsAt.After(time.Now()) {
+		return "", ErrIneligible
+	}
+
+	tmpl, err := s.GetTemplate(ctx, ownerID, pl.TemplateID)
+	if errors.Is(err, ErrNotFound) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+	if tmpl.Phase != "pre" || !tmpl.AutoRun {
+		return "", ErrIneligible
+	}
+
+	brief, found, err := s.GetEventBriefByID(ctx, pl.BriefID)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return "", ErrNotFound
+	}
+	if brief.Generation != pl.Generation {
+		return "", ErrIneligible
+	}
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE event_briefs SET status=$1, updated_at=now() WHERE id=$2 AND generation=$3`,
+		model.BriefPending, pl.BriefID, pl.Generation); err != nil {
+		return "", err
+	}
+	newJobID, err := enqueuePreGenerateJobTx(ctx, tx, job.CalendarEventID, pl.BriefID, pl.TemplateID, pl.Generation)
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	return newJobID, nil
+}
