@@ -102,7 +102,7 @@ func TestRetryJobSuccess(t *testing.T) {
 	}
 
 	// Enqueue a transcribe job then mark it failed directly.
-	jobID, err := st.EnqueueJob(ctx, note.ID, "transcribe", nil)
+	jobID, err := st.EnqueueNoteJob(ctx, note.ID, "transcribe", nil)
 	if err != nil {
 		t.Fatalf("enqueue job: %v", err)
 	}
@@ -175,7 +175,7 @@ func TestRetryJobRefreshesStaleExpectedGeneration(t *testing.T) {
 	// The failed job's OWN stored payload is stale: expected_generation 0, as
 	// if it had been enqueued before that transcript ever existed.
 	audioKey := "notes/" + note.ID + "/audio/a.webm"
-	staleJobID, err := st.EnqueueJob(ctx, note.ID, model.JobTranscribe,
+	staleJobID, err := st.EnqueueNoteJob(ctx, note.ID, model.JobTranscribe,
 		json.RawMessage(`{"audio_key":"`+audioKey+`","expected_generation":0}`))
 	if err != nil {
 		t.Fatalf("enqueue job: %v", err)
@@ -240,7 +240,7 @@ func TestRetryJobNotFailed(t *testing.T) {
 		t.Fatalf("create note: %v", err)
 	}
 	// Job stays in pending state.
-	jobID, err := st.EnqueueJob(ctx, note.ID, "transcribe", nil)
+	jobID, err := st.EnqueueNoteJob(ctx, note.ID, "transcribe", nil)
 	if err != nil {
 		t.Fatalf("enqueue job: %v", err)
 	}
@@ -265,7 +265,7 @@ func TestRetryJobNoteDeleted(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create note: %v", err)
 	}
-	jobID, err := st.EnqueueJob(ctx, note.ID, "transcribe", nil)
+	jobID, err := st.EnqueueNoteJob(ctx, note.ID, "transcribe", nil)
 	if err != nil {
 		t.Fatalf("enqueue job: %v", err)
 	}
@@ -299,7 +299,7 @@ func TestCancelJobSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create note: %v", err)
 	}
-	jobID, err := st.EnqueueJob(ctx, note.ID, "transcribe", nil)
+	jobID, err := st.EnqueueNoteJob(ctx, note.ID, "transcribe", nil)
 	if err != nil {
 		t.Fatalf("enqueue job: %v", err)
 	}
@@ -339,7 +339,7 @@ func TestCancelJobRunningConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create note: %v", err)
 	}
-	jobID, err := st.EnqueueJob(ctx, note.ID, "transcribe", nil)
+	jobID, err := st.EnqueueNoteJob(ctx, note.ID, "transcribe", nil)
 	if err != nil {
 		t.Fatalf("enqueue job: %v", err)
 	}
@@ -378,7 +378,7 @@ func TestCancelJobTerminalConflict(t *testing.T) {
 	}
 
 	for _, status := range []string{"done", "failed"} {
-		jobID, err := st.EnqueueJob(ctx, note.ID, "transcribe", nil)
+		jobID, err := st.EnqueueNoteJob(ctx, note.ID, "transcribe", nil)
 		if err != nil {
 			t.Fatalf("enqueue job: %v", err)
 		}
@@ -419,7 +419,7 @@ func TestProcessNextJobSuccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create note: %v", err)
 	}
-	jobID, err := st.EnqueueJob(ctx, note.ID, "transcribe", nil)
+	jobID, err := st.EnqueueNoteJob(ctx, note.ID, "transcribe", nil)
 	if err != nil {
 		t.Fatalf("enqueue job: %v", err)
 	}
@@ -466,7 +466,7 @@ func TestProcessNextJobRunningConflict(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create note: %v", err)
 	}
-	jobID, err := st.EnqueueJob(ctx, note.ID, "transcribe", nil)
+	jobID, err := st.EnqueueNoteJob(ctx, note.ID, "transcribe", nil)
 	if err != nil {
 		t.Fatalf("enqueue job: %v", err)
 	}
@@ -522,15 +522,15 @@ func TestListNoteJobsSuccess(t *testing.T) {
 
 	// Enqueue in pipeline order, forcing created_at apart so ordering is
 	// deterministic regardless of clock resolution.
-	transcribeID, err := st.EnqueueJob(ctx, note.ID, "transcribe", nil)
+	transcribeID, err := st.EnqueueNoteJob(ctx, note.ID, "transcribe", nil)
 	if err != nil {
 		t.Fatalf("enqueue transcribe: %v", err)
 	}
-	summarizeID, err := st.EnqueueJob(ctx, note.ID, "summarize", nil)
+	summarizeID, err := st.EnqueueNoteJob(ctx, note.ID, "summarize", nil)
 	if err != nil {
 		t.Fatalf("enqueue summarize: %v", err)
 	}
-	embedID, err := st.EnqueueJob(ctx, note.ID, "embed", nil)
+	embedID, err := st.EnqueueNoteJob(ctx, note.ID, "embed", nil)
 	if err != nil {
 		t.Fatalf("enqueue embed: %v", err)
 	}

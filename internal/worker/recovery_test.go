@@ -41,7 +41,7 @@ func TestStartupRecovery_AllRunning(t *testing.T) {
 	noteID := seedNoteForRecoveryTest(t, st)
 
 	// Insert a job and claim it (gives it a 10-minute future lease).
-	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+	jobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -106,7 +106,7 @@ func TestStartupRecovery_IgnoresNonRunning(t *testing.T) {
 	// ClaimJob orders by created_at, so we must ensure the pending job is inserted
 	// AFTER the done/failed jobs are already claimed.
 	noteID2 := seedNoteForRecoveryTest(t, st)
-	doneJobID, err := st.EnqueueJob(ctx, noteID2, model.JobTranscribe, json.RawMessage(`{}`))
+	doneJobID, err := st.EnqueueNoteJob(ctx, noteID2, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue done: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestStartupRecovery_IgnoresNonRunning(t *testing.T) {
 
 	// Set up failed job SECOND: enqueue, claim, fail terminally.
 	noteID3 := seedNoteForRecoveryTest(t, st)
-	failJobID, err := st.EnqueueJob(ctx, noteID3, model.JobTranscribe, json.RawMessage(`{}`))
+	failJobID, err := st.EnqueueNoteJob(ctx, noteID3, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue failed: %v", err)
 	}
@@ -130,7 +130,7 @@ func TestStartupRecovery_IgnoresNonRunning(t *testing.T) {
 
 	// Insert the pending job LAST so it was not picked up by ClaimJob above.
 	noteID := seedNoteForRecoveryTest(t, st)
-	pendingID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+	pendingID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue pending: %v", err)
 	}
@@ -164,7 +164,7 @@ func TestPeriodicSweep_ExpiredLease(t *testing.T) {
 	noteID := seedNoteForRecoveryTest(t, st)
 
 	// Claim with a lease already in the past.
-	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+	jobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestPeriodicSweep_FutureLease_NotRecovered(t *testing.T) {
 	noteID := seedNoteForRecoveryTest(t, st)
 
 	// Claim with a future lease.
-	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+	jobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestStartupRecovery_DoesNotReclaimFutureLeaseJob(t *testing.T) {
 	ctx := context.Background()
 	noteID := seedNoteForRecoveryTest(t, st)
 
-	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+	jobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -280,7 +280,7 @@ func TestStartupRecovery_EndToEnd(t *testing.T) {
 	noteID := seedNoteForRecoveryTest(t, st)
 
 	// Simulate orphaned job: enqueue and claim with an expired lease.
-	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+	jobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}

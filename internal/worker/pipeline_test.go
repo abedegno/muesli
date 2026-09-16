@@ -87,7 +87,7 @@ func pipelineFixtureWithStorage(t *testing.T, retention string, tr *plugintest.S
 	cfg := config.Config{AudioRetention: retention}
 	proc := worker.NewProcessor(st, cr, prov, cfg, nil)
 
-	jobID, _ := st.EnqueueJob(ctx, n.ID, model.JobTranscribe, json.RawMessage(`{"audio_key":"`+key+`"}`))
+	jobID, _ := st.EnqueueNoteJob(ctx, n.ID, model.JobTranscribe, json.RawMessage(`{"audio_key":"`+key+`"}`))
 	_ = jobID
 	return proc, st, n.ID, tr, ag, prov
 }
@@ -128,7 +128,7 @@ func pipelineFixtureWithDefaults(t *testing.T, retention, transcribeLanguage str
 	cfg := config.Config{AudioRetention: retention, TranscribeLanguage: transcribeLanguage, Embedded: embedded}
 	proc := worker.NewProcessor(st, cr, prov, cfg, nil)
 
-	jobID, _ := st.EnqueueJob(ctx, n.ID, model.JobTranscribe, json.RawMessage(`{"audio_key":"`+key+`"}`))
+	jobID, _ := st.EnqueueNoteJob(ctx, n.ID, model.JobTranscribe, json.RawMessage(`{"audio_key":"`+key+`"}`))
 	_ = jobID
 	return proc, st, n.ID, tr, ag
 }
@@ -967,7 +967,7 @@ func TestPipelineDiarizationSegmentsPersisted(t *testing.T) {
 	proc := worker.NewProcessor(st, cr, prov, cfg, nil)
 
 	noteID := n.ID
-	_, _ = st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{"audio_key":"`+key+`"}`))
+	_, _ = st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{"audio_key":"`+key+`"}`))
 
 	drain(t, proc, st)
 
@@ -1017,7 +1017,7 @@ func TestPipelineSummaryTruncatedFlagged(t *testing.T) {
 
 	cfg := config.Config{AudioRetention: "keep"}
 	proc := worker.NewProcessor(st, cr, prov, cfg, nil)
-	_, _ = st.EnqueueJob(ctx, n.ID, model.JobTranscribe, json.RawMessage(`{"audio_key":"`+key+`"}`))
+	_, _ = st.EnqueueNoteJob(ctx, n.ID, model.JobTranscribe, json.RawMessage(`{"audio_key":"`+key+`"}`))
 
 	drain(t, proc, st)
 

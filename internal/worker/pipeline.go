@@ -819,7 +819,7 @@ func (p *Processor) FinalizeNote(ctx context.Context, noteID string) {
 	// Embedding is config-gated: only enqueue when an embedder is wired in. This
 	// runs once per ready transition (MarkNoteReady above just won it).
 	if p.embedder != nil {
-		if _, err := p.store.EnqueueJob(ctx, noteID, model.JobEmbed, nil); err != nil {
+		if _, err := p.store.EnqueueNoteJob(ctx, noteID, model.JobEmbed, nil); err != nil {
 			slog.WarnContext(ctx, "finalize: enqueue embed", "error", err, "note_id", noteID)
 		}
 	}

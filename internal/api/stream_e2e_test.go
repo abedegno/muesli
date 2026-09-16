@@ -173,7 +173,7 @@ func setNoteAudioAndJob(t *testing.T, st *store.Store, noteID string) {
 	if err != nil {
 		t.Fatalf("marshal payload: %v", err)
 	}
-	if _, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, payload); err != nil {
+	if _, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, payload); err != nil {
 		t.Fatalf("enqueue transcribe job: %v", err)
 	}
 }

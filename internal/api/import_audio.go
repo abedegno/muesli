@@ -215,7 +215,7 @@ haveFile:
 	// existing note, that path must restore a real CurrentTranscriptGeneration
 	// lookup.
 	payload, _ := json.Marshal(map[string]any{"audio_key": grant.Key, "expected_generation": 0})
-	if _, err := s.deps.Store.EnqueueJob(r.Context(), note.ID, model.JobTranscribe, payload); err != nil {
+	if _, err := s.deps.Store.EnqueueNoteJob(r.Context(), note.ID, model.JobTranscribe, payload); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}

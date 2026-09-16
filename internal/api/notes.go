@@ -539,7 +539,7 @@ func (s *Server) handleRetranscribe(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if _, err := s.deps.Store.EnqueueJob(r.Context(), id, model.JobTranscribe, payload); err != nil {
+	if _, err := s.deps.Store.EnqueueNoteJob(r.Context(), id, model.JobTranscribe, payload); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}

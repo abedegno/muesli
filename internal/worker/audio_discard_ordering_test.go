@@ -93,7 +93,7 @@ func TestAudioDiscardOrderingSurvivesADeleteFailure(t *testing.T) {
 
 	proc := worker.NewProcessor(st, cr, prov, config.Config{AudioRetention: "discard"}, nil)
 
-	if _, err := st.EnqueueJob(ctx, n.ID, model.JobTranscribe,
+	if _, err := st.EnqueueNoteJob(ctx, n.ID, model.JobTranscribe,
 		json.RawMessage(`{"audio_key":"`+key+`","expected_generation":0}`)); err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}

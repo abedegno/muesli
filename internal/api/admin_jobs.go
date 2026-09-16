@@ -74,7 +74,7 @@ func (s *Server) handleRetryJob(w http.ResponseWriter, r *http.Request) {
 		payload = refreshed
 	}
 
-	if _, err = s.deps.Store.EnqueueJob(r.Context(), job.NoteID, job.Type, payload); err != nil {
+	if _, err = s.deps.Store.EnqueueNoteJob(r.Context(), job.NoteID, job.Type, payload); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}

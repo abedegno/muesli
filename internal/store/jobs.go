@@ -31,17 +31,79 @@ func RetryBackoff(attempts int) time.Duration {
 	return backoff
 }
 
-// EnqueueJob inserts a pending job and returns its id.
-func (s *Store) EnqueueJob(ctx context.Context, noteID, jobType string, payload json.RawMessage) (string, error) {
+// JobEnqueue specifies a new job's target and payload. Exactly one of NoteID
+// or CalendarEventID must be set (see model.Job.TargetKind): a note job
+// (transcribe/summarize/embed) carries NoteID only, a pre_generate job
+// carries CalendarEventID plus BriefID/BriefGeneration identifying the
+// event_briefs row it will publish into.
+type JobEnqueue struct {
+	NoteID          string
+	CalendarEventID string
+	BriefID         string
+	BriefGeneration int
+	Type            string
+	Payload         json.RawMessage
+}
+
+// EnqueueJob inserts a pending job for an explicit target and returns its id.
+// It validates the target before writing: exactly one of NoteID/
+// CalendarEventID, a pre_generate job must target an event and carry a brief
+// id/generation, and every other job type must target a note. Most callers
+// want EnqueueNoteJob instead of building a JobEnqueue by hand.
+func (s *Store) EnqueueJob(ctx context.Context, spec JobEnqueue) (string, error) {
+	hasNote := spec.NoteID != ""
+	hasEvent := spec.CalendarEventID != ""
+	if hasNote == hasEvent { // both set, or neither
+		return "", ValidationError("job must target exactly one of note_id or calendar_event_id")
+	}
+	if spec.Type == model.JobPreGenerate {
+		if !hasEvent {
+			return "", ValidationError("pre_generate jobs must target a calendar event")
+		}
+		if spec.BriefID == "" || spec.BriefGeneration <= 0 {
+			return "", ValidationError("pre_generate jobs must carry a brief id and a positive generation")
+		}
+	} else if !hasNote {
+		return "", ValidationError(spec.Type + " jobs must target a note")
+	}
+
+	payload := spec.Payload
 	if len(payload) == 0 {
 		payload = json.RawMessage(`{}`)
 	}
 	id := uuid.NewString()
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO jobs (id, note_id, type, status, payload)
-		 VALUES ($1,$2,$3,$4,$5::jsonb)`,
-		id, noteID, jobType, model.JobPending, string(payload))
+		`INSERT INTO jobs (id, note_id, calendar_event_id, brief_id, brief_generation, type, status, payload)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)`,
+		id, nullableStr(spec.NoteID), nullableStr(spec.CalendarEventID), nullableStr(spec.BriefID), nullableInt(spec.BriefGeneration),
+		spec.Type, model.JobPending, string(payload))
 	return id, err
+}
+
+// EnqueueNoteJob inserts a pending note-targeted job (transcribe/summarize/
+// embed) and returns its id. Thin wrapper around EnqueueJob for the vast
+// majority of call sites that only ever target a note.
+func (s *Store) EnqueueNoteJob(ctx context.Context, noteID, jobType string, payload json.RawMessage) (string, error) {
+	return s.EnqueueJob(ctx, JobEnqueue{NoteID: noteID, Type: jobType, Payload: payload})
+}
+
+// nullableStr returns nil (SQL NULL) for an empty string, else the string
+// itself, for writing optional UUID/text job target columns.
+func nullableStr(v string) any {
+	if v == "" {
+		return nil
+	}
+	return v
+}
+
+// nullableInt returns nil (SQL NULL) for a non-positive value, else the value
+// itself, for writing the optional brief_generation job column (generations
+// are always positive; see event_briefs.generation).
+func nullableInt(v int) any {
+	if v <= 0 {
+		return nil
+	}
+	return v
 }
 
 // ClaimJob atomically selects one claimable job (pending without a lease, or
@@ -58,14 +120,15 @@ func (s *Store) ClaimJob(ctx context.Context, lease time.Duration) (model.Job, b
 	var j model.Job
 	var payload []byte
 	err = tx.QueryRow(ctx,
-		`SELECT id, note_id, type, status, attempts, COALESCE(last_error,''), priority, payload
+		`SELECT id, COALESCE(note_id::text,''), COALESCE(calendar_event_id::text,''), COALESCE(brief_id::text,''), COALESCE(brief_generation,0),
+		        type, status, attempts, COALESCE(last_error,''), priority, payload
 		 FROM jobs
 		 WHERE (status='pending' AND (lease_expires_at IS NULL OR lease_expires_at < now()))
 		    OR (status='running' AND lease_expires_at < now())
 		 ORDER BY priority DESC, created_at ASC
 		 FOR UPDATE SKIP LOCKED
 		 LIMIT 1`).
-		Scan(&j.ID, &j.NoteID, &j.Type, &j.Status, &j.Attempts, &j.LastError, &j.Priority, &payload)
+		Scan(&j.ID, &j.NoteID, &j.CalendarEventID, &j.BriefID, &j.BriefGeneration, &j.Type, &j.Status, &j.Attempts, &j.LastError, &j.Priority, &payload)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return model.Job{}, false, tx.Commit(ctx)
 	}
@@ -202,7 +265,8 @@ func (s *Store) CancelJob(ctx context.Context, id string) error {
 
 // ListJobs returns jobs (optionally filtered by status) for the admin monitor.
 func (s *Store) ListJobs(ctx context.Context, status string) ([]model.Job, error) {
-	q := `SELECT id, note_id, type, status, attempts, COALESCE(last_error,''), priority, started_at, finished_at
+	q := `SELECT id, COALESCE(note_id::text,''), COALESCE(calendar_event_id::text,''), COALESCE(brief_id::text,''), COALESCE(brief_generation,0),
+	             type, status, attempts, COALESCE(last_error,''), priority, started_at, finished_at
 	      FROM jobs`
 	args := []any{}
 	if status != "" {
@@ -218,7 +282,7 @@ func (s *Store) ListJobs(ctx context.Context, status string) ([]model.Job, error
 	var out []model.Job
 	for rows.Next() {
 		var j model.Job
-		if err := rows.Scan(&j.ID, &j.NoteID, &j.Type, &j.Status, &j.Attempts, &j.LastError, &j.Priority, &j.StartedAt, &j.FinishedAt); err != nil {
+		if err := rows.Scan(&j.ID, &j.NoteID, &j.CalendarEventID, &j.BriefID, &j.BriefGeneration, &j.Type, &j.Status, &j.Attempts, &j.LastError, &j.Priority, &j.StartedAt, &j.FinishedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, j)
@@ -235,7 +299,8 @@ func (s *Store) ListJobs(ctx context.Context, status string) ([]model.Job, error
 // backs an admin endpoint over the global jobs table.
 func (s *Store) ListJobsByNoteID(ctx context.Context, noteID string) ([]model.Job, error) {
 	rows, err := s.pool.Query(ctx,
-		`SELECT id, note_id, type, status, attempts, COALESCE(last_error,''), priority, started_at, finished_at
+		`SELECT id, COALESCE(note_id::text,''), COALESCE(calendar_event_id::text,''), COALESCE(brief_id::text,''), COALESCE(brief_generation,0),
+		        type, status, attempts, COALESCE(last_error,''), priority, started_at, finished_at
 		 FROM jobs
 		 WHERE note_id=$1
 		 ORDER BY created_at ASC`, noteID)
@@ -246,7 +311,7 @@ func (s *Store) ListJobsByNoteID(ctx context.Context, noteID string) ([]model.Jo
 	var out []model.Job
 	for rows.Next() {
 		var j model.Job
-		if err := rows.Scan(&j.ID, &j.NoteID, &j.Type, &j.Status, &j.Attempts, &j.LastError, &j.Priority, &j.StartedAt, &j.FinishedAt); err != nil {
+		if err := rows.Scan(&j.ID, &j.NoteID, &j.CalendarEventID, &j.BriefID, &j.BriefGeneration, &j.Type, &j.Status, &j.Attempts, &j.LastError, &j.Priority, &j.StartedAt, &j.FinishedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, j)
@@ -262,9 +327,10 @@ func (s *Store) GetJob(ctx context.Context, jobID string) (model.Job, error) {
 	var j model.Job
 	var payload []byte
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, note_id, type, status, attempts, COALESCE(last_error,''), priority, payload, started_at, finished_at
+		`SELECT id, COALESCE(note_id::text,''), COALESCE(calendar_event_id::text,''), COALESCE(brief_id::text,''), COALESCE(brief_generation,0),
+		        type, status, attempts, COALESCE(last_error,''), priority, payload, started_at, finished_at
 		 FROM jobs WHERE id=$1`, jobID).
-		Scan(&j.ID, &j.NoteID, &j.Type, &j.Status, &j.Attempts, &j.LastError, &j.Priority, &payload, &j.StartedAt, &j.FinishedAt)
+		Scan(&j.ID, &j.NoteID, &j.CalendarEventID, &j.BriefID, &j.BriefGeneration, &j.Type, &j.Status, &j.Attempts, &j.LastError, &j.Priority, &payload, &j.StartedAt, &j.FinishedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return model.Job{}, ErrNotFound
 	}
@@ -338,12 +404,13 @@ func (s *Store) GetLatestFailedJobByNoteID(ctx context.Context, noteID string) (
 	var j model.Job
 	var payload []byte
 	err := s.pool.QueryRow(ctx,
-		`SELECT id, note_id, type, status, attempts, COALESCE(last_error,''), priority, payload
+		`SELECT id, COALESCE(note_id::text,''), COALESCE(calendar_event_id::text,''), COALESCE(brief_id::text,''), COALESCE(brief_generation,0),
+		        type, status, attempts, COALESCE(last_error,''), priority, payload
 		 FROM jobs
 		 WHERE note_id = $1 AND status = 'failed'
 		 ORDER BY updated_at DESC
 		 LIMIT 1`, noteID).
-		Scan(&j.ID, &j.NoteID, &j.Type, &j.Status, &j.Attempts, &j.LastError, &j.Priority, &payload)
+		Scan(&j.ID, &j.NoteID, &j.CalendarEventID, &j.BriefID, &j.BriefGeneration, &j.Type, &j.Status, &j.Attempts, &j.LastError, &j.Priority, &payload)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}

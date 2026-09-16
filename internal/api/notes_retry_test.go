@@ -56,7 +56,7 @@ func TestRetryNoteAPI(t *testing.T) {
 	}
 
 	// Enqueue a transcribe job and fail it terminally.
-	jobID, err := st.EnqueueJob(ctx, note.ID, model.JobTranscribe, nil)
+	jobID, err := st.EnqueueNoteJob(ctx, note.ID, model.JobTranscribe, nil)
 	if err != nil {
 		t.Fatalf("enqueue job: %v", err)
 	}
@@ -144,7 +144,7 @@ func TestRetryNoteRefreshesStaleExpectedGeneration(t *testing.T) {
 	// The failed job's OWN stored payload is stale: expected_generation 0, as
 	// if it had been enqueued before that transcript ever existed.
 	audioKey := "notes/" + note.ID + "/audio/a.webm"
-	staleJobID, err := st.EnqueueJob(ctx, note.ID, model.JobTranscribe,
+	staleJobID, err := st.EnqueueNoteJob(ctx, note.ID, model.JobTranscribe,
 		json.RawMessage(`{"audio_key":"`+audioKey+`","expected_generation":0}`))
 	if err != nil {
 		t.Fatalf("enqueue stale job: %v", err)

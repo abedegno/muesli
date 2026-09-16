@@ -28,7 +28,7 @@ func (s *Store) EnqueueSummarizeJobs(ctx context.Context, ownerID, noteID string
 			return err
 		}
 		payload, _ := json.Marshal(map[string]string{"template_id": tmpl.ID, "summary_id": sumID})
-		if _, err := s.EnqueueJob(ctx, noteID, model.JobSummarize, payload); err != nil {
+		if _, err := s.EnqueueNoteJob(ctx, noteID, model.JobSummarize, payload); err != nil {
 			return err
 		}
 	}
@@ -299,6 +299,6 @@ func (s *Store) EnqueueTemplateSummarizeJob(ctx context.Context, ownerID, noteID
 		return err
 	}
 	payload, _ := json.Marshal(map[string]string{"template_id": templateID, "summary_id": sumID})
-	_, err = s.EnqueueJob(ctx, noteID, model.JobSummarize, payload)
+	_, err = s.EnqueueNoteJob(ctx, noteID, model.JobSummarize, payload)
 	return err
 }

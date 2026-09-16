@@ -78,7 +78,7 @@ func TestAdminHealth_JobsWarnOnFailedJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create note: %v", err)
 	}
-	jobID, err := st.EnqueueJob(ctx, note.ID, "transcribe", nil)
+	jobID, err := st.EnqueueNoteJob(ctx, note.ID, "transcribe", nil)
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}

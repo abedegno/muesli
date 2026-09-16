@@ -158,7 +158,7 @@ func newPartialRetryFixture(t *testing.T, emailPrefix string) *partialRetryFixtu
 		t.Fatalf("set note audio: %v", err)
 	}
 
-	if _, err := st.EnqueueJob(ctx, note.ID, model.JobTranscribe,
+	if _, err := st.EnqueueNoteJob(ctx, note.ID, model.JobTranscribe,
 		json.RawMessage(`{"audio_key":"`+audioKey+`","expected_generation":0}`)); err != nil {
 		t.Fatalf("enqueue transcribe job: %v", err)
 	}

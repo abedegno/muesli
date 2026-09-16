@@ -115,7 +115,7 @@ func EnqueueBackfillEmbeds(ctx context.Context, st *store.Store, modelName strin
 		return 0, err
 	}
 	for _, id := range ids {
-		if _, err := st.EnqueueJob(ctx, id, model.JobEmbed, nil); err != nil {
+		if _, err := st.EnqueueNoteJob(ctx, id, model.JobEmbed, nil); err != nil {
 			return 0, err
 		}
 	}

@@ -40,7 +40,7 @@ func TestEnqueueAndClaim(t *testing.T) {
 	ctx := context.Background()
 	noteID := seedNote(t, st)
 
-	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{"audio_key":"k"}`))
+	jobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{"audio_key":"k"}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestCompleteJob(t *testing.T) {
 	st := store.New(testutil.NewPool(t))
 	ctx := context.Background()
 	noteID := seedNote(t, st)
-	_, _ = st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+	_, _ = st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
 	job, _, _ := st.ClaimJob(ctx, 30*time.Second)
 
 	if err := st.CompleteJob(ctx, job.ID); err != nil {
@@ -92,7 +92,7 @@ func TestUpdateJobPayload(t *testing.T) {
 	st := store.New(testutil.NewPool(t))
 	ctx := context.Background()
 	noteID := seedNote(t, st)
-	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{"expected_generation":0}`))
+	jobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{"expected_generation":0}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -124,7 +124,7 @@ func TestFailJobRetryThenTerminal(t *testing.T) {
 	st := store.New(testutil.NewPool(t))
 	ctx := context.Background()
 	noteID := seedNote(t, st)
-	_, _ = st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+	_, _ = st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
 
 	// Attempt 1: claim, fail retryable → back to pending, no lease.
 	job, _, _ := st.ClaimJob(ctx, 30*time.Second)
@@ -158,7 +158,7 @@ func TestFailJob_RetryBackoffBlocksImmediateReclaim(t *testing.T) {
 	st := store.New(testutil.NewPool(t))
 	ctx := context.Background()
 	noteID := seedNote(t, st)
-	_, _ = st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+	_, _ = st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
 
 	job, ok, err := st.ClaimJob(ctx, 30*time.Second)
 	if err != nil {
@@ -182,7 +182,7 @@ func TestReclaimExpiredLease(t *testing.T) {
 	st := store.New(testutil.NewPool(t))
 	ctx := context.Background()
 	noteID := seedNote(t, st)
-	_, _ = st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+	_, _ = st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
 
 	// Claim with a lease that is already expired (negative ttl).
 	job, ok, _ := st.ClaimJob(ctx, -time.Second)
@@ -206,7 +206,7 @@ func TestResetRunningJobs_ResetsAllRegardlessOfLease(t *testing.T) {
 	noteID := seedNote(t, st)
 
 	// Insert and claim a job with a future lease (10 min from now).
-	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+	jobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -239,7 +239,7 @@ func TestResetExpiredRunningJobs_SkipsFutureLease(t *testing.T) {
 	noteID := seedNote(t, st)
 
 	// Claim with a future lease.
-	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+	jobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -272,7 +272,7 @@ func TestResetExpiredRunningJobs_ResetsExpiredLease(t *testing.T) {
 	noteID := seedNote(t, st)
 
 	// Claim with a lease already in the past.
-	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+	jobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -307,13 +307,13 @@ func TestBumpNoteJobPriority_DequeuesBeforeOlderUnbumped(t *testing.T) {
 	ctx := context.Background()
 
 	noteA := seedNote(t, st)
-	oldJobID, err := st.EnqueueJob(ctx, noteA, model.JobTranscribe, json.RawMessage(`{}`))
+	oldJobID, err := st.EnqueueNoteJob(ctx, noteA, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue A: %v", err)
 	}
 
 	noteB := seedNote(t, st)
-	bumpedJobID, err := st.EnqueueJob(ctx, noteB, model.JobTranscribe, json.RawMessage(`{}`))
+	bumpedJobID, err := st.EnqueueNoteJob(ctx, noteB, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue B: %v", err)
 	}
@@ -353,7 +353,7 @@ func TestBumpNoteJobPriority_LeavesRunningJobUntouched(t *testing.T) {
 	ctx := context.Background()
 	noteID := seedNote(t, st)
 
-	runningJobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+	runningJobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -367,7 +367,7 @@ func TestBumpNoteJobPriority_LeavesRunningJobUntouched(t *testing.T) {
 	}
 
 	// A second, still-pending job on the same note is the one that should move.
-	pendingJobID, err := st.EnqueueJob(ctx, noteID, model.JobSummarize, json.RawMessage(`{}`))
+	pendingJobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobSummarize, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue pending: %v", err)
 	}
@@ -411,7 +411,7 @@ func TestCancelJob_HappyPath(t *testing.T) {
 	ctx := context.Background()
 	noteID := seedNote(t, st)
 
-	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+	jobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -438,7 +438,7 @@ func TestCancelJob_LeavesRunningJobUntouched(t *testing.T) {
 	ctx := context.Background()
 	noteID := seedNote(t, st)
 
-	runningJobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+	runningJobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -497,7 +497,7 @@ func TestJobStatusCounts_AllKnownStatusesAlwaysPresent(t *testing.T) {
 	// claimed as the pending one.
 	const totalJobs = 4
 	for i := 0; i < totalJobs; i++ {
-		if _, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, nil); err != nil {
+		if _, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, nil); err != nil {
 			t.Fatalf("enqueue %d: %v", i, err)
 		}
 	}
