@@ -32,4 +32,9 @@ type CalendarEvent struct {
 	ConferencingURL string     `json:"conferencing_url"`
 	Attendees       []Attendee `json:"attendees"`
 	UpdatedAt       time.Time  `json:"updated_at"`
+	// Briefs are this event's current pre-meeting briefs, always an array
+	// (never null) -- see EventBrief. Populated by ListEvents; empty for a
+	// caller that never asked for them (e.g. UpsertEvents round trips don't
+	// carry briefs).
+	Briefs []EventBrief `json:"briefs"`
 }

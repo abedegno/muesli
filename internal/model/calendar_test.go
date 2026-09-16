@@ -62,9 +62,49 @@ func TestCalendarEventJSONRoundTrip(t *testing.T) {
 			},
 		},
 		UpdatedAt: time.Date(2026, time.July, 11, 13, 0, 0, 0, time.UTC),
+		Briefs: []EventBrief{
+			{
+				ID:           "brief_1",
+				TemplateID:   "template_1",
+				TemplateName: "Pre-read",
+				Status:       BriefReady,
+				Model:        "llama3.2:3b",
+				Sections: []SummarySection{
+					{Heading: "Context", ContentMarkdown: "Agenda notes."},
+				},
+				UpdatedAt: time.Date(2026, time.July, 11, 13, 30, 0, 0, time.UTC),
+			},
+		},
 	}
 
-	assertJSONRoundTrip(t, value, []string{"id", "owner_id", "source_id", "external_id", "title", "starts_at", "ends_at", "description", "location", "conferencing_url", "attendees", "updated_at"})
+	assertJSONRoundTrip(t, value, []string{"id", "owner_id", "source_id", "external_id", "title", "starts_at", "ends_at", "description", "location", "conferencing_url", "attendees", "updated_at", "briefs"})
+}
+
+func TestEventBriefJSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	value := EventBrief{
+		ID:           "brief_1",
+		TemplateID:   "template_1",
+		TemplateName: "Pre-read",
+		Status:       BriefReady,
+		Model:        "llama3.2:3b",
+		Sections: []SummarySection{
+			{Heading: "Context", ContentMarkdown: "Agenda notes.", Refs: []int{0}},
+		},
+		UpdatedAt: time.Date(2026, time.July, 11, 13, 30, 0, 0, time.UTC),
+	}
+
+	got := assertJSONRoundTrip(t, value, []string{"id", "template_id", "template_name", "status", "sections", "model", "updated_at"})
+
+	// EventID, InputHash, Generation, AgentPlugin, and CreatedAt are internal
+	// bookkeeping -- never serialized, so a round trip through JSON loses
+	// them. Confirm the loss is exactly the set the accepted spec calls out as
+	// never leaving the server (id, template_id, template_name, status,
+	// sections, model, updated_at ARE returned; nothing else is).
+	if got.EventID != "" || got.InputHash != nil || got.Generation != 0 || got.AgentPlugin != "" || !got.CreatedAt.IsZero() {
+		t.Fatalf("EventBrief round trip leaked internal field: %#v", got)
+	}
 }
 
 func TestNoteJSONRoundTrip(t *testing.T) {
@@ -160,23 +200,32 @@ func TestCalendarZeroValues(t *testing.T) {
 	t.Run("calendar event nil attendees", func(t *testing.T) {
 		t.Parallel()
 
-		got := assertJSONRoundTrip(t, CalendarEvent{}, []string{"id", "owner_id", "source_id", "external_id", "title", "starts_at", "ends_at", "description", "location", "conferencing_url", "attendees", "updated_at"})
+		got := assertJSONRoundTrip(t, CalendarEvent{}, []string{"id", "owner_id", "source_id", "external_id", "title", "starts_at", "ends_at", "description", "location", "conferencing_url", "attendees", "updated_at", "briefs"})
 
 		if got.Attendees != nil {
 			t.Fatalf("Attendees = %#v, want nil", got.Attendees)
 		}
+		if got.Briefs != nil {
+			t.Fatalf("Briefs = %#v, want nil", got.Briefs)
+		}
 	})
 
-	t.Run("calendar event empty attendees stays empty", func(t *testing.T) {
+	t.Run("calendar event empty attendees and briefs stay empty", func(t *testing.T) {
 		t.Parallel()
 
-		got := assertJSONRoundTrip(t, CalendarEvent{Attendees: []Attendee{}}, []string{"id", "owner_id", "source_id", "external_id", "title", "starts_at", "ends_at", "description", "location", "conferencing_url", "attendees", "updated_at"})
+		got := assertJSONRoundTrip(t, CalendarEvent{Attendees: []Attendee{}, Briefs: []EventBrief{}}, []string{"id", "owner_id", "source_id", "external_id", "title", "starts_at", "ends_at", "description", "location", "conferencing_url", "attendees", "updated_at", "briefs"})
 
 		if got.Attendees == nil {
 			t.Fatal("Attendees = nil, want non-nil empty slice")
 		}
 		if len(got.Attendees) != 0 {
 			t.Fatalf("Attendees len = %d, want 0", len(got.Attendees))
+		}
+		if got.Briefs == nil {
+			t.Fatal("Briefs = nil, want non-nil empty slice")
+		}
+		if len(got.Briefs) != 0 {
+			t.Fatalf("Briefs len = %d, want 0", len(got.Briefs))
 		}
 	})
 

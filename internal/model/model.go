@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -151,9 +152,10 @@ const (
 
 // Job types.
 const (
-	JobTranscribe = "transcribe"
-	JobSummarize  = "summarize"
-	JobEmbed      = "embed"
+	JobTranscribe  = "transcribe"
+	JobSummarize   = "summarize"
+	JobEmbed       = "embed"
+	JobPreGenerate = "pre_generate"
 )
 
 // Job statuses.
@@ -188,14 +190,37 @@ type Plugin struct {
 	IsDefault    bool            `json:"is_default"`
 }
 
-// Job is one unit of pipeline work.
+// JobTargetKind identifies which union member a Job targets.
+type JobTargetKind string
+
+const (
+	JobTargetNote          JobTargetKind = "note"
+	JobTargetCalendarEvent JobTargetKind = "calendar_event"
+)
+
+// Job is one unit of pipeline work. It targets exactly one of a note
+// (transcribe/summarize/embed) or a calendar event (pre_generate) -- see
+// TargetKind. NoteID/CalendarEventID/BriefID use the empty string, and
+// BriefGeneration the zero value, to mean "unset" (mirroring the COALESCE(...,
+// ”) convention already used for nullable text columns elsewhere in this
+// package), rather than pointers, so every pre-existing note-job call site
+// continues to compile and behave unchanged.
 type Job struct {
-	ID        string `json:"id"`
-	NoteID    string `json:"note_id"`
-	Type      string `json:"type"`
-	Status    string `json:"status"`
-	Attempts  int    `json:"attempts"`
-	LastError string `json:"last_error,omitempty"`
+	ID     string `json:"id"`
+	NoteID string `json:"note_id,omitempty"`
+	// CalendarEventID is set only for JobPreGenerate jobs.
+	CalendarEventID string `json:"calendar_event_id,omitempty"`
+	// BriefID/BriefGeneration identify the event_briefs row a JobPreGenerate
+	// job produces output for. BriefID deliberately has no DB foreign key (see
+	// the pre_meeting_briefs migration): a brief can be deleted out from under
+	// a still-running job, which is made harmless by generation-guarded
+	// publication rather than being prevented at the schema level.
+	BriefID         string `json:"brief_id,omitempty"`
+	BriefGeneration int    `json:"brief_generation,omitempty"`
+	Type            string `json:"type"`
+	Status          string `json:"status"`
+	Attempts        int    `json:"attempts"`
+	LastError       string `json:"last_error,omitempty"`
 	// Priority orders pending/reclaimable jobs within ClaimJob's dequeue: higher
 	// values are claimed first, ties broken FIFO by created_at. Defaults to 0;
 	// bumped by BumpNoteJobPriority ("process next") for pending jobs only.
@@ -206,6 +231,24 @@ type Job struct {
 	StartedAt  *time.Time      `json:"started_at,omitempty"`
 	FinishedAt *time.Time      `json:"finished_at,omitempty"`
 	Payload    json.RawMessage `json:"-"`
+}
+
+// TargetKind reports which target this job carries, or an error if it carries
+// zero or both -- exactly one of NoteID/CalendarEventID must be set. Every job
+// enqueued through the store's typed enqueue path satisfies this by
+// construction; this method lets a caller (and the migration/store tests)
+// assert it directly.
+func (j Job) TargetKind() (JobTargetKind, error) {
+	hasNote := j.NoteID != ""
+	hasEvent := j.CalendarEventID != ""
+	switch {
+	case hasNote && !hasEvent:
+		return JobTargetNote, nil
+	case hasEvent && !hasNote:
+		return JobTargetCalendarEvent, nil
+	default:
+		return "", fmt.Errorf("job %s: exactly one of note_id/calendar_event_id must be set (note=%q event=%q)", j.ID, j.NoteID, j.CalendarEventID)
+	}
 }
 
 // Word is a single word with its timing within a segment.
@@ -457,4 +500,41 @@ type Message struct {
 	Model          string    `json:"model"`
 	TokensUsed     *int      `json:"tokens_used,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
+}
+
+// Event brief statuses (see model.EventBrief).
+const (
+	BriefPending = "pending"
+	BriefReady   = "ready"
+	BriefFailed  = "failed"
+)
+
+// EventBrief is one generated pre-meeting brief panel for a calendar event and
+// template. Ownership is derived through EventID's calendar_events row, never
+// stored directly (see internal/store/event_briefs.go), so every read joins
+// calendar_events and applies the same owner predicate.
+//
+// Only the fields tagged for JSON below are ever returned by the calendar
+// events API (internal/api/calendar.go): id, template_id, template_name,
+// status, sections, model, updated_at. InputHash, Generation, AgentPlugin,
+// EventID, and TemplateID's cross-owner join details never leave the server.
+type EventBrief struct {
+	ID           string `json:"id"`
+	EventID      string `json:"-"`
+	TemplateID   string `json:"template_id"`
+	TemplateName string `json:"template_name"`
+	// InputHash is the SHA-256 of the normalized generation source (see
+	// internal/worker/prebriefs.go); nil when no default agent has ever been
+	// configured for the owner (a "failed, null hash" placeholder -- see the
+	// accepted spec's "Reconciliation and lifecycle flow" step 4).
+	InputHash *string `json:"-"`
+	// Generation increases monotonically each time the hash changes; used only
+	// server-side to guard publication and detect staleness.
+	Generation  int              `json:"-"`
+	Status      string           `json:"status"`
+	AgentPlugin string           `json:"-"`
+	Model       string           `json:"model"`
+	Sections    []SummarySection `json:"sections"`
+	CreatedAt   time.Time        `json:"-"`
+	UpdatedAt   time.Time        `json:"updated_at"`
 }
