@@ -8,6 +8,8 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
 	"time"
@@ -757,5 +759,175 @@ func TestRunPreGenerateCrossWiredJobIneligibleTemplateNeverDeletesUnrelatedBrief
 	}
 	if afterGood.Status != briefGood.Status || afterGood.Generation != briefGood.Generation {
 		t.Fatalf("the good brief must be completely untouched by the ineligible template's cleanup: before=%+v after=%+v", briefGood, afterGood)
+	}
+}
+
+// blockingAgentStub is a minimal fake /generate endpoint that blocks until
+// explicitly released, letting a test provoke a REAL concurrent race
+// against an in-flight plugin call -- as opposed to simulating one by
+// simply reordering calls around a plugin invocation that already
+// returned. Generate() (see internal/plugin/client.go) only ever POSTs
+// /generate, so that is the only route this stub needs.
+type blockingAgentStub struct {
+	srv     *httptest.Server
+	started chan struct{}
+	release chan struct{}
+}
+
+func newBlockingAgentStub(t *testing.T) *blockingAgentStub {
+	t.Helper()
+	b := &blockingAgentStub{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/generate", func(w http.ResponseWriter, r *http.Request) {
+		close(b.started) // signals the test that the plugin call has genuinely begun
+		<-b.release      // blocks here until the test releases it
+		var req plugin.GenerateRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		var sections []model.SummarySection
+		for _, sec := range req.Template.Sections {
+			sections = append(sections, model.SummarySection{Heading: sec.Heading, ContentMarkdown: "Stub summary for " + sec.Heading + "."})
+		}
+		_ = json.NewEncoder(w).Encode(plugin.GenerateResponse{Summary: plugin.SummaryPayload{Sections: sections}, Model: "stub"})
+	})
+	b.srv = httptest.NewServer(mux)
+	t.Cleanup(b.srv.Close)
+	return b
+}
+
+func (b *blockingAgentStub) URL() string { return b.srv.URL }
+
+// waitStarted blocks until the in-flight /generate request has actually
+// reached the handler (not merely been dispatched), so the test's
+// concurrent mutation below is guaranteed to race against a plugin call
+// that is genuinely already in progress.
+func (b *blockingAgentStub) waitStarted(t *testing.T) {
+	t.Helper()
+	select {
+	case <-b.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the blocking agent to receive the /generate call")
+	}
+}
+
+func (b *blockingAgentStub) unblock() { close(b.release) }
+
+type runPreGenerateResult struct {
+	retryable bool
+	err       error
+}
+
+// runPreGenerateAsync runs runPreGenerate on its own goroutine so the
+// calling test can perform a concurrent store mutation while the plugin
+// call it triggers is blocked inside blockingAgentStub.
+func runPreGenerateAsync(proc *Processor, ctx context.Context, job model.Job) <-chan runPreGenerateResult {
+	ch := make(chan runPreGenerateResult, 1)
+	go func() {
+		retryable, err := proc.runPreGenerate(ctx, job)
+		ch <- runPreGenerateResult{retryable: retryable, err: err}
+	}()
+	return ch
+}
+
+// TestRunPreGenerateInFlightGenerationAdvanceDiscardsPublish is the
+// genuinely-concurrent counterpart to TestRunPreGenerateStaleGenerationSkipsWithoutPublishing:
+// that test proves runPreGenerate's early generation check rejects an
+// ALREADY-stale job before ever calling the plugin. This test proves the
+// separate guard that matters once the plugin call is already underway --
+// generation 1's plugin call is genuinely in flight when reconciliation
+// concurrently advances the SAME pair to generation 2 (e.g. the agenda
+// changed mid-generation); when generation 1's response finally arrives,
+// PublishEventBrief's `WHERE id=? AND generation=?` guard discards it as
+// zero affected rows rather than overwriting generation 2's now-current
+// (pending) state.
+func TestRunPreGenerateInFlightGenerationAdvanceDiscardsPublish(t *testing.T) {
+	f := newPreJobFixture(t)
+	ctx := context.Background()
+
+	agent := newBlockingAgentStub(t)
+	if err := f.st.EnsureDefaultPlugin(ctx, f.proc.crypto, model.PluginAgent, "agent", agent.URL(), "tok", "{}"); err != nil {
+		t.Fatalf("ensure default agent: %v", err)
+	}
+	ev, tmpl, briefID, job := f.seedReadyPair(t, 2*time.Hour)
+
+	resultCh := runPreGenerateAsync(f.proc, ctx, job)
+	agent.waitStarted(t)
+
+	// While generation 1's plugin call is genuinely in flight, reconcile
+	// the same pair again with a changed hash -- advancing the brief to
+	// generation 2, exactly as a concurrent calendar sync would.
+	h2 := "h2"
+	if _, err := f.st.ReconcileEventBriefPair(ctx, ev.ID, tmpl.ID, tmpl.Name, &h2); err != nil {
+		t.Fatalf("reconcile gen 2: %v", err)
+	}
+	advanced, found, err := f.st.GetEventBriefByID(ctx, briefID)
+	if err != nil || !found || advanced.Generation != 2 {
+		t.Fatalf("expected the brief advanced to generation 2 while generation 1 was in flight: found=%v err=%v brief=%+v", found, err, advanced)
+	}
+
+	// Now let generation 1's (now-stale) plugin call complete with real
+	// output.
+	agent.unblock()
+	res := <-resultCh
+	if res.err != nil || res.retryable {
+		t.Fatalf("expected generation 1's job to settle cleanly once its publish is discarded, got err=%v retryable=%v", res.err, res.retryable)
+	}
+
+	after, found, err := f.st.GetEventBriefByID(ctx, briefID)
+	if err != nil || !found {
+		t.Fatalf("expected the brief to still exist at generation 2: found=%v err=%v", found, err)
+	}
+	if after.Generation != 2 || after.Status != model.BriefPending {
+		t.Fatalf("generation 1's late-arriving publish must not affect generation 2's state: %+v", after)
+	}
+	if len(after.Sections) != 0 {
+		t.Fatalf("generation 1's stale output must never appear in generation 2's sections: %+v", after)
+	}
+	_ = tmpl
+}
+
+// TestRunPreGenerateInFlightBriefDeletionDiscardsPublish is the deletion
+// counterpart: generation 1's plugin call is genuinely in flight when the
+// brief is deleted out from under it (e.g. concurrent template-mutation
+// cleanup, or a second reconciliation pass finding the pair ineligible).
+// When generation 1's response finally arrives, the same guarded publish
+// affects zero rows because the row no longer exists at all -- it must not
+// resurrect the deleted brief.
+func TestRunPreGenerateInFlightBriefDeletionDiscardsPublish(t *testing.T) {
+	f := newPreJobFixture(t)
+	ctx := context.Background()
+
+	agent := newBlockingAgentStub(t)
+	if err := f.st.EnsureDefaultPlugin(ctx, f.proc.crypto, model.PluginAgent, "agent", agent.URL(), "tok", "{}"); err != nil {
+		t.Fatalf("ensure default agent: %v", err)
+	}
+	_, _, briefID, job := f.seedReadyPair(t, 2*time.Hour)
+
+	resultCh := runPreGenerateAsync(f.proc, ctx, job)
+	agent.waitStarted(t)
+
+	// While generation 1's plugin call is genuinely in flight, the brief is
+	// deleted -- the same generation-guarded cleanup runPreGenerate itself
+	// uses for ineligibility, called here directly to model a concurrent
+	// cleanup (e.g. a race with template-mutation cleanup or another
+	// reconciliation pass).
+	deleted, err := f.st.CleanupIneligibleEventBriefIfCurrent(ctx, briefID, 1)
+	if err != nil || !deleted {
+		t.Fatalf("expected the concurrent cleanup to delete the brief: deleted=%v err=%v", deleted, err)
+	}
+	if _, found, err := f.st.GetEventBriefByID(ctx, briefID); err != nil || found {
+		t.Fatalf("expected the brief gone before generation 1's plugin call returns: found=%v err=%v", found, err)
+	}
+
+	agent.unblock()
+	res := <-resultCh
+	if res.err != nil || res.retryable {
+		t.Fatalf("expected generation 1's job to settle cleanly once its publish is discarded, got err=%v retryable=%v", res.err, res.retryable)
+	}
+
+	if _, found, err := f.st.GetEventBriefByID(ctx, briefID); err != nil || found {
+		t.Fatalf("generation 1's late-arriving publish must not resurrect the deleted brief: found=%v err=%v", found, err)
 	}
 }
