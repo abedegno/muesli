@@ -15,6 +15,10 @@ import (
 	"github.com/abedegno/muesli/internal/testutil"
 )
 
+// adminPreJobTestBase is a fixed, deterministic instant used instead of the
+// wall clock in this file (see scripts/check-test-determinism.sh).
+var adminPreJobTestBase = testutil.NewFakeClock(time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)).Now()
+
 // adminPreJobFixture seeds a store, an owner, a calendar source/event, a
 // pre/auto-run template, and one claimed-then-failed pre_generate job ready
 // for retry via the admin HTTP API.
@@ -46,8 +50,7 @@ func newAdminPreJobFixture(t *testing.T, startsIn time.Duration) adminPreJobFixt
 	if err != nil {
 		t.Fatalf("create source: %v", err)
 	}
-	now := time.Now()
-	starts := now.Add(startsIn)
+	starts := adminPreJobTestBase.Add(startsIn)
 	if err := st.UpsertEvents(ctx, u.ID, src.ID, []calendar.NormalizedEvent{
 		{ExternalID: "ext-1", Title: "Planning", StartsAt: starts, EndsAt: starts.Add(time.Hour)},
 	}); err != nil {
@@ -181,7 +184,7 @@ func TestAdminRetryPreGenerateJobTwoOwnersNoCrossOwnerJoin(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		starts := time.Now().Add(2 * time.Hour)
+		starts := adminPreJobTestBase.Add(2 * time.Hour)
 		if err := st.UpsertEvents(ctx, owner, src.ID, []calendar.NormalizedEvent{
 			{ExternalID: "ext-1", Title: "Planning", StartsAt: starts, EndsAt: starts.Add(time.Hour)},
 		}); err != nil {

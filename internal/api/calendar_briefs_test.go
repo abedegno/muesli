@@ -15,7 +15,12 @@ import (
 	"github.com/abedegno/muesli/internal/calendar"
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/store"
+	"github.com/abedegno/muesli/internal/testutil"
 )
+
+// calendarBriefsTestBase is a fixed, deterministic instant used instead of
+// the wall clock in this file (see scripts/check-test-determinism.sh).
+var calendarBriefsTestBase = testutil.NewFakeClock(time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)).Now()
 
 // calendarEventsResponseItem captures exactly the public shape of one
 // calendar event's JSON, so a test can assert the brief's key allowlist
@@ -33,7 +38,7 @@ func seedBriefEventForOwner(t *testing.T, st *store.Store, ownerID string, start
 	if err != nil {
 		t.Fatalf("create source: %v", err)
 	}
-	starts := time.Now().Add(startsIn)
+	starts := calendarBriefsTestBase.Add(startsIn)
 	if err := st.UpsertEvents(ctx, ownerID, src.ID, []calendar.NormalizedEvent{
 		{ExternalID: "ext-1", Title: "Planning", StartsAt: starts, EndsAt: starts.Add(time.Hour)},
 	}); err != nil {
@@ -48,8 +53,8 @@ func seedBriefEventForOwner(t *testing.T, st *store.Store, ownerID string, start
 
 func getCalendarEvents(t *testing.T, srv *api.Server, hdr map[string]string) []calendarEventsResponseItem {
 	t.Helper()
-	from := time.Now().Add(-time.Hour).Format(time.RFC3339)
-	to := time.Now().Add(8 * 24 * time.Hour).Format(time.RFC3339)
+	from := calendarBriefsTestBase.Add(-time.Hour).Format(time.RFC3339)
+	to := calendarBriefsTestBase.Add(8 * 24 * time.Hour).Format(time.RFC3339)
 	path := "/api/calendar/events?from=" + url.QueryEscape(from) + "&to=" + url.QueryEscape(to)
 	rec := doJSON(t, srv, http.MethodGet, path, nil, hdr)
 	if rec.Code != http.StatusOK {

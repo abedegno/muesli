@@ -15,6 +15,10 @@ import (
 	"github.com/abedegno/muesli/internal/testutil"
 )
 
+// templateBriefCleanupTestBase is a fixed, deterministic instant used
+// instead of the wall clock in this file (see scripts/check-test-determinism.sh).
+var templateBriefCleanupTestBase = testutil.NewFakeClock(time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)).Now()
+
 // cleanupFixture is a store + owner + one eligible pre/auto-run template with
 // one event, ready to be driven into pending/ready/failed brief states.
 type cleanupFixture struct {
@@ -44,7 +48,7 @@ func newCleanupFixtureInStore(t *testing.T, st *store.Store) cleanupFixture {
 	if err != nil {
 		t.Fatalf("create source: %v", err)
 	}
-	starts := time.Now().Add(time.Hour)
+	starts := templateBriefCleanupTestBase.Add(time.Hour)
 	if err := st.UpsertEvents(ctx, u.ID, src.ID, []calendar.NormalizedEvent{
 		{ExternalID: "e1", Title: "Planning", StartsAt: starts, EndsAt: starts.Add(time.Hour)},
 	}); err != nil {

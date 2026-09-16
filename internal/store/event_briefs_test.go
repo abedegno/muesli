@@ -6,6 +6,7 @@ package store_test
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -42,7 +43,7 @@ func newBriefTestFixture(t *testing.T) briefTestFixture {
 }
 
 func uniqueSuffix() string {
-	return time.Now().Format("150405.000000000")
+	return strconv.FormatInt(seedUserCounter.Add(1), 10)
 }
 
 // seedEvent creates one event starting startsIn after the fixture's now and
