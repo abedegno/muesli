@@ -48,8 +48,13 @@ func scanEventBrief(row pgx.Row) (model.EventBrief, error) {
 	return b, nil
 }
 
-const eventBriefColumns = `id, event_id, template_id, template_name, input_hash, generation,
-	        status, agent_plugin, model, sections::text, created_at, updated_at`
+// eventBriefColumns is fully qualified with the "b" alias so it stays
+// unambiguous whether the callsite selects from event_briefs alone or
+// joins in another table (e.g. calendar_events, which also has
+// created_at/updated_at columns) -- see the ambiguous-column regression
+// this guards against.
+const eventBriefColumns = `b.id, b.event_id, b.template_id, b.template_name, b.input_hash, b.generation,
+	        b.status, b.agent_plugin, b.model, b.sections::text, b.created_at, b.updated_at`
 
 // EventBriefsForEvents returns every current brief row for the given event
 // ids, owner-scoped through the calendar_events join (the same owner
@@ -62,7 +67,7 @@ func (s *Store) EventBriefsForEvents(ctx context.Context, ownerID string, eventI
 		return out, nil
 	}
 	rows, err := s.pool.Query(ctx,
-		`SELECT b.`+eventBriefColumns+`
+		`SELECT `+eventBriefColumns+`
 		 FROM event_briefs b
 		 JOIN calendar_events e ON e.id = b.event_id
 		 WHERE e.owner_id = $1 AND b.event_id = ANY($2::uuid[])
@@ -338,7 +343,7 @@ func enqueuePreGenerateJobTx(ctx context.Context, tx pgx.Tx, eventID, briefID, t
 // EventBrief and no error) when no row matches, distinguishing "already
 // removed" from a real error for the worker's ineligibility-cleanup paths.
 func (s *Store) GetEventBriefByID(ctx context.Context, briefID string) (model.EventBrief, bool, error) {
-	row := s.pool.QueryRow(ctx, `SELECT `+eventBriefColumns+` FROM event_briefs WHERE id=$1`, briefID)
+	row := s.pool.QueryRow(ctx, `SELECT `+eventBriefColumns+` FROM event_briefs b WHERE b.id=$1`, briefID)
 	b, err := scanEventBrief(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return model.EventBrief{}, false, nil

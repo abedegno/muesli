@@ -434,3 +434,60 @@ func TestDeleteIneligibleEventBriefsEmptyEligibleSetRemovesEverything(t *testing
 		t.Fatalf("expected the queued job also removed: ok=%v err=%v", ok, err)
 	}
 }
+
+// TestEventBriefsForEventsJoinDoesNotAmbiguateSharedColumns is a regression
+// guard for a real incident: EventBriefsForEvents' join against
+// calendar_events used a SELECT list built by string-concatenating "b." onto
+// eventBriefColumns, which only qualified the FIRST column and left every
+// other column (including created_at/updated_at, which calendar_events also
+// has) unqualified. Postgres rejects that as an ambiguous column reference,
+// which broke this query -- and therefore ListEvents, which calls it on
+// every request -- for any event/brief pair, cascading into unrelated tests
+// sharing the pool. Both calendar_events and event_briefs default
+// created_at/updated_at to now(), so any real row exercises this; this test
+// names the failure mode explicitly so a future refactor of eventBriefColumns
+// can't silently reintroduce it. It exercises both the direct join
+// (EventBriefsForEvents) and the production entry point (ListEvents).
+func TestEventBriefsForEventsJoinDoesNotAmbiguateSharedColumns(t *testing.T) {
+	t.Parallel()
+	f := newBriefTestFixture(t)
+	ctx := context.Background()
+	eventID := f.seedEvent(t, "e1", time.Hour)
+	tmpl := f.createTemplate(t, "Pre-read", "pre", true)
+
+	if _, err := f.st.ReconcileEventBriefPair(ctx, eventID, tmpl.ID, tmpl.Name, hashPtr("h1")); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	briefs, err := f.st.EventBriefsForEvents(ctx, f.owner, []string{eventID})
+	if err != nil {
+		t.Fatalf("EventBriefsForEvents must not fail with an ambiguous column error: %v", err)
+	}
+	got := briefs[eventID]
+	if len(got) != 1 || got[0].TemplateID != tmpl.ID {
+		t.Fatalf("unexpected briefs from join query: %+v", got)
+	}
+	if got[0].UpdatedAt.IsZero() || got[0].CreatedAt.IsZero() {
+		t.Fatalf("expected the brief's own (event_briefs) timestamps, not zero values: %+v", got[0])
+	}
+
+	// Exercise the production path too: ListEvents joins in briefs for every
+	// event it returns, on the same query shape.
+	evs, err := f.st.ListEvents(ctx, f.owner, f.now, f.now.Add(2*time.Hour))
+	if err != nil {
+		t.Fatalf("ListEvents must not fail with an ambiguous column error: %v", err)
+	}
+	var found bool
+	for _, ev := range evs {
+		if ev.ID != eventID {
+			continue
+		}
+		found = true
+		if len(ev.Briefs) != 1 || ev.Briefs[0].TemplateID != tmpl.ID {
+			t.Fatalf("expected ListEvents to attach the seeded brief: %+v", ev.Briefs)
+		}
+	}
+	if !found {
+		t.Fatalf("expected seeded event in ListEvents result: %+v", evs)
+	}
+}
