@@ -123,3 +123,81 @@ func TestGenerateRequestOptionalOverridesJSON(t *testing.T) {
 		t.Fatalf("overrides did not round-trip: %+v", gotSet)
 	}
 }
+
+// TestGenerateSourceJSON proves the optional Source field is wire-compatible:
+// omitted entirely when nil (every pre-existing after-summary/chat caller),
+// and round-trips a calendar_event source with its typed attendee list intact.
+func TestGenerateSourceJSON(t *testing.T) {
+	sourceless := GenerateRequest{
+		Transcript: []model.Segment{},
+		Template:   TemplatePayload{Sections: []model.TemplateSection{{Heading: "Overview", Instruction: "Summarise."}}},
+		Config:     json.RawMessage(`{}`),
+	}
+	got, err := json.Marshal(sourceless)
+	if err != nil {
+		t.Fatalf("marshal sourceless: %v", err)
+	}
+	if strings.Contains(string(got), "\"source\"") {
+		t.Fatalf("omitted source must not appear on the wire: %s", got)
+	}
+
+	withSource := GenerateRequest{
+		Transcript: []model.Segment{},
+		Template:   TemplatePayload{Sections: []model.TemplateSection{{Heading: "Overview", Instruction: "Summarise."}}},
+		Config:     json.RawMessage(`{}`),
+		Source: &GenerateSource{
+			Kind: GenerateSourceCalendarEvent,
+			CalendarEvent: &CalendarEventSource{
+				Title:           "Planning",
+				StartsAt:        "2026-09-17T09:00:00Z",
+				EndsAt:          "2026-09-17T09:30:00Z",
+				Description:     "Sprint planning",
+				Location:        "Room 2",
+				ConferencingURL: "https://meet.example.com/abc",
+				Attendees: []CalendarEventAttendee{
+					{Name: "Jane Example", Email: "jane@example.com", Response: "accepted"},
+				},
+			},
+		},
+	}
+	gotSrc, err := json.Marshal(withSource)
+	if err != nil {
+		t.Fatalf("marshal with source: %v", err)
+	}
+	var roundTripped GenerateRequest
+	if err := json.Unmarshal(gotSrc, &roundTripped); err != nil {
+		t.Fatalf("unmarshal with source: %v", err)
+	}
+	if roundTripped.Source == nil || roundTripped.Source.Kind != GenerateSourceCalendarEvent {
+		t.Fatalf("source did not round trip: %+v", roundTripped.Source)
+	}
+	if roundTripped.Source.CalendarEvent == nil || roundTripped.Source.CalendarEvent.Title != "Planning" {
+		t.Fatalf("calendar_event did not round trip: %+v", roundTripped.Source.CalendarEvent)
+	}
+	if len(roundTripped.Source.CalendarEvent.Attendees) != 1 || roundTripped.Source.CalendarEvent.Attendees[0].Email != "jane@example.com" {
+		t.Fatalf("attendees did not round trip: %+v", roundTripped.Source.CalendarEvent.Attendees)
+	}
+	// Legacy fields stay empty/omitted on a pre request -- calendar data is
+	// never hidden in transcript/notes_markdown.
+	if len(withSource.Transcript) != 0 || withSource.NotesMarkdown != "" {
+		t.Fatalf("pre request must carry empty transcript/notes_markdown, got %+v", withSource)
+	}
+}
+
+func TestValidateGenerateSource(t *testing.T) {
+	if err := validateGenerateSource(nil); err != nil {
+		t.Fatalf("nil source should be valid: %v", err)
+	}
+	if err := validateGenerateSource(&GenerateSource{Kind: "unknown"}); err == nil {
+		t.Fatal("expected an unknown source kind to be rejected")
+	}
+	if err := validateGenerateSource(&GenerateSource{Kind: GenerateSourceCalendarEvent}); err == nil {
+		t.Fatal("expected a calendar_event source with a nil CalendarEvent to be rejected")
+	}
+	if err := validateGenerateSource(&GenerateSource{
+		Kind:          GenerateSourceCalendarEvent,
+		CalendarEvent: &CalendarEventSource{Title: "Planning"},
+	}); err != nil {
+		t.Fatalf("valid calendar_event source rejected: %v", err)
+	}
+}

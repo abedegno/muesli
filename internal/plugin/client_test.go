@@ -140,6 +140,58 @@ func TestGenerateSendsOptionalAgentOverridesWhenSet(t *testing.T) {
 	}
 }
 
+// TestGenerateOmitsSourceWhenUnset proves the optional Source field is absent
+// from the wire body when unset (every pre-existing after-summary/chat
+// caller), and present with its typed calendar_event payload when set (a
+// pre-meeting-brief request).
+func TestGenerateOmitsSourceWhenUnset(t *testing.T) {
+	var raw map[string]json.RawMessage
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&raw)
+		_ = json.NewEncoder(w).Encode(plugin.GenerateResponse{Model: "stub"})
+	}))
+	defer srv.Close()
+	c := plugin.New(srv.URL, "tok")
+
+	if _, err := c.Generate(context.Background(), plugin.GenerateRequest{
+		Template: plugin.TemplatePayload{Sections: []model.TemplateSection{{Heading: "Overview", Instruction: "Summarise."}}},
+		Config:   json.RawMessage(`{}`),
+	}); err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	if _, ok := raw["source"]; ok {
+		t.Fatalf("unset source should be absent from wire body, got %v", raw)
+	}
+
+	if _, err := c.Generate(context.Background(), plugin.GenerateRequest{
+		Template: plugin.TemplatePayload{Sections: []model.TemplateSection{{Heading: "Overview", Instruction: "Summarise."}}},
+		Config:   json.RawMessage(`{}`),
+		Source: &plugin.GenerateSource{
+			Kind: plugin.GenerateSourceCalendarEvent,
+			CalendarEvent: &plugin.CalendarEventSource{
+				Title:    "Planning",
+				StartsAt: "2026-09-17T09:00:00Z",
+				EndsAt:   "2026-09-17T09:30:00Z",
+				Attendees: []plugin.CalendarEventAttendee{
+					{Name: "Jane", Email: "jane@example.com", Response: "accepted"},
+				},
+			},
+		},
+	}); err != nil {
+		t.Fatalf("generate with source: %v", err)
+	}
+	var gotSource plugin.GenerateSource
+	if err := json.Unmarshal(raw["source"], &gotSource); err != nil {
+		t.Fatalf("unmarshal source: %v", err)
+	}
+	if gotSource.Kind != plugin.GenerateSourceCalendarEvent || gotSource.CalendarEvent == nil || gotSource.CalendarEvent.Title != "Planning" {
+		t.Fatalf("source did not round trip: %+v", gotSource)
+	}
+	if len(gotSource.CalendarEvent.Attendees) != 1 || gotSource.CalendarEvent.Attendees[0].Email != "jane@example.com" {
+		t.Fatalf("attendees did not round trip: %+v", gotSource.CalendarEvent.Attendees)
+	}
+}
+
 func TestGenerateNilTranscriptSerializesAsEmptyArray(t *testing.T) {
 	// A nil Go slice marshals to JSON null, which the agent's Pydantic schema
 	// rejects with 422. The client must coerce it to an empty array so the agent

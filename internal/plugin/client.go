@@ -72,6 +72,40 @@ type TemplatePayload struct {
 	Sections []model.TemplateSection `json:"sections"`
 }
 
+// GenerateSourceKind identifies the shape of an optional GenerateRequest.Source.
+// Mirrors pluginkit.GenerateSourceKind.
+type GenerateSourceKind string
+
+// GenerateSourceCalendarEvent is the only source kind this slice (issue #763,
+// pre-meeting briefs) defines.
+const GenerateSourceCalendarEvent GenerateSourceKind = "calendar_event"
+
+// GenerateSource is an optional typed context attached to a /generate
+// request. Mirrors pluginkit.GenerateSource -- see its doc comment.
+type GenerateSource struct {
+	Kind          GenerateSourceKind   `json:"kind"`
+	CalendarEvent *CalendarEventSource `json:"calendar_event,omitempty"`
+}
+
+// CalendarEventSource is the normalized calendar-event generation source.
+// Mirrors pluginkit.CalendarEventSource.
+type CalendarEventSource struct {
+	Title           string                  `json:"title"`
+	StartsAt        string                  `json:"starts_at"`
+	EndsAt          string                  `json:"ends_at"`
+	Description     string                  `json:"description,omitempty"`
+	Location        string                  `json:"location,omitempty"`
+	ConferencingURL string                  `json:"conferencing_url,omitempty"`
+	Attendees       []CalendarEventAttendee `json:"attendees,omitempty"`
+}
+
+// CalendarEventAttendee is one attendee within a CalendarEventSource.
+type CalendarEventAttendee struct {
+	Name     string `json:"name,omitempty"`
+	Email    string `json:"email,omitempty"`
+	Response string `json:"response,omitempty"`
+}
+
 // GenerateRequest is the POST /generate body.
 //
 // SystemPrompt, Model, and Temperature are optional per-template agent
@@ -79,6 +113,9 @@ type TemplatePayload struct {
 // They are absent/zero when the resolved template has no override set,
 // preserving prior behaviour (the agent falls back to its own default system
 // prompt / plugin Config values).
+//
+// Source is optional and nil for every pre-existing caller (after-summary,
+// chat) -- see GenerateSource.
 type GenerateRequest struct {
 	Transcript    []model.Segment `json:"transcript"`
 	NotesMarkdown string          `json:"notes_markdown"`
@@ -88,6 +125,7 @@ type GenerateRequest struct {
 	SystemPrompt  string          `json:"system_prompt,omitempty"`
 	Model         string          `json:"model,omitempty"`
 	Temperature   *float64        `json:"temperature,omitempty"`
+	Source        *GenerateSource `json:"source,omitempty"`
 }
 
 // SummaryPayload is the produced summary in a /generate reply.
