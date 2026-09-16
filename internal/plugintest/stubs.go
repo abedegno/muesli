@@ -140,6 +140,7 @@ func NewAgent() *Stub {
 		_ = json.NewEncoder(w).Encode(plugin.Info{Name: "stub-agent", Version: "0", PluginAPI: 1, Kind: "agent"})
 	})
 	mux.HandleFunc("/generate", func(w http.ResponseWriter, r *http.Request) {
+		s.recordBody(r)
 		if s.shouldFail() {
 			http.Error(w, "injected failure", http.StatusInternalServerError)
 			return
@@ -148,7 +149,7 @@ func NewAgent() *Stub {
 		// null. Decode into a raw map first so we can reject "transcript": null
 		// with 422 the way the Pydantic-backed agent does.
 		var raw map[string]json.RawMessage
-		if err := json.NewDecoder(r.Body).Decode(&raw); err != nil {
+		if err := json.Unmarshal(s.LastBody(), &raw); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
 			return
 		}

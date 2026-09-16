@@ -98,9 +98,12 @@ func (f *preJobFixture) createTemplate(t *testing.T, phase string, autoRun bool)
 	return tmpl
 }
 
-// seedReadyPair reconciles a brand-new eligible pair and claims its job,
-// returning the event, template, brief id, and claimed job.
-func (f *preJobFixture) seedReadyPair(t *testing.T, startsIn time.Duration) (model.CalendarEvent, model.Template, string, model.Job) {
+// seedPendingPair reconciles a brand-new eligible pair WITHOUT claiming its
+// job, returning the event, template, and brief id, so callers that need to
+// control their own claim/release cycle (e.g. driving a job through several
+// attempts) do not have to fight an already-leased job left over from a
+// claim they never settled.
+func (f *preJobFixture) seedPendingPair(t *testing.T, startsIn time.Duration) (model.CalendarEvent, model.Template, string) {
 	t.Helper()
 	ctx := context.Background()
 	ev := f.seedEvent(t, "e1", startsIn)
@@ -113,11 +116,20 @@ func (f *preJobFixture) seedReadyPair(t *testing.T, startsIn time.Duration) (mod
 	if err != nil || len(briefs[ev.ID]) != 1 {
 		t.Fatalf("event briefs: %+v %v", briefs, err)
 	}
+	return ev, tmpl, briefs[ev.ID][0].ID
+}
+
+// seedReadyPair reconciles a brand-new eligible pair and claims its job,
+// returning the event, template, brief id, and claimed job.
+func (f *preJobFixture) seedReadyPair(t *testing.T, startsIn time.Duration) (model.CalendarEvent, model.Template, string, model.Job) {
+	t.Helper()
+	ctx := context.Background()
+	ev, tmpl, briefID := f.seedPendingPair(t, startsIn)
 	job, ok, err := f.st.ClaimJob(ctx, time.Minute)
 	if err != nil || !ok {
 		t.Fatalf("claim job: ok=%v err=%v", ok, err)
 	}
-	return ev, tmpl, briefs[ev.ID][0].ID, job
+	return ev, tmpl, briefID, job
 }
 
 // TestRunPreGenerateSuccessPublishesTypedSourceAndEmptyLegacyFields proves a
@@ -397,8 +409,11 @@ func TestRunPreGenerateRetryableFailureLeavesBriefPending(t *testing.T) {
 func TestRunPreGenerateExhaustedRetriesMarksBriefFailed(t *testing.T) {
 	f := newPreJobFixture(t)
 	f.setDefaultAgent(t)
-	ev, _, briefID, job := f.seedReadyPair(t, 2*time.Hour)
-	_ = job // seedReadyPair already claimed one job; re-claim it fresh below.
+	// seedPendingPair, not seedReadyPair: this test drives its own claim/fail
+	// loop across store.MaxJobAttempts, so the job must start unclaimed --
+	// otherwise the first claim below finds nothing (the job would still be
+	// leased from an earlier claim nobody ever settled).
+	ev, _, briefID := f.seedPendingPair(t, 2*time.Hour)
 
 	ctx := context.Background()
 	for attempt := 1; attempt <= 3; attempt++ {
@@ -408,6 +423,13 @@ func TestRunPreGenerateExhaustedRetriesMarksBriefFailed(t *testing.T) {
 			t.Fatalf("attempt %d: claim: ok=%v err=%v", attempt, ok, err)
 		}
 		f.proc.Process(ctx, claimed)
+		// A retryable failure sets a real backoff lease (see
+		// store.RetryBackoff); clear it so the next attempt's ClaimJob can
+		// reclaim immediately instead of waiting out the backoff, matching the
+		// convention in pipeline_test.go's exhausted-retries tests.
+		if _, err := f.st.Pool().Exec(ctx, "UPDATE jobs SET lease_expires_at = NULL WHERE id=$1", claimed.ID); err != nil {
+			t.Fatalf("attempt %d: clear retry lease: %v", attempt, err)
+		}
 	}
 
 	briefs, err := f.st.EventBriefsForEvents(ctx, f.owner, []string{ev.ID})

@@ -90,10 +90,11 @@ func (s *Store) EventBriefsForEvents(ctx context.Context, ownerID string, eventI
 // UpcomingEventsForSourceBatch returns up to limit events for (ownerID,
 // sourceID) that start strictly after now and no later than now+7d (the same
 // eligibility window as Coming Up), in a fixed UUID-keyset page ordered by
-// id, strictly after afterID (pass "" for the first page). Backs bounded
+// id, strictly after afterID (pass nil for the first page -- an empty string
+// is NOT a valid uuid and must never be bound as one). Backs bounded
 // reconciliation batches (see internal/worker/prebriefs.go) -- callers page
 // until a short page signals the end.
-func (s *Store) UpcomingEventsForSourceBatch(ctx context.Context, ownerID, sourceID string, now time.Time, afterID string, limit int) ([]model.CalendarEvent, error) {
+func (s *Store) UpcomingEventsForSourceBatch(ctx context.Context, ownerID, sourceID string, now time.Time, afterID *string, limit int) ([]model.CalendarEvent, error) {
 	if limit <= 0 {
 		limit = 100
 	}
@@ -104,7 +105,7 @@ func (s *Store) UpcomingEventsForSourceBatch(ctx context.Context, ownerID, sourc
 		 FROM calendar_events
 		 WHERE owner_id = $1 AND source_id = $2
 		   AND starts_at > $3 AND starts_at <= $4
-		   AND id > $5
+		   AND ($5::uuid IS NULL OR id > $5::uuid)
 		 ORDER BY id
 		 LIMIT $6`,
 		ownerID, sourceID, now, horizon, afterID, limit)
@@ -420,6 +421,16 @@ func (s *Store) CleanupIneligibleEventBriefIfCurrent(ctx context.Context, briefI
 	return true, tx.Commit(ctx)
 }
 
+// RetryPreBriefClock is the (exported, overridable) clock RetryPreBriefJob
+// uses for its "has the event started" eligibility check. Production leaves
+// it as time.Now; cross-package tests (e.g. internal/api's admin retry
+// tests) override it to a fixed instant for determinism -- see
+// scripts/check-test-determinism.sh, which bans literal time.Now() in
+// non-e2e test files, and internal/worker's analogous preJobClock/
+// calendarSyncClock seams (this one is exported because it must be settable
+// from outside the store package).
+var RetryPreBriefClock = time.Now
+
 // RetryPreBriefJob re-enqueues a fresh pre_generate job for jobID's own
 // (brief, generation), starting from the job id alone: one transaction loads
 // the job, joins its calendar event to derive the authoritative owner_id,
@@ -457,7 +468,7 @@ func (s *Store) RetryPreBriefJob(ctx context.Context, jobID string) (string, err
 	}
 	ownerID := event.OwnerID
 
-	if !event.StartsAt.After(time.Now()) {
+	if !event.StartsAt.After(RetryPreBriefClock()) {
 		return "", ErrIneligible
 	}
 

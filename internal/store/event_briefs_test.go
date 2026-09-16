@@ -15,6 +15,7 @@ import (
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/store"
 	"github.com/abedegno/muesli/internal/testutil"
+	"github.com/google/uuid"
 )
 
 // briefTestFixture is a store + owner + calendar source, with events seeded
@@ -167,7 +168,11 @@ func TestReconcileEventBriefPairAdvancesGenerationOnHashChange(t *testing.T) {
 		t.Fatalf("expected generation 2 pending: %+v", briefs[eventID][0])
 	}
 
-	jobs, err := f.st.ListJobsByNoteID(ctx, "") // sanity: note-scoped listing must never see event jobs
+	// Sanity: note-scoped listing must never see event jobs. note_id is a
+	// uuid column, so a syntactically valid (but never-enqueued) id -- not
+	// "" -- is what a real caller would pass; the pre-generate job above has
+	// a null note_id, so it can never match this filter regardless.
+	jobs, err := f.st.ListJobsByNoteID(ctx, uuid.NewString())
 	if err != nil {
 		t.Fatalf("list note jobs: %v", err)
 	}
@@ -290,7 +295,7 @@ func TestUpcomingEventsForSourceBatchWindowAndPaging(t *testing.T) {
 	tooFarID := f.seedEvent(t, "too-far", 8*24*time.Hour)       // beyond 7d -- not eligible
 	boundaryID := f.seedEvent(t, "at-boundary", 7*24*time.Hour) // exactly at the boundary -- eligible (<=)
 
-	got, err := f.st.UpcomingEventsForSourceBatch(ctx, f.owner, f.source, f.now, "", 100)
+	got, err := f.st.UpcomingEventsForSourceBatch(ctx, f.owner, f.source, f.now, nil, 100)
 	if err != nil {
 		t.Fatalf("upcoming events: %v", err)
 	}
@@ -308,7 +313,7 @@ func TestUpcomingEventsForSourceBatchWindowAndPaging(t *testing.T) {
 	// A second owner's source never leaks in (owner/source scoping).
 	other := newBriefTestFixture(t)
 	other.seedEvent(t, "other-owner-event", time.Hour)
-	otherGot, err := f.st.UpcomingEventsForSourceBatch(ctx, other.owner, other.source, other.now, "", 100)
+	otherGot, err := f.st.UpcomingEventsForSourceBatch(ctx, other.owner, other.source, other.now, nil, 100)
 	if err != nil {
 		t.Fatalf("other owner upcoming events: %v", err)
 	}
@@ -321,7 +326,7 @@ func TestUpcomingEventsForSourceBatchWindowAndPaging(t *testing.T) {
 	// Paging: limit=1 must eventually enumerate every eligible event across
 	// pages, strictly after the previous page's last id, without duplicates.
 	seen := map[string]bool{}
-	afterID := ""
+	var afterID *string
 	for i := 0; i < 10; i++ {
 		page, err := f.st.UpcomingEventsForSourceBatch(ctx, f.owner, f.source, f.now, afterID, 1)
 		if err != nil {
@@ -336,7 +341,8 @@ func TestUpcomingEventsForSourceBatchWindowAndPaging(t *testing.T) {
 			}
 			seen[ev.ID] = true
 		}
-		afterID = page[len(page)-1].ID
+		lastID := page[len(page)-1].ID
+		afterID = &lastID
 	}
 	if !seen[inWindowID] || !seen[boundaryID] {
 		t.Fatalf("paging did not enumerate every eligible event: %+v", seen)

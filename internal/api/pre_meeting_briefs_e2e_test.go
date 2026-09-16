@@ -96,7 +96,7 @@ func TestPreMeetingBriefEndToEnd(t *testing.T) {
 
 	// Before execution: Coming Up must show the brief as pending, with no
 	// sections exposed yet.
-	beforeItems := getCalendarEvents(t, srv, hdr)
+	beforeItems := getCalendarEvents(t, srv, hdr, now)
 	before := findCalendarEvent(t, beforeItems, eventID)
 	if len(before.Briefs) != 1 || before.Briefs[0]["status"] != model.BriefPending {
 		t.Fatalf("expected one pending brief before execution: %+v", before.Briefs)
@@ -118,7 +118,7 @@ func TestPreMeetingBriefEndToEnd(t *testing.T) {
 	// After execution: the brief is ready with real generated sections, on
 	// the ordinary Coming Up fetch -- no standalone brief endpoint, no
 	// polling, just the next GET.
-	afterItems := getCalendarEvents(t, srv, hdr)
+	afterItems := getCalendarEvents(t, srv, hdr, now)
 	after := findCalendarEvent(t, afterItems, eventID)
 	if len(after.Briefs) != 1 {
 		t.Fatalf("expected exactly one brief after execution: %+v", after.Briefs)

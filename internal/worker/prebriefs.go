@@ -42,7 +42,7 @@ func ReconcilePreBriefs(ctx context.Context, st *store.Store, cr *crypto.Crypto,
 	// the next reconciliation pass.
 	agentID, hasAgent := resolveDefaultAgentIdentity(ctx, st, cr)
 
-	afterID := ""
+	var afterID *string
 	for {
 		events, err := st.UpcomingEventsForSourceBatch(ctx, ownerID, sourceID, now, afterID, preBriefBatchSize)
 		if err != nil {
@@ -82,7 +82,8 @@ func ReconcilePreBriefs(ctx context.Context, st *store.Store, cr *crypto.Crypto,
 		if len(events) < preBriefBatchSize {
 			return nil
 		}
-		afterID = events[len(events)-1].ID
+		lastID := events[len(events)-1].ID
+		afterID = &lastID
 	}
 }
 

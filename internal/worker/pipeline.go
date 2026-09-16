@@ -736,7 +736,11 @@ func (p *Processor) runSummarize(ctx context.Context, job model.Job) (bool, erro
 
 	plug, err := p.resolveDefaultAgent(ctx)
 	if err != nil {
-		return errors.Is(err, ErrPluginNotConfigured), err
+		// Preserves the pre-refactor classification: "no default agent
+		// configured" is terminal (not retryable) -- retrying cannot fix a
+		// missing plugin -- while any other resolution error (e.g. a
+		// transient DB failure) is retryable.
+		return !errors.Is(err, ErrPluginNotConfigured), err
 	}
 
 	// Substitute note-scoped speaker aliases (raw label -> user-chosen name)

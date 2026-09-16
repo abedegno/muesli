@@ -19,12 +19,26 @@ import (
 // wall clock in this file (see scripts/check-test-determinism.sh).
 var adminPreJobTestBase = testutil.NewFakeClock(time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)).Now()
 
+// store.RetryPreBriefJob's "has the event started" check is real production
+// code and genuinely reads the wall clock (there is no per-call clock
+// argument in its accepted interface -- see the plan's "RetryPreBriefJob(jobID)"
+// ruling). A literal fixed instant would silently go stale as real time
+// passes it, so this file pins that one seam to the same fixed base every
+// event/job in this file is seeded relative to. This runs once at package
+// init, before any t.Parallel() test starts, so it is not a data race with
+// this file's own parallel subtests; no other file in this package exercises
+// RetryPreBriefJob's real-time path.
+func init() {
+	store.RetryPreBriefClock = func() time.Time { return adminPreJobTestBase }
+}
+
 // adminPreJobFixture seeds a store, an owner, a calendar source/event, a
 // pre/auto-run template, and one claimed-then-failed pre_generate job ready
 // for retry via the admin HTTP API.
 type adminPreJobFixture struct {
 	st      *store.Store
 	srv     *api.Server
+	hdr     map[string]string
 	owner   string
 	eventID string
 	tmplID  string
@@ -41,6 +55,7 @@ func newAdminPreJobFixture(t *testing.T, startsIn time.Duration) adminPreJobFixt
 		t.Fatal(err)
 	}
 	srv := api.NewServer(api.Deps{Store: st, Crypto: cr})
+	hdr := setupLoginHdr(t, srv, "admin-pre-login@example.com")
 
 	u, err := st.CreateUser(ctx, "admin-pre-owner@example.com", "h")
 	if err != nil {
@@ -86,14 +101,14 @@ func newAdminPreJobFixture(t *testing.T, startsIn time.Duration) adminPreJobFixt
 		t.Fatalf("fail job: %v", err)
 	}
 
-	return adminPreJobFixture{st: st, srv: srv, owner: u.ID, eventID: eventID, tmplID: tmpl.ID, briefID: briefID, jobID: job.ID}
+	return adminPreJobFixture{st: st, srv: srv, hdr: hdr, owner: u.ID, eventID: eventID, tmplID: tmpl.ID, briefID: briefID, jobID: job.ID}
 }
 
 func TestAdminRetryPreGenerateJobEligibleReEnqueues(t *testing.T) {
 	t.Parallel()
 	f := newAdminPreJobFixture(t, 2*time.Hour)
 
-	rec := doJSON(t, f.srv, http.MethodPost, "/api/admin/jobs/"+f.jobID+"/retry", nil, nil)
+	rec := doJSON(t, f.srv, http.MethodPost, "/api/admin/jobs/"+f.jobID+"/retry", nil, f.hdr)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("retry status = %d, body %s", rec.Code, rec.Body)
 	}
@@ -122,7 +137,7 @@ func TestAdminRetryPreGenerateJobMissingReturns404(t *testing.T) {
 	f := newAdminPreJobFixture(t, 2*time.Hour)
 	_ = f
 
-	rec := doJSON(t, f.srv, http.MethodPost, "/api/admin/jobs/00000000-0000-0000-0000-000000000000/retry", nil, nil)
+	rec := doJSON(t, f.srv, http.MethodPost, "/api/admin/jobs/00000000-0000-0000-0000-000000000000/retry", nil, f.hdr)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("retry status = %d, want 404, body %s", rec.Code, rec.Body)
 	}
@@ -134,7 +149,7 @@ func TestAdminRetryPreGenerateJobStartedEventReturns409(t *testing.T) {
 	// ineligible by the time retry runs.
 	f := newAdminPreJobFixture(t, -time.Hour)
 
-	rec := doJSON(t, f.srv, http.MethodPost, "/api/admin/jobs/"+f.jobID+"/retry", nil, nil)
+	rec := doJSON(t, f.srv, http.MethodPost, "/api/admin/jobs/"+f.jobID+"/retry", nil, f.hdr)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("retry status = %d, want 409, body %s", rec.Code, rec.Body)
 	}
@@ -148,7 +163,7 @@ func TestAdminRetryPreGenerateJobDeletedTemplateReturns404(t *testing.T) {
 		t.Fatalf("delete template: %v", err)
 	}
 
-	rec := doJSON(t, f.srv, http.MethodPost, "/api/admin/jobs/"+f.jobID+"/retry", nil, nil)
+	rec := doJSON(t, f.srv, http.MethodPost, "/api/admin/jobs/"+f.jobID+"/retry", nil, f.hdr)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("retry status = %d, want 404, body %s", rec.Code, rec.Body)
 	}
@@ -169,6 +184,7 @@ func TestAdminRetryPreGenerateJobTwoOwnersNoCrossOwnerJoin(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := api.NewServer(api.Deps{Store: st, Crypto: cr})
+	hdr := setupLoginHdr(t, srv, "admin-two-owner-login@example.com")
 
 	ownerA, err := st.CreateUser(ctx, "owner-a@example.com", "h")
 	if err != nil {
@@ -219,7 +235,7 @@ func TestAdminRetryPreGenerateJobTwoOwnersNoCrossOwnerJoin(t *testing.T) {
 		t.Fatal("test setup bug: templates must have distinct ids")
 	}
 
-	rec := doJSON(t, srv, http.MethodPost, "/api/admin/jobs/"+jobA+"/retry", nil, nil)
+	rec := doJSON(t, srv, http.MethodPost, "/api/admin/jobs/"+jobA+"/retry", nil, hdr)
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("retry status = %d, body %s", rec.Code, rec.Body)
 	}

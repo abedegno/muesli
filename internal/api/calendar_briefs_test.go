@@ -39,8 +39,12 @@ func seedBriefEventForOwner(t *testing.T, st *store.Store, ownerID string, start
 		t.Fatalf("create source: %v", err)
 	}
 	starts := calendarBriefsTestBase.Add(startsIn)
+	// A short (15m) duration keeps consecutive events seeded 1h apart (this
+	// file's convention: 3h, 4h, 5h, 6h offsets) from overlapping in the
+	// narrow +/-1min lookup window just below -- a 1h duration would make
+	// event N's end touch event N+1's start exactly, so both would appear.
 	if err := st.UpsertEvents(ctx, ownerID, src.ID, []calendar.NormalizedEvent{
-		{ExternalID: "ext-1", Title: "Planning", StartsAt: starts, EndsAt: starts.Add(time.Hour)},
+		{ExternalID: "ext-1", Title: "Planning", StartsAt: starts, EndsAt: starts.Add(15 * time.Minute)},
 	}); err != nil {
 		t.Fatalf("upsert event: %v", err)
 	}
@@ -51,10 +55,15 @@ func seedBriefEventForOwner(t *testing.T, st *store.Store, ownerID string, start
 	return evs[0].ID
 }
 
-func getCalendarEvents(t *testing.T, srv *api.Server, hdr map[string]string) []calendarEventsResponseItem {
+// getCalendarEvents fetches Coming Up's calendar-events response for a
+// window anchored at "at" (this file's fixed-clock tests pass
+// calendarBriefsTestBase; a caller seeding against the real wall clock, e.g.
+// the end-to-end test, passes its own "now"). The window itself -- 1h in the
+// past through 8 days out -- mirrors Coming Up's real query range.
+func getCalendarEvents(t *testing.T, srv *api.Server, hdr map[string]string, at time.Time) []calendarEventsResponseItem {
 	t.Helper()
-	from := calendarBriefsTestBase.Add(-time.Hour).Format(time.RFC3339)
-	to := calendarBriefsTestBase.Add(8 * 24 * time.Hour).Format(time.RFC3339)
+	from := at.Add(-time.Hour).Format(time.RFC3339)
+	to := at.Add(8 * 24 * time.Hour).Format(time.RFC3339)
 	path := "/api/calendar/events?from=" + url.QueryEscape(from) + "&to=" + url.QueryEscape(to)
 	rec := doJSON(t, srv, http.MethodGet, path, nil, hdr)
 	if rec.Code != http.StatusOK {
@@ -145,7 +154,7 @@ func TestCalendarEventsBriefsAlwaysArrayAndKeyAllowlist(t *testing.T) {
 		t.Fatalf("fail: %v", err)
 	}
 
-	items := getCalendarEvents(t, srv, hdr)
+	items := getCalendarEvents(t, srv, hdr, calendarBriefsTestBase)
 
 	empty := findCalendarEvent(t, items, emptyEventID)
 	if empty.Briefs == nil || len(empty.Briefs) != 0 {
@@ -250,7 +259,7 @@ func TestCalendarEventsBriefsOwnerIsolation(t *testing.T) {
 		t.Fatalf("reconcile B: %v", err)
 	}
 
-	itemsA := getCalendarEvents(t, srv, ownerAHdr)
+	itemsA := getCalendarEvents(t, srv, ownerAHdr, calendarBriefsTestBase)
 	for _, it := range itemsA {
 		if it.ID == eventB {
 			t.Fatalf("owner A's response leaked owner B's event: %+v", it)
@@ -261,7 +270,7 @@ func TestCalendarEventsBriefsOwnerIsolation(t *testing.T) {
 		t.Fatalf("owner A did not see its own brief: %+v", gotA.Briefs)
 	}
 
-	itemsB := getCalendarEvents(t, srv, ownerBHdr)
+	itemsB := getCalendarEvents(t, srv, ownerBHdr, calendarBriefsTestBase)
 	for _, it := range itemsB {
 		if it.ID == eventA {
 			t.Fatalf("owner B's response leaked owner A's event: %+v", it)
@@ -296,7 +305,7 @@ func TestCalendarEventsBriefsRemovedTemplateAndPrunedEvent(t *testing.T) {
 		t.Fatalf("reconcile: %v", err)
 	}
 
-	items := getCalendarEvents(t, srv, hdr)
+	items := getCalendarEvents(t, srv, hdr, calendarBriefsTestBase)
 	before := findCalendarEvent(t, items, eventID)
 	if len(before.Briefs) != 1 {
 		t.Fatalf("expected one brief before deletion, got %+v", before.Briefs)
@@ -305,7 +314,7 @@ func TestCalendarEventsBriefsRemovedTemplateAndPrunedEvent(t *testing.T) {
 	if err := st.DeleteTemplate(ctx, owner.ID, tmpl.ID); err != nil {
 		t.Fatalf("delete template: %v", err)
 	}
-	items = getCalendarEvents(t, srv, hdr)
+	items = getCalendarEvents(t, srv, hdr, calendarBriefsTestBase)
 	afterTemplateDelete := findCalendarEvent(t, items, eventID)
 	if len(afterTemplateDelete.Briefs) != 0 {
 		t.Fatalf("expected no briefs once the template is deleted, got %+v", afterTemplateDelete.Briefs)
@@ -321,7 +330,7 @@ func TestCalendarEventsBriefsRemovedTemplateAndPrunedEvent(t *testing.T) {
 	if err := st.PruneEvents(ctx, src[0].ID, nil); err != nil {
 		t.Fatalf("prune events: %v", err)
 	}
-	items = getCalendarEvents(t, srv, hdr)
+	items = getCalendarEvents(t, srv, hdr, calendarBriefsTestBase)
 	for _, it := range items {
 		if it.ID == eventID {
 			t.Fatalf("expected the pruned event absent from the response: %+v", it)
