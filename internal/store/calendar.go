@@ -305,6 +305,7 @@ func (s *Store) ListEvents(ctx context.Context, ownerID string, from, to time.Ti
 	}
 	defer rows.Close()
 	out := []model.CalendarEvent{}
+	eventIDs := []string{}
 	for rows.Next() {
 		var ev model.CalendarEvent
 		var attendeesRaw string
@@ -316,7 +317,26 @@ func (s *Store) ListEvents(ctx context.Context, ownerID string, from, to time.Ti
 		if err != nil {
 			return nil, err
 		}
+		ev.Briefs = []model.EventBrief{}
 		out = append(out, ev)
+		eventIDs = append(eventIDs, ev.ID)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// One extra query for every event's briefs (never N+1 -- see
+	// EventBriefsForEvents), scoped by the SAME owner predicate as the events
+	// query above so a brief can never surface for an event this owner cannot
+	// already see.
+	briefsByEvent, err := s.EventBriefsForEvents(ctx, ownerID, eventIDs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if briefs, ok := briefsByEvent[out[i].ID]; ok {
+			out[i].Briefs = briefs
+		}
+	}
+	return out, nil
 }
