@@ -169,15 +169,41 @@ Returns HTTP `200`. The response body is ignored.
 }
 ```
 
-| Field                             | Type   | Notes                                                                                                                    |
-| --------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------ |
-| `transcript`                      | array  | Array of segment objects — same shape as the `/transcribe` response segments. Will be `[]` if no segments were produced. |
-| `notes_markdown`                  | string | Free-text context the user added to the note. Always present; may be an empty string if the user added no notes.         |
-| `template.sections`               | array  | Ordered list of sections to produce.                                                                                     |
-| `template.sections[].heading`     | string | Section heading to use in the output.                                                                                    |
-| `template.sections[].instruction` | string | Instruction the model should follow when generating this section.                                                        |
-| `options`                         | object | Optional free-form per-request overrides.                                                                                |
-| `config`                          | object | The plugin's stored config, decrypted at call time. May be `{}`.                                                         |
+| Field                             | Type   | Notes                                                                                                                                                                                                                                                                                                                                                                            |
+| --------------------------------- | ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `transcript`                      | array  | Array of segment objects — same shape as the `/transcribe` response segments. Will be `[]` if no segments were produced.                                                                                                                                                                                                                                                         |
+| `notes_markdown`                  | string | Free-text context the user added to the note. Always present; may be an empty string if the user added no notes.                                                                                                                                                                                                                                                                 |
+| `template.sections`               | array  | Ordered list of sections to produce.                                                                                                                                                                                                                                                                                                                                             |
+| `template.sections[].heading`     | string | Section heading to use in the output.                                                                                                                                                                                                                                                                                                                                            |
+| `template.sections[].instruction` | string | Instruction the model should follow when generating this section.                                                                                                                                                                                                                                                                                                                |
+| `options`                         | object | Optional free-form per-request overrides.                                                                                                                                                                                                                                                                                                                                        |
+| `config`                          | object | The plugin's stored config, decrypted at call time. May be `{}`.                                                                                                                                                                                                                                                                                                                 |
+| `source`                          | object | Optional (issue #763, additive). Absent/`null` for every transcript-driven request (after-summary, chat) -- omitting it is fully backward compatible with every existing agent. Present only for a pre-meeting-brief request, which always carries an empty `transcript` (`[]`) and `notes_markdown` (`""`); calendar context is never hidden in those legacy fields. See below. |
+
+**`source` (optional, only for pre-meeting briefs):**
+
+```json
+{
+  "kind": "calendar_event",
+  "calendar_event": {
+    "title": "Quarterly planning",
+    "starts_at": "2026-09-17T09:00:00Z",
+    "ends_at": "2026-09-17T09:30:00Z",
+    "description": "Review the roadmap",
+    "location": "Room 2",
+    "conferencing_url": "https://meet.example.com/abc",
+    "attendees": [{ "name": "Jane", "email": "jane@example.com", "response": "accepted" }]
+  }
+}
+```
+
+`kind` is currently always `"calendar_event"` when present; an agent MUST reject an unrecognized
+`kind`, or a `calendar_event` kind missing its `calendar_event` payload, with `400`. All
+`calendar_event` fields except `title`/`starts_at`/`ends_at` may be empty strings / an empty
+`attendees` array. Only stored preparation fields are ever sent here -- never calendar
+credentials, provider identifiers, or source ids. The bundled Ollama agent formats this as a
+labeled "Upcoming meeting" context block and reuses the ordinary per-section generation path; a
+custom agent may do the same or ignore fields it does not use.
 
 **Response body:**
 

@@ -142,6 +142,40 @@ conferencing URL.
       calendar with nothing in the next 7 days), the screen shows a friendly
       empty state ("No upcoming events") — no crash, no error boundary.
 
+## Pre-meeting briefs (issue #763)
+
+Prereq: same calendar source setup as CALUI02, a `pre`-phase template with
+"Auto-run" enabled (Templates settings -> New/Edit template -> Phase: Pre-meeting,
+Auto-run: on), and a default agent plugin configured on the server. Allow up to
+~15 minutes (the background scheduler's sync interval) after creating the
+template/source pairing for the first brief to appear, or trigger a manual
+calendar refresh from Settings -> Calendar.
+
+- [ ] **Brief control appears**: on "Coming up", an upcoming event whose owner
+      has at least one applicable `pre`+auto-run template shows a "Brief"
+      toggle beneath its row; an event with no applicable template shows no
+      such control (unchanged from CALUI02).
+- [ ] **Keyboard operable**: Tab to the "Brief" toggle, confirm it is
+      reachable and shows a visible focus ring, then activate it with
+      Enter/Space — it expands/collapses the panel the same as a click.
+- [ ] **Pending state**: immediately after the template/event pairing becomes
+      eligible (before generation completes), expanding shows a "Generating…"
+      state for that template — no raw error text, no blank panel.
+- [ ] **Ready state**: once generation completes (reload/renavigate to "Coming
+      up" to refetch), expanding shows the template's name as a heading and
+      its generated Markdown sections rendered normally (headings, bullets,
+      paragraphs — same renderer as note summaries).
+- [ ] **Multiple templates**: with two or more applicable `pre`+auto-run
+      templates, expanding shows one panel per template, each individually
+      labeled.
+- [ ] **No note created**: after a brief appears, the note sidebar list is
+      unchanged — no new note, no transcript, no summary was created for the
+      event.
+- [ ] **Auto-run disabled repair**: turn off "Auto-run" (or change the phase
+      away from "Pre-meeting") on the template in Settings -> Templates — the
+      brief disappears from "Coming up" on the next fetch (near-immediate,
+      not waiting for the next sync).
+
 ## CALLNK02 — Note <-> calendar-event link (client)
 
 Prereq: same calendar source setup as CALUI02, plus at least one existing note.
