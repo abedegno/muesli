@@ -274,20 +274,31 @@ func (s *Store) GetTemplate(ctx context.Context, ownerID, id string) (model.Temp
 	return tm, nil
 }
 
-// TemplatesForSummary returns the owner's visible templates that are opted in
-// to auto-run, for summarize fan-out.
-func (s *Store) TemplatesForSummary(ctx context.Context, ownerID string) ([]model.Template, error) {
+// TemplatesForPhase returns the owner's visible templates (built-ins plus
+// their own) whose phase and auto_run match exactly. The transcript-driven
+// after-summary fan-out and the calendar-driven pre-meeting-brief
+// reconciliation (internal/worker/prebriefs.go) both go through this, each
+// with its own phase, so a "pre" template can never accidentally run against
+// a completed transcript and vice versa.
+func (s *Store) TemplatesForPhase(ctx context.Context, ownerID, phase string, autoRun bool) ([]model.Template, error) {
 	templates, err := s.ListTemplates(ctx, ownerID)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]model.Template, 0, len(templates))
 	for _, tmpl := range templates {
-		if tmpl.AutoRun {
+		if tmpl.Phase == phase && tmpl.AutoRun == autoRun {
 			out = append(out, tmpl)
 		}
 	}
 	return out, nil
+}
+
+// TemplatesForSummary returns the owner's visible auto-run "after" templates,
+// for the transcript-driven summarize fan-out. Explicitly phase-scoped (see
+// TemplatesForPhase) so a "pre" auto-run template is never selected here.
+func (s *Store) TemplatesForSummary(ctx context.Context, ownerID string) ([]model.Template, error) {
+	return s.TemplatesForPhase(ctx, ownerID, templatePhaseAfter, true)
 }
 
 func (s *Store) nameTaken(ctx context.Context, ownerID, name, excludeID string) (bool, error) {

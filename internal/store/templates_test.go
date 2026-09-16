@@ -236,3 +236,63 @@ func TestNoteOwnerIDAndTemplatesForSummary(t *testing.T) {
 		t.Errorf("NoteOwnerID missing: want ErrNotFound, got %v", err)
 	}
 }
+
+// TestTemplatesForSummaryExcludesPreTemplates proves the after-summary
+// fan-out is explicitly phase-scoped: an auto-run "pre" template must never
+// be selected for transcript-driven summarization, closing the gap where
+// TemplatesForSummary used to select every auto-run template regardless of
+// phase (issue #763's TemplatesForPhase).
+func TestTemplatesForSummaryExcludesPreTemplates(t *testing.T) {
+	t.Parallel()
+	st, owner, _ := newStoreWithOwner(t)
+	ctx := context.Background()
+
+	after, err := st.CreateTemplate(ctx, owner, "After template", "after", secs(), true, "", "", nil)
+	if err != nil {
+		t.Fatalf("create after template: %v", err)
+	}
+	pre, err := st.CreateTemplate(ctx, owner, "Pre template", "pre", secs(), true, "", "", nil)
+	if err != nil {
+		t.Fatalf("create pre template: %v", err)
+	}
+
+	forSummary, err := st.TemplatesForSummary(ctx, owner)
+	if err != nil {
+		t.Fatalf("TemplatesForSummary: %v", err)
+	}
+	var sawAfter, sawPre bool
+	for _, tmpl := range forSummary {
+		if tmpl.ID == after.ID {
+			sawAfter = true
+		}
+		if tmpl.ID == pre.ID {
+			sawPre = true
+		}
+	}
+	if !sawAfter {
+		t.Fatalf("TemplatesForSummary missing auto-run after template: %+v", forSummary)
+	}
+	if sawPre {
+		t.Fatalf("TemplatesForSummary must exclude pre templates even when auto-run: %+v", forSummary)
+	}
+
+	forPre, err := st.TemplatesForPhase(ctx, owner, "pre", true)
+	if err != nil {
+		t.Fatalf("TemplatesForPhase(pre): %v", err)
+	}
+	var sawPreInPrePhase, sawAfterInPrePhase bool
+	for _, tmpl := range forPre {
+		if tmpl.ID == pre.ID {
+			sawPreInPrePhase = true
+		}
+		if tmpl.ID == after.ID {
+			sawAfterInPrePhase = true
+		}
+	}
+	if !sawPreInPrePhase {
+		t.Fatalf("TemplatesForPhase(pre) missing the pre template: %+v", forPre)
+	}
+	if sawAfterInPrePhase {
+		t.Fatalf("TemplatesForPhase(pre) must exclude after templates: %+v", forPre)
+	}
+}
