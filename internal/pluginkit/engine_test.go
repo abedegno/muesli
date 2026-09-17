@@ -99,6 +99,63 @@ func TestServeTranscriber(t *testing.T) {
 	}
 }
 
+// TestServeAgentRejectsMalformedSource proves a present-but-invalid source
+// (unknown kind, or calendar_event missing its typed payload) is a terminal
+// 400 -- the boundary never falls back to guessing intent from empty legacy
+// fields.
+func TestServeAgentRejectsMalformedSource(t *testing.T) {
+	addr := freeLoopbackAddr(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- ServeAgent(ctx, Config{Name: "plug", Version: "1.0", Token: "secret", Addr: addr}, serveTestAgent{})
+	}()
+	waitForHTTP(t, "http://"+addr+"/health", nil)
+
+	cases := []struct {
+		name   string
+		source map[string]any
+	}{
+		{name: "unknown kind", source: map[string]any{"kind": "live_transcript"}},
+		{name: "calendar_event without payload", source: map[string]any{"kind": "calendar_event"}},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			payload := map[string]any{
+				"transcript":     []map[string]any{},
+				"notes_markdown": "",
+				"template":       map[string]any{"sections": []map[string]any{}},
+				"config":         map[string]any{},
+				"source":         tc.source,
+			}
+			body, _ := json.Marshal(payload)
+			req, _ := http.NewRequest(http.MethodPost, "http://"+addr+"/generate", bytes.NewReader(body))
+			req.Header.Set("Authorization", "Bearer secret")
+			req.Header.Set("Content-Type", "application/json")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("generate: %v", err)
+			}
+			resp.Body.Close()
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("generate status = %d, want 400", resp.StatusCode)
+			}
+		})
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("ServeAgent: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for agent shutdown")
+	}
+}
+
 func TestServeAgent(t *testing.T) {
 	addr := freeLoopbackAddr(t)
 	ctx, cancel := context.WithCancel(context.Background())

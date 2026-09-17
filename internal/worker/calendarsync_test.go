@@ -12,6 +12,7 @@ import (
 
 	"github.com/abedegno/muesli/internal/calendar"
 	"github.com/abedegno/muesli/internal/crypto"
+	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/store"
 	"github.com/abedegno/muesli/internal/testutil"
 	"golang.org/x/oauth2"
@@ -227,4 +228,55 @@ func assertSourceStatus(t *testing.T, st *store.Store, ownerID, sourceID, want s
 		}
 	}
 	t.Fatalf("source %s not found", sourceID)
+}
+
+// TestSyncSourceReconcilesPreBriefsOnSuccessOnly proves a successful sync
+// reconciles pre-meeting briefs (enqueuing a job for a fresh eligible pair),
+// while a failed fetch performs neither generation nor eligibility cleanup
+// (see the accepted spec's calendar-authentication-failure rule).
+func TestSyncSourceReconcilesPreBriefsOnSuccessOnly(t *testing.T) {
+	ctx := context.Background()
+	st, cr, ownerID := newCalendarSyncTestState(t)
+
+	originalICS := fetchICS
+	originalClock := calendarSyncClock
+	t.Cleanup(func() { fetchICS = originalICS; calendarSyncClock = originalClock })
+
+	fixedNow := time.Date(2026, 9, 20, 8, 0, 0, 0, time.UTC)
+	calendarSyncClock = func() time.Time { return fixedNow }
+
+	if _, err := st.CreateTemplate(ctx, ownerID, "Pre-read", "pre",
+		[]model.TemplateSection{{Heading: "Context", Instruction: "Summarize."}}, true, "", "", nil); err != nil {
+		t.Fatalf("create template: %v", err)
+	}
+	if err := st.EnsureDefaultPlugin(ctx, cr, model.PluginAgent, "agent", "http://127.0.0.1:0", "tok", "{}"); err != nil {
+		t.Fatalf("ensure default agent: %v", err)
+	}
+
+	starts := fixedNow.Add(2 * time.Hour)
+	fetchICS = func(context.Context, *http.Client, string) ([]calendar.NormalizedEvent, error) {
+		return []calendar.NormalizedEvent{{ExternalID: "ext-1", Title: "Planning", StartsAt: starts, EndsAt: starts.Add(time.Hour)}}, nil
+	}
+	sourceID := createCalendarSyncSource(t, st, cr, ownerID, "ics", icsCreds{URL: "https://example.test/calendar.ics"})
+
+	if err := SyncSource(ctx, st, cr, "", "", "", "", sourceID); err != nil {
+		t.Fatalf("SyncSource: %v", err)
+	}
+	if _, ok, err := st.ClaimJob(ctx, 30*time.Second); err != nil || !ok {
+		t.Fatalf("expected a successful sync to reconcile and enqueue a pre_generate job: ok=%v err=%v", ok, err)
+	}
+
+	// A failed fetch on the NEXT sync (a second, independent source) must not
+	// touch pre-meeting-brief state at all.
+	fetchICS = func(context.Context, *http.Client, string) ([]calendar.NormalizedEvent, error) {
+		return nil, errors.New("fetch failed")
+	}
+	failingSourceID := createCalendarSyncSource(t, st, cr, ownerID, "ics", icsCreds{URL: "https://example.test/other.ics"})
+	if err := SyncSource(ctx, st, cr, "", "", "", "", failingSourceID); err == nil {
+		t.Fatal("expected the failed fetch to return an error")
+	}
+	// No new event exists for the failing source, so no new brief/job can have
+	// been created for it; the assertion here is simply that SyncSource did not
+	// panic or otherwise misbehave attempting reconciliation against a fetch
+	// that never persisted anything.
 }

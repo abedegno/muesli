@@ -29,6 +29,16 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`badge badge-${status}`}>{status}</span>;
 }
 
+// jobTargetLabel renders a job's target generically: a note job shows its
+// note id, an event (pre_generate) job shows its event id. Exactly one of
+// note_id/calendar_event_id is ever present on a given job (see the Job
+// type), so this never has to guess.
+function jobTargetLabel(job: Job): string {
+  if (job.note_id) return `note ${job.note_id}`;
+  if (job.calendar_event_id) return `event ${job.calendar_event_id}`;
+  return "—";
+}
+
 export function JobsView({ client }: Props) {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [statusFilter, setStatusFilter] = useState("");
@@ -62,15 +72,15 @@ export function JobsView({ client }: Props) {
     const needle = noteIdSearch.trim().toLowerCase();
     return jobs.filter((j) => {
       if (typeFilter && j.type !== typeFilter) return false;
-      if (needle && !j.note_id.toLowerCase().includes(needle)) return false;
+      if (needle && !jobTargetLabel(j).toLowerCase().includes(needle)) return false;
       return true;
     });
   }, [jobs, typeFilter, noteIdSearch]);
 
   const confirmMessages: Record<JobAction, (job: Job) => string> = {
-    retry: (job) => `Retry job ${job.id} (note ${job.note_id})?`,
-    cancel: (job) => `Cancel pending job ${job.id} (note ${job.note_id})?`,
-    "process-next": (job) => `Process job ${job.id} (note ${job.note_id}) next?`,
+    retry: (job) => `Retry job ${job.id} (${jobTargetLabel(job)})?`,
+    cancel: (job) => `Cancel pending job ${job.id} (${jobTargetLabel(job)})?`,
+    "process-next": (job) => `Process job ${job.id} (${jobTargetLabel(job)}) next?`,
   };
 
   const handleAction = useCallback(
@@ -86,7 +96,7 @@ export function JobsView({ client }: Props) {
       });
       try {
         if (action === "retry") {
-          if (job.type === "summarize") {
+          if (job.type === "summarize" && job.note_id) {
             await client.resummarizeNote(job.note_id);
           } else {
             await client.retryJob(job.id);
@@ -142,13 +152,14 @@ export function JobsView({ client }: Props) {
           <option value="transcribe">transcribe</option>
           <option value="summarize">summarize</option>
           <option value="embed">embed</option>
+          <option value="pre_generate">pre_generate</option>
         </select>
         <input
           type="text"
           value={noteIdSearch}
           onChange={(e) => setNoteIdSearch(e.target.value)}
-          placeholder="Search note id…"
-          aria-label="note id search"
+          placeholder="Search note or event id…"
+          aria-label="note or event id search"
         />
         <button onClick={() => void refresh()}>Refresh</button>
       </div>
@@ -156,7 +167,7 @@ export function JobsView({ client }: Props) {
       <table>
         <thead>
           <tr>
-            <th>Note</th>
+            <th>Target</th>
             <th>Type</th>
             <th>Status</th>
             <th>Attempts</th>
@@ -167,7 +178,7 @@ export function JobsView({ client }: Props) {
         <tbody>
           {visibleJobs.map((j) => (
             <tr key={j.id}>
-              <td>{j.note_id}</td>
+              <td>{jobTargetLabel(j)}</td>
               <td>{j.type}</td>
               <td>
                 <StatusBadge status={j.status} />
@@ -190,7 +201,7 @@ export function JobsView({ client }: Props) {
                     </button>
                   </>
                 )}
-                <button onClick={() => void showTimeline(j.note_id)}>View timeline</button>
+                {j.note_id && <button onClick={() => void showTimeline(j.note_id!)}>View timeline</button>}
                 {actionErrors[j.id] && <span style={{ color: "red" }}>{actionErrors[j.id]}</span>}
               </td>
             </tr>

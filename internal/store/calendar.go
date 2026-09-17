@@ -262,6 +262,42 @@ func (s *Store) PruneEvents(ctx context.Context, sourceID string, keepExternalID
 	return err
 }
 
+// GetCalendarEventByID returns one calendar event by id, unscoped by owner.
+// Internal only -- callers that derive authorization FROM the event (the
+// pre_generate worker, and admin pre-job retry) must load it first to learn
+// its owner_id, then apply owner checks against whatever they load next
+// (template visibility, brief state). Never exposed directly by a public API
+// handler. Returns ErrNotFound if no row matches.
+func (s *Store) GetCalendarEventByID(ctx context.Context, eventID string) (model.CalendarEvent, error) {
+	return getCalendarEventByIDTx(ctx, s.pool, eventID)
+}
+
+// getCalendarEventByIDTx is GetCalendarEventByID's body, parameterized over
+// queryRower so callers that need it inside an already-open transaction
+// (e.g. RetryPreBriefJob) can read the event as part of that same
+// transaction instead of a separate pool-level round trip.
+func getCalendarEventByIDTx(ctx context.Context, q queryRower, eventID string) (model.CalendarEvent, error) {
+	var ev model.CalendarEvent
+	var attendeesRaw string
+	err := q.QueryRow(ctx,
+		`SELECT id, owner_id, source_id, external_id, title, starts_at, ends_at,
+		        description, location, conferencing_url, attendees::text, updated_at
+		 FROM calendar_events WHERE id=$1`, eventID).
+		Scan(&ev.ID, &ev.OwnerID, &ev.SourceID, &ev.ExternalID, &ev.Title, &ev.StartsAt, &ev.EndsAt,
+			&ev.Description, &ev.Location, &ev.ConferencingURL, &attendeesRaw, &ev.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.CalendarEvent{}, ErrNotFound
+	}
+	if err != nil {
+		return model.CalendarEvent{}, err
+	}
+	ev.Attendees, err = decodeCalendarAttendees(attendeesRaw)
+	if err != nil {
+		return model.CalendarEvent{}, err
+	}
+	return ev, nil
+}
+
 func (s *Store) ListEvents(ctx context.Context, ownerID string, from, to time.Time) ([]model.CalendarEvent, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, owner_id, source_id, external_id, title, starts_at, ends_at,
@@ -277,6 +313,7 @@ func (s *Store) ListEvents(ctx context.Context, ownerID string, from, to time.Ti
 	}
 	defer rows.Close()
 	out := []model.CalendarEvent{}
+	eventIDs := []string{}
 	for rows.Next() {
 		var ev model.CalendarEvent
 		var attendeesRaw string
@@ -288,7 +325,26 @@ func (s *Store) ListEvents(ctx context.Context, ownerID string, from, to time.Ti
 		if err != nil {
 			return nil, err
 		}
+		ev.Briefs = []model.EventBrief{}
 		out = append(out, ev)
+		eventIDs = append(eventIDs, ev.ID)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	// One extra query for every event's briefs (never N+1 -- see
+	// EventBriefsForEvents), scoped by the SAME owner predicate as the events
+	// query above so a brief can never surface for an event this owner cannot
+	// already see.
+	briefsByEvent, err := s.EventBriefsForEvents(ctx, ownerID, eventIDs)
+	if err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if briefs, ok := briefsByEvent[out[i].ID]; ok {
+			out[i].Briefs = briefs
+		}
+	}
+	return out, nil
 }

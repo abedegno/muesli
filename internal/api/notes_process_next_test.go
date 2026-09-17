@@ -47,7 +47,7 @@ func TestProcessNextNoteAPI(t *testing.T) {
 	// Enqueue a job on our note and immediately claim it (it is the only
 	// claimable job in the whole table at this point, so ClaimJob must pick
 	// it) so it becomes RUNNING and must not be touched by the bump below.
-	runningJobID, err := st.EnqueueJob(ctx, note.ID, model.JobTranscribe, nil)
+	runningJobID, err := st.EnqueueNoteJob(ctx, note.ID, model.JobTranscribe, nil)
 	if err != nil {
 		t.Fatalf("enqueue running job: %v", err)
 	}
@@ -66,13 +66,13 @@ func TestProcessNextNoteAPI(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create other note: %v", err)
 	}
-	otherPendingJobID, err := st.EnqueueJob(ctx, otherNote.ID, model.JobTranscribe, nil)
+	otherPendingJobID, err := st.EnqueueNoteJob(ctx, otherNote.ID, model.JobTranscribe, nil)
 	if err != nil {
 		t.Fatalf("enqueue other pending job: %v", err)
 	}
 
 	// The only PENDING job belonging to our note.
-	pendingJobID, err := st.EnqueueJob(ctx, note.ID, model.JobSummarize, nil)
+	pendingJobID, err := st.EnqueueNoteJob(ctx, note.ID, model.JobSummarize, nil)
 	if err != nil {
 		t.Fatalf("enqueue pending job: %v", err)
 	}

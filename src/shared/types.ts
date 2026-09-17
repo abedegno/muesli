@@ -438,6 +438,20 @@ export interface Attendee {
 }
 
 /** Server calendar-event snapshot; start/end are serialized timestamps, not live values. */
+/** A generated pre-meeting brief panel for one (event, template) pair. Only
+ * the fields the server allows through ever appear here -- no job payloads,
+ * hashes, generations, owner ids, or plugin errors (see
+ * internal/api/calendar.go). Pending and failed rows carry empty sections. */
+export interface EventBrief {
+  id: string
+  template_id: string
+  template_name: string
+  status: 'pending' | 'ready' | 'failed'
+  sections: SummarySection[]
+  model: string
+  updated_at: string
+}
+
 export interface CalendarEvent {
   id: string
   title: string
@@ -448,6 +462,10 @@ export interface CalendarEvent {
   conferencing_url: string
   attendees: Attendee[]
   source_id: string
+  // Optional during rolling upgrades: an older server that has not yet
+  // migrated omits this field entirely. UpcomingEventsPanel treats an
+  // absent briefs field the same as an empty array.
+  briefs?: EventBrief[]
 }
 
 /** Server person snapshot; absent company means no company association is loaded. */

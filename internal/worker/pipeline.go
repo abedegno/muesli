@@ -73,12 +73,16 @@ func (p *Processor) SetActionItemsExtractor(extractor ActionItemsExtractor) {
 func (p *Processor) Process(ctx context.Context, job model.Job) {
 	// Skip work for a note that was trashed after the job was enqueued: complete the
 	// job without acting on the (now hidden) note so it isn't retried indefinitely.
-	if trashed, terr := p.store.NoteIsTrashed(ctx, job.NoteID); terr == nil && trashed {
-		slog.InfoContext(ctx, "job skipped: note is trashed", "job_id", job.ID, "job_type", job.Type, "note_id", job.NoteID)
-		if cerr := p.store.CompleteJob(ctx, job.ID); cerr != nil {
-			slog.WarnContext(ctx, "failed to mark skipped job done", "error", cerr, "job_id", job.ID, "job_type", job.Type, "note_id", job.NoteID)
+	// Only note-targeted jobs have a note to check; a calendar-event job
+	// (pre_generate) has no NoteID and this check must not run for it.
+	if job.NoteID != "" {
+		if trashed, terr := p.store.NoteIsTrashed(ctx, job.NoteID); terr == nil && trashed {
+			slog.InfoContext(ctx, "job skipped: note is trashed", "job_id", job.ID, "job_type", job.Type, "note_id", job.NoteID)
+			if cerr := p.store.CompleteJob(ctx, job.ID); cerr != nil {
+				slog.WarnContext(ctx, "failed to mark skipped job done", "error", cerr, "job_id", job.ID, "job_type", job.Type, "note_id", job.NoteID)
+			}
+			return
 		}
-		return
 	}
 
 	var err error
@@ -90,6 +94,8 @@ func (p *Processor) Process(ctx context.Context, job model.Job) {
 		retryable, err = p.runSummarize(ctx, job)
 	case model.JobEmbed:
 		retryable, err = p.runEmbed(ctx, job)
+	case model.JobPreGenerate:
+		retryable, err = p.runPreGenerate(ctx, job)
 	default:
 		err = errors.New("unknown job type: " + job.Type)
 	}
@@ -144,6 +150,8 @@ func (p *Processor) handleTerminalFailure(ctx context.Context, job model.Job) {
 			}
 		}
 		p.FinalizeNote(ctx, job.NoteID)
+	case model.JobPreGenerate:
+		p.handlePreGenerateTerminalFailure(ctx, job)
 	}
 }
 
@@ -726,12 +734,13 @@ func (p *Processor) runSummarize(ctx context.Context, job model.Job) (bool, erro
 		return true, err
 	}
 
-	plug, err := p.store.DefaultPlugin(ctx, p.crypto, model.PluginAgent)
-	if errors.Is(err, store.ErrNotFound) {
-		return false, fmt.Errorf("no default agent plugin configured: %w", ErrPluginNotConfigured)
-	}
+	plug, err := p.resolveDefaultAgent(ctx)
 	if err != nil {
-		return true, err
+		// Preserves the pre-refactor classification: "no default agent
+		// configured" is terminal (not retryable) -- retrying cannot fix a
+		// missing plugin -- while any other resolution error (e.g. a
+		// transient DB failure) is retryable.
+		return !errors.Is(err, ErrPluginNotConfigured), err
 	}
 
 	// Substitute note-scoped speaker aliases (raw label -> user-chosen name)
@@ -754,15 +763,7 @@ func (p *Processor) runSummarize(ctx context.Context, job model.Job) (bool, erro
 	// template actually has them; absent template values leave the request
 	// fields at their zero value, preserving current behaviour (the agent
 	// falls back to its own default system prompt / plugin Config).
-	if tmpl.SystemPrompt != "" {
-		genReq.SystemPrompt = tmpl.SystemPrompt
-	}
-	if tmpl.Model != "" {
-		genReq.Model = tmpl.Model
-	}
-	if tmpl.Temperature != nil {
-		genReq.Temperature = tmpl.Temperature
-	}
+	applyTemplateOverrides(&genReq, tmpl)
 	resp, err := client.Generate(ctx, genReq)
 	if err != nil {
 		// Do NOT mark the summary failed or finalize here: the job row is still
@@ -819,7 +820,7 @@ func (p *Processor) FinalizeNote(ctx context.Context, noteID string) {
 	// Embedding is config-gated: only enqueue when an embedder is wired in. This
 	// runs once per ready transition (MarkNoteReady above just won it).
 	if p.embedder != nil {
-		if _, err := p.store.EnqueueJob(ctx, noteID, model.JobEmbed, nil); err != nil {
+		if _, err := p.store.EnqueueNoteJob(ctx, noteID, model.JobEmbed, nil); err != nil {
 			slog.WarnContext(ctx, "finalize: enqueue embed", "error", err, "note_id", noteID)
 		}
 	}

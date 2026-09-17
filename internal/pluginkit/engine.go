@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -325,7 +326,27 @@ func validateGenerateRequest(req GenerateRequest) error {
 	if req.Template.Sections == nil {
 		return errors.New("template is required")
 	}
-	return nil
+	return validateGenerateSource(req.Source)
+}
+
+// validateGenerateSource validates an optional GenerateRequest.Source only
+// when present, so every pre-existing source-less request (after-summary,
+// chat) is unaffected. A present source with an unknown kind, or a
+// calendar_event kind missing its typed payload, is a terminal bad request --
+// the pluginkit HTTP boundary never guesses at partial/malformed source data.
+func validateGenerateSource(src *GenerateSource) error {
+	if src == nil {
+		return nil
+	}
+	switch src.Kind {
+	case GenerateSourceCalendarEvent:
+		if src.CalendarEvent == nil {
+			return errors.New("source.calendar_event is required for source.kind=calendar_event")
+		}
+		return nil
+	default:
+		return fmt.Errorf("unknown source.kind %q", src.Kind)
+	}
 }
 
 func segmentsText(segs []model.Segment) string {

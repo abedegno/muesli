@@ -104,7 +104,7 @@ func (e *Engine) Generate(ctx context.Context, req pluginkit.GenerateRequest) (p
 	sections := make([]model.SummarySection, 0, len(req.Template.Sections))
 	reportedModel := ""
 	for idx, section := range req.Template.Sections {
-		out, err := e.generateSection(ctx, cfg, sysPrompt, idx, section, transcript, req.NotesMarkdown, req.Options)
+		out, err := e.generateSection(ctx, cfg, sysPrompt, idx, section, transcript, req.NotesMarkdown, req.Options, req.Source)
 		if err != nil {
 			return pluginkit.GenerateResponse{}, err
 		}
@@ -126,8 +126,8 @@ func (e *Engine) Generate(ctx context.Context, req pluginkit.GenerateRequest) (p
 	return resp, nil
 }
 
-func (e *Engine) generateSection(ctx context.Context, cfg pluginConfig, sysPrompt string, index int, section model.TemplateSection, transcript []model.Segment, notesMarkdown string, options json.RawMessage) (sectionOutput, error) {
-	prompt := buildPrompt(index, section, transcript, notesMarkdown, options)
+func (e *Engine) generateSection(ctx context.Context, cfg pluginConfig, sysPrompt string, index int, section model.TemplateSection, transcript []model.Segment, notesMarkdown string, options json.RawMessage, source *pluginkit.GenerateSource) (sectionOutput, error) {
+	prompt := buildPrompt(index, section, transcript, notesMarkdown, options, source)
 	payload := ollamaChatRequest{
 		Model:  cfg.Model,
 		Stream: false,
@@ -220,13 +220,54 @@ func (e *Engine) effectiveConfig(raw json.RawMessage) pluginConfig {
 	return cfg
 }
 
-func buildPrompt(index int, section model.TemplateSection, transcript []model.Segment, notesMarkdown string, options json.RawMessage) string {
+// writeUpcomingMeetingContext writes a labeled "Upcoming meeting" context
+// block for a calendar_event generation source, or nothing when source is nil
+// or not a calendar event -- every pre-existing (source-less) request is
+// unaffected. Pre-meeting-brief requests (issue #763) always carry an empty
+// transcript/notes_markdown; the calendar data below is what the model
+// actually has to work with, never hidden in those legacy fields.
+func writeUpcomingMeetingContext(b *strings.Builder, source *pluginkit.GenerateSource) {
+	if source == nil || source.Kind != pluginkit.GenerateSourceCalendarEvent || source.CalendarEvent == nil {
+		return
+	}
+	ev := source.CalendarEvent
+	b.WriteString("Upcoming meeting:\n")
+	fmt.Fprintf(b, "Title: %s\n", ev.Title)
+	fmt.Fprintf(b, "Starts at: %s\n", ev.StartsAt)
+	fmt.Fprintf(b, "Ends at: %s\n", ev.EndsAt)
+	if strings.TrimSpace(ev.Location) != "" {
+		fmt.Fprintf(b, "Location: %s\n", ev.Location)
+	}
+	if strings.TrimSpace(ev.ConferencingURL) != "" {
+		fmt.Fprintf(b, "Conferencing URL: %s\n", ev.ConferencingURL)
+	}
+	if strings.TrimSpace(ev.Description) != "" {
+		fmt.Fprintf(b, "Description/agenda: %s\n", ev.Description)
+	}
+	if len(ev.Attendees) == 0 {
+		b.WriteString("Attendees: (none)\n")
+	} else {
+		b.WriteString("Attendees:\n")
+		for _, a := range ev.Attendees {
+			name := strings.TrimSpace(a.Name)
+			if name == "" {
+				name = a.Email
+			}
+			fmt.Fprintf(b, "- %s <%s> (%s)\n", name, a.Email, a.Response)
+		}
+	}
+	b.WriteByte('\n')
+}
+
+func buildPrompt(index int, section model.TemplateSection, transcript []model.Segment, notesMarkdown string, options json.RawMessage, source *pluginkit.GenerateSource) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Section %d\n", index+1)
 	fmt.Fprintf(&b, "Heading: %s\n", section.Heading)
 	fmt.Fprintf(&b, "Instruction: %s\n\n", section.Instruction)
 	b.WriteString("Return only JSON with keys content_markdown and optional refs.\n")
 	b.WriteString("refs must be 0-based transcript indices.\n\n")
+
+	writeUpcomingMeetingContext(&b, source)
 
 	b.WriteString("Notes markdown:\n")
 	if strings.TrimSpace(notesMarkdown) == "" {

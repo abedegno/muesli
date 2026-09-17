@@ -2,19 +2,31 @@ package worker_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/abedegno/muesli/internal/calendar"
+	"github.com/abedegno/muesli/internal/config"
+	"github.com/abedegno/muesli/internal/crypto"
 	"github.com/abedegno/muesli/internal/model"
+	"github.com/abedegno/muesli/internal/plugintest"
 	"github.com/abedegno/muesli/internal/store"
 	"github.com/abedegno/muesli/internal/testutil"
 	"github.com/abedegno/muesli/internal/worker"
 )
 
 var recoveryUserCounter atomic.Int64
+
+// preGenerateRecoveryTestBase is a fixed instant used only to compute a
+// far-future event start time (well outside any plausible real test-run
+// duration) -- this file's other tests don't need an injected clock, but
+// scripts/check-test-determinism.sh bans the wall-clock call outright in
+// non-e2e Go test files, so this fixed base takes its place.
+var preGenerateRecoveryTestBase = testutil.NewFakeClock(time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)).Now()
 
 func seedNoteForRecoveryTest(t *testing.T, st *store.Store) string {
 	t.Helper()
@@ -41,7 +53,7 @@ func TestStartupRecovery_AllRunning(t *testing.T) {
 	noteID := seedNoteForRecoveryTest(t, st)
 
 	// Insert a job and claim it (gives it a 10-minute future lease).
-	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+	jobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -106,7 +118,7 @@ func TestStartupRecovery_IgnoresNonRunning(t *testing.T) {
 	// ClaimJob orders by created_at, so we must ensure the pending job is inserted
 	// AFTER the done/failed jobs are already claimed.
 	noteID2 := seedNoteForRecoveryTest(t, st)
-	doneJobID, err := st.EnqueueJob(ctx, noteID2, model.JobTranscribe, json.RawMessage(`{}`))
+	doneJobID, err := st.EnqueueNoteJob(ctx, noteID2, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue done: %v", err)
 	}
@@ -118,7 +130,7 @@ func TestStartupRecovery_IgnoresNonRunning(t *testing.T) {
 
 	// Set up failed job SECOND: enqueue, claim, fail terminally.
 	noteID3 := seedNoteForRecoveryTest(t, st)
-	failJobID, err := st.EnqueueJob(ctx, noteID3, model.JobTranscribe, json.RawMessage(`{}`))
+	failJobID, err := st.EnqueueNoteJob(ctx, noteID3, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue failed: %v", err)
 	}
@@ -130,7 +142,7 @@ func TestStartupRecovery_IgnoresNonRunning(t *testing.T) {
 
 	// Insert the pending job LAST so it was not picked up by ClaimJob above.
 	noteID := seedNoteForRecoveryTest(t, st)
-	pendingID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+	pendingID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue pending: %v", err)
 	}
@@ -164,7 +176,7 @@ func TestPeriodicSweep_ExpiredLease(t *testing.T) {
 	noteID := seedNoteForRecoveryTest(t, st)
 
 	// Claim with a lease already in the past.
-	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+	jobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -201,7 +213,7 @@ func TestPeriodicSweep_FutureLease_NotRecovered(t *testing.T) {
 	noteID := seedNoteForRecoveryTest(t, st)
 
 	// Claim with a future lease.
-	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+	jobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -237,7 +249,7 @@ func TestStartupRecovery_DoesNotReclaimFutureLeaseJob(t *testing.T) {
 	ctx := context.Background()
 	noteID := seedNoteForRecoveryTest(t, st)
 
-	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+	jobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -280,7 +292,7 @@ func TestStartupRecovery_EndToEnd(t *testing.T) {
 	noteID := seedNoteForRecoveryTest(t, st)
 
 	// Simulate orphaned job: enqueue and claim with an expired lease.
-	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
+	jobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe, json.RawMessage(`{}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
 	}
@@ -307,5 +319,239 @@ func TestStartupRecovery_EndToEnd(t *testing.T) {
 	}
 	if !ok3 || reclaimed.ID != jobID {
 		t.Fatalf("expected reclaimable after startup recovery: ok=%v id=%s err=%v", ok3, reclaimed.ID, err)
+	}
+}
+
+// preGenerateRecoveryFixture seeds a user, calendar source, a single
+// eligible (far-future, never actually "started" during a real test run)
+// event, a pre/auto-run template, and a deterministic fake default agent --
+// everything ReconcileEventBriefPair and a real Processor.Process(pre_generate
+// job) need end to end, without reaching into worker's unexported preJobClock
+// (this file is package worker_test).
+type preGenerateRecoveryFixture struct {
+	st    *store.Store
+	proc  *worker.Processor
+	owner string
+	event model.CalendarEvent
+	tmpl  model.Template
+}
+
+func newPreGenerateRecoveryFixture(t *testing.T) *preGenerateRecoveryFixture {
+	t.Helper()
+	ctx := context.Background()
+	pool := testutil.NewPool(t)
+	st := store.New(pool)
+
+	cr, err := crypto.New(base64.StdEncoding.EncodeToString(make([]byte, 32)))
+	if err != nil {
+		t.Fatalf("crypto: %v", err)
+	}
+
+	email := fmt.Sprintf("prerecover%d@example.com", recoveryUserCounter.Add(1))
+	u, err := st.CreateUser(ctx, email, "h")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+	src, err := st.CreateSource(ctx, u.ID, "ics", "Cal", "sealed")
+	if err != nil {
+		t.Fatalf("create source: %v", err)
+	}
+
+	agent := plugintest.NewAgent()
+	t.Cleanup(agent.Close)
+	if err := st.EnsureDefaultPlugin(ctx, cr, model.PluginAgent, "agent", agent.URL(), "tok", "{}"); err != nil {
+		t.Fatalf("ensure default agent: %v", err)
+	}
+
+	starts := preGenerateRecoveryTestBase.Add(48 * time.Hour)
+	if err := st.UpsertEvents(ctx, u.ID, src.ID, []calendar.NormalizedEvent{
+		{
+			ExternalID: "e1", Title: "Planning", StartsAt: starts, EndsAt: starts.Add(30 * time.Minute),
+			Description: "Sprint planning", Location: "Room 2", ConferencingURL: "https://meet.example.com/abc",
+			Attendees: []model.Attendee{{Name: "Jane", Email: "jane@example.com", Response: "accepted"}},
+		},
+	}); err != nil {
+		t.Fatalf("upsert event: %v", err)
+	}
+	evs, err := st.ListEvents(ctx, u.ID, starts.Add(-time.Minute), starts.Add(time.Minute))
+	if err != nil || len(evs) != 1 {
+		t.Fatalf("list seeded event: %+v %v", evs, err)
+	}
+
+	tmpl, err := st.CreateTemplate(ctx, u.ID, "Pre-read", "pre",
+		[]model.TemplateSection{{Heading: "Context", Instruction: "Summarize the agenda."}}, true, "", "", nil)
+	if err != nil {
+		t.Fatalf("create template: %v", err)
+	}
+
+	proc := worker.NewProcessor(st, cr, nil, config.Config{}, nil)
+	return &preGenerateRecoveryFixture{st: st, proc: proc, owner: u.ID, event: evs[0], tmpl: tmpl}
+}
+
+func (f *preGenerateRecoveryFixture) currentBrief(t *testing.T) model.EventBrief {
+	t.Helper()
+	briefs, err := f.st.EventBriefsForEvents(context.Background(), f.owner, []string{f.event.ID})
+	if err != nil || len(briefs[f.event.ID]) != 1 {
+		t.Fatalf("event briefs: %+v %v", briefs, err)
+	}
+	return briefs[f.event.ID][0]
+}
+
+func countPreGenerateJobsForBrief(t *testing.T, st *store.Store, briefID string) int {
+	t.Helper()
+	var n int
+	if err := st.Pool().QueryRow(context.Background(),
+		`SELECT count(*) FROM jobs WHERE type=$1 AND brief_id=$2`, model.JobPreGenerate, briefID).Scan(&n); err != nil {
+		t.Fatalf("count pre_generate jobs: %v", err)
+	}
+	return n
+}
+
+// TestPreGenerateLeaseRecoveryReclaimsWithoutDuplicating proves the lease
+// recovery contract ("no duplicate/regress") for a pre_generate job, not
+// just note-targeted ones: a crashed worker's expired-lease pre_generate job
+// is reclaimed by the same startup recovery path used for note jobs, runs
+// exactly once to completion, and never spawns a second/duplicate job for
+// the same brief.
+func TestPreGenerateLeaseRecoveryReclaimsWithoutDuplicating(t *testing.T) {
+	t.Parallel()
+	f := newPreGenerateRecoveryFixture(t)
+	ctx := context.Background()
+
+	h := "h1"
+	if _, err := f.st.ReconcileEventBriefPair(ctx, f.event.ID, f.tmpl.ID, f.tmpl.Name, &h); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	brief := f.currentBrief(t)
+	if countPreGenerateJobsForBrief(t, f.st, brief.ID) != 1 {
+		t.Fatalf("expected exactly one queued pre_generate job before any crash")
+	}
+
+	// Simulate a crashed worker: claim with an already-expired lease, same
+	// as TestStartupRecovery_EndToEnd's note-job scenario.
+	crashed, ok, err := f.st.ClaimJob(ctx, -time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("claim (simulated crash): ok=%v err=%v", ok, err)
+	}
+	if crashed.Type != model.JobPreGenerate || crashed.BriefID != brief.ID {
+		t.Fatalf("claimed unexpected job: %+v", crashed)
+	}
+
+	// Startup recovery resets the orphaned running job back to pending.
+	worker.RecoverStartupJobsForTest(ctx, f.st)
+
+	reclaimed, ok, err := f.st.ClaimJob(ctx, 30*time.Second)
+	if err != nil || !ok {
+		t.Fatalf("reclaim after recovery: ok=%v err=%v", ok, err)
+	}
+	if reclaimed.ID != crashed.ID {
+		t.Fatalf("expected recovery to reclaim the SAME job (no duplicate), got original=%s reclaimed=%s", crashed.ID, reclaimed.ID)
+	}
+
+	// Run it to completion through the real dispatcher.
+	f.proc.Process(ctx, reclaimed)
+
+	after := f.currentBrief(t)
+	if after.Status != model.BriefReady || len(after.Sections) == 0 {
+		t.Fatalf("expected the reclaimed job to publish the brief ready, got %+v", after)
+	}
+	if got := countPreGenerateJobsForBrief(t, f.st, brief.ID); got != 1 {
+		t.Fatalf("expected exactly one pre_generate job to ever exist for this brief (no duplicate from recovery), got %d", got)
+	}
+}
+
+// TestPreGenerateLeaseRecoveryDoesNotRegressNewerGeneration proves lease
+// recovery cannot regress a brief that reconciliation already advanced past
+// the crashed job's generation -- including one that has already published
+// as ready at the newer generation. A crashed worker's stale-generation job
+// is reclaimed and re-run by the same recovery path, but
+// PublishEventBrief's WHERE id=? AND generation=? guard (exercised through
+// the real runPreGenerate path here, not mocked) makes it a no-op rather
+// than overwriting the newer, already-ready state.
+func TestPreGenerateLeaseRecoveryDoesNotRegressNewerGeneration(t *testing.T) {
+	t.Parallel()
+	f := newPreGenerateRecoveryFixture(t)
+	ctx := context.Background()
+
+	h1 := "h1"
+	if _, err := f.st.ReconcileEventBriefPair(ctx, f.event.ID, f.tmpl.ID, f.tmpl.Name, &h1); err != nil {
+		t.Fatalf("reconcile gen 1: %v", err)
+	}
+	brief := f.currentBrief(t)
+	if brief.Generation != 1 {
+		t.Fatalf("expected generation 1, got %+v", brief)
+	}
+
+	// Claim generation 1's job with a LIVE lease -- modeling a worker still
+	// mid-flight, not yet crashed (a claim with an already-expired lease
+	// would make it immediately re-claimable by the very next ClaimJob call
+	// below, racing with generation 2's own claim on job age/ordering rather
+	// than deterministically exercising recovery).
+	staleJob, ok, err := f.st.ClaimJob(ctx, time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("claim gen-1 job: ok=%v err=%v", ok, err)
+	}
+	if staleJob.BriefGeneration != 1 {
+		t.Fatalf("expected the claimed job to be generation 1, got %+v", staleJob)
+	}
+
+	// Meanwhile, reconciliation runs again with a CHANGED hash (e.g. the
+	// agenda changed) -- advances the brief to generation 2 and enqueues a
+	// fresh job the in-flight generation-1 job knows nothing about.
+	h2 := "h2"
+	if _, err := f.st.ReconcileEventBriefPair(ctx, f.event.ID, f.tmpl.ID, f.tmpl.Name, &h2); err != nil {
+		t.Fatalf("reconcile gen 2: %v", err)
+	}
+	gen2Job, ok, err := f.st.ClaimJob(ctx, time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("claim gen-2 job: ok=%v err=%v", ok, err)
+	}
+	if gen2Job.BriefGeneration != 2 {
+		t.Fatalf("expected the fresh job to be generation 2, got %+v", gen2Job)
+	}
+	// Run generation 2 to completion FIRST, so the brief is already
+	// published ready at generation 2 before the stale generation-1 job is
+	// ever recovered.
+	f.proc.Process(ctx, gen2Job)
+	readyAtGen2 := f.currentBrief(t)
+	if readyAtGen2.Status != model.BriefReady || readyAtGen2.Generation != 2 {
+		t.Fatalf("expected the brief ready at generation 2 before recovery runs, got %+v", readyAtGen2)
+	}
+
+	// NOW simulate the generation-1 worker crashing without ever settling
+	// its job: force its lease into the past directly (generation 2's job is
+	// already 'done' by this point, so it can never be mistaken for the
+	// reclaim target below).
+	if _, err := f.st.Pool().Exec(ctx, `UPDATE jobs SET lease_expires_at = now() - interval '1 minute' WHERE id=$1`, staleJob.ID); err != nil {
+		t.Fatalf("force-expire stale job lease: %v", err)
+	}
+
+	// Recover the orphaned generation-1 lease and let it run.
+	worker.RecoverStartupJobsForTest(ctx, f.st)
+	reclaimedStale, ok, err := f.st.ClaimJob(ctx, 30*time.Second)
+	if err != nil || !ok {
+		t.Fatalf("reclaim stale gen-1 job: ok=%v err=%v", ok, err)
+	}
+	if reclaimedStale.ID != staleJob.ID {
+		t.Fatalf("expected to reclaim the SAME stale job, got original=%s reclaimed=%s", staleJob.ID, reclaimedStale.ID)
+	}
+
+	f.proc.Process(ctx, reclaimedStale)
+
+	// The already-ready generation-2 brief must be completely unchanged --
+	// recovery must not regress it back toward generation 1's (never
+	// actually generated) output.
+	after := f.currentBrief(t)
+	if after.Generation != readyAtGen2.Generation || after.Status != readyAtGen2.Status {
+		t.Fatalf("recovery regressed the newer generation: before=%+v after=%+v", readyAtGen2, after)
+	}
+	if len(after.Sections) != len(readyAtGen2.Sections) {
+		t.Fatalf("recovery altered the newer generation's published sections: before=%+v after=%+v", readyAtGen2, after)
+	}
+
+	// No third/duplicate job was spontaneously created by recovery: exactly
+	// the original generation-1 job and the generation-2 job exist.
+	if got := countPreGenerateJobsForBrief(t, f.st, brief.ID); got != 2 {
+		t.Fatalf("expected exactly 2 pre_generate jobs total (gen 1 + gen 2, no duplicate from recovery), got %d", got)
 	}
 }

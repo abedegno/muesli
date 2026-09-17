@@ -146,7 +146,7 @@ func (s *Server) handleAudioUploaded(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	payload, _ := buildTranscribeJobPayload(req.Key, "", "", expectedGeneration)
-	if _, err := s.deps.Store.EnqueueJob(r.Context(), noteID, model.JobTranscribe, payload); err != nil {
+	if _, err := s.deps.Store.EnqueueNoteJob(r.Context(), noteID, model.JobTranscribe, payload); err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}

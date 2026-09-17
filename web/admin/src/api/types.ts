@@ -55,8 +55,15 @@ export type JobStatus = 'pending' | 'running' | 'done' | 'failed' | 'cancelled'
 
 export interface Job {
   id: string
-  note_id: string
-  type: 'transcribe' | 'summarize' | 'embed'
+  // Exactly one of note_id / calendar_event_id is present (issue #763 added
+  // the calendar-event target for pre_generate jobs; existing note jobs are
+  // unaffected). brief_id/brief_generation are only present on pre_generate
+  // jobs.
+  note_id?: string
+  calendar_event_id?: string
+  brief_id?: string
+  brief_generation?: number
+  type: 'transcribe' | 'summarize' | 'embed' | 'pre_generate'
   status: JobStatus
   attempts: number
   last_error: string | null

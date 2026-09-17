@@ -51,6 +51,11 @@ var (
 	fetchMicrosoft = calendar.FetchMicrosoft
 )
 
+// calendarSyncClock is injected so pre-meeting-brief reconciliation tests can
+// control "now" deterministically instead of racing the wall clock's 7-day
+// eligibility window. Production leaves it as time.Now.
+var calendarSyncClock = time.Now
+
 // SyncSource fetches upstream events for a single calendar source, upserts
 // them, prunes anything no longer present upstream, and records the
 // resulting sync status on the source row.
@@ -129,6 +134,21 @@ func SyncSource(ctx context.Context, st *store.Store, cr *crypto.Crypto, googleC
 	}
 	if err := st.PruneEvents(ctx, sourceID, calendar.DiffExternalIDs(events)); err != nil {
 		return fmt.Errorf("sync source %s: prune events: %w", sourceID, err)
+	}
+
+	// Reconcile pre-meeting briefs only after a successful fetch+persist: a
+	// fetch/auth failure returns earlier above and never reaches here, so no
+	// generation or eligibility cleanup runs against a stale/absent event
+	// snapshot (see the accepted spec's error-handling rules). A database
+	// failure here fails this sync attempt -- events are already durably
+	// persisted, so the next scheduled/manual pass simply retries
+	// reconciliation. Agent-side failures (no default agent, a plugin error)
+	// never reach this call at all; they are handled inside reconciliation
+	// itself (failed-brief placeholders) or later during job execution, and
+	// never mark the calendar sync unhealthy.
+	if err := ReconcilePreBriefs(ctx, st, cr, ownerID, sourceID, calendarSyncClock()); err != nil {
+		markSourceStatus(ctx, st, sourceID, "error")
+		return fmt.Errorf("sync source %s: reconcile pre-meeting briefs: %w", sourceID, err)
 	}
 
 	if err := st.UpdateSourceStatus(ctx, sourceID, "ok", time.Now()); err != nil {

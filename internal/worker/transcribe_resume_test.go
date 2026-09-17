@@ -105,7 +105,7 @@ func writeStorageObject(t *testing.T, root, key string, data []byte) {
 // enqueueAndRun enqueues a fresh transcribe job and processes it once.
 func (f *resumeFixture) enqueue(t *testing.T, expectedGeneration int) string {
 	t.Helper()
-	jobID, err := f.st.EnqueueJob(context.Background(), f.noteID, model.JobTranscribe,
+	jobID, err := f.st.EnqueueNoteJob(context.Background(), f.noteID, model.JobTranscribe,
 		json.RawMessage(`{"audio_key":"`+f.audioKey+`","expected_generation":`+itoa(expectedGeneration)+`}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)

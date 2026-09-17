@@ -39,3 +39,11 @@ var ErrGenerationMismatch = errors.New("transcript generation mismatch")
 // own. Distinct from ErrNotFound, which is returned for absent, trashed, or
 // private non-owned resources so a guessed id is never an existence oracle.
 var ErrForbidden = errors.New("forbidden")
+
+// ErrIneligible is returned by RetryPreBriefJob when a pre_generate job's
+// (event, template) pair still exists but is no longer eligible for
+// generation (the event has started, or the template is no longer
+// pre/auto-run/visible), or the job's generation is no longer the brief's
+// current one. Distinct from ErrNotFound, which is returned when the job,
+// event, brief, or template is simply gone.
+var ErrIneligible = errors.New("no longer applicable")

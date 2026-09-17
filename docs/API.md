@@ -119,13 +119,31 @@ Notes:
       "response": "<string>"
     }
   ],
-  "updated_at": "<RFC3339>"
+  "updated_at": "<RFC3339>",
+  "briefs": [
+    {
+      "id": "<uuid>",
+      "template_id": "<uuid>",
+      "template_name": "<string>",
+      "status": "pending|ready|failed",
+      "sections": [{ "heading": "<string>", "content_markdown": "<string>", "refs": [0, 1] }],
+      "model": "<string>",
+      "updated_at": "<RFC3339>"
+    }
+  ]
 }
 ```
 
 Notes:
 
 - `attendees` is always serialized as an array, never `null`.
+- `briefs` (issue #763, additive) is always serialized as an array, never `null` -- one entry per
+  applicable `pre`-phase, auto-run template visible to the owner. A `pending` or `failed` brief's
+  `sections` is always an empty array; only a `ready` brief carries generated content, rendered
+  through the client's existing sanitized Markdown renderer. `briefs` never exposes job payloads,
+  input hashes, generations, owner ids, credentials, or plugin error detail -- those stay in
+  server-side admin diagnostics only. Clients built before this field existed simply do not read
+  it; a rolling upgrade is safe in both directions.
 
 ### SmartList
 
@@ -919,10 +937,19 @@ Lists the caller's own calendar events in the requested time window.
 - Query params:
   - `from=<RFC3339>` optional, defaults to now
   - `to=<RFC3339>` optional, defaults to `from + 7 days`
-- Response `200`: array of CalendarEvent objects
+- Response `200`: array of CalendarEvent objects, each carrying its current `briefs` (see
+  CalendarEvent above)
 - Errors:
   - `400`: invalid `from` or `to`
   - `500`: database error
+
+**Pre-meeting briefs (issue #763).** A background reconciliation pass -- run after every
+successful scheduled or manual calendar sync, and repaired by template-mutation cleanup -- keeps
+each upcoming event's `briefs` current for every `pre`-phase, auto-run template visible to the
+owner: `starts_at` in `(now, now+7d]`, matching this endpoint's own default window. There is no
+standalone brief endpoint, manual retry button, websocket, or polling loop; a brief simply appears
+on the next ordinary fetch of this endpoint once its generation job completes. A brief never
+creates or modifies a note.
 
 #### `GET /api/calendar/oauth/google/status`
 

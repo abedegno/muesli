@@ -71,7 +71,7 @@ describe("JobsView", () => {
   it("shows Retry only for a failed job", async () => {
     const client = makeClient([failedJob, pendingJob, runningJob, doneJob]);
     render(<JobsView client={client as never} />);
-    await screen.findByText("note-failed");
+    await screen.findByText(/note-failed/);
 
     expect(screen.getByRole("button", { name: /^retry$/i })).toBeInTheDocument();
   });
@@ -79,7 +79,7 @@ describe("JobsView", () => {
   it("shows Cancel and Process next only for a pending job", async () => {
     const client = makeClient([failedJob, pendingJob, runningJob, doneJob]);
     render(<JobsView client={client as never} />);
-    await screen.findByText("note-pending");
+    await screen.findByText(/note-pending/);
 
     expect(screen.getByRole("button", { name: /^cancel$/i })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /^process next$/i })).toBeInTheDocument();
@@ -88,7 +88,7 @@ describe("JobsView", () => {
   it("hides Cancel and Process next for running/done/failed jobs", async () => {
     const client = makeClient([failedJob, runningJob, doneJob]);
     render(<JobsView client={client as never} />);
-    await screen.findByText("note-failed");
+    await screen.findByText(/note-failed/);
 
     expect(screen.queryByRole("button", { name: /^cancel$/i })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /^process next$/i })).not.toBeInTheDocument();
@@ -98,7 +98,7 @@ describe("JobsView", () => {
     const client = makeClient([failedJob]);
     vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<JobsView client={client as never} />);
-    await screen.findByText("note-failed");
+    await screen.findByText(/note-failed/);
 
     await userEvent.click(screen.getByRole("button", { name: /^retry$/i }));
 
@@ -112,7 +112,7 @@ describe("JobsView", () => {
     client.listJobs.mockResolvedValueOnce([failedJob]).mockResolvedValueOnce([]);
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<JobsView client={client as never} />);
-    await screen.findByText("note-failed");
+    await screen.findByText(/note-failed/);
 
     await userEvent.click(screen.getByRole("button", { name: /^retry$/i }));
 
@@ -126,7 +126,7 @@ describe("JobsView", () => {
     const client = makeClient([summarizeFailed]);
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<JobsView client={client as never} />);
-    await screen.findByText("note-failed");
+    await screen.findByText(/note-failed/);
 
     await userEvent.click(screen.getByRole("button", { name: /^retry$/i }));
 
@@ -138,7 +138,7 @@ describe("JobsView", () => {
     const client = makeClient([pendingJob]);
     vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<JobsView client={client as never} />);
-    await screen.findByText("note-pending");
+    await screen.findByText(/note-pending/);
 
     await userEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
 
@@ -151,7 +151,7 @@ describe("JobsView", () => {
     client.listJobs.mockResolvedValueOnce([pendingJob]).mockResolvedValueOnce([]);
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<JobsView client={client as never} />);
-    await screen.findByText("note-pending");
+    await screen.findByText(/note-pending/);
 
     await userEvent.click(screen.getByRole("button", { name: /^cancel$/i }));
 
@@ -163,7 +163,7 @@ describe("JobsView", () => {
     const client = makeClient([pendingJob]);
     vi.spyOn(window, "confirm").mockReturnValue(false);
     render(<JobsView client={client as never} />);
-    await screen.findByText("note-pending");
+    await screen.findByText(/note-pending/);
 
     await userEvent.click(screen.getByRole("button", { name: /^process next$/i }));
 
@@ -176,7 +176,7 @@ describe("JobsView", () => {
     client.listJobs.mockResolvedValueOnce([pendingJob]).mockResolvedValueOnce([pendingJob]);
     vi.spyOn(window, "confirm").mockReturnValue(true);
     render(<JobsView client={client as never} />);
-    await screen.findByText("note-pending");
+    await screen.findByText(/note-pending/);
 
     await userEvent.click(screen.getByRole("button", { name: /^process next$/i }));
 
@@ -187,34 +187,34 @@ describe("JobsView", () => {
   it("the type filter narrows the visible rows client-side", async () => {
     const client = makeClient([failedJob, pendingJob, runningJob]);
     render(<JobsView client={client as never} />);
-    await screen.findByText("note-failed");
-    expect(screen.getByText("note-pending")).toBeInTheDocument();
-    expect(screen.getByText("note-running")).toBeInTheDocument();
+    await screen.findByText(/note-failed/);
+    expect(screen.getByText(/note-pending/)).toBeInTheDocument();
+    expect(screen.getByText(/note-running/)).toBeInTheDocument();
 
     await userEvent.selectOptions(screen.getByLabelText(/type filter/i), "summarize");
 
-    expect(screen.queryByText("note-failed")).not.toBeInTheDocument();
-    expect(screen.getByText("note-pending")).toBeInTheDocument();
-    expect(screen.queryByText("note-running")).not.toBeInTheDocument();
+    expect(screen.queryByText(/note-failed/)).not.toBeInTheDocument();
+    expect(screen.getByText(/note-pending/)).toBeInTheDocument();
+    expect(screen.queryByText(/note-running/)).not.toBeInTheDocument();
     // Client-side filtering must not trigger another server round-trip.
     expect(client.listJobs).toHaveBeenCalledTimes(1);
   });
 
-  it("the note-id search narrows the visible rows and combines with the type filter", async () => {
+  it("the target search narrows the visible rows and combines with the type filter", async () => {
     const client = makeClient([failedJob, pendingJob, runningJob]);
     render(<JobsView client={client as never} />);
-    await screen.findByText("note-failed");
+    await screen.findByText(/note-failed/);
 
-    await userEvent.type(screen.getByLabelText(/note id search/i), "PENDING");
+    await userEvent.type(screen.getByLabelText(/note or event id search/i), "PENDING");
 
-    expect(screen.queryByText("note-failed")).not.toBeInTheDocument();
-    expect(screen.getByText("note-pending")).toBeInTheDocument();
-    expect(screen.queryByText("note-running")).not.toBeInTheDocument();
+    expect(screen.queryByText(/note-failed/)).not.toBeInTheDocument();
+    expect(screen.getByText(/note-pending/)).toBeInTheDocument();
+    expect(screen.queryByText(/note-running/)).not.toBeInTheDocument();
 
     // Combine with the type filter: narrowing to "transcribe" excludes the
     // (summarize) pending note even though it still matches the search text.
     await userEvent.selectOptions(screen.getByLabelText(/type filter/i), "transcribe");
-    expect(screen.queryByText("note-pending")).not.toBeInTheDocument();
+    expect(screen.queryByText(/note-pending/)).not.toBeInTheDocument();
   });
 
   it("clicking View timeline fetches and renders the note's pipeline, including an errored stage", async () => {
@@ -254,7 +254,7 @@ describe("JobsView", () => {
     const rowJob: Job = { ...doneJob, note_id: "note-pipeline" };
     const client = makeClient([rowJob], [transcribeDone, summarizeFailed, embedPending]);
     render(<JobsView client={client as never} />);
-    await screen.findByText("note-pipeline");
+    await screen.findByText(/note-pipeline/);
 
     await userEvent.click(screen.getByRole("button", { name: /view timeline/i }));
 
@@ -267,5 +267,57 @@ describe("JobsView", () => {
     const timeline = screen.getByRole("region", { name: /pipeline timeline/i });
     const badges = within(timeline).getAllByText("failed");
     expect(badges.length).toBeGreaterThan(0);
+  });
+  it("renders an event-targeted pre_generate job by its event id and never calls a note endpoint", async () => {
+    const preJob: Job = {
+      id: "p1",
+      calendar_event_id: "event-1",
+      brief_id: "brief-1",
+      brief_generation: 2,
+      type: "pre_generate",
+      status: "failed",
+      attempts: 3,
+      last_error: "agent unreachable",
+      priority: 0,
+      started_at: "2026-07-05T10:00:00Z",
+      finished_at: "2026-07-05T10:00:05Z",
+    };
+    const client = makeClient([preJob]);
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<JobsView client={client as never} />);
+    await screen.findByText(/event event-1/);
+
+    expect(screen.queryByText("undefined")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /view timeline/i })).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /^retry$/i }));
+
+    await waitFor(() => expect(client.retryJob).toHaveBeenCalledWith("p1"));
+    expect(client.resummarizeNote).not.toHaveBeenCalled();
+    expect(client.listNoteJobs).not.toHaveBeenCalled();
+  });
+
+  it("filters jobs by event id via the target search box", async () => {
+    const preJob: Job = {
+      id: "p2",
+      calendar_event_id: "event-search-me",
+      brief_id: "brief-2",
+      brief_generation: 1,
+      type: "pre_generate",
+      status: "pending",
+      attempts: 0,
+      last_error: null,
+      priority: 0,
+      started_at: null,
+      finished_at: null,
+    };
+    const client = makeClient([failedJob, preJob]);
+    render(<JobsView client={client as never} />);
+    await screen.findByText(/note-failed/);
+
+    await userEvent.type(screen.getByLabelText(/note or event id search/i), "search-me");
+
+    expect(screen.queryByText(/note-failed/)).not.toBeInTheDocument();
+    expect(screen.getByText(/event-search-me/)).toBeInTheDocument();
   });
 });

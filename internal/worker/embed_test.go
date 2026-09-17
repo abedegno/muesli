@@ -72,7 +72,7 @@ func TestRunEmbedUpsertsVector(t *testing.T) {
 	fake := newFakeEmbedder()
 	eproc := embedProcessor(t, st, fake)
 
-	if _, err := st.EnqueueJob(ctx, noteID, model.JobEmbed, nil); err != nil {
+	if _, err := st.EnqueueNoteJob(ctx, noteID, model.JobEmbed, nil); err != nil {
 		t.Fatalf("enqueue embed: %v", err)
 	}
 	drain(t, eproc, st)
@@ -136,7 +136,7 @@ func TestRunEmbedStoresOffDimensionVector(t *testing.T) {
 
 	off := newOffDimEmbedder()
 	eproc := embedProcessor(t, st, off)
-	if _, err := st.EnqueueJob(ctx, noteID, model.JobEmbed, nil); err != nil {
+	if _, err := st.EnqueueNoteJob(ctx, noteID, model.JobEmbed, nil); err != nil {
 		t.Fatalf("enqueue embed: %v", err)
 	}
 	drain(t, eproc, st)
@@ -225,7 +225,7 @@ func TestEnqueueBackfillEmbedsLimitCap(t *testing.T) {
 		if err := st.SetNoteAudio(ctx, owner1.OwnerID, n.ID, key); err != nil {
 			t.Fatalf("SetNoteAudio #%d: %v", i+2, err)
 		}
-		if _, err := st.EnqueueJob(ctx, n.ID, model.JobTranscribe, json.RawMessage(`{"audio_key":"`+key+`"}`)); err != nil {
+		if _, err := st.EnqueueNoteJob(ctx, n.ID, model.JobTranscribe, json.RawMessage(`{"audio_key":"`+key+`"}`)); err != nil {
 			t.Fatalf("enqueue transcribe #%d: %v", i+2, err)
 		}
 		drain(t, proc, st)
@@ -279,7 +279,7 @@ func TestEnqueueBackfillEmbeds(t *testing.T) {
 	if err := st.SetNoteAudio(ctx, owner1.OwnerID, n2.ID, key); err != nil {
 		t.Fatalf("SetNoteAudio: %v", err)
 	}
-	if _, err := st.EnqueueJob(ctx, n2.ID, model.JobTranscribe, json.RawMessage(`{"audio_key":"`+key+`"}`)); err != nil {
+	if _, err := st.EnqueueNoteJob(ctx, n2.ID, model.JobTranscribe, json.RawMessage(`{"audio_key":"`+key+`"}`)); err != nil {
 		t.Fatalf("enqueue transcribe: %v", err)
 	}
 	drain(t, proc, st)

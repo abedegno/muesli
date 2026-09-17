@@ -121,7 +121,7 @@ func TestRunTranscribeStaleJobDetectedEarlyTouchesNothing(t *testing.T) {
 
 	// This job was enqueued back when the note had no transcript at all
 	// (expected_generation 0) — now stale against generation 1.
-	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe,
+	jobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe,
 		json.RawMessage(`{"audio_key":"`+key+`","expected_generation":0}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
@@ -226,7 +226,7 @@ func TestRunTranscribeStaleJobDetectedLateRestoresDisplacedStatus(t *testing.T) 
 
 	// Correct at enqueue time (generation is 1); by the time this job reaches
 	// SaveTranscript, the /transcribe handler above has already moved it to 2.
-	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe,
+	jobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe,
 		json.RawMessage(`{"audio_key":"`+key+`","expected_generation":1}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
@@ -320,7 +320,7 @@ func TestRunTranscribeStaleJobLateMismatchDoesNotClobberNewerClaim(t *testing.T)
 		t.Fatalf("set status: %v", err)
 	}
 
-	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe,
+	jobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe,
 		json.RawMessage(`{"audio_key":"`+key+`","expected_generation":1}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
@@ -416,7 +416,7 @@ func TestRunTranscribeRetriedClaimPreservesOriginalPriorStatus(t *testing.T) {
 		t.Fatalf("set status: %v", err)
 	}
 
-	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe,
+	jobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe,
 		json.RawMessage(`{"audio_key":"`+key+`","expected_generation":1}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
@@ -582,7 +582,7 @@ func TestRunTranscribeStaleJobDetectedLateDoesNotOverwriteAudioHashes(t *testing
 
 	// Correct at enqueue time (generation is 1); the /transcribe handler above
 	// bumps it to 2 before this job's own SaveTranscript runs.
-	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe,
+	jobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe,
 		json.RawMessage(`{"audio_key":"`+key+`","expected_generation":1}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
@@ -657,7 +657,7 @@ func TestRunTranscribeExpectedGenerationPersistFailureIsRetryable(t *testing.T) 
 		})
 	})
 
-	enqueuedID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe,
+	enqueuedID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe,
 		json.RawMessage(`{"audio_key":"`+key+`","expected_generation":0}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)
@@ -750,7 +750,7 @@ func TestRunTranscribeRetryReleasesClaimLeftByFailedAttemptOnEarlyMismatch(t *te
 		t.Fatalf("set status: %v", err)
 	}
 
-	jobID, err := st.EnqueueJob(ctx, noteID, model.JobTranscribe,
+	jobID, err := st.EnqueueNoteJob(ctx, noteID, model.JobTranscribe,
 		json.RawMessage(`{"audio_key":"`+key+`","expected_generation":1}`))
 	if err != nil {
 		t.Fatalf("enqueue: %v", err)

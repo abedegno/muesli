@@ -251,11 +251,19 @@ func (s *Store) ListTemplates(ctx context.Context, ownerID string) ([]model.Temp
 // either a built-in (owner_id NULL) or owned by ownerID. Returns ErrNotFound
 // otherwise (including cross-owner lookups).
 func (s *Store) GetTemplate(ctx context.Context, ownerID, id string) (model.Template, error) {
+	return getTemplateTx(ctx, s.pool, ownerID, id)
+}
+
+// getTemplateTx is GetTemplate's body, parameterized over queryRower so
+// callers that need it inside an already-open transaction (e.g.
+// RetryPreBriefJob) can read the template as part of that same transaction
+// instead of a separate pool-level round trip.
+func getTemplateTx(ctx context.Context, q queryRower, ownerID, id string) (model.Template, error) {
 	var tm model.Template
 	var sectionsJSON []byte
 	var systemPrompt, modelName *string
 	var temperature *float64
-	err := s.pool.QueryRow(ctx,
+	err := q.QueryRow(ctx,
 		`SELECT id, name, phase, sections, (owner_id IS NULL) AS built_in, auto_run,
 		        system_prompt, model, temperature
 		   FROM templates WHERE id=$1 AND (owner_id IS NULL OR owner_id=$2)`,
@@ -274,20 +282,31 @@ func (s *Store) GetTemplate(ctx context.Context, ownerID, id string) (model.Temp
 	return tm, nil
 }
 
-// TemplatesForSummary returns the owner's visible templates that are opted in
-// to auto-run, for summarize fan-out.
-func (s *Store) TemplatesForSummary(ctx context.Context, ownerID string) ([]model.Template, error) {
+// TemplatesForPhase returns the owner's visible templates (built-ins plus
+// their own) whose phase and auto_run match exactly. The transcript-driven
+// after-summary fan-out and the calendar-driven pre-meeting-brief
+// reconciliation (internal/worker/prebriefs.go) both go through this, each
+// with its own phase, so a "pre" template can never accidentally run against
+// a completed transcript and vice versa.
+func (s *Store) TemplatesForPhase(ctx context.Context, ownerID, phase string, autoRun bool) ([]model.Template, error) {
 	templates, err := s.ListTemplates(ctx, ownerID)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]model.Template, 0, len(templates))
 	for _, tmpl := range templates {
-		if tmpl.AutoRun {
+		if tmpl.Phase == phase && tmpl.AutoRun == autoRun {
 			out = append(out, tmpl)
 		}
 	}
 	return out, nil
+}
+
+// TemplatesForSummary returns the owner's visible auto-run "after" templates,
+// for the transcript-driven summarize fan-out. Explicitly phase-scoped (see
+// TemplatesForPhase) so a "pre" auto-run template is never selected here.
+func (s *Store) TemplatesForSummary(ctx context.Context, ownerID string) ([]model.Template, error) {
+	return s.TemplatesForPhase(ctx, ownerID, templatePhaseAfter, true)
 }
 
 func (s *Store) nameTaken(ctx context.Context, ownerID, name, excludeID string) (bool, error) {
@@ -347,6 +366,20 @@ func (s *Store) CreateTemplate(ctx context.Context, ownerID, name, phase string,
 // UpdateTemplate updates an owner-scoped template, including its optional
 // agent overrides. Passing an empty systemPrompt/modelName or a nil
 // temperature clears that override (unset).
+//
+// If the update makes the template ineligible for pre-meeting-brief
+// generation (phase changes away from "pre", or auto_run is disabled -- it
+// was previously pre+auto-run), this transactionally cleans up every current
+// brief for the template ACROSS EVERY OWNER THAT HAS ONE -- not only the
+// mutating owner -- together with their still-queued pre jobs, in the SAME
+// transaction as the mutation and in bounded batches (see
+// cleanupBriefsForTemplateAllOwners). This mutation itself is always
+// owner-scoped (id+owner_id must both match), but the resulting cleanup is
+// not: it is correct whether the template turns out to be owner-private
+// (where it always resolves to exactly this one owner) or -- were a shared/
+// built-in template ever mutated through some future path -- visible to
+// many. Calendar reconciliation remains the backstop for any
+// missed/concurrent/out-of-band change (see the accepted spec).
 func (s *Store) UpdateTemplate(ctx context.Context, ownerID, id, name, phase string, sections []model.TemplateSection, autoRun bool, systemPrompt, modelName string, temperature *float64) error {
 	phase = normalizeTemplatePhase(phase)
 	if err := validateTemplate(name, sections); err != nil {
@@ -370,7 +403,26 @@ func (s *Store) UpdateTemplate(ctx context.Context, ownerID, id, name, phase str
 	if err != nil {
 		return err
 	}
-	ct, err := s.pool.Exec(ctx,
+
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var oldPhase string
+	var oldAutoRun bool
+	err = tx.QueryRow(ctx,
+		`SELECT phase, auto_run FROM templates WHERE id=$1 AND owner_id=$2 FOR UPDATE`,
+		id, ownerID).Scan(&oldPhase, &oldAutoRun)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+
+	ct, err := tx.Exec(ctx,
 		`UPDATE templates SET name=$1, phase=$2, sections=$3::jsonb, auto_run=$4, system_prompt=$5, model=$6, temperature=$7
 		  WHERE id=$8 AND owner_id=$9`,
 		name, phase, string(secJSON), autoRun, nullableTemplateStr(systemPrompt), nullableTemplateStr(modelName), temperature,
@@ -381,18 +433,64 @@ func (s *Store) UpdateTemplate(ctx context.Context, ownerID, id, name, phase str
 	if ct.RowsAffected() == 0 {
 		return ErrNotFound
 	}
-	return nil
+
+	wasPreAutoRun := oldPhase == templatePhasePre && oldAutoRun
+	nowPreAutoRun := phase == templatePhasePre && autoRun
+	if wasPreAutoRun && !nowPreAutoRun {
+		if _, err := cleanupBriefsForTemplateAllOwners(ctx, s, tx, id); err != nil {
+			return err
+		}
+	}
+
+	return tx.Commit(ctx)
 }
 
+// DeleteTemplate deletes an owner-scoped template and, in the same
+// transaction, every current pre-meeting brief for it ACROSS EVERY OWNER
+// THAT HAS ONE plus their still-queued pre jobs, in bounded batches (see
+// cleanupBriefsForTemplateAllOwners's doc comment -- the same reasoning as
+// UpdateTemplate's applies here). Running jobs are left intact; guarded
+// publication makes them harmless once their brief is gone. Ownership is
+// verified FIRST (a locking row lookup, mirroring UpdateTemplate's own "FOR
+// UPDATE" ownership check) so a non-owner's delete attempt on someone else's
+// template id is rejected before any cleanup work runs, rather than being
+// merely rolled back after the fact -- though the whole operation is one
+// transaction either way, so an unauthorized attempt is never visible even
+// if this ordering were reversed. Deleting the brief rows and their jobs
+// BEFORE the template row matters: event_briefs.template_id cascades on
+// template deletion, but jobs.brief_id deliberately has no FK (see the
+// pre_meeting_briefs migration), so their still-queued jobs would otherwise
+// survive orphaned.
 func (s *Store) DeleteTemplate(ctx context.Context, ownerID, id string) error {
-	ct, err := s.pool.Exec(ctx, `DELETE FROM templates WHERE id=$1 AND owner_id=$2`, id, ownerID)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	var exists bool
+	err = tx.QueryRow(ctx,
+		`SELECT true FROM templates WHERE id=$1 AND owner_id=$2 FOR UPDATE`,
+		id, ownerID).Scan(&exists)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+
+	if _, err := cleanupBriefsForTemplateAllOwners(ctx, s, tx, id); err != nil {
+		return err
+	}
+
+	ct, err := tx.Exec(ctx, `DELETE FROM templates WHERE id=$1 AND owner_id=$2`, id, ownerID)
 	if err != nil {
 		return err
 	}
 	if ct.RowsAffected() == 0 {
 		return ErrNotFound
 	}
-	return nil
+	return tx.Commit(ctx)
 }
 
 func (s *Store) NoteOwnerID(ctx context.Context, noteID string) (string, error) {
