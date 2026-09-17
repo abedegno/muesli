@@ -154,8 +154,11 @@ func TestDeleteEventBriefsOutsideWindowIsSourceScoped(t *testing.T) {
 	if err := st.EnsureDefaultPlugin(ctx, cr, model.PluginAgent, "agent", "http://127.0.0.1:0", "tok", "{}"); err != nil {
 		t.Fatalf("ensure default agent: %v", err)
 	}
+	// Different start times: seedPreBriefEvent lists the owner's events within
+	// a minute of the start and requires exactly one, and ListEvents is
+	// owner-scoped, not source-scoped. Both are still inside the window.
 	evA := seedPreBriefEvent(t, st, owner, srcA.ID, "a1", now, time.Hour)
-	evB := seedPreBriefEvent(t, st, owner, srcB.ID, "b1", now, time.Hour)
+	evB := seedPreBriefEvent(t, st, owner, srcB.ID, "b1", now, 2*time.Hour)
 	for _, src := range []string{srcA.ID, srcB.ID} {
 		if err := ReconcilePreBriefs(ctx, st, cr, owner, src, now); err != nil {
 			t.Fatalf("reconcile %s: %v", src, err)
