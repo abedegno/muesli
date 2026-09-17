@@ -44,6 +44,15 @@ func ReconcilePreBriefs(ctx context.Context, st *store.Store, cr *crypto.Crypto,
 	// pair's hash on the next reconciliation pass.
 	agent, hasAgent := resolveDefaultAgentIdentity(ctx, st, cr)
 
+	// Briefs whose event has LEFT the window -- rescheduled beyond seven days,
+	// or already started -- are cleaned first, source-wide. The batch loop
+	// below only ever sees events inside the window, so the per-batch cleanup
+	// there can never reach them (cross-review finding on PR #766: a stale
+	// brief stayed attached and retrievable through the calendar API).
+	if _, err := st.DeleteEventBriefsOutsideWindow(ctx, ownerID, sourceID, now); err != nil {
+		return err
+	}
+
 	var afterID *string
 	for {
 		events, err := st.UpcomingEventsForSourceBatch(ctx, ownerID, sourceID, now, afterID, preBriefBatchSize)

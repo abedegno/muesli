@@ -94,11 +94,25 @@ func (s *Store) EventBriefsForEvents(ctx context.Context, ownerID string, eventI
 // is NOT a valid uuid and must never be bound as one). Backs bounded
 // reconciliation batches (see internal/worker/prebriefs.go) -- callers page
 // until a short page signals the end.
+// preBriefEligibilityHorizon is how far ahead an event may start and still
+// be eligible for a pre-meeting brief: the window is (now, now+horizon], the
+// same as Coming Up. Defined ONCE and read by both the batch query and the
+// out-of-window cleanup, because the cleanup must use the batch's exact
+// predicate -- a brief is stale precisely when its event would no longer be
+// loaded, and two spellings of that window would drift apart.
+const preBriefEligibilityHorizon = 7 * 24 * time.Hour
+
+// preBriefWindow returns the eligibility window's bounds for now: an event is
+// eligible when starts_at > lo AND starts_at <= hi.
+func preBriefWindow(now time.Time) (lo, hi time.Time) {
+	return now, now.Add(preBriefEligibilityHorizon)
+}
+
 func (s *Store) UpcomingEventsForSourceBatch(ctx context.Context, ownerID, sourceID string, now time.Time, afterID *string, limit int) ([]model.CalendarEvent, error) {
 	if limit <= 0 {
 		limit = 100
 	}
-	horizon := now.Add(7 * 24 * time.Hour)
+	lo, hi := preBriefWindow(now)
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, owner_id, source_id, external_id, title, starts_at, ends_at,
 		        description, location, conferencing_url, attendees::text, updated_at
@@ -108,7 +122,7 @@ func (s *Store) UpcomingEventsForSourceBatch(ctx context.Context, ownerID, sourc
 		   AND ($5::uuid IS NULL OR id > $5::uuid)
 		 ORDER BY id
 		 LIMIT $6`,
-		ownerID, sourceID, now, horizon, afterID, limit)
+		ownerID, sourceID, lo, hi, afterID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -156,6 +170,49 @@ func (s *Store) DeleteIneligibleEventBriefs(ctx context.Context, eventIDs []stri
 		 WHERE event_id = ANY($1::uuid[]) AND NOT (template_id = ANY($2::uuid[]))
 		 RETURNING id`,
 		eventIDs, eligibleTemplateIDs)
+	if err != nil {
+		return 0, err
+	}
+	if err := deleteQueuedPreJobsForBriefs(ctx, tx, ids); err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, err
+	}
+	return len(ids), nil
+}
+
+// DeleteEventBriefsOutsideWindow deletes, in one transaction, every existing
+// brief for (ownerID, sourceID) whose event is no longer inside the
+// eligibility window (now, now+7d] -- rescheduled beyond the horizon, or
+// already started -- together with its still-queued pre_generate jobs.
+// Running jobs are left intact; guarded publication makes them harmless once
+// their brief is gone.
+//
+// This is the cleanup DeleteIneligibleEventBriefs cannot do: that one runs
+// over the events the reconciler has just LOADED, and the reconciler loads
+// only events inside the window. An event that left the window is never in
+// a batch, so its brief was never examined, and it stayed attached and
+// retrievable through the calendar API (cross-review finding on PR #766).
+// The window here is preBriefWindow, the batch query's own predicate
+// negated, so the two cannot disagree about which events are eligible.
+// Returns the number of briefs deleted.
+func (s *Store) DeleteEventBriefsOutsideWindow(ctx context.Context, ownerID, sourceID string, now time.Time) (int, error) {
+	lo, hi := preBriefWindow(now)
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+
+	ids, err := deleteBriefsReturningIDs(ctx, tx,
+		`DELETE FROM event_briefs b
+		 USING calendar_events e
+		 WHERE b.event_id = e.id
+		   AND e.owner_id = $1 AND e.source_id = $2
+		   AND NOT (e.starts_at > $3 AND e.starts_at <= $4)
+		 RETURNING b.id`,
+		ownerID, sourceID, lo, hi)
 	if err != nil {
 		return 0, err
 	}
