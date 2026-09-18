@@ -26,13 +26,14 @@ func TestRecoverLiveTemplateOutputs_RemovesStaleByLastDemand(t *testing.T) {
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("list outputs: %v %+v", err, rows)
 	}
-	staleTime := time.Now().Add(-2 * time.Hour)
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	staleTime := now.Add(-2 * time.Hour)
 	if _, err := st.Pool().Exec(context.Background(),
 		`UPDATE live_template_outputs SET last_demand_at=$2 WHERE id=$1`, rows[0].ID, staleTime); err != nil {
 		t.Fatalf("backdate last_demand_at: %v", err)
 	}
 
-	noteIDs, removed, err := st.RecoverLiveTemplateOutputs(context.Background(), time.Now(), 200)
+	noteIDs, removed, err := st.RecoverLiveTemplateOutputs(context.Background(), now, 200)
 	if err != nil {
 		t.Fatalf("recover: %v", err)
 	}
@@ -64,7 +65,8 @@ func TestRecoverLiveTemplateOutputs_RecentDemandSurvives(t *testing.T) {
 	noteID, transcriptID, streamID := newLiveTestStream(t, st, owner)
 	appendFinalSegment(t, st, transcriptID, streamID, "hello")
 
-	if _, _, err := st.RecoverLiveTemplateOutputs(context.Background(), time.Now(), 200); err != nil {
+	now := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	if _, _, err := st.RecoverLiveTemplateOutputs(context.Background(), now, 200); err != nil {
 		t.Fatalf("recover: %v", err)
 	}
 

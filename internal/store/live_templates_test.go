@@ -180,7 +180,7 @@ func TestReconcileStreamDemand_AdvancesAndCoalesces(t *testing.T) {
 // TestScheduleLiveJob_EnforcesCadence proves the durable not-before lease
 // excludes a claim before 15s and admits it after, using a fake clock passed
 // directly to ReconcileStreamDemandTx (rather than AppendStreamSegment's
-// production time.Now()).
+// production wall clock).
 func TestScheduleLiveJob_EnforcesCadence(t *testing.T) {
 	st := store.New(testutil.NewPool(t))
 	owner := newLiveTestOwner(t, st)

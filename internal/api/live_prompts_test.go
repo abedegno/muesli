@@ -192,8 +192,7 @@ func TestLiveNotePrompts_SnapshotThenCoalescedUpdate(t *testing.T) {
 	}
 
 	seenTemplates := map[string]bool{}
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) && len(seenTemplates) < 2 {
+	for attempt := 0; attempt < 10 && len(seenTemplates) < 2; attempt++ {
 		f, ok := sse.next(t, 5*time.Second)
 		if !ok {
 			break

@@ -24,6 +24,7 @@ type liveJobFixture struct {
 	st    *store.Store
 	owner string
 	agent *plugintest.Stub
+	now   time.Time
 }
 
 func newLiveJobFixture(t *testing.T) *liveJobFixture {
@@ -47,7 +48,7 @@ func newLiveJobFixture(t *testing.T) *liveJobFixture {
 	t.Cleanup(func() { liveJobClock = originalClock })
 
 	proc := NewProcessor(st, cr, nil, config.Config{}, nil)
-	f := &liveJobFixture{t: t, proc: proc, st: st, owner: u.ID, agent: agent}
+	f := &liveJobFixture{t: t, proc: proc, st: st, owner: u.ID, agent: agent, now: now}
 	if err := st.EnsureDefaultPlugin(ctx, cr, model.PluginAgent, "agent", agent.URL(), "tok", "{}"); err != nil {
 		t.Fatalf("ensure default agent: %v", err)
 	}
@@ -203,7 +204,7 @@ func TestRunLiveGenerate_IneligibleDuringExecution_CompletionFenceDiscards(t *te
 
 	job := f.claimLiveJob(t)
 
-	claim, err := f.st.ClaimLiveGenerateJobTx(context.Background(), job, time.Now())
+	claim, err := f.st.ClaimLiveGenerateJobTx(context.Background(), job, f.now)
 	if err != nil || !claim.Valid {
 		t.Fatalf("claim: %v %+v", err, claim)
 	}
@@ -214,7 +215,7 @@ func TestRunLiveGenerate_IneligibleDuringExecution_CompletionFenceDiscards(t *te
 	}
 
 	published, err := f.st.CompleteLiveGenerateSuccessTx(context.Background(), job.ID, claim.TargetRevision, "stub", "stub-model",
-		[]model.SummarySection{{Heading: "Live", ContentMarkdown: "x"}}, time.Now())
+		[]model.SummarySection{{Heading: "Live", ContentMarkdown: "x"}}, f.now)
 	if err != nil {
 		t.Fatalf("complete: %v", err)
 	}
