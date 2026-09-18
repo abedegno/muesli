@@ -759,48 +759,51 @@ func (s *Store) ClaimLiveGenerateJobTx(ctx context.Context, job model.Job, now t
 // row's active job, the stream is still current, and the template is still
 // in the owner's first-eight eligible set. Shared by success and
 // terminal-failure completion (issue #764's completion eligibility fence).
+// It also returns the job row's own target_revision (nil when the job never
+// completed a valid live claim): the only place the fixed target is read
+// back from, never recomputed from current demand.
 // Returns ok=false (with no error) when the job row itself is already gone
 // (e.g. cascade-deleted by note deletion) -- nothing left to do.
-func liveCompletionFenceTx(ctx context.Context, tx pgx.Tx, jobID string) (output model.LiveTemplateOutput, eligible bool, ok bool, err error) {
+func liveCompletionFenceTx(ctx context.Context, tx pgx.Tx, jobID string) (output model.LiveTemplateOutput, target *int, eligible bool, ok bool, err error) {
 	var liveOutputID string
-	err = tx.QueryRow(ctx, `SELECT COALESCE(live_output_id::text,'') FROM jobs WHERE id=$1 FOR UPDATE`, jobID).Scan(&liveOutputID)
+	err = tx.QueryRow(ctx, `SELECT COALESCE(live_output_id::text,''), target_revision FROM jobs WHERE id=$1 FOR UPDATE`, jobID).Scan(&liveOutputID, &target)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return model.LiveTemplateOutput{}, false, false, nil
+		return model.LiveTemplateOutput{}, nil, false, false, nil
 	}
 	if err != nil {
-		return model.LiveTemplateOutput{}, false, false, err
+		return model.LiveTemplateOutput{}, nil, false, false, err
 	}
 	if liveOutputID == "" {
-		return model.LiveTemplateOutput{}, false, false, nil
+		return model.LiveTemplateOutput{}, nil, false, false, nil
 	}
 	row := tx.QueryRow(ctx, `SELECT `+liveOutputColumns+` FROM live_template_outputs WHERE id=$1 FOR UPDATE`, liveOutputID)
 	output, err = scanLiveOutput(row)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return model.LiveTemplateOutput{}, false, true, nil
+		return model.LiveTemplateOutput{}, target, false, true, nil
 	}
 	if err != nil {
-		return model.LiveTemplateOutput{}, false, false, err
+		return model.LiveTemplateOutput{}, nil, false, false, err
 	}
 	if output.ActiveJobID != jobID {
-		return output, false, true, nil
+		return output, target, false, true, nil
 	}
 	_, streamID, ok2, err := currentStreamForNoteTx(ctx, tx, output.NoteID)
 	if err != nil {
-		return model.LiveTemplateOutput{}, false, false, err
+		return model.LiveTemplateOutput{}, nil, false, false, err
 	}
 	if !ok2 || streamID != output.StreamID {
-		return output, false, true, nil
+		return output, target, false, true, nil
 	}
 	eligibleTemplates, _, err := EligibleLiveTemplatesTx(ctx, tx, output.OwnerID)
 	if err != nil {
-		return model.LiveTemplateOutput{}, false, false, err
+		return model.LiveTemplateOutput{}, nil, false, false, err
 	}
 	for _, t := range eligibleTemplates {
 		if t.ID == output.TemplateID {
-			return output, true, true, nil
+			return output, target, true, true, nil
 		}
 	}
-	return output, false, true, nil
+	return output, target, false, true, nil
 }
 
 // discardIneligibleLiveRowTx removes an output row that failed the
@@ -837,7 +840,7 @@ func (s *Store) CompleteLiveGenerateSuccessTx(ctx context.Context, jobID string,
 	}
 	defer tx.Rollback(ctx)
 
-	output, eligible, ok, err := liveCompletionFenceTx(ctx, tx, jobID)
+	output, _, eligible, ok, err := liveCompletionFenceTx(ctx, tx, jobID)
 	if err != nil {
 		return false, err
 	}
@@ -892,16 +895,22 @@ func (s *Store) CompleteLiveGenerateSuccessTx(ctx context.Context, jobID string,
 // eligible, it marks the row failed with a safe errorCode (never raw
 // provider/credential text), retains prior sections, and creates one
 // cadence-limited follow-up only when desired_revision still exceeds the
-// fixed targetRevision. If no longer eligible, it discards the failure state
-// entirely (never publishes it).
-func (s *Store) CompleteLiveGenerateFailureTx(ctx context.Context, jobID string, targetRevision int, errorCode string, now time.Time) (recorded bool, err error) {
+// job's fixed target_revision. That target is read from the job's own row
+// inside this transaction: the worker's job struct predates the live claim
+// that captured it, so a caller-supplied value would be stale and every
+// terminal failure would look like growth. A job that never completed a
+// valid live claim has no target and rendered nothing, so it gets no
+// follow-up; the next finalized segment's reconciliation reschedules it. If
+// no longer eligible, it discards the failure state entirely (never
+// publishes it).
+func (s *Store) CompleteLiveGenerateFailureTx(ctx context.Context, jobID string, errorCode string, now time.Time) (recorded bool, err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return false, err
 	}
 	defer tx.Rollback(ctx)
 
-	output, eligible, ok, err := liveCompletionFenceTx(ctx, tx, jobID)
+	output, target, eligible, ok, err := liveCompletionFenceTx(ctx, tx, jobID)
 	if err != nil {
 		return false, err
 	}
@@ -928,7 +937,7 @@ func (s *Store) CompleteLiveGenerateFailureTx(ctx context.Context, jobID string,
 		return false, err
 	}
 
-	if output.DesiredRevision > targetRevision {
+	if target != nil && output.DesiredRevision > *target {
 		out := output
 		out.LastStartedAt = &now
 		out.ActiveJobID = ""

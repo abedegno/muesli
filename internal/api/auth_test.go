@@ -22,7 +22,9 @@ func newTestServer(t *testing.T) (*api.Server, *store.Store) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return api.NewServer(api.Deps{Store: st, Crypto: cr}), st
+	srv := api.NewServer(api.Deps{Store: st, Crypto: cr})
+	t.Cleanup(srv.Close) // registered after NewPool's, so it runs first and frees the LISTEN connection
+	return srv, st
 }
 
 func doJSON(t *testing.T, srv *api.Server, method, path string, body any, headers map[string]string) *httptest.ResponseRecorder {

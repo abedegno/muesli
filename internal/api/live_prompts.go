@@ -83,10 +83,31 @@ func (s *Server) liveHubInstance() *liveNoteHub {
 		s.liveHubField = newLiveNoteHub()
 		if s.deps.Store != nil && s.deps.Store.Pool() != nil {
 			hub := s.liveHubField
-			store.NewLiveNoteListener(s.deps.Store.Pool(), hub.wake)
+			s.liveMu.Lock()
+			defer s.liveMu.Unlock()
+			if !s.liveClosed {
+				s.liveListener = store.NewLiveNoteListener(s.deps.Store.Pool(), hub.wake)
+			}
 		}
 	})
 	return s.liveHubField
+}
+
+// Close releases the process-wide resources the server acquired lazily:
+// currently the live-prompts LISTEN connection, which otherwise stays
+// acquired from the pool for the life of the process and blocks
+// pgxpool.Close forever (the store's pool cannot close while a connection is
+// checked out). Run calls it on return; tests call it before their pool's
+// cleanup. Safe to call when nothing was started, and idempotent.
+func (s *Server) Close() {
+	s.liveMu.Lock()
+	l := s.liveListener
+	s.liveListener = nil
+	s.liveClosed = true
+	s.liveMu.Unlock()
+	if l != nil {
+		l.Close()
+	}
 }
 
 // liveSnapshotItem is one template's entry in the SSE snapshot/update

@@ -201,6 +201,16 @@ func TestScheduleLiveJob_EnforcesCadence(t *testing.T) {
 	// Simulate the first job having already started, then force a second
 	// demand-advancing reconciliation shortly after (before the 15s cadence
 	// elapses) directly against the fixed clock.
+	// The first job must be settled, not merely detached: jobs_live_active_uniq
+	// allows one pending/running live_generate job per output row, so leaving
+	// it pending would make the second schedule a unique violation instead of
+	// a cadence check.
+	if _, err := st.Pool().Exec(ctx,
+		`UPDATE jobs SET status=$2, finished_at=now()
+		  WHERE id=(SELECT active_job_id FROM live_template_outputs WHERE id=$1)`,
+		outputID, model.JobDone); err != nil {
+		t.Fatalf("settle first job: %v", err)
+	}
 	if _, err := st.Pool().Exec(ctx,
 		`UPDATE live_template_outputs SET active_job_id=NULL, last_started_at=$2 WHERE id=$1`,
 		outputID, base); err != nil {
@@ -211,6 +221,7 @@ func TestScheduleLiveJob_EnforcesCadence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("begin: %v", err)
 	}
+	defer tx.Rollback(ctx) // a t.Fatalf below must not leave the pool's connection held
 	if _, err := store.ReconcileStreamDemandTx(ctx, tx, owner, noteID, transcriptID, streamID, base.Add(5*time.Second)); err != nil {
 		t.Fatalf("reconcile: %v", err)
 	}

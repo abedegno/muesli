@@ -122,21 +122,19 @@ func classifyLiveError(err error) string {
 // store.CompleteLiveGenerateFailureTx): eligibility changed after claim
 // discards the failure state entirely rather than publishing it.
 //
-// target_revision is read from the job's own row rather than recomputed --
-// it was captured once at first claim and must never be recomputed here.
+// The fixed target_revision is deliberately not passed from here: the job
+// struct the pipeline holds was populated by the queue claim, before the
+// live claim captured the target, so the store reads it from the job's own
+// row inside the completion transaction instead.
 func (p *Processor) handleLiveGenerateTerminalFailure(ctx context.Context, job model.Job, terminalErr error) {
 	if job.LiveOutputID == "" {
 		return
-	}
-	target := 0
-	if job.TargetRevision != nil {
-		target = *job.TargetRevision
 	}
 	code := model.LiveErrorProviderFailed
 	if terminalErr != nil {
 		code = classifyLiveError(terminalErr)
 	}
-	if _, err := p.store.CompleteLiveGenerateFailureTx(ctx, job.ID, target, code, liveJobClock()); err != nil {
+	if _, err := p.store.CompleteLiveGenerateFailureTx(ctx, job.ID, code, liveJobClock()); err != nil {
 		slog.ErrorContext(ctx, "terminal live_generate: publish failure", "error", err, "job_id", job.ID, "note_id", job.NoteID)
 	}
 }

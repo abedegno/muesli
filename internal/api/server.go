@@ -110,6 +110,12 @@ type Server struct {
 	// that never touch /live-prompts never open a database LISTEN connection.
 	liveOnce     sync.Once
 	liveHubField *liveNoteHub
+	// liveMu guards liveListener and liveClosed so Close can stop the
+	// listener (and refuse to start one afterwards) without racing the lazy
+	// start above.
+	liveMu       sync.Mutex
+	liveListener *store.LiveNoteListener
+	liveClosed   bool
 }
 
 func NewServer(deps Deps) *Server {
@@ -324,6 +330,7 @@ func (s *Server) Handler() http.Handler { return s.router }
 
 // Run starts the HTTP server and blocks until ctx is cancelled, then shuts down gracefully.
 func (s *Server) Run(ctx context.Context, addr string) error {
+	defer s.Close()
 	httpSrv := &http.Server{Addr: addr, Handler: s.router}
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpSrv.ListenAndServe() }()

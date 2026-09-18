@@ -145,7 +145,14 @@ func TestRunLiveGenerate_GrowthDuringExecutionCreatesOneFollowUp(t *testing.T) {
 
 	job := f.claimLiveJob(t)
 
-	// Growth committed AFTER this job captured its target_revision.
+	// Capture target_revision (=1) exactly as the worker's own live claim
+	// does, then commit growth AFTER it. runLiveGenerate's re-claim must keep
+	// that fixed target (COALESCE), render revision 1 only, and schedule the
+	// single follow-up for revision 2.
+	claim, err := f.st.ClaimLiveGenerateJobTx(context.Background(), job, f.now)
+	if err != nil || !claim.Valid || claim.TargetRevision != 1 {
+		t.Fatalf("claim: err=%v valid=%v target=%d, want a valid claim at target 1", err, claim.Valid, claim.TargetRevision)
+	}
 	f.appendFinal(t, transcriptID, streamID, "world")
 
 	if _, err := f.proc.runLiveGenerate(context.Background(), job); err != nil {
