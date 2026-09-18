@@ -145,8 +145,9 @@ func TestLivePromptsE2E_TwoProcessViewers(t *testing.T) {
 	if err := st.SetDefaultPlugin(ctx, streamID); err != nil {
 		t.Fatalf("set default streaming plugin: %v", err)
 	}
-	batch := newSingleSegmentTranscriber(t, model.Segment{StartMS: 0, EndMS: 3000, Text: "the whole meeting", Source: "batch"})
-	batchID := registerPlugin(t, srvA, hdr, model.PluginTranscriber, "batch-fake", batch.URL, "batch-token")
+	batch := plugintest.NewTranscriber()
+	t.Cleanup(batch.Close)
+	batchID := registerPlugin(t, srvA, hdr, model.PluginTranscriber, "batch-fake", batch.URL(), "batch-token")
 	if err := st.SetDefaultPlugin(ctx, batchID); err != nil {
 		t.Fatalf("set default batch transcriber: %v", err)
 	}
@@ -179,10 +180,10 @@ func TestLivePromptsE2E_TwoProcessViewers(t *testing.T) {
 		}
 	}
 
+	// The server forwards no control message before the first segment unless
+	// the plugin emits a loading one (see the streaming e2e tests), so the
+	// first read comes after the first frame.
 	conn := openStream(t, httpA.URL, noteID, token)
-	if _, payload, err := conn.ReadMessage(); err != nil || !strings.Contains(string(payload), `"ready"`) {
-		t.Fatalf("expected ready, got %s err=%v", payload, err)
-	}
 	frames := pcmFixtureAllFrames(t)
 	sendFrame := func(i int) {
 		t.Helper()

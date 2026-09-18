@@ -327,12 +327,15 @@ func TestDeleteNote_EndsCurrentLiveStream(t *testing.T) {
 				if n != 0 {
 					t.Fatalf("queued row count after trash = %d, want 0", n)
 				}
-				var status string
-				if err := st.Pool().QueryRow(ctx, `SELECT status FROM jobs WHERE id=$1`, jobID).Scan(&status); err != nil {
+				// The queued job is cancelled and then cascades away with its
+				// output row (jobs.live_output_id ON DELETE CASCADE); either way
+				// nothing claimable may remain.
+				var claimable int
+				if err := st.Pool().QueryRow(ctx, `SELECT count(*) FROM jobs WHERE id=$1 AND status=$2`, jobID, model.JobPending).Scan(&claimable); err != nil {
 					t.Fatalf("read job: %v", err)
 				}
-				if status != model.JobCancelled {
-					t.Fatalf("queued job status after trash = %q, want %q", status, model.JobCancelled)
+				if claimable != 0 {
+					t.Fatalf("queued job still pending after trash")
 				}
 			}
 			if _, err := st.LiveNoteSnapshot(ctx, owner, noteID); !errors.Is(err, store.ErrNotFound) {
