@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"regexp"
+	"time"
 
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/google/uuid"
@@ -101,9 +103,10 @@ func (s *Store) SaveTranscript(ctx context.Context, tr model.Transcript, expecte
 	nextGeneration := 1
 	var priorID string
 	var priorGeneration int
+	var priorStreamID *string
 	err = tx.QueryRow(ctx,
-		`SELECT id, generation FROM transcripts WHERE note_id=$1`,
-		tr.NoteID).Scan(&priorID, &priorGeneration)
+		`SELECT id, generation, stream_id FROM transcripts WHERE note_id=$1`,
+		tr.NoteID).Scan(&priorID, &priorGeneration, &priorStreamID)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		nextGeneration = 1
@@ -132,6 +135,12 @@ func (s *Store) SaveTranscript(ctx context.Context, tr model.Transcript, expecte
 		// row. It protects rows that remain present, and documents intent.
 		if _, err := tx.Exec(ctx, `UPDATE transcripts SET sealed=TRUE WHERE id=$1`, priorID); err != nil {
 			return model.Transcript{}, err
+		}
+		if priorStreamID != nil {
+			// Batch transcription is replacing a live-stream-owned transcript
+			// (issue #764): clean up that stream's live prompts best-effort, the
+			// same way CreateStreamTranscript's supersession path does.
+			s.endLiveStreamBestEffort(ctx, tx, tr.NoteID, *priorStreamID)
 		}
 	}
 
@@ -261,6 +270,14 @@ func (s *Store) CreateStreamTranscript(ctx context.Context, noteID, streamID, pl
 		if _, err := tx.Exec(ctx, `UPDATE transcripts SET sealed=TRUE WHERE id=$1`, priorID); err != nil {
 			return model.Transcript{}, err
 		}
+		if priorStreamID != nil {
+			// This live stream is being superseded by a fresh recording
+			// generation (issue #764): live prompts belong only to the current
+			// active stream, so clean up the one ending here best-effort, the
+			// same way AppendStreamSegment isolates live scheduling from
+			// authoritative transcript work.
+			s.endLiveStreamBestEffort(ctx, tx, noteID, *priorStreamID)
+		}
 		if _, err := tx.Exec(ctx, `DELETE FROM transcripts WHERE note_id=$1`, noteID); err != nil {
 			return model.Transcript{}, err
 		}
@@ -300,12 +317,12 @@ func (s *Store) AppendStreamSegment(ctx context.Context, transcriptID, streamID 
 	}
 	defer tx.Rollback(ctx)
 
-	var found string
+	var found, noteID string
 	err = tx.QueryRow(ctx,
-		`SELECT id FROM transcripts
+		`SELECT id, note_id FROM transcripts
 		  WHERE id=$1 AND stream_id=$2 AND sealed=FALSE
 		  FOR UPDATE`,
-		transcriptID, streamID).Scan(&found)
+		transcriptID, streamID).Scan(&found, &noteID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrStreamSuperseded
 	} else if err != nil {
@@ -335,7 +352,65 @@ func (s *Store) AppendStreamSegment(ctx context.Context, transcriptID, streamID 
 		speaker, wordsJSON, seg.Confidence, boundary); err != nil {
 		return err
 	}
+
+	// Live-prompt scheduling (issue #764) is isolated behind a savepoint:
+	// persisting this finalized segment is authoritative recording work and
+	// must commit regardless of whether best-effort live scheduling
+	// succeeds (see the accepted plan's savepoint ruling). A reconciliation
+	// failure rolls back only the savepoint, is logged without transcript
+	// content, and the segment still commits -- the next finalized segment
+	// retries the idempotent reconciliation against the full current
+	// revision.
+	s.reconcileLiveDemandBestEffort(ctx, tx, noteID, transcriptID, streamID)
+
 	return tx.Commit(ctx)
+}
+
+// reconcileLiveDemandBestEffort runs ReconcileStreamDemandTx inside a
+// savepoint of the caller's already-open transaction, swallowing any
+// reconciliation error after rolling back to the savepoint so the caller's
+// outer transaction (which has already done the authoritative recording
+// work) is unaffected. See AppendStreamSegment's doc comment.
+// endLiveStreamBestEffort runs EndLiveTemplateStream inside a savepoint of
+// the caller's already-open transaction, best-effort: a failure is logged
+// (without transcript/output content) and rolled back to the savepoint
+// rather than failing the caller's own authoritative transcript-replacement
+// transaction (issue #764, mirroring reconcileLiveDemandBestEffort).
+func (s *Store) endLiveStreamBestEffort(ctx context.Context, tx pgx.Tx, noteID, streamID string) {
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		slog.ErrorContext(ctx, "live cleanup: open savepoint failed", "error", err, "note_id", noteID, "stream_id", streamID)
+		return
+	}
+	if _, err := EndLiveTemplateStream(ctx, sp, noteID, streamID, time.Now()); err != nil {
+		slog.ErrorContext(ctx, "live cleanup: end stream failed, continuing without it", "error", err, "note_id", noteID, "stream_id", streamID)
+		_ = sp.Rollback(ctx)
+		return
+	}
+	if err := sp.Commit(ctx); err != nil {
+		slog.ErrorContext(ctx, "live cleanup: release savepoint failed", "error", err, "note_id", noteID, "stream_id", streamID)
+	}
+}
+
+func (s *Store) reconcileLiveDemandBestEffort(ctx context.Context, tx pgx.Tx, noteID, transcriptID, streamID string) {
+	ownerID, err := s.NoteOwnerID(ctx, noteID)
+	if err != nil {
+		slog.ErrorContext(ctx, "live scheduling: resolve note owner failed", "error", err, "note_id", noteID, "stream_id", streamID)
+		return
+	}
+	sp, err := tx.Begin(ctx) // pgx savepoint (nested Begin on a Tx).
+	if err != nil {
+		slog.ErrorContext(ctx, "live scheduling: open savepoint failed", "error", err, "note_id", noteID, "stream_id", streamID)
+		return
+	}
+	if _, err := ReconcileStreamDemandTx(ctx, sp, ownerID, noteID, transcriptID, streamID, time.Now()); err != nil {
+		slog.ErrorContext(ctx, "live scheduling: reconciliation failed, continuing without it", "error", err, "note_id", noteID, "stream_id", streamID)
+		_ = sp.Rollback(ctx)
+		return
+	}
+	if err := sp.Commit(ctx); err != nil {
+		slog.ErrorContext(ctx, "live scheduling: release savepoint failed", "error", err, "note_id", noteID, "stream_id", streamID)
+	}
 }
 
 // AppendTranscriptGap records an interval of audio that never reached a

@@ -41,8 +41,15 @@ type JobEnqueue struct {
 	CalendarEventID string
 	BriefID         string
 	BriefGeneration int
-	Type            string
-	Payload         json.RawMessage
+	// TemplateID/StreamID/LiveOutputID are required for a JobLiveGenerate
+	// job (issue #764); TargetRevision is deliberately absent here -- it is
+	// written exactly once, at the job's first claim (see runLiveGenerate),
+	// never at enqueue time.
+	TemplateID   string
+	StreamID     string
+	LiveOutputID string
+	Type         string
+	Payload      json.RawMessage
 }
 
 // EnqueueJob inserts a pending job for an explicit target and returns its id.
@@ -66,6 +73,11 @@ func (s *Store) EnqueueJob(ctx context.Context, spec JobEnqueue) (string, error)
 	} else if !hasNote {
 		return "", ValidationError(spec.Type + " jobs must target a note")
 	}
+	if spec.Type == model.JobLiveGenerate {
+		if spec.TemplateID == "" || spec.StreamID == "" || spec.LiveOutputID == "" {
+			return "", ValidationError("live_generate jobs must carry template_id, stream_id, and live_output_id")
+		}
+	}
 
 	payload := spec.Payload
 	if len(payload) == 0 {
@@ -73,9 +85,10 @@ func (s *Store) EnqueueJob(ctx context.Context, spec JobEnqueue) (string, error)
 	}
 	id := uuid.NewString()
 	_, err := s.pool.Exec(ctx,
-		`INSERT INTO jobs (id, note_id, calendar_event_id, brief_id, brief_generation, type, status, payload)
-		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb)`,
+		`INSERT INTO jobs (id, note_id, calendar_event_id, brief_id, brief_generation, template_id, stream_id, live_output_id, type, status, payload)
+		 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb)`,
 		id, nullableStr(spec.NoteID), nullableStr(spec.CalendarEventID), nullableStr(spec.BriefID), nullableInt(spec.BriefGeneration),
+		nullableStr(spec.TemplateID), nullableStr(spec.StreamID), nullableStr(spec.LiveOutputID),
 		spec.Type, model.JobPending, string(payload))
 	return id, err
 }
@@ -121,6 +134,7 @@ func (s *Store) ClaimJob(ctx context.Context, lease time.Duration) (model.Job, b
 	var payload []byte
 	err = tx.QueryRow(ctx,
 		`SELECT id, COALESCE(note_id::text,''), COALESCE(calendar_event_id::text,''), COALESCE(brief_id::text,''), COALESCE(brief_generation,0),
+		        COALESCE(template_id::text,''), COALESCE(stream_id,''), COALESCE(live_output_id::text,''), target_revision,
 		        type, status, attempts, COALESCE(last_error,''), priority, payload
 		 FROM jobs
 		 WHERE (status='pending' AND (lease_expires_at IS NULL OR lease_expires_at < now()))
@@ -128,7 +142,9 @@ func (s *Store) ClaimJob(ctx context.Context, lease time.Duration) (model.Job, b
 		 ORDER BY priority DESC, created_at ASC
 		 FOR UPDATE SKIP LOCKED
 		 LIMIT 1`).
-		Scan(&j.ID, &j.NoteID, &j.CalendarEventID, &j.BriefID, &j.BriefGeneration, &j.Type, &j.Status, &j.Attempts, &j.LastError, &j.Priority, &payload)
+		Scan(&j.ID, &j.NoteID, &j.CalendarEventID, &j.BriefID, &j.BriefGeneration,
+			&j.TemplateID, &j.StreamID, &j.LiveOutputID, &j.TargetRevision,
+			&j.Type, &j.Status, &j.Attempts, &j.LastError, &j.Priority, &payload)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return model.Job{}, false, tx.Commit(ctx)
 	}
@@ -427,4 +443,24 @@ func (s *Store) GetLatestFailedJobByNoteID(ctx context.Context, noteID string) (
 	}
 	j.Payload = json.RawMessage(payload)
 	return &j, nil
+}
+
+// SetJobTargetRevisionIfNull writes a live_generate job's TargetRevision
+// exactly once, on its first claim, from the given revision. It is a no-op
+// (revision unchanged) when the column is already set, so a retry or
+// lease-recovered reclaim of the same job can call this unconditionally
+// without ever moving the fixed prefix it executes (see the accepted
+// spec's target_revision ruling). Returns the job's TargetRevision after
+// the call, which is either the pre-existing value or the one just written.
+func (s *Store) SetJobTargetRevisionIfNull(ctx context.Context, jobID string, revision int) (int, error) {
+	var out int
+	err := s.pool.QueryRow(ctx,
+		`UPDATE jobs SET target_revision = COALESCE(target_revision, $2), updated_at = now()
+		 WHERE id = $1
+		 RETURNING target_revision`,
+		jobID, revision).Scan(&out)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return out, err
 }

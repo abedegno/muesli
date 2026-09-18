@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"strings"
+	"time"
 
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/google/uuid"
@@ -310,14 +311,21 @@ func (s *Store) TemplatesForSummary(ctx context.Context, ownerID string) ([]mode
 }
 
 func (s *Store) nameTaken(ctx context.Context, ownerID, name, excludeID string) (bool, error) {
+	return templateNameTakenTx(ctx, s.pool, ownerID, name, excludeID)
+}
+
+// templateNameTakenTx is nameTaken's body, parameterized over queryRower so
+// CreateTemplate can run it inside its own eligibility-reconciling
+// transaction (issue #764) instead of a separate pool-level round trip.
+func templateNameTakenTx(ctx context.Context, q queryRower, ownerID, name, excludeID string) (bool, error) {
 	var exists bool
 	var err error
 	if excludeID == "" {
-		err = s.pool.QueryRow(ctx,
+		err = q.QueryRow(ctx,
 			`SELECT EXISTS(SELECT 1 FROM templates WHERE owner_id=$1 AND lower(name)=lower($2))`,
 			ownerID, name).Scan(&exists)
 	} else {
-		err = s.pool.QueryRow(ctx,
+		err = q.QueryRow(ctx,
 			`SELECT EXISTS(SELECT 1 FROM templates WHERE owner_id=$1 AND lower(name)=lower($2) AND id<>$3::uuid)`,
 			ownerID, name, excludeID).Scan(&exists)
 	}
@@ -341,10 +349,26 @@ func (s *Store) CreateTemplate(ctx context.Context, ownerID, name, phase string,
 	name = strings.TrimSpace(name)
 	systemPrompt = strings.TrimSpace(systemPrompt)
 	modelName = strings.TrimSpace(modelName)
-	if taken, err := s.nameTaken(ctx, ownerID, name, ""); err != nil {
+
+	// Transactional (rather than a bare pool.Exec) because enabling a
+	// during+auto_run template must reconcile the owner's live-prompt
+	// eligibility in the SAME transaction as the mutation: a reconciliation
+	// failure must roll back the create rather than leave a live row set
+	// unreconciled against newly-eligible state (issue #764's accepted
+	// spec).
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return model.Template{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	if taken, err := templateNameTakenTx(ctx, tx, ownerID, name, ""); err != nil {
 		return model.Template{}, err
 	} else if taken {
 		return model.Template{}, ErrDuplicate
+	}
+	if err := validateLiveTemplateCap(ctx, tx, ownerID, "", phase, autoRun); err != nil {
+		return model.Template{}, err
 	}
 	secJSON, err := json.Marshal(sections)
 	if err != nil {
@@ -355,13 +379,25 @@ func (s *Store) CreateTemplate(ctx context.Context, ownerID, name, phase string,
 		AutoRun:      autoRun,
 		SystemPrompt: systemPrompt, Model: modelName, Temperature: temperature,
 	}
-	_, err = s.pool.Exec(ctx,
+	if _, err = tx.Exec(ctx,
 		`INSERT INTO templates (id, owner_id, name, phase, sections, auto_run, system_prompt, model, temperature)
 		 VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9)`,
 		tm.ID, ownerID, name, phase, string(secJSON),
-		autoRun, nullableTemplateStr(systemPrompt), nullableTemplateStr(modelName), temperature)
-	return tm, err
+		autoRun, nullableTemplateStr(systemPrompt), nullableTemplateStr(modelName), temperature); err != nil {
+		return model.Template{}, err
+	}
+	if err := ReconcileOwnerEligibilityTx(ctx, tx, ownerID, liveClock()); err != nil {
+		return model.Template{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return model.Template{}, err
+	}
+	return tm, nil
 }
+
+// liveClock is injected so tests can control eligibility-reconciliation
+// timing deterministically; production leaves it as time.Now.
+var liveClock = time.Now
 
 // UpdateTemplate updates an owner-scoped template, including its optional
 // agent overrides. Passing an empty systemPrompt/modelName or a nil
@@ -422,6 +458,10 @@ func (s *Store) UpdateTemplate(ctx context.Context, ownerID, id, name, phase str
 		return err
 	}
 
+	if err := validateLiveTemplateCap(ctx, tx, ownerID, id, phase, autoRun); err != nil {
+		return err
+	}
+
 	ct, err := tx.Exec(ctx,
 		`UPDATE templates SET name=$1, phase=$2, sections=$3::jsonb, auto_run=$4, system_prompt=$5, model=$6, temperature=$7
 		  WHERE id=$8 AND owner_id=$9`,
@@ -440,6 +480,14 @@ func (s *Store) UpdateTemplate(ctx context.Context, ownerID, id, name, phase str
 		if _, err := cleanupBriefsForTemplateAllOwners(ctx, s, tx, id); err != nil {
 			return err
 		}
+	}
+
+	// Phase/auto_run/ordering changes can all move this template into or out
+	// of the owner's live-prompt eligible set; reconcile every one of the
+	// owner's current active streams in this same transaction (issue #764).
+	// A reconciliation failure rolls back the whole mutation.
+	if err := ReconcileOwnerEligibilityTx(ctx, tx, ownerID, liveClock()); err != nil {
+		return err
 	}
 
 	return tx.Commit(ctx)
@@ -489,6 +537,12 @@ func (s *Store) DeleteTemplate(ctx context.Context, ownerID, id string) error {
 	}
 	if ct.RowsAffected() == 0 {
 		return ErrNotFound
+	}
+
+	// A deleted template can no longer be eligible; reconcile the owner's
+	// current active streams in this same transaction (issue #764).
+	if err := ReconcileOwnerEligibilityTx(ctx, tx, ownerID, liveClock()); err != nil {
+		return err
 	}
 	return tx.Commit(ctx)
 }

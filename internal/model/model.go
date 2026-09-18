@@ -156,6 +156,12 @@ const (
 	JobSummarize   = "summarize"
 	JobEmbed       = "embed"
 	JobPreGenerate = "pre_generate"
+	// JobLiveGenerate executes one immutable finalized-transcript prefix for
+	// a during-phase auto-run template against a note's current live
+	// stream (issue #764). It targets a note (see JobTargetNote) plus the
+	// live-specific TemplateID/StreamID/LiveOutputID/TargetRevision fields
+	// below.
+	JobLiveGenerate = "live_generate"
 )
 
 // Job statuses.
@@ -217,10 +223,19 @@ type Job struct {
 	// publication rather than being prevented at the schema level.
 	BriefID         string `json:"brief_id,omitempty"`
 	BriefGeneration int    `json:"brief_generation,omitempty"`
-	Type            string `json:"type"`
-	Status          string `json:"status"`
-	Attempts        int    `json:"attempts"`
-	LastError       string `json:"last_error,omitempty"`
+	// TemplateID/StreamID/LiveOutputID/TargetRevision are set only for
+	// JobLiveGenerate jobs (issue #764). TargetRevision is nil until this
+	// job's first claim captures it from live_template_outputs.desired_revision;
+	// it is never recomputed afterward by retry, lease renewal, or
+	// lease-recovered reclaim (see runLiveGenerate).
+	TemplateID     string `json:"template_id,omitempty"`
+	StreamID       string `json:"stream_id,omitempty"`
+	LiveOutputID   string `json:"live_output_id,omitempty"`
+	TargetRevision *int   `json:"target_revision,omitempty"`
+	Type           string `json:"type"`
+	Status         string `json:"status"`
+	Attempts       int    `json:"attempts"`
+	LastError      string `json:"last_error,omitempty"`
 	// Priority orders pending/reclaimable jobs within ClaimJob's dequeue: higher
 	// values are claimed first, ties broken FIFO by created_at. Defaults to 0;
 	// bumped by BumpNoteJobPriority ("process next") for pending jobs only.
@@ -537,4 +552,61 @@ type EventBrief struct {
 	Sections    []SummarySection `json:"sections"`
 	CreatedAt   time.Time        `json:"-"`
 	UpdatedAt   time.Time        `json:"updated_at"`
+}
+
+// Live template output statuses (see model.LiveTemplateOutput).
+const (
+	LiveOutputPending = "pending"
+	LiveOutputRunning = "running"
+	LiveOutputReady   = "ready"
+	LiveOutputFailed  = "failed"
+)
+
+// Safe live-output error codes (issue #764). Never raw provider text or
+// credentials -- see LiveTemplateOutput.ErrorCode's doc comment.
+const (
+	LiveErrorAgentUnavailable = "agent_unavailable"
+	LiveErrorProviderFailed   = "provider_failed"
+	LiveErrorInvalidOutput    = "invalid_output"
+)
+
+// LiveTemplateOutput is one compact execution/output row for a during-phase,
+// auto-run template running against a note's current live transcript stream
+// (issue #764). Uniquely keyed by (note_id, template_id, stream_id) at the
+// store layer. Only ClientVisible rows appear in SSE snapshots and active-set
+// rereads (internal/api/live_prompts.go).
+type LiveTemplateOutput struct {
+	ID         string `json:"id"`
+	NoteID     string `json:"note_id"`
+	TemplateID string `json:"template_id"`
+	// TemplateName is denormalized at read time (joined from templates) for
+	// the SSE snapshot/update payload; never written.
+	TemplateName string `json:"template_name,omitempty"`
+	StreamID     string `json:"stream_id"`
+	OwnerID      string `json:"-"`
+	// DesiredRevision is the current finalized-segment count scheduling has
+	// advanced this row to; RenderedRevision is the latest successfully
+	// rendered revision (0 initially).
+	DesiredRevision  int `json:"desired_revision"`
+	RenderedRevision int `json:"rendered_revision"`
+	// EventVersion increments on every client-visible row change; SSE
+	// handlers diff against their last-sent value per (stream_id,template_id).
+	EventVersion int    `json:"event_version"`
+	Status       string `json:"status"`
+	// ClientVisible is false once eligibility reconciliation has removed
+	// this item from the live view; never serialized (SSE snapshots only
+	// ever select ClientVisible rows in the first place).
+	ClientVisible           bool             `json:"-"`
+	CancellationRequestedAt *time.Time       `json:"-"`
+	Sections                []SummarySection `json:"sections"`
+	AgentPlugin             string           `json:"-"`
+	Model                   string           `json:"model,omitempty"`
+	// ErrorCode is one of the Live*Error constants above -- never raw
+	// provider or credential-bearing text.
+	ErrorCode     string     `json:"error_code,omitempty"`
+	LastStartedAt *time.Time `json:"-"`
+	LastDemandAt  time.Time  `json:"-"`
+	UpdatedAt     time.Time  `json:"-"`
+	EndedAt       *time.Time `json:"-"`
+	ActiveJobID   string     `json:"-"`
 }
