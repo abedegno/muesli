@@ -382,6 +382,11 @@ func applyEligibilityTx(ctx context.Context, tx pgx.Tx, ownerID, noteID, transcr
 			changed = true
 		}
 	}
+	if changed {
+		if err := notifyLiveNoteTx(ctx, tx, noteID); err != nil {
+			return false, err
+		}
+	}
 	return changed, nil
 }
 
@@ -466,6 +471,11 @@ func EndLiveTemplateStream(ctx context.Context, tx pgx.Tx, noteID, streamID stri
 				return false, err
 			}
 			changed = true
+		}
+	}
+	if changed {
+		if err := notifyLiveNoteTx(ctx, tx, noteID); err != nil {
+			return false, err
 		}
 	}
 	return changed, nil
@@ -606,6 +616,11 @@ func (s *Store) RecoverLiveTemplateOutputs(ctx context.Context, now time.Time, l
 			noteIDs = append(noteIDs, r.noteID)
 		}
 	}
+	for _, nid := range noteIDs {
+		if err := notifyLiveNoteTx(ctx, tx, nid); err != nil {
+			return nil, 0, err
+		}
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return nil, 0, err
 	}
@@ -729,6 +744,9 @@ func (s *Store) ClaimLiveGenerateJobTx(ctx context.Context, job model.Job, now t
 	}
 	output.Status = model.LiveOutputRunning
 	output.LastStartedAt = &now
+	if err := notifyLiveNoteTx(ctx, tx, output.NoteID); err != nil {
+		return LiveClaimResult{}, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return LiveClaimResult{}, err
@@ -789,9 +807,12 @@ func liveCompletionFenceTx(ctx context.Context, tx pgx.Tx, jobID string) (output
 // completion eligibility fence and marks the job done without publishing,
 // per the accepted spec: "it discards the generated output ... and notifies
 // the note; it publishes no result."
-func discardIneligibleLiveRowTx(ctx context.Context, tx pgx.Tx, jobID, outputID string) error {
+func discardIneligibleLiveRowTx(ctx context.Context, tx pgx.Tx, jobID, outputID, noteID string) error {
 	if outputID != "" {
 		if _, err := tx.Exec(ctx, `DELETE FROM live_template_outputs WHERE id=$1`, outputID); err != nil {
+			return err
+		}
+		if err := notifyLiveNoteTx(ctx, tx, noteID); err != nil {
 			return err
 		}
 	}
@@ -824,7 +845,7 @@ func (s *Store) CompleteLiveGenerateSuccessTx(ctx context.Context, jobID string,
 		return false, tx.Commit(ctx)
 	}
 	if !eligible {
-		if err := discardIneligibleLiveRowTx(ctx, tx, jobID, output.ID); err != nil {
+		if err := discardIneligibleLiveRowTx(ctx, tx, jobID, output.ID, output.NoteID); err != nil {
 			return false, err
 		}
 		return false, tx.Commit(ctx)
@@ -856,6 +877,9 @@ func (s *Store) CompleteLiveGenerateSuccessTx(ctx context.Context, jobID string,
 			return false, err
 		}
 	}
+	if err := notifyLiveNoteTx(ctx, tx, output.NoteID); err != nil {
+		return false, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return false, err
@@ -885,7 +909,7 @@ func (s *Store) CompleteLiveGenerateFailureTx(ctx context.Context, jobID string,
 		return false, tx.Commit(ctx)
 	}
 	if !eligible {
-		if err := discardIneligibleLiveRowTx(ctx, tx, jobID, output.ID); err != nil {
+		if err := discardIneligibleLiveRowTx(ctx, tx, jobID, output.ID, output.NoteID); err != nil {
 			return false, err
 		}
 		return false, tx.Commit(ctx)
@@ -912,9 +936,21 @@ func (s *Store) CompleteLiveGenerateFailureTx(ctx context.Context, jobID string,
 			return false, err
 		}
 	}
+	if err := notifyLiveNoteTx(ctx, tx, output.NoteID); err != nil {
+		return false, err
+	}
 
 	if err := tx.Commit(ctx); err != nil {
 		return false, err
 	}
 	return true, nil
+}
+
+// CurrentLiveStreamID returns the note's current active (unsealed) live
+// stream id, or active=false when the note has no transcript or its
+// transcript is batch-authored / sealed. Backs the SSE snapshot's
+// note/current-stream identity (issue #764).
+func (s *Store) CurrentLiveStreamID(ctx context.Context, noteID string) (streamID string, active bool, err error) {
+	_, streamID, active, err = currentStreamForNoteTx(ctx, s.pool, noteID)
+	return streamID, active, err
 }

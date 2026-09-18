@@ -670,6 +670,31 @@ Exports a set of notes as a ZIP archive.
   - `404`: invalid UUID, note not found, or folder not found
   - `500`: internal error while rendering or building the archive
 
+### Live In-Meeting Prompts
+
+#### `GET /api/notes/{id}/live-prompts`
+
+Authenticated `text/event-stream` of live in-meeting prompt state for one
+note (issue #764). Only owner-visible templates with `phase == "during"` and
+`auto_run == true` participate; at most 8 per owner. Ownership/readability is
+checked before capacity is allocated, and a note that is missing, malformed,
+foreign, deleted, or trashed is an indistinguishable `404`.
+
+- Auth: required
+- Response: `Content-Type: text/event-stream`
+  - `snapshot`: `{ "note_id", "stream_id", "active", "items": [Item] }` sent once, immediately after connecting
+  - `update`: `{ "item": Item }` sent for each new or changed item on every reread
+  - `ended`: `{ "template_id", "stream_id" }` sent when a previously-sent item is no longer visible (deleted, hidden, or its stream ended)
+  - `heartbeat`: `{}` sent periodically; also triggers an authoritative reread, repairing any dropped notification
+  - `Item`: `{ "template_id", "template_name", "stream_id", "status", "event_version", "rendered_revision", "desired_revision", "sections", "error_code" }`
+    - `status` is one of `pending`, `running`, `ready`, `failed`
+    - `error_code`, when present, is one of `agent_unavailable`, `provider_failed`, `invalid_output` -- never raw provider text or credentials
+- Capacity: a note accepts at most 40 concurrent subscribers globally across every API process, enforced by a renewable database lease (renewed every 20s, expiring 60s after the last renewal). The 41st concurrent subscriber receives `429`.
+- Errors:
+  - `404`: invalid UUID, or note not found/foreign/deleted/trashed
+  - `429`: the note is already at its subscriber cap
+  - `500`: internal error
+
 ### Audio Upload Flow
 
 #### Step 1: `POST /api/notes/{id}/audio-upload-url`

@@ -287,6 +287,7 @@ func run(ctx context.Context, cfg config.Config) (err error) {
 	go wpool.Run(ctx)
 	go worker.RunTrashPurger(ctx, st, prov, time.Duration(cfg.TrashRetentionDays)*24*time.Hour)
 	go worker.RunDigestScheduler(ctx, st, time.Hour)
+	go worker.RunLiveRecoverySweep(ctx, st)
 	go worker.StartCalendarScheduler(ctx, st, cr, cfg.GoogleOAuthClientID, cfg.GoogleOAuthClientSecret, cfg.MicrosoftOAuthClientID, cfg.MicrosoftOAuthClientSecret)
 	defer wpool.Stop()
 

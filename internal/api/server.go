@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/abedegno/muesli/internal/adminui"
@@ -103,6 +104,12 @@ type Server struct {
 	// microsoftOAuthStates holds the short-lived state values for the
 	// Microsoft OAuth connect flow. Zero value is ready to use.
 	microsoftOAuthStates microsoftOAuthStateStore
+
+	// liveOnce lazily starts this process's live-prompt note-update listener
+	// and hub (issue #764) on first use, so the many pre-existing api tests
+	// that never touch /live-prompts never open a database LISTEN connection.
+	liveOnce     sync.Once
+	liveHubField *liveNoteHub
 }
 
 func NewServer(deps Deps) *Server {
@@ -157,6 +164,7 @@ func (s *Server) routes() {
 		r.Post("/api/notes/{id}/event", s.handleSetNoteEvent)
 		r.Delete("/api/notes/{id}/event", s.handleClearNoteEvent)
 		r.Get("/api/notes/{id}/action-items", s.handleListNoteActionItems)
+		r.Get("/api/notes/{id}/live-prompts", s.handleLiveNotePrompts)
 		r.Get("/api/action-items", s.handleListActionItems)
 		r.Patch("/api/action-items/{id}", s.handleUpdateActionItemStatus)
 		r.Get("/api/notes/trash", s.handleListTrash)
