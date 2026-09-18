@@ -273,7 +273,11 @@ func TestReconcileOwnerEligibility_TemplateDeleted_RemovesIdleAndQueuedRows(t *t
 
 // TestReconcileOwnerEligibility_RunningRow_HiddenAndCancellationRequested
 // proves a running row is hidden and cancellation-requested (not deleted)
-// when its template becomes ineligible.
+// when its template becomes ineligible while still existing (auto_run
+// switched off). Deletion is the one ineligibility that cannot leave a hidden
+// row: live_template_outputs.template_id cascades on template delete, so the
+// row and its job vanish before reconciliation runs and the completion fence
+// then finds no job row (see the TemplateDeleted test above).
 func TestReconcileOwnerEligibility_RunningRow_HiddenAndCancellationRequested(t *testing.T) {
 	st := store.New(testutil.NewPool(t))
 	owner := newLiveTestOwner(t, st)
@@ -295,8 +299,9 @@ func TestReconcileOwnerEligibility_RunningRow_HiddenAndCancellationRequested(t *
 		t.Fatalf("simulate running job: %v", err)
 	}
 
-	if err := st.DeleteTemplate(context.Background(), owner, tmpl.ID); err != nil {
-		t.Fatalf("delete template: %v", err)
+	sections := []model.TemplateSection{{Heading: "Notes", Instruction: "Summarize."}}
+	if err := st.UpdateTemplate(context.Background(), owner, tmpl.ID, tmpl.Name, "during", sections, false, "", "", nil); err != nil {
+		t.Fatalf("switch auto_run off: %v", err)
 	}
 
 	var clientVisible bool
