@@ -96,10 +96,25 @@ func countOtherEligibleLiveTemplatesTx(ctx context.Context, q queryRower, ownerI
 	return n, err
 }
 
+// lockLiveTemplateCapTx serializes, for the rest of the caller's
+// transaction, every writer that can change ownerID's count of
+// during+auto_run templates. validateLiveTemplateCap is a count followed by
+// a decision: two transactions that both count seven and both commit an
+// eighth leave nine enabled (the cross-review finding on PR #769). The lock
+// is a transaction-scoped advisory lock keyed by owner, released at commit
+// or rollback; callers take it before any row lock so create and update
+// acquire in the same order. Built-in (owner-less) templates count toward
+// every owner's cap but are never written through these paths.
+func lockLiveTemplateCapTx(ctx context.Context, tx pgx.Tx, ownerID string) error {
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('live_template_cap'), hashtext($1))`, ownerID)
+	return err
+}
+
 // validateLiveTemplateCap returns a ValidationError, matching the existing
 // template validation-error shape, when enabling phase=during+auto_run=true
 // would put the owner over MaxLiveTemplates. excludeID is the template being
-// updated (empty for a create).
+// updated (empty for a create). The caller's transaction must already hold
+// lockLiveTemplateCapTx for ownerID, or the count is a race.
 func validateLiveTemplateCap(ctx context.Context, q queryRower, ownerID, excludeID, phase string, autoRun bool) error {
 	if phase != templatePhaseDuring || !autoRun {
 		return nil

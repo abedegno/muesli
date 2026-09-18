@@ -177,6 +177,97 @@ func TestReconcileStreamDemand_AdvancesAndCoalesces(t *testing.T) {
 	}
 }
 
+// TestLiveTemplateCap_ConcurrentWritersSerialize proves the eight-template
+// cap holds under concurrent writers (cross-review finding on PR #769).
+// validateLiveTemplateCap is a count followed by a decision, so the store
+// serializes it per owner with a transaction advisory lock. The interleaving
+// is forced rather than hoped for: the test holds the owner's lock itself,
+// starts two writers racing for the eighth slot, proves neither completes
+// while the lock is held (a writer that finishes here is one that never
+// took the lock), then releases it and proves exactly one succeeded, one hit
+// the cap, and the database holds exactly eight.
+func TestLiveTemplateCap_ConcurrentWritersSerialize(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		viaUpdate bool
+	}{{"create", false}, {"update", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := store.New(testutil.NewPool(t))
+			owner := newLiveTestOwner(t, st)
+			ctx := context.Background()
+			for i := 0; i < store.MaxLiveTemplates-1; i++ {
+				newLiveTestTemplate(t, st, owner, fmt.Sprintf("live-%d", i), "during", true)
+			}
+			var candA, candB model.Template
+			if tc.viaUpdate {
+				candA = newLiveTestTemplate(t, st, owner, "cand-a", "after", true)
+				candB = newLiveTestTemplate(t, st, owner, "cand-b", "after", true)
+			}
+
+			hold, err := st.Pool().Begin(ctx)
+			if err != nil {
+				t.Fatalf("begin holder: %v", err)
+			}
+			defer hold.Rollback(ctx)
+			if _, err := hold.Exec(ctx,
+				`SELECT pg_advisory_xact_lock(hashtext('live_template_cap'), hashtext($1))`, owner); err != nil {
+				t.Fatalf("hold cap lock: %v", err)
+			}
+
+			sections := []model.TemplateSection{{Heading: "Notes", Instruction: "Summarize."}}
+			write := func(name string, tm model.Template) error {
+				if tc.viaUpdate {
+					return st.UpdateTemplate(ctx, owner, tm.ID, tm.Name, "during", sections, true, "", "", nil)
+				}
+				_, err := st.CreateTemplate(ctx, owner, name, "during", sections, true, "", "", nil)
+				return err
+			}
+			results := make(chan error, 2)
+			go func() { results <- write("eighth-a", candA) }()
+			go func() { results <- write("eighth-b", candB) }()
+
+			select {
+			case err := <-results:
+				t.Fatalf("a writer completed (err=%v) while the owner's cap lock was held: cap validation is not serialized", err)
+			case <-time.After(300 * time.Millisecond):
+			}
+			if err := hold.Rollback(ctx); err != nil {
+				t.Fatalf("release cap lock: %v", err)
+			}
+
+			var succeeded, capped int
+			for i := 0; i < 2; i++ {
+				select {
+				case err := <-results:
+					var ve store.ValidationError
+					switch {
+					case err == nil:
+						succeeded++
+					case errorsAs(err, &ve):
+						capped++
+					default:
+						t.Fatalf("unexpected writer error: %v", err)
+					}
+				case <-time.After(10 * time.Second):
+					t.Fatal("a writer never completed after the lock was released")
+				}
+			}
+			if succeeded != 1 || capped != 1 {
+				t.Fatalf("after the race: %d succeeded, %d hit the cap; want exactly one of each", succeeded, capped)
+			}
+			var n int
+			if err := st.Pool().QueryRow(ctx,
+				`SELECT count(*) FROM templates WHERE (owner_id IS NULL OR owner_id=$1) AND phase='during' AND auto_run=TRUE`,
+				owner).Scan(&n); err != nil {
+				t.Fatalf("count eligible: %v", err)
+			}
+			if n != store.MaxLiveTemplates {
+				t.Fatalf("eligible templates = %d, want exactly %d", n, store.MaxLiveTemplates)
+			}
+		})
+	}
+}
+
 // TestScheduleLiveJob_EnforcesCadence proves the durable not-before lease
 // excludes a claim before 15s and admits it after, using a fake clock passed
 // directly to ReconcileStreamDemandTx (rather than AppendStreamSegment's

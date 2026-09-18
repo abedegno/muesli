@@ -362,6 +362,13 @@ func (s *Store) CreateTemplate(ctx context.Context, ownerID, name, phase string,
 	}
 	defer tx.Rollback(ctx)
 
+	// First statement in the transaction: serialize this owner's cap
+	// validation against every other template writer (see
+	// lockLiveTemplateCapTx).
+	if err := lockLiveTemplateCapTx(ctx, tx, ownerID); err != nil {
+		return model.Template{}, err
+	}
+
 	if taken, err := templateNameTakenTx(ctx, tx, ownerID, name, ""); err != nil {
 		return model.Template{}, err
 	} else if taken {
@@ -445,6 +452,13 @@ func (s *Store) UpdateTemplate(ctx context.Context, ownerID, id, name, phase str
 		return err
 	}
 	defer tx.Rollback(ctx)
+
+	// First statement in the transaction, before the template's own row
+	// lock, so create and update take locks in the same order (see
+	// lockLiveTemplateCapTx).
+	if err := lockLiveTemplateCapTx(ctx, tx, ownerID); err != nil {
+		return err
+	}
 
 	var oldPhase string
 	var oldAutoRun bool
