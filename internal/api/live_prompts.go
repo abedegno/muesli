@@ -15,14 +15,35 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// Live-prompt SSE constants (issue #764's production constants, tested with
-// injectable clocks at the store layer; the transport-level timers here are
-// exercised directly by internal/api/live_prompts_test.go).
-const (
+// Live-prompt SSE timers (issue #764's production values). Variables rather
+// than constants so the package's own tests can shorten them and drive the
+// heartbeat and renewal paths within milliseconds, without sleeping; see
+// live_prompts_release_test.go.
+var (
 	liveSubscriberRenewInterval = 20 * time.Second
 	liveSubscriberLeaseTTL      = 60 * time.Second
 	liveHeartbeatInterval       = 15 * time.Second
 )
+
+// liveStore is the store surface handleLiveNotePrompts uses from admission
+// onward. Production uses *store.Store; the package's own tests wrap it to
+// force a failure after the lease is acquired and prove the lease is still
+// released (the resource-release requirement: failure paths, not only the
+// happy path).
+type liveStore interface {
+	AcquireLiveNoteSubscription(ctx context.Context, noteID, ownerID string, ttl time.Duration) (string, bool, error)
+	RenewLiveNoteSubscription(ctx context.Context, connectionID string, ttl time.Duration) (bool, error)
+	ReleaseLiveNoteSubscription(ctx context.Context, connectionID string) error
+	CurrentLiveStreamID(ctx context.Context, noteID string) (string, bool, error)
+	ListVisibleLiveTemplateOutputs(ctx context.Context, ownerID, noteID string) ([]model.LiveTemplateOutput, error)
+}
+
+func (s *Server) liveStoreOrDefault() liveStore {
+	if s.liveStoreOverride != nil {
+		return s.liveStoreOverride
+	}
+	return s.deps.Store
+}
 
 // liveNoteHub fans out PostgreSQL note-ID notifications to every local
 // handler subscribed to that note, via a one-item coalescing mailbox per
@@ -191,7 +212,8 @@ func (s *Server) handleLiveNotePrompts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	connID, admitted, err := s.deps.Store.AcquireLiveNoteSubscription(r.Context(), noteID, note.OwnerID, liveSubscriberLeaseTTL)
+	ls := s.liveStoreOrDefault()
+	connID, admitted, err := ls.AcquireLiveNoteSubscription(r.Context(), noteID, note.OwnerID, liveSubscriberLeaseTTL)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
@@ -201,7 +223,7 @@ func (s *Server) handleLiveNotePrompts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer func() {
-		if err := s.deps.Store.ReleaseLiveNoteSubscription(context.Background(), connID); err != nil {
+		if err := ls.ReleaseLiveNoteSubscription(context.Background(), connID); err != nil {
 			slog.Error("live prompts: release subscription failed", "error", err, "note_id", noteID)
 		}
 	}()
@@ -219,11 +241,11 @@ func (s *Server) handleLiveNotePrompts(w http.ResponseWriter, r *http.Request) {
 	sent := map[liveOutputKey]int{}
 
 	reread := func() error {
-		streamID, active, err := s.deps.Store.CurrentLiveStreamID(r.Context(), noteID)
+		streamID, active, err := ls.CurrentLiveStreamID(r.Context(), noteID)
 		if err != nil {
 			return err
 		}
-		rows, err := s.deps.Store.ListVisibleLiveTemplateOutputs(r.Context(), note.OwnerID, noteID)
+		rows, err := ls.ListVisibleLiveTemplateOutputs(r.Context(), note.OwnerID, noteID)
 		if err != nil {
 			return err
 		}
@@ -256,11 +278,11 @@ func (s *Server) handleLiveNotePrompts(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}
 
-	streamID, active, err := s.deps.Store.CurrentLiveStreamID(r.Context(), noteID)
+	streamID, active, err := ls.CurrentLiveStreamID(r.Context(), noteID)
 	if err != nil {
 		return
 	}
-	rows, err := s.deps.Store.ListVisibleLiveTemplateOutputs(r.Context(), note.OwnerID, noteID)
+	rows, err := ls.ListVisibleLiveTemplateOutputs(r.Context(), note.OwnerID, noteID)
 	if err != nil {
 		return
 	}
@@ -294,7 +316,7 @@ func (s *Server) handleLiveNotePrompts(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		case <-renewTicker.C:
-			ok, err := s.deps.Store.RenewLiveNoteSubscription(r.Context(), connID, liveSubscriberLeaseTTL)
+			ok, err := ls.RenewLiveNoteSubscription(r.Context(), connID, liveSubscriberLeaseTTL)
 			if err != nil || !ok {
 				// Renewal cannot complete before expiry (or the lease is
 				// already gone): close the stream rather than serve without

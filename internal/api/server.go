@@ -116,6 +116,9 @@ type Server struct {
 	liveMu       sync.Mutex
 	liveListener *store.LiveNoteListener
 	liveClosed   bool
+	// liveStoreOverride replaces deps.Store behind the live-prompts handler's
+	// liveStore boundary; nil in production. Set only by this package's tests.
+	liveStoreOverride liveStore
 }
 
 func NewServer(deps Deps) *Server {
