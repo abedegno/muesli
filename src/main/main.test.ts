@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { IPC } from '../shared/ipc'
 
 const mocks = vi.hoisted(() => {
   const permissionHandler = vi.fn()
@@ -372,6 +373,54 @@ describe('main bootstrap wiring', () => {
       expect(mocks.app.quit).toHaveBeenCalledTimes(1)
       expect(mocks.tray.destroy).toHaveBeenCalledTimes(1)
     } finally {
+      Object.defineProperty(process, 'platform', { value: originalPlatform })
+    }
+  })
+
+  it('aborts the live-prompts stream when the window closes while the app keeps running', async () => {
+    // The lifecycle the relay's stopAll exists for: on darwin with background
+    // running enabled the process outlives its window, the destroyed renderer
+    // can no longer send its stop IPC, and only main's own wiring can release
+    // the server's subscriber lease.
+    const originalPlatform = process.platform
+    Object.defineProperty(process, 'platform', { value: 'darwin' })
+    const originalFetch = globalThis.fetch
+    let abortedSignal: AbortSignal | undefined
+    const fetchSpy = vi.fn((_url: string | URL | Request, init?: RequestInit) => {
+      abortedSignal = init?.signal ?? undefined
+      return new Promise<Response>(() => {
+        /* an open SSE stream: never resolves until aborted */
+      })
+    })
+    globalThis.fetch = fetchSpy as unknown as typeof fetch
+    try {
+      mocks.secretState.keepRunningInBackground = true
+      mocks.tokenStoreCtor.mockImplementation(() => ({
+        load: vi.fn(() => ({ serverUrl: 'http://127.0.0.1:4567', token: 'tok' })),
+        save: vi.fn(),
+      }))
+      await import('./main')
+      await flushBoot()
+
+      const start = mocks.ipcHandle.mock.calls.find(([channel]) => channel === IPC.startLivePrompts)?.[1] as
+        | ((event: unknown, noteId: string) => void)
+        | undefined
+      expect(start).toBeDefined()
+      start!({}, 'note-1')
+      await vi.waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(1))
+      expect(abortedSignal?.aborted).toBe(false)
+
+      const closed = mocks.browserWindow.on.mock.calls.find(([event]) => event === 'closed')?.[1] as
+        | (() => void)
+        | undefined
+      expect(closed).toBeDefined()
+      closed!()
+      emitAppEvent('window-all-closed')
+      expect(mocks.app.quit).not.toHaveBeenCalled()
+      expect(abortedSignal?.aborted).toBe(true)
+    } finally {
+      globalThis.fetch = originalFetch
+      mocks.tokenStoreCtor.mockImplementation(() => ({ load: vi.fn(), save: vi.fn() }))
       Object.defineProperty(process, 'platform', { value: originalPlatform })
     }
   })
