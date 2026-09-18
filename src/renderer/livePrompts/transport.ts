@@ -16,6 +16,15 @@ export type { LivePromptsEvent, LivePromptsItem }
  * lease) and detaches the event listener.
  */
 export function subscribeLivePrompts(noteId: string, callback: (event: LivePromptsEvent) => void): () => void {
+  // Defensive: a lightweight test double for `window.muesli` (see many
+  // existing component tests) commonly implements only the bridge members
+  // it exercises. Treat a bridge missing these members the same as "no
+  // transport available" rather than throwing, mirroring
+  // LiveTranscriptPanel's own optional-source handling.
+  if (typeof muesli.onLivePromptsEvent !== 'function' || typeof muesli.startLivePrompts !== 'function') {
+    return () => {}
+  }
+
   let stopped = false
   const detach = muesli.onLivePromptsEvent((event) => {
     if (stopped) return
@@ -28,6 +37,6 @@ export function subscribeLivePrompts(noteId: string, callback: (event: LivePromp
     if (stopped) return
     stopped = true
     detach()
-    void muesli.stopLivePrompts(noteId)
+    void muesli.stopLivePrompts?.(noteId)
   }
 }

@@ -15,6 +15,7 @@ import { TagBar } from './TagBar'
 import { FolderBar } from './FolderBar'
 import { NoteActionItemsPanel } from './NoteActionItemsPanel'
 import { LiveTranscriptPanel } from './LiveTranscriptPanel'
+import { LivePromptsPanel } from '../livePrompts/LivePromptsPanel'
 import { tagIndex } from '@/lib/tagIndex'
 import { loadAudioPrefs, saveAudioPrefs } from '@/lib/audioPrefs'
 import { useAnnouncer } from '@/hooks/useAnnouncer'
@@ -1365,6 +1366,7 @@ export function NoteScreen() {
       )}
       <ProcessingBanner status={full.note.status} onRetry={retryPipeline} onProcessNext={processNext} statusEnteredAt={full.note.updated_at} onGetDownloadStatus={() => muesli.getDefaultTranscriberStatus()} />
       <LiveTranscriptPanel noteId={id} isRecording={recordState === 'recording'} />
+      <LivePromptsPanel noteId={id} isRecording={recordState === 'recording'} />
       <TagBar
         tags={full.note.tags ?? []}
         suggestions={tagIndex(allNotes).map((t) => t.name)}

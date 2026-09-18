@@ -176,6 +176,49 @@ calendar refresh from Settings -> Calendar.
       brief disappears from "Coming up" on the next fetch (near-immediate,
       not waiting for the next sync).
 
+## Live in-meeting prompts (issue #764)
+
+Prereq: a `during`-phase template with "Auto-run" enabled (Templates settings
+-> New/Edit template -> Phase: During-meeting, Auto-run: on) and a default
+agent plugin configured on the server. This is an integration change
+touching the database, worker, API, and Electron main/renderer -- exercise
+both a single embedded server and, if available, two API processes sharing
+one database to validate the cross-process subscriber cap.
+
+- [ ] **Card appears after first speech**: start recording a note with an
+      eligible `during`+auto-run template. Speak one sentence and pause; once
+      it finalizes, a "Live prompts" region appears next to the live
+      transcript with a card for that template.
+- [ ] **Waiting/generating states**: before the first result, the card reads
+      "Waiting for speech..." or "Generating..." (never a blank panel, never
+      raw error text).
+- [ ] **Atomic refresh**: keep speaking; a completed refresh replaces the
+      card's content all at once, and a refresh in progress adds an
+      "Updating." label under the retained prior content.
+- [ ] **Failure resilience**: temporarily point the default agent plugin at
+      an unreachable URL, then speak again. The card should either explain it
+      will retry (if it never had content) or retain its last content labeled
+      "Not updated." -- never raw provider text. Restore the plugin URL and
+      confirm the card recovers on the next finalized segment.
+- [ ] **Ineligibility removal**: with the meeting still recording, in another
+      window/tab turn off the template's "Auto-run" (or change its phase) --
+      the card disappears from "Live prompts" promptly, without waiting for
+      more speech.
+- [ ] **Stream end**: stop recording -- the "Live prompts" region disappears
+      immediately (client-side, gated on recording state); ordinary tabs and
+      post-meeting summarization continue unaffected.
+- [ ] **Cap enabled but no ninth**: in Templates settings, verify a ninth
+      `during`+auto-run template is rejected with a clear validation message
+      rather than silently accepted.
+- [ ] **Two viewers (if a second API process is available)**: open the same
+      recording note in two authenticated clients pointed at different API
+      processes sharing one database -- both should show the same live
+      prompt cards updating together.
+- [ ] **Accessibility**: with a screen reader active, confirm each content
+      refresh announces only "<template name> updated." -- no other new
+      speech, and keyboard focus/summary-tab selection is undisturbed by a
+      live-prompts refresh.
+
 ## CALLNK02 — Note <-> calendar-event link (client)
 
 Prereq: same calendar source setup as CALUI02, plus at least one existing note.
