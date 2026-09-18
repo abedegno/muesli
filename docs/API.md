@@ -681,6 +681,11 @@ checked before capacity is allocated, and a note that is missing, malformed,
 foreign, deleted, or trashed is an indistinguishable `404`.
 
 - Auth: required
+- Clients: the desktop app's main process, for both the embedded server and a
+  self-hosted one (`src/main/livePromptRelay.ts`); there is no browser client.
+  Every reread, including the initial snapshot, is one consistent database
+  snapshot (`LiveNoteSnapshot`). Trashing the note ends its stream: subscribers
+  receive `ended` for every card and the stream closes.
 - Response: `Content-Type: text/event-stream`
   - `snapshot`: `{ "note_id", "stream_id", "active", "items": [Item] }` sent once, immediately after connecting
   - `update`: `{ "item": Item }` sent for each new or changed item on every reread

@@ -14,6 +14,15 @@ export type { LivePromptsEvent, LivePromptsItem }
  * Callers must call the returned cleanup function on note change/unmount --
  * it stops the underlying subscription (releasing the server's capacity
  * lease) and detaches the event listener.
+ *
+ * Deployment shapes. The renderer only ever runs inside the desktop app:
+ * there is no browser-served client (docs/ARCHITECTURE.md lists a web client
+ * as later work), so "hosted" means the desktop app connected to a
+ * self-hosted server (ConnectScreen), and both the embedded and the hosted
+ * shapes reach the server the same way -- Electron main's authenticated
+ * `fetch` + `ReadableStream` against the configured server URL, in
+ * `src/main/livePromptRelay.ts`. The no-bridge branch below is not a
+ * deployment shape; it is the test-double affordance described there.
  */
 export function subscribeLivePrompts(noteId: string, callback: (event: LivePromptsEvent) => void): () => void {
   // Defensive: a lightweight test double for `window.muesli` (see many

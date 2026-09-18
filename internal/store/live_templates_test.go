@@ -5,6 +5,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -263,6 +264,79 @@ func TestLiveTemplateCap_ConcurrentWritersSerialize(t *testing.T) {
 			}
 			if n != store.MaxLiveTemplates {
 				t.Fatalf("eligible templates = %d, want exactly %d", n, store.MaxLiveTemplates)
+			}
+		})
+	}
+}
+
+// TestDeleteNote_EndsCurrentLiveStream proves trash ends the note's live work
+// in the trash transaction itself (the accepted spec's lifecycle ruling:
+// close, seal, supersession, trash, or deletion ends the stream): a queued
+// row is removed and its job cancelled, a running row is hidden and
+// cancellation-requested so its completion fence discards the result, and a
+// subscriber's next consistent snapshot reads the note as gone.
+func TestDeleteNote_EndsCurrentLiveStream(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		running bool
+	}{{"queued row", false}, {"running row", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := store.New(testutil.NewPool(t))
+			owner := newLiveTestOwner(t, st)
+			newLiveTestTemplate(t, st, owner, "live-during", "during", true)
+			noteID, transcriptID, streamID := newLiveTestStream(t, st, owner)
+			appendFinalSegment(t, st, transcriptID, streamID, "hello")
+			ctx := context.Background()
+
+			rows, err := st.ListVisibleLiveTemplateOutputs(ctx, owner, noteID)
+			if err != nil || len(rows) != 1 || rows[0].ActiveJobID == "" {
+				t.Fatalf("expected one queued row with a job: %v %+v", err, rows)
+			}
+			jobID := rows[0].ActiveJobID
+			if tc.running {
+				if _, err := st.Pool().Exec(ctx, `UPDATE live_template_outputs SET status='running' WHERE id=$1`, rows[0].ID); err != nil {
+					t.Fatalf("simulate running: %v", err)
+				}
+				if _, err := st.Pool().Exec(ctx, `UPDATE jobs SET status='running' WHERE id=$1`, jobID); err != nil {
+					t.Fatalf("simulate running job: %v", err)
+				}
+			}
+
+			if err := st.DeleteNote(ctx, owner, noteID); err != nil {
+				t.Fatalf("trash: %v", err)
+			}
+
+			var n int
+			if err := st.Pool().QueryRow(ctx, `SELECT count(*) FROM live_template_outputs WHERE note_id=$1`, noteID).Scan(&n); err != nil {
+				t.Fatalf("count rows: %v", err)
+			}
+			if tc.running {
+				if n != 1 {
+					t.Fatalf("running row count after trash = %d, want 1 (hidden, not deleted)", n)
+				}
+				var visible, cancelRequested bool
+				if err := st.Pool().QueryRow(ctx,
+					`SELECT client_visible, cancellation_requested_at IS NOT NULL FROM live_template_outputs WHERE note_id=$1`, noteID).
+					Scan(&visible, &cancelRequested); err != nil {
+					t.Fatalf("read row: %v", err)
+				}
+				if visible || !cancelRequested {
+					t.Fatalf("running row after trash: visible=%v cancel_requested=%v, want hidden and cancellation-requested", visible, cancelRequested)
+				}
+			} else {
+				if n != 0 {
+					t.Fatalf("queued row count after trash = %d, want 0", n)
+				}
+				var status string
+				if err := st.Pool().QueryRow(ctx, `SELECT status FROM jobs WHERE id=$1`, jobID).Scan(&status); err != nil {
+					t.Fatalf("read job: %v", err)
+				}
+				if status != model.JobCancelled {
+					t.Fatalf("queued job status after trash = %q, want %q", status, model.JobCancelled)
+				}
+			}
+			if _, err := st.LiveNoteSnapshot(ctx, owner, noteID); !errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("snapshot after trash: err=%v, want ErrNotFound", err)
 			}
 		})
 	}

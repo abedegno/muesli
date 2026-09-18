@@ -501,10 +501,19 @@ func EndLiveTemplateStream(ctx context.Context, tx pgx.Tx, noteID, streamID stri
 // visible-template order -- the authoritative reread behind both the SSE
 // snapshot and every subsequent coalesced wake-up / heartbeat (issue #764).
 func (s *Store) ListVisibleLiveTemplateOutputs(ctx context.Context, ownerID, noteID string) ([]model.LiveTemplateOutput, error) {
-	rows, err := s.pool.Query(ctx,
+	return listVisibleLiveTemplateOutputsTx(ctx, s.pool, ownerID, noteID)
+}
+
+// listVisibleLiveTemplateOutputsTx is ListVisibleLiveTemplateOutputs over any
+// querier, so LiveNoteSnapshot can read it inside one transaction. A trashed
+// or deleted note has no visible rows whatever its rows say: trash ends the
+// stream in DeleteNote, and this join is the backstop.
+func listVisibleLiveTemplateOutputsTx(ctx context.Context, q txQuerier, ownerID, noteID string) ([]model.LiveTemplateOutput, error) {
+	rows, err := q.Query(ctx,
 		`SELECT `+qualifiedLiveOutputColumns()+`, t.name
 		   FROM live_template_outputs o
 		   JOIN templates t ON t.id = o.template_id
+		   JOIN notes n ON n.id = o.note_id AND n.deleted_at IS NULL
 		  WHERE o.owner_id=$1 AND o.note_id=$2 AND o.client_visible=TRUE
 		  ORDER BY (t.owner_id IS NULL) DESC, lower(t.name), t.id`,
 		ownerID, noteID)
@@ -521,6 +530,54 @@ func (s *Store) ListVisibleLiveTemplateOutputs(ctx context.Context, ownerID, not
 		out = append(out, o)
 	}
 	return out, rows.Err()
+}
+
+// LiveNoteSnapshot is what one SSE reread observes: the note's current live
+// stream identity and its client-visible output rows, read in one consistent
+// database snapshot (the accepted spec's "one consistent database snapshot"
+// per wake-up), so a supersession committing between the two reads cannot
+// pair one stream's identity with another stream's rows.
+type LiveNoteSnapshot struct {
+	StreamID string
+	Active   bool
+	Items    []model.LiveTemplateOutput
+}
+
+// LiveNoteSnapshot reads the snapshot in one repeatable-read, read-only
+// transaction. It returns ErrNotFound when the note is absent, deleted, or
+// trashed: a subscriber admitted before a trash learns of it on its next
+// reread and is closed, rather than served prompts for a note nobody can
+// read.
+func (s *Store) LiveNoteSnapshot(ctx context.Context, ownerID, noteID string) (LiveNoteSnapshot, error) {
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return LiveNoteSnapshot{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	var present bool
+	err = tx.QueryRow(ctx, `SELECT true FROM notes WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL`, noteID, ownerID).Scan(&present)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return LiveNoteSnapshot{}, ErrNotFound
+	}
+	if err != nil {
+		return LiveNoteSnapshot{}, err
+	}
+	_, streamID, active, err := currentStreamForNoteTx(ctx, tx, noteID)
+	if err != nil {
+		return LiveNoteSnapshot{}, err
+	}
+	if !active {
+		streamID = ""
+	}
+	items, err := listVisibleLiveTemplateOutputsTx(ctx, tx, ownerID, noteID)
+	if err != nil {
+		return LiveNoteSnapshot{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return LiveNoteSnapshot{}, err
+	}
+	return LiveNoteSnapshot{StreamID: streamID, Active: active, Items: items}, nil
 }
 
 // qualifiedLiveOutputColumns is liveOutputColumns qualified with the "o"

@@ -60,4 +60,13 @@ describe('subscribeLivePrompts', () => {
     unsubscribe()
     expect(stopLivePrompts).toHaveBeenCalledTimes(1)
   })
+
+  it('is a safe no-op when the bridge has no live-prompts members (a test double, not a deployment shape)', async () => {
+    installContextBridgeLike({})
+    const { subscribeLivePrompts } = await loadTransport()
+    const received: LivePromptsEvent[] = []
+    const unsubscribe = subscribeLivePrompts('note-1', (e) => received.push(e))
+    expect(received).toEqual([])
+    expect(() => unsubscribe()).not.toThrow()
+  })
 })

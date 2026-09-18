@@ -34,8 +34,7 @@ type liveStore interface {
 	AcquireLiveNoteSubscription(ctx context.Context, noteID, ownerID string, ttl time.Duration) (string, bool, error)
 	RenewLiveNoteSubscription(ctx context.Context, connectionID string, ttl time.Duration) (bool, error)
 	ReleaseLiveNoteSubscription(ctx context.Context, connectionID string) error
-	CurrentLiveStreamID(ctx context.Context, noteID string) (string, bool, error)
-	ListVisibleLiveTemplateOutputs(ctx context.Context, ownerID, noteID string) ([]model.LiveTemplateOutput, error)
+	LiveNoteSnapshot(ctx context.Context, ownerID, noteID string) (store.LiveNoteSnapshot, error)
 }
 
 func (s *Server) liveStoreOrDefault() liveStore {
@@ -240,17 +239,31 @@ func (s *Server) handleLiveNotePrompts(w http.ResponseWriter, r *http.Request) {
 
 	sent := map[liveOutputKey]int{}
 
-	reread := func() error {
-		streamID, active, err := ls.CurrentLiveStreamID(r.Context(), noteID)
-		if err != nil {
-			return err
+	// endAll tells the viewer every card it holds is gone. Used when the note
+	// stops being readable after admission (trashed or deleted): the accepted
+	// spec ends the stream on trash, and a viewer must not keep displaying
+	// prompts for a note nobody can read.
+	endAll := func() error {
+		for key := range sent {
+			if err := writeSSE(w, flusher, "ended", liveEndedEvent{TemplateID: key.templateID, StreamID: key.streamID}); err != nil {
+				return err
+			}
+			delete(sent, key)
 		}
-		rows, err := ls.ListVisibleLiveTemplateOutputs(r.Context(), note.OwnerID, noteID)
+		return nil
+	}
+
+	reread := func() error {
+		snap, err := ls.LiveNoteSnapshot(r.Context(), note.OwnerID, noteID)
+		if errors.Is(err, store.ErrNotFound) {
+			_ = endAll()
+			return err // closes the stream; the deferred release frees the lease
+		}
 		if err != nil {
 			return err
 		}
 		current := map[liveOutputKey]model.LiveTemplateOutput{}
-		for _, row := range rows {
+		for _, row := range snap.Items {
 			current[liveOutputKey{row.StreamID, row.TemplateID}] = row
 		}
 		for key := range sent {
@@ -273,25 +286,19 @@ func (s *Server) handleLiveNotePrompts(w http.ResponseWriter, r *http.Request) {
 			newSent[key] = row.EventVersion
 		}
 		sent = newSent
-		_ = active
-		_ = streamID
 		return nil
 	}
 
-	streamID, active, err := ls.CurrentLiveStreamID(r.Context(), noteID)
+	snap, err := ls.LiveNoteSnapshot(r.Context(), note.OwnerID, noteID)
 	if err != nil {
-		return
+		return // a note trashed between admission and here has nothing to show; the lease is released
 	}
-	rows, err := ls.ListVisibleLiveTemplateOutputs(r.Context(), note.OwnerID, noteID)
-	if err != nil {
-		return
-	}
-	items := make([]liveSnapshotItem, 0, len(rows))
-	for _, row := range rows {
+	items := make([]liveSnapshotItem, 0, len(snap.Items))
+	for _, row := range snap.Items {
 		items = append(items, toLiveSnapshotItem(row))
 		sent[liveOutputKey{row.StreamID, row.TemplateID}] = row.EventVersion
 	}
-	if err := writeSSE(w, flusher, "snapshot", liveSnapshotEvent{NoteID: noteID, StreamID: streamID, Active: active, Items: items}); err != nil {
+	if err := writeSSE(w, flusher, "snapshot", liveSnapshotEvent{NoteID: noteID, StreamID: snap.StreamID, Active: snap.Active, Items: items}); err != nil {
 		return
 	}
 

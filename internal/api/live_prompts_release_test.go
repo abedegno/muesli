@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/abedegno/muesli/internal/crypto"
-	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/store"
 	"github.com/abedegno/muesli/internal/testutil"
 	"github.com/go-chi/chi/v5"
@@ -35,14 +34,13 @@ var errInjected = errors.New("injected live store failure")
 // faultyLiveStore delegates to the real store and fails one chosen call.
 type faultyLiveStore struct {
 	*store.Store
-	failSnapshot  bool  // CurrentLiveStreamID, the initial snapshot query
-	failListAfter int32 // ListVisibleLiveTemplateOutputs fails once this many calls succeeded (0 = never)
-	failRenew     bool  // RenewLiveNoteSubscription errors; the lease row is left untouched
+	failSnapshotAt int32 // the Nth LiveNoteSnapshot call fails: 1 is the initial snapshot, 2 the first reread (0 = never)
+	failRenew      bool  // RenewLiveNoteSubscription errors; the lease row is left untouched
 
-	lists    atomic.Int32
-	released atomic.Int32
-	mu       sync.Mutex
-	connID   string
+	snapshots atomic.Int32
+	released  atomic.Int32
+	mu        sync.Mutex
+	connID    string
 }
 
 func (f *faultyLiveStore) AcquireLiveNoteSubscription(ctx context.Context, noteID, ownerID string, ttl time.Duration) (string, bool, error) {
@@ -67,19 +65,12 @@ func (f *faultyLiveStore) RenewLiveNoteSubscription(ctx context.Context, id stri
 	return f.Store.RenewLiveNoteSubscription(ctx, id, ttl)
 }
 
-func (f *faultyLiveStore) CurrentLiveStreamID(ctx context.Context, noteID string) (string, bool, error) {
-	if f.failSnapshot {
-		return "", false, errInjected
+func (f *faultyLiveStore) LiveNoteSnapshot(ctx context.Context, ownerID, noteID string) (store.LiveNoteSnapshot, error) {
+	n := f.snapshots.Add(1)
+	if f.failSnapshotAt > 0 && n == f.failSnapshotAt {
+		return store.LiveNoteSnapshot{}, errInjected
 	}
-	return f.Store.CurrentLiveStreamID(ctx, noteID)
-}
-
-func (f *faultyLiveStore) ListVisibleLiveTemplateOutputs(ctx context.Context, ownerID, noteID string) ([]model.LiveTemplateOutput, error) {
-	n := f.lists.Add(1)
-	if f.failListAfter > 0 && n > f.failListAfter {
-		return nil, errInjected
-	}
-	return f.Store.ListVisibleLiveTemplateOutputs(ctx, ownerID, noteID)
+	return f.Store.LiveNoteSnapshot(ctx, ownerID, noteID)
 }
 
 func (f *faultyLiveStore) admitted() string {
@@ -191,7 +182,7 @@ func (fx *releaseFixture) assertReleased(t *testing.T) {
 }
 
 func TestLiveNotePrompts_ReleasesLeaseWhenSnapshotQueryFails(t *testing.T) {
-	fx := newReleaseFixture(t, &faultyLiveStore{failSnapshot: true})
+	fx := newReleaseFixture(t, &faultyLiveStore{failSnapshotAt: 1})
 	rec := httptest.NewRecorder()
 	fx.serve(t, rec)
 	if rec.Code != http.StatusOK {
@@ -208,12 +199,12 @@ func TestLiveNotePrompts_ReleasesLeaseWhenSSEWriteFails(t *testing.T) {
 }
 
 func TestLiveNotePrompts_ReleasesLeaseWhenHeartbeatRereadFails(t *testing.T) {
-	setTimers(t, time.Hour, 5*time.Millisecond)                    // heartbeat fires; renewal never does
-	fx := newReleaseFixture(t, &faultyLiveStore{failListAfter: 1}) // snapshot list succeeds, the reread's fails
+	setTimers(t, time.Hour, 5*time.Millisecond)                     // heartbeat fires; renewal never does
+	fx := newReleaseFixture(t, &faultyLiveStore{failSnapshotAt: 2}) // the initial snapshot succeeds, the reread's fails
 	rec := httptest.NewRecorder()
 	fx.serve(t, rec)
-	if got := fx.fs.lists.Load(); got < 2 {
-		t.Fatalf("list calls = %d, want the snapshot and at least one heartbeat reread", got)
+	if got := fx.fs.snapshots.Load(); got < 2 {
+		t.Fatalf("snapshot reads = %d, want the initial snapshot and at least one heartbeat reread", got)
 	}
 	fx.assertReleased(t)
 }
