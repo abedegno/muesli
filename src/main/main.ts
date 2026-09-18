@@ -11,6 +11,7 @@ import { resolveAudiotapBin } from './resourcePaths'
 import { startEmbeddedStartupMonitor } from './embeddedStartupMonitor'
 import { MuesliClient } from './muesliClient'
 import { NoteStreamRelay } from './noteStreamRelay'
+import { LivePromptRelay } from './livePromptRelay'
 import { SecretStore } from './secretStore'
 import { makeSystemAudioPermission } from './systemAudioPermission'
 import { makeSystemAudioHelper } from './systemAudioHelper'
@@ -233,6 +234,10 @@ app.whenReady().then(async () => {
       getConfig: () => tokenStore.load(),
       emit: (event) => mainWindow?.webContents.send(IPC.noteStreamEvent, event),
     })
+    const livePrompts = new LivePromptRelay({
+      getConfig: () => tokenStore.load(),
+      emit: (event) => mainWindow?.webContents.send(IPC.livePromptsEvent, event),
+    })
     const handlers = createHandlers({
       tokenStore,
       fetch: fetchImpl,
@@ -382,6 +387,8 @@ app.whenReady().then(async () => {
     ipcMain.handle(IPC.uploadAudio, (_e, req: UploadAudioRequest) => handlers.uploadAudio(req))
     ipcMain.handle(IPC.startNoteStream, (_e, noteId: string) => noteStream.start(noteId))
     ipcMain.handle(IPC.stopNoteStream, (_e, noteId: string) => noteStream.stop(noteId))
+    ipcMain.handle(IPC.startLivePrompts, (_e, noteId: string) => livePrompts.start(noteId))
+    ipcMain.handle(IPC.stopLivePrompts, (_e, noteId: string) => livePrompts.stop(noteId))
     ipcMain.handle(IPC.sendNoteStreamAudio, (_e, noteId: string, audio: ArrayBuffer) => noteStream.sendAudio(noteId, audio))
     ipcMain.handle(IPC.addTag, (_e, noteId: string, name: string) => handlers.addTag(noteId, name))
     ipcMain.handle(IPC.removeTag, (_e, noteId: string, name: string) => handlers.removeTag(noteId, name))

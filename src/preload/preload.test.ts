@@ -65,6 +65,7 @@ const eventMembers = {
   onMeetingDetectionPromptClear: IPC.meetingDetectionPromptClear,
   onMeetingDetectionAutoRecord: IPC.meetingDetectionAutoRecord,
   onNoteStreamEvent: IPC.noteStreamEvent,
+  onLivePromptsEvent: IPC.livePromptsEvent,
   onSystemAudioPcm: IPC.systemAudioPcm,
   onUploadProgress: IPC.uploadProgress,
 } as const

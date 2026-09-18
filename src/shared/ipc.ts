@@ -70,6 +70,9 @@ export const IPC = {
   stopNoteStream: 'muesli:stopNoteStream',
   sendNoteStreamAudio: 'muesli:sendNoteStreamAudio',
   noteStreamEvent: 'muesli:noteStreamEvent',
+  startLivePrompts: 'muesli:startLivePrompts',
+  stopLivePrompts: 'muesli:stopLivePrompts',
+  livePromptsEvent: 'muesli:livePromptsEvent',
   addTag: 'muesli:addTag',
   removeTag: 'muesli:removeTag',
   renameTag: 'muesli:renameTag',
@@ -216,6 +219,69 @@ export interface NoteStreamGapEvent {
  * requests are handled in `src/main/main.ts`, not `ipcHandlers.ts`.
  */
 export type NoteStreamEvent = NoteStreamSegmentEvent | NoteStreamConnectionEvent | NoteStreamGapEvent
+
+/**
+ * One template's entry in a live-prompts `snapshot`/`update` payload (issue
+ * #764). Field names are kept snake_case to match the server's SSE JSON
+ * exactly, mirroring NoteStreamSegmentEvent's convention above.
+ */
+export interface LivePromptsItem {
+  template_id: string
+  template_name: string
+  stream_id: string
+  status: 'pending' | 'running' | 'ready' | 'failed'
+  event_version: number
+  rendered_revision: number
+  desired_revision: number
+  sections: { heading: string; content_markdown: string; refs?: number[] }[]
+  error_code?: string
+}
+
+/** Main-to-renderer `livePromptsEvent` sent once per connection, immediately after subscribing. */
+export interface LivePromptsSnapshotEvent {
+  noteId: string
+  type: 'snapshot'
+  streamId: string
+  active: boolean
+  items: LivePromptsItem[]
+}
+
+/** Main-to-renderer `livePromptsEvent` sent for each new or changed item on a reread. */
+export interface LivePromptsUpdateEvent {
+  noteId: string
+  type: 'update'
+  item: LivePromptsItem
+}
+
+/**
+ * Main-to-renderer `livePromptsEvent` sent when a previously-sent
+ * (stream_id,template_id) key is no longer in the authoritative visible set
+ * (deleted, hidden, or its stream ended) -- no tombstone needed server-side,
+ * see the accepted spec.
+ */
+export interface LivePromptsEndedEvent {
+  noteId: string
+  type: 'ended'
+  templateId: string
+  streamId: string
+}
+
+/** Main-to-renderer `livePromptsEvent` connection lifecycle snapshot. */
+export interface LivePromptsConnectionEvent {
+  noteId: string
+  type: 'connecting' | 'live' | 'dropped'
+}
+
+/**
+ * Fire-and-forget main-to-renderer payload for `livePromptsEvent`; connection
+ * lifecycle (start/stop/reconnect-with-backoff) is owned by
+ * `src/main/livePromptRelay.ts`, not `ipcHandlers.ts`.
+ */
+export type LivePromptsEvent =
+  | LivePromptsSnapshotEvent
+  | LivePromptsUpdateEvent
+  | LivePromptsEndedEvent
+  | LivePromptsConnectionEvent
 
 /**
  * Renderer-to-main `postDiarizationReview` payload handled by
@@ -389,6 +455,9 @@ export interface MuesliBridge {
   stopNoteStream(noteId: string): Promise<void>
   sendNoteStreamAudio(noteId: string, audio: ArrayBuffer): Promise<void>
   onNoteStreamEvent(cb: (event: NoteStreamEvent) => void): () => void
+  startLivePrompts(noteId: string): Promise<void>
+  stopLivePrompts(noteId: string): Promise<void>
+  onLivePromptsEvent(cb: (event: LivePromptsEvent) => void): () => void
   onEmbeddedStartupStatus?(cb: (status: EmbeddedStartupStatus) => void): () => void
   onMeetingDetectionPromptShow?(cb: (payload: MeetingDetectionEventPayload) => void): () => void
   onMeetingDetectionPromptClear?(cb: (payload: { occurrenceKey: string }) => void): () => void
