@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"net/url"
 	"os"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -28,6 +29,16 @@ var (
 // Locally this skips if TEST_DATABASE_URL is not set; in CI it fails loudly so
 // a missing server-job dependency does not silently pass.
 func NewPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	return NewPoolWithMaxConns(t, 3)
+}
+
+// NewPoolWithMaxConns is NewPool with an explicit per-test connection cap,
+// for the rare test that must hold several connections for its whole life
+// (a LISTEN connection per API process under test, say) and would starve
+// its own ordinary queries under the default cap of three. Keep it small:
+// the budget in NewPool's comment still applies.
+func NewPoolWithMaxConns(t *testing.T, maxConns int) *pgxpool.Pool {
 	t.Helper()
 	baseURL := os.Getenv("TEST_DATABASE_URL")
 	testsupport.RequireDependency(t, "TEST_DATABASE_URL", baseURL != "", "TEST_DATABASE_URL not set; run `make test-db`")
@@ -96,7 +107,7 @@ func NewPool(t *testing.T) *pgxpool.Pool {
 	poolURL := schemaURL
 	if u, perr := url.Parse(poolURL); perr == nil {
 		q := u.Query()
-		q.Set("pool_max_conns", "3")
+		q.Set("pool_max_conns", strconv.Itoa(maxConns))
 		u.RawQuery = q.Encode()
 		poolURL = u.String()
 	}

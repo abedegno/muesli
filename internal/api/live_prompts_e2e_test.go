@@ -26,12 +26,48 @@ import (
 
 	"github.com/abedegno/muesli/internal/api"
 	"github.com/abedegno/muesli/internal/config"
+	"github.com/abedegno/muesli/internal/crypto"
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/plugintest"
+	"github.com/abedegno/muesli/internal/storage"
 	"github.com/abedegno/muesli/internal/store"
+	"github.com/abedegno/muesli/internal/testutil"
 	"github.com/abedegno/muesli/internal/worker"
 	"github.com/gorilla/websocket"
 )
+
+// newLiveE2EFixture mirrors newStreamingE2EFixture with a larger pool. This
+// test holds three LISTEN connections for its whole life (one live-prompts
+// hub per API process plus the note stream's own), and under the default
+// three-connection test pool the first write that persists a final segment
+// blocked forever behind them.
+func newLiveE2EFixture(t *testing.T) *streamingE2EFixture {
+	t.Helper()
+	pool := testutil.NewPoolWithMaxConns(t, 8)
+	st := store.New(pool)
+	cr, err := crypto.New("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	prov, err := storage.NewLocal(t.TempDir(), "http://example.test", "http://example.test", []byte("test-signing-key-0123456789"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := api.NewServer(api.Deps{Store: st, Storage: prov, Crypto: cr})
+	if err := st.SeedBuiltInTemplates(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	_ = doJSON(t, srv, http.MethodPost, "/api/setup",
+		map[string]string{"email": "streamer@example.com", "password": "password123"}, nil)
+	rec := doJSON(t, srv, http.MethodPost, "/api/login",
+		map[string]string{"email": "streamer@example.com", "password": "password123"}, nil)
+	var login struct {
+		Token string `json:"token"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &login)
+	return &streamingE2EFixture{srv: srv, st: st, pool: pool, prov: prov, cr: cr,
+		hdr: map[string]string{"Authorization": "Bearer " + login.Token}}
+}
 
 type liveE2EItem struct {
 	TemplateID       string `json:"template_id"`
@@ -110,7 +146,7 @@ func readWSSegment(t *testing.T, conn *websocket.Conn) map[string]any {
 }
 
 func TestLivePromptsE2E_TwoProcessViewers(t *testing.T) {
-	fixture := newStreamingE2EFixture(t)
+	fixture := newLiveE2EFixture(t)
 	ctx := context.Background()
 	st := fixture.st
 	hdr := fixture.hdr
