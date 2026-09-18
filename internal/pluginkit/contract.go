@@ -55,7 +55,21 @@ const GenerateSourceCalendarEvent GenerateSourceKind = "calendar_event"
 type GenerateSource struct {
 	Kind          GenerateSourceKind   `json:"kind"`
 	CalendarEvent *CalendarEventSource `json:"calendar_event,omitempty"`
+	Transcript    *TranscriptSource    `json:"transcript,omitempty"`
 }
+
+// GenerateSourceTranscript identifies a live in-meeting generation request
+// (issue #764): the immutable finalized-transcript prefix itself travels
+// through the existing Transcript/NotesMarkdown fields (see GenerateRequest),
+// alongside note Markdown, aliases, sections, and overrides exactly as
+// after-summary generation does. TranscriptSource carries only the identity
+// of that prefix -- which live stream it came from and how many finalized
+// segments it captures -- so a plugin (or this boundary's own logging) can
+// tell a during-phase live run apart from an after-phase summary without
+// duplicating the transcript itself.
+const GenerateSourceTranscript GenerateSourceKind = "transcript"
+
+// TranscriptSource is the normalized live-transcript generation source.
 
 // CalendarEventSource is the normalized calendar-event generation source: only
 // stored preparation fields (see the accepted spec's "Input and freshness"
@@ -75,6 +89,16 @@ type CalendarEventAttendee struct {
 	Name     string `json:"name,omitempty"`
 	Email    string `json:"email,omitempty"`
 	Response string `json:"response,omitempty"`
+}
+
+// TranscriptSource identifies the immutable finalized-transcript prefix a
+// live in-meeting generation request executes against (issue #764): which
+// live stream it belongs to and how many finalized segments it captures.
+// Never the segments themselves -- those travel through the existing
+// GenerateRequest.Transcript field, shared with after-summary generation.
+type TranscriptSource struct {
+	StreamID       string `json:"stream_id"`
+	TargetRevision int    `json:"target_revision"`
 }
 
 // GenerateRequest is the POST /generate body.

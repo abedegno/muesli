@@ -344,6 +344,11 @@ func validateGenerateSource(src *GenerateSource) error {
 			return errors.New("source.calendar_event is required for source.kind=calendar_event")
 		}
 		return nil
+	case GenerateSourceTranscript:
+		if src.Transcript == nil {
+			return errors.New("source.transcript is required for source.kind=transcript")
+		}
+		return nil
 	default:
 		return fmt.Errorf("unknown source.kind %q", src.Kind)
 	}

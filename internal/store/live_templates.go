@@ -611,3 +611,310 @@ func (s *Store) RecoverLiveTemplateOutputs(ctx context.Context, now time.Time, l
 	}
 	return noteIDs, len(stale), nil
 }
+
+// LiveTranscriptPrefix returns the first `limit` finalized segments (in the
+// store's stable transcript order) for a transcript -- the exact immutable
+// prefix a live_generate job's captured target_revision names (issue #764).
+// Later growth beyond limit is invisible to this read, by construction.
+func (s *Store) LiveTranscriptPrefix(ctx context.Context, transcriptID string, limit int) ([]model.Segment, error) {
+	rows, err := s.pool.Query(ctx,
+		`SELECT id, start_ms, end_ms, text, source, COALESCE(speaker,''), words, confidence,
+		        provisional, COALESCE(boundary,'')
+		   FROM transcript_segments WHERE transcript_id=$1 ORDER BY start_ms, id LIMIT $2`,
+		transcriptID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []model.Segment{}
+	for rows.Next() {
+		var seg model.Segment
+		var wordsJSON []byte
+		var confidence *float64
+		if err := rows.Scan(&seg.ID, &seg.StartMS, &seg.EndMS, &seg.Text, &seg.Source, &seg.Speaker, &wordsJSON, &confidence,
+			&seg.Provisional, &seg.Boundary); err != nil {
+			return nil, err
+		}
+		seg.Confidence = confidence
+		if len(wordsJSON) > 0 {
+			if err := json.Unmarshal(wordsJSON, &seg.Words); err != nil {
+				return nil, err
+			}
+		}
+		out = append(out, seg)
+	}
+	return out, rows.Err()
+}
+
+// LiveClaimResult is ClaimLiveGenerateJobTx's outcome.
+type LiveClaimResult struct {
+	// Valid is false when the job/row is no longer eligible to execute (row
+	// gone, active-job identity mismatch, stream replaced, or the template
+	// fell out of the current first-eight). The caller must not invoke the
+	// generalized executor and should simply complete the job.
+	Valid          bool
+	Output         model.LiveTemplateOutput
+	TargetRevision int
+	TranscriptID   string
+}
+
+// ClaimLiveGenerateJobTx performs the live-specific half of claiming a
+// live_generate job, run by the worker immediately after the generic
+// ClaimJob has already flipped it to 'running' (issue #764). It locks the
+// job and its output row, rechecks current stream identity, active-job
+// identity, and full first-eight eligibility, and -- only if still valid --
+// captures target_revision exactly once (from desired_revision, only if
+// still null) and marks the output row running. An invalid claim cancels/
+// removes the row without ever invoking the generalized executor; the
+// caller then completes the job as a clean no-op (mirroring
+// runPreGenerate's ineligibility handling).
+func (s *Store) ClaimLiveGenerateJobTx(ctx context.Context, job model.Job, now time.Time) (LiveClaimResult, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return LiveClaimResult{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	row := tx.QueryRow(ctx, `SELECT `+liveOutputColumns+` FROM live_template_outputs WHERE id=$1 FOR UPDATE`, job.LiveOutputID)
+	output, err := scanLiveOutput(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return LiveClaimResult{Valid: false}, tx.Commit(ctx)
+	}
+	if err != nil {
+		return LiveClaimResult{}, err
+	}
+
+	valid := output.ActiveJobID == job.ID
+	var transcriptID, streamID string
+	if valid {
+		transcriptID, streamID, valid, err = currentStreamForNoteTx(ctx, tx, output.NoteID)
+		if err != nil {
+			return LiveClaimResult{}, err
+		}
+		valid = valid && streamID == job.StreamID && streamID == output.StreamID
+	}
+	if valid {
+		eligible, _, err := EligibleLiveTemplatesTx(ctx, tx, output.OwnerID)
+		if err != nil {
+			return LiveClaimResult{}, err
+		}
+		found := false
+		for _, t := range eligible {
+			if t.ID == output.TemplateID {
+				found = true
+				break
+			}
+		}
+		valid = found
+	}
+
+	if !valid {
+		if _, err := tx.Exec(ctx, `DELETE FROM live_template_outputs WHERE id=$1`, output.ID); err != nil {
+			return LiveClaimResult{}, err
+		}
+		return LiveClaimResult{Valid: false}, tx.Commit(ctx)
+	}
+
+	target := output.DesiredRevision
+	if err := tx.QueryRow(ctx,
+		`UPDATE jobs SET target_revision = COALESCE(target_revision, $2), updated_at=now() WHERE id=$1 RETURNING target_revision`,
+		job.ID, target).Scan(&target); err != nil {
+		return LiveClaimResult{}, err
+	}
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE live_template_outputs SET status=$2, last_started_at=$3, updated_at=$3, event_version=event_version+1 WHERE id=$1`,
+		output.ID, model.LiveOutputRunning, now); err != nil {
+		return LiveClaimResult{}, err
+	}
+	output.Status = model.LiveOutputRunning
+	output.LastStartedAt = &now
+
+	if err := tx.Commit(ctx); err != nil {
+		return LiveClaimResult{}, err
+	}
+	return LiveClaimResult{Valid: true, Output: output, TargetRevision: target, TranscriptID: transcriptID}, nil
+}
+
+// liveCompletionFenceTx re-locks a live_generate job and its output row and
+// reports whether the row is still eligible to publish: the job is still the
+// row's active job, the stream is still current, and the template is still
+// in the owner's first-eight eligible set. Shared by success and
+// terminal-failure completion (issue #764's completion eligibility fence).
+// Returns ok=false (with no error) when the job row itself is already gone
+// (e.g. cascade-deleted by note deletion) -- nothing left to do.
+func liveCompletionFenceTx(ctx context.Context, tx pgx.Tx, jobID string) (output model.LiveTemplateOutput, eligible bool, ok bool, err error) {
+	var liveOutputID string
+	err = tx.QueryRow(ctx, `SELECT COALESCE(live_output_id::text,'') FROM jobs WHERE id=$1 FOR UPDATE`, jobID).Scan(&liveOutputID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.LiveTemplateOutput{}, false, false, nil
+	}
+	if err != nil {
+		return model.LiveTemplateOutput{}, false, false, err
+	}
+	if liveOutputID == "" {
+		return model.LiveTemplateOutput{}, false, false, nil
+	}
+	row := tx.QueryRow(ctx, `SELECT `+liveOutputColumns+` FROM live_template_outputs WHERE id=$1 FOR UPDATE`, liveOutputID)
+	output, err = scanLiveOutput(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return model.LiveTemplateOutput{}, false, true, nil
+	}
+	if err != nil {
+		return model.LiveTemplateOutput{}, false, false, err
+	}
+	if output.ActiveJobID != jobID {
+		return output, false, true, nil
+	}
+	_, streamID, ok2, err := currentStreamForNoteTx(ctx, tx, output.NoteID)
+	if err != nil {
+		return model.LiveTemplateOutput{}, false, false, err
+	}
+	if !ok2 || streamID != output.StreamID {
+		return output, false, true, nil
+	}
+	eligibleTemplates, _, err := EligibleLiveTemplatesTx(ctx, tx, output.OwnerID)
+	if err != nil {
+		return model.LiveTemplateOutput{}, false, false, err
+	}
+	for _, t := range eligibleTemplates {
+		if t.ID == output.TemplateID {
+			return output, true, true, nil
+		}
+	}
+	return output, false, true, nil
+}
+
+// discardIneligibleLiveRowTx removes an output row that failed the
+// completion eligibility fence and marks the job done without publishing,
+// per the accepted spec: "it discards the generated output ... and notifies
+// the note; it publishes no result."
+func discardIneligibleLiveRowTx(ctx context.Context, tx pgx.Tx, jobID, outputID string) error {
+	if outputID != "" {
+		if _, err := tx.Exec(ctx, `DELETE FROM live_template_outputs WHERE id=$1`, outputID); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE jobs SET status=$1, lease_expires_at=NULL, finished_at=now(), updated_at=now() WHERE id=$2`,
+		model.JobDone, jobID); err != nil {
+		return err
+	}
+	return nil
+}
+
+// CompleteLiveGenerateSuccessTx publishes a successful live_generate job's
+// result, fenced by liveCompletionFenceTx. published=false (no error) means
+// the result was discarded because eligibility changed after claim; the
+// caller must not treat that as a failure. If desired_revision still exceeds
+// the fixed target_revision this run just rendered, it creates exactly one
+// cadence-limited follow-up job in the same transaction.
+func (s *Store) CompleteLiveGenerateSuccessTx(ctx context.Context, jobID string, targetRevision int, agentPlugin, modelName string, sections []model.SummarySection, now time.Time) (published bool, err error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+
+	output, eligible, ok, err := liveCompletionFenceTx(ctx, tx, jobID)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, tx.Commit(ctx)
+	}
+	if !eligible {
+		if err := discardIneligibleLiveRowTx(ctx, tx, jobID, output.ID); err != nil {
+			return false, err
+		}
+		return false, tx.Commit(ctx)
+	}
+
+	secJSON, err := json.Marshal(sections)
+	if err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE live_template_outputs
+		    SET status=$2, sections=$3::jsonb, agent_plugin=$4, model=$5, error_code=NULL,
+		        rendered_revision=$6, active_job_id=NULL, event_version=event_version+1, updated_at=$7
+		  WHERE id=$1`,
+		output.ID, model.LiveOutputReady, string(secJSON), agentPlugin, modelName, targetRevision, now); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE jobs SET status=$1, lease_expires_at=NULL, last_error=NULL, finished_at=now(), updated_at=now() WHERE id=$2`,
+		model.JobDone, jobID); err != nil {
+		return false, err
+	}
+
+	if output.DesiredRevision > targetRevision {
+		out := output
+		out.LastStartedAt = &now
+		out.ActiveJobID = ""
+		if err := scheduleLiveJobTx(ctx, tx, &out, now); err != nil {
+			return false, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// CompleteLiveGenerateFailureTx publishes a terminal live_generate failure,
+// fenced by liveCompletionFenceTx exactly like the success path. If still
+// eligible, it marks the row failed with a safe errorCode (never raw
+// provider/credential text), retains prior sections, and creates one
+// cadence-limited follow-up only when desired_revision still exceeds the
+// fixed targetRevision. If no longer eligible, it discards the failure state
+// entirely (never publishes it).
+func (s *Store) CompleteLiveGenerateFailureTx(ctx context.Context, jobID string, targetRevision int, errorCode string, now time.Time) (recorded bool, err error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+
+	output, eligible, ok, err := liveCompletionFenceTx(ctx, tx, jobID)
+	if err != nil {
+		return false, err
+	}
+	if !ok {
+		return false, tx.Commit(ctx)
+	}
+	if !eligible {
+		if err := discardIneligibleLiveRowTx(ctx, tx, jobID, output.ID); err != nil {
+			return false, err
+		}
+		return false, tx.Commit(ctx)
+	}
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE live_template_outputs
+		    SET status=$2, error_code=$3, active_job_id=NULL, event_version=event_version+1, updated_at=$4
+		  WHERE id=$1`,
+		output.ID, model.LiveOutputFailed, errorCode, now); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx,
+		`UPDATE jobs SET status=$1, lease_expires_at=NULL, finished_at=now(), updated_at=now() WHERE id=$2`,
+		model.JobFailed, jobID); err != nil {
+		return false, err
+	}
+
+	if output.DesiredRevision > targetRevision {
+		out := output
+		out.LastStartedAt = &now
+		out.ActiveJobID = ""
+		if err := scheduleLiveJobTx(ctx, tx, &out, now); err != nil {
+			return false, err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}
