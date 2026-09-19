@@ -11,6 +11,7 @@ import { resolveAudiotapBin } from './resourcePaths'
 import { startEmbeddedStartupMonitor } from './embeddedStartupMonitor'
 import { MuesliClient } from './muesliClient'
 import { NoteStreamRelay } from './noteStreamRelay'
+import { LivePromptRelay } from './livePromptRelay'
 import { SecretStore } from './secretStore'
 import { makeSystemAudioPermission } from './systemAudioPermission'
 import { makeSystemAudioHelper } from './systemAudioHelper'
@@ -20,6 +21,11 @@ import { CalendarPrefsStore } from './calendarPrefs'
 import { MeetingDetectionManager } from './meetingDetectionLoop'
 
 let mainWindow: BrowserWindow | null = null
+// The live-prompts relay outlives any one window: the renderer's own stop
+// IPC cannot be relied on once its window is destroyed, and on macOS with
+// background running the process stays alive, so window close and quit must
+// abort the stream themselves or the server keeps renewing its lease.
+let livePrompts: LivePromptRelay | null = null
 let fatalShutdownRequested = false
 let meetingDetectionManager: MeetingDetectionManager | null = null
 let keepRunningInBackground = false
@@ -166,6 +172,9 @@ function createWindow(options: { show?: boolean; route?: TrayNavigationTarget } 
     if (mainWindow === null) return
     mainWindow = null
     meetingDetectionManager?.windowClosed()
+    // Abort any live-prompts stream so the server releases its subscriber
+    // lease now, not after its TTL: there is no renderer left to ask for it.
+    livePrompts?.stopAll()
   })
 
   return mainWindow
@@ -233,6 +242,11 @@ app.whenReady().then(async () => {
       getConfig: () => tokenStore.load(),
       emit: (event) => mainWindow?.webContents.send(IPC.noteStreamEvent, event),
     })
+    const livePromptRelay = new LivePromptRelay({
+      getConfig: () => tokenStore.load(),
+      emit: (event) => mainWindow?.webContents.send(IPC.livePromptsEvent, event),
+    })
+    livePrompts = livePromptRelay
     const handlers = createHandlers({
       tokenStore,
       fetch: fetchImpl,
@@ -382,6 +396,8 @@ app.whenReady().then(async () => {
     ipcMain.handle(IPC.uploadAudio, (_e, req: UploadAudioRequest) => handlers.uploadAudio(req))
     ipcMain.handle(IPC.startNoteStream, (_e, noteId: string) => noteStream.start(noteId))
     ipcMain.handle(IPC.stopNoteStream, (_e, noteId: string) => noteStream.stop(noteId))
+    ipcMain.handle(IPC.startLivePrompts, (_e, noteId: string) => livePromptRelay.start(noteId))
+    ipcMain.handle(IPC.stopLivePrompts, (_e, noteId: string) => livePromptRelay.stop(noteId))
     ipcMain.handle(IPC.sendNoteStreamAudio, (_e, noteId: string, audio: ArrayBuffer) => noteStream.sendAudio(noteId, audio))
     ipcMain.handle(IPC.addTag, (_e, noteId: string, name: string) => handlers.addTag(noteId, name))
     ipcMain.handle(IPC.removeTag, (_e, noteId: string, name: string) => handlers.removeTag(noteId, name))
@@ -518,6 +534,7 @@ app.on('before-quit', () => {
   tray?.destroy()
   tray = null
   meetingDetectionManager?.stop()
+  livePrompts?.stopAll()
 })
 
 app.on('activate', () => {

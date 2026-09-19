@@ -390,6 +390,10 @@ func TestNoteScopedRouteRegistrationCompleteness(t *testing.T) {
 	sharedReadable := map[string]bool{
 		"GET " + idPrefix:           true,
 		"GET " + idPrefix + "/full": true,
+		// Live in-meeting prompt stream (issue #764): gated by
+		// GetReadableNote like /full, since it carries only material derived
+		// from the transcript a reader can already see.
+		"GET " + idPrefix + "/live-prompts": true,
 	}
 	filing := map[string]bool{
 		"POST " + idPrefix + "/folders":              true,

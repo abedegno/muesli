@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/abedegno/muesli/internal/adminui"
@@ -103,6 +104,21 @@ type Server struct {
 	// microsoftOAuthStates holds the short-lived state values for the
 	// Microsoft OAuth connect flow. Zero value is ready to use.
 	microsoftOAuthStates microsoftOAuthStateStore
+
+	// liveOnce lazily starts this process's live-prompt note-update listener
+	// and hub (issue #764) on first use, so the many pre-existing api tests
+	// that never touch /live-prompts never open a database LISTEN connection.
+	liveOnce     sync.Once
+	liveHubField *liveNoteHub
+	// liveMu guards liveListener and liveClosed so Close can stop the
+	// listener (and refuse to start one afterwards) without racing the lazy
+	// start above.
+	liveMu       sync.Mutex
+	liveListener *store.LiveNoteListener
+	liveClosed   bool
+	// liveStoreOverride replaces deps.Store behind the live-prompts handler's
+	// liveStore boundary; nil in production. Set only by this package's tests.
+	liveStoreOverride liveStore
 }
 
 func NewServer(deps Deps) *Server {
@@ -157,6 +173,7 @@ func (s *Server) routes() {
 		r.Post("/api/notes/{id}/event", s.handleSetNoteEvent)
 		r.Delete("/api/notes/{id}/event", s.handleClearNoteEvent)
 		r.Get("/api/notes/{id}/action-items", s.handleListNoteActionItems)
+		r.Get("/api/notes/{id}/live-prompts", s.handleLiveNotePrompts)
 		r.Get("/api/action-items", s.handleListActionItems)
 		r.Patch("/api/action-items/{id}", s.handleUpdateActionItemStatus)
 		r.Get("/api/notes/trash", s.handleListTrash)
@@ -316,6 +333,7 @@ func (s *Server) Handler() http.Handler { return s.router }
 
 // Run starts the HTTP server and blocks until ctx is cancelled, then shuts down gracefully.
 func (s *Server) Run(ctx context.Context, addr string) error {
+	defer s.Close()
 	httpSrv := &http.Server{Addr: addr, Handler: s.router}
 	errCh := make(chan error, 1)
 	go func() { errCh <- httpSrv.ListenAndServe() }()

@@ -62,6 +62,8 @@ const bridge: MuesliBridge = {
   startNoteStream: (noteId) => ipcRenderer.invoke(IPC.startNoteStream, noteId),
   stopNoteStream: (noteId) => ipcRenderer.invoke(IPC.stopNoteStream, noteId),
   sendNoteStreamAudio: (noteId, audio) => ipcRenderer.invoke(IPC.sendNoteStreamAudio, noteId, audio),
+  startLivePrompts: (noteId) => ipcRenderer.invoke(IPC.startLivePrompts, noteId),
+  stopLivePrompts: (noteId) => ipcRenderer.invoke(IPC.stopLivePrompts, noteId),
   addTag: (noteId, name) => ipcRenderer.invoke(IPC.addTag, noteId, name),
   removeTag: (noteId, name) => ipcRenderer.invoke(IPC.removeTag, noteId, name),
   renameTag: (id, name) => ipcRenderer.invoke(IPC.renameTag, id, name),
@@ -152,6 +154,11 @@ const bridge: MuesliBridge = {
     const listener = (_e: unknown, event: Parameters<typeof cb>[0]) => cb(event)
     ipcRenderer.on(IPC.noteStreamEvent, listener)
     return () => ipcRenderer.removeListener(IPC.noteStreamEvent, listener)
+  },
+  onLivePromptsEvent: (cb) => {
+    const listener = (_e: unknown, event: Parameters<typeof cb>[0]) => cb(event)
+    ipcRenderer.on(IPC.livePromptsEvent, listener)
+    return () => ipcRenderer.removeListener(IPC.livePromptsEvent, listener)
   },
   onEmbeddedStartupStatus: (cb) => {
     const listener = (_e: unknown, status: Parameters<typeof cb>[0]) => cb(status)

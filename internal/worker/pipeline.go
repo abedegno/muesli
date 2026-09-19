@@ -96,6 +96,8 @@ func (p *Processor) Process(ctx context.Context, job model.Job) {
 		retryable, err = p.runEmbed(ctx, job)
 	case model.JobPreGenerate:
 		retryable, err = p.runPreGenerate(ctx, job)
+	case model.JobLiveGenerate:
+		retryable, err = p.runLiveGenerate(ctx, job)
 	default:
 		err = errors.New("unknown job type: " + job.Type)
 	}
@@ -117,7 +119,7 @@ func (p *Processor) Process(ctx context.Context, job model.Job) {
 		if !terminal {
 			return // will be retried by another claim
 		}
-		p.handleTerminalFailure(ctx, job)
+		p.handleTerminalFailure(ctx, job, err)
 		return
 	}
 	if cerr := p.store.CompleteJob(ctx, job.ID); cerr != nil {
@@ -136,7 +138,7 @@ func (p *Processor) Process(ctx context.Context, job model.Job) {
 //   - transcribe: no transcript will ever exist → the note is failed.
 //   - summarize: this one panel is failed, but the note can still be ready once
 //     the remaining summarize jobs settle (partial success).
-func (p *Processor) handleTerminalFailure(ctx context.Context, job model.Job) {
+func (p *Processor) handleTerminalFailure(ctx context.Context, job model.Job, terminalErr error) {
 	switch job.Type {
 	case model.JobTranscribe:
 		if err := p.store.SetNoteStatus(ctx, job.NoteID, model.NoteFailed); err != nil {
@@ -152,6 +154,8 @@ func (p *Processor) handleTerminalFailure(ctx context.Context, job model.Job) {
 		p.FinalizeNote(ctx, job.NoteID)
 	case model.JobPreGenerate:
 		p.handlePreGenerateTerminalFailure(ctx, job)
+	case model.JobLiveGenerate:
+		p.handleLiveGenerateTerminalFailure(ctx, job, terminalErr)
 	}
 }
 

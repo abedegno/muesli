@@ -707,7 +707,13 @@ func (s *Store) NoteIsTrashed(ctx context.Context, noteID string) (bool, error) 
 // children are kept until permanent delete or auto-purge. ErrNotFound if absent or
 // already trashed.
 func (s *Store) DeleteNote(ctx context.Context, ownerID, id string) error {
-	ct, err := s.pool.Exec(ctx,
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	ct, err := tx.Exec(ctx,
 		`UPDATE notes SET deleted_at=now(), updated_at=now()
 		 WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL`,
 		id, ownerID)
@@ -717,7 +723,24 @@ func (s *Store) DeleteNote(ctx context.Context, ownerID, id string) error {
 	if ct.RowsAffected() == 0 {
 		return ErrNotFound
 	}
-	return nil
+
+	// Trash ends the note's current live stream (issue #764's lifecycle
+	// ruling: close, seal, supersession, trash, or deletion ends it), in the
+	// trash transaction itself so a cleanup failure rolls the trash back
+	// rather than leaving live rows and jobs running against a note nobody
+	// can read. Queued rows go with their jobs cancelled; running rows are
+	// hidden and cancellation-requested so their completion fence discards
+	// the result; subscribers are notified and end their cards.
+	_, streamID, ok, err := currentStreamForNoteTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if ok {
+		if _, err := EndLiveTemplateStream(ctx, tx, id, streamID, liveClock()); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 // SetRetentionState records the audio's post-transcription disposition.
