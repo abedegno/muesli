@@ -48,6 +48,28 @@ func uniqueSuffix() string {
 	return strconv.FormatInt(seedUserCounter.Add(1), 10)
 }
 
+// briefRetryClockBase is a fixed, deterministic instant used in place of the
+// wall clock for store.RetryPreBriefJob's real "has the event started" check
+// (see scripts/check-test-determinism.sh and store.RetryPreBriefClock's own
+// doc comment). newBriefTestFixture seeds every event at a fixed offset from
+// its own "now" (2026-09-20 08:00 UTC); without pinning the package-level
+// RetryPreBriefClock too, TestRetryPreBriefJobRejectsMismatchedBriefWithoutTouchingIt
+// would silently go stale once real wall-clock time passed that fixture
+// instant: RetryPreBriefJob's eligibility check ("event already started")
+// would then trip before the mismatched-brief-target check under test ever
+// runs, and the test would observe ErrIneligible ("no longer applicable")
+// instead of the ErrNotFound it asserts. This mirrors the same seam-pinning
+// pattern internal/api's admin retry tests use for the same production
+// clock (adminPreJobTestBase in admin_jobs_pre_test.go). Runs once at
+// package init, before any t.Parallel() test starts, so it is not a data
+// race with this file's own parallel subtests; no other file in this
+// package exercises RetryPreBriefJob's real-time path.
+var briefRetryClockBase = time.Date(2026, 9, 20, 8, 0, 0, 0, time.UTC)
+
+func init() {
+	store.RetryPreBriefClock = func() time.Time { return briefRetryClockBase }
+}
+
 // seedEvent creates one event starting startsIn after the fixture's now and
 // returns its id.
 func (f briefTestFixture) seedEvent(t *testing.T, externalID string, startsIn time.Duration) string {
