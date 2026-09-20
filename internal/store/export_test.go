@@ -46,30 +46,25 @@ func SetTestHookAfterListReadableNotesRowsLoaded(f func(requesterID string)) fun
 	}
 }
 
-// SetTestHookBeforeAssistantMessageInsert installs the hook for tests in
-// package store_test and returns a restore function. See
-// testHookBeforeAssistantMessageInsert's doc comment in cross_analysis.go.
-func SetTestHookBeforeAssistantMessageInsert(f func(cancel context.CancelFunc)) func() {
-	prev := testHookBeforeAssistantMessageInsert
-	testHookBeforeAssistantMessageInsert = f
-	return func() { testHookBeforeAssistantMessageInsert = prev }
-}
-
-// SetTestHookBeforeConversationTimestampUpdate installs the hook for tests
-// in package store_test and returns a restore function. See
-// testHookBeforeConversationTimestampUpdate's doc comment in
-// cross_analysis.go.
-func SetTestHookBeforeConversationTimestampUpdate(f func(cancel context.CancelFunc)) func() {
-	prev := testHookBeforeConversationTimestampUpdate
-	testHookBeforeConversationTimestampUpdate = f
-	return func() { testHookBeforeConversationTimestampUpdate = prev }
-}
-
-// SetTestHookBeforeCrossAnalysisCommit installs the hook for tests in
-// package store_test and returns a restore function. See
-// testHookBeforeCrossAnalysisCommit's doc comment in cross_analysis.go.
-func SetTestHookBeforeCrossAnalysisCommit(f func(cancel context.CancelFunc)) func() {
-	prev := testHookBeforeCrossAnalysisCommit
-	testHookBeforeCrossAnalysisCommit = f
-	return func() { testHookBeforeCrossAnalysisCommit = prev }
+// ContextWithCrossAnalysisFaultInjection returns a context that scopes the
+// given fault-injection hooks to the SPECIFIC AppendCrossAnalysisTurn call
+// made with the returned context -- see crossAnalysisFaultInjection's doc
+// comment in cross_analysis.go for why this is call-scoped (via
+// context.Value) rather than a global mutable hook variable: this file's
+// tests run under t.Parallel(), and AppendCrossAnalysisTurn calls made by
+// any OTHER test (or by production code) always use a context without this
+// value, so they can never observe -- or trigger -- a hook installed here.
+// Any of the three hook parameters may be nil to leave that step
+// uninjected.
+func ContextWithCrossAnalysisFaultInjection(
+	ctx context.Context,
+	beforeAssistantMessageInsert func(cancel context.CancelFunc),
+	beforeConversationTimestampUpdate func(cancel context.CancelFunc),
+	beforeCommit func(cancel context.CancelFunc),
+) context.Context {
+	return context.WithValue(ctx, crossAnalysisFaultInjectionKey{}, &crossAnalysisFaultInjection{
+		beforeAssistantMessageInsert:      beforeAssistantMessageInsert,
+		beforeConversationTimestampUpdate: beforeConversationTimestampUpdate,
+		beforeCommit:                      beforeCommit,
+	})
 }

@@ -286,21 +286,34 @@ func truncateRunesEllipsis(s string, max int) string {
 	return string(r[:max]) + "..."
 }
 
-// testHookBeforeAssistantMessageInsert, testHookBeforeConversationTimestampUpdate,
-// and testHookBeforeCrossAnalysisCommit are test-only fault-injection points
-// for AppendCrossAnalysisTurn's transactional steps. Each is invoked (when
-// set by a test) with the transaction's own cancel func immediately before
-// the named step, letting a test force that EXACT step -- and only that
-// step -- to fail deterministically (via cancel()), without racing real
-// timing or needing a step-specific data-driven constraint violation (unlike
-// the source-row insert, whose failure the existing rollback test already
-// triggers genuinely via a source citing a nonexistent note id). nil in
-// production; never touched outside tests.
-var (
-	testHookBeforeAssistantMessageInsert      func(cancel context.CancelFunc)
-	testHookBeforeConversationTimestampUpdate func(cancel context.CancelFunc)
-	testHookBeforeCrossAnalysisCommit         func(cancel context.CancelFunc)
-)
+// crossAnalysisFaultInjectionKey is the unexported context key a test uses
+// to scope a fault-injection point to its OWN AppendCrossAnalysisTurn call
+// only -- see crossAnalysisFaultInjection below and
+// export_test.go's ContextWithCrossAnalysisFaultInjection. Deliberately NOT
+// a package-level mutable hook variable: this file's tests run with
+// t.Parallel(), and a global hook read unconditionally by every call would
+// let one test's injected failure fire inside a concurrently-running
+// sibling test's call, a real cross-test race. Threading the injection
+// through the call's own context instead means a call made with a plain
+// context.Background() (every sibling test, and every production caller)
+// never observes another call's injection: ctx.Value simply returns nil.
+type crossAnalysisFaultInjectionKey struct{}
+
+// crossAnalysisFaultInjection holds the three optional fault-injection
+// points for AppendCrossAnalysisTurn's transactional steps, reachable only
+// through the specific context a test built with
+// ContextWithCrossAnalysisFaultInjection. Each field, when set, is invoked
+// with the transaction's own cancel func immediately before the named step,
+// letting a test force that EXACT step -- and only that step, and only for
+// that one call -- to fail deterministically (via cancel()), without racing
+// real timing or needing a step-specific data-driven constraint violation
+// (unlike the source-row insert, whose failure the existing rollback test
+// already triggers genuinely via a source citing a nonexistent note id).
+type crossAnalysisFaultInjection struct {
+	beforeAssistantMessageInsert      func(cancel context.CancelFunc)
+	beforeConversationTimestampUpdate func(cancel context.CancelFunc)
+	beforeCommit                      func(cancel context.CancelFunc)
+}
 
 // AppendCrossAnalysisTurn atomically persists the complete cross-meeting
 // analysis turn (issue #765): the user message, the assistant message, and
@@ -314,9 +327,14 @@ var (
 // This never falls back to independent AppendMessage calls -- see the
 // accepted spec's "Persistence" section.
 func (s *Store) AppendCrossAnalysisTurn(ctx context.Context, conversationID, userContent, assistantContent, assistantModel string, tokensUsed *int, sources []model.MessageSource) (userMsg model.Message, assistantMsg model.Message, err error) {
-	// A cancelable child context lets a test's fault-injection hook (above)
-	// force one exact subsequent statement to fail. cancel is always called
-	// via defer regardless, which is a no-op once the transaction has already
+	// fi is nil for every production call and every test that did not build
+	// its context via ContextWithCrossAnalysisFaultInjection -- see that
+	// type's doc comment for why this is call-scoped rather than a global.
+	fi, _ := ctx.Value(crossAnalysisFaultInjectionKey{}).(*crossAnalysisFaultInjection)
+
+	// A cancelable child context lets fi's hooks (if any) force one exact
+	// subsequent statement to fail. cancel is always called via defer
+	// regardless, which is a no-op once the transaction has already
 	// committed or been rolled back.
 	queryCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -341,8 +359,8 @@ func (s *Store) AppendCrossAnalysisTurn(ctx context.Context, conversationID, use
 		return model.Message{}, model.Message{}, err
 	}
 
-	if testHookBeforeAssistantMessageInsert != nil {
-		testHookBeforeAssistantMessageInsert(cancel)
+	if fi != nil && fi.beforeAssistantMessageInsert != nil {
+		fi.beforeAssistantMessageInsert(cancel)
 	}
 	err = tx.QueryRow(queryCtx,
 		`INSERT INTO messages (conversation_id, role, content, model, tokens_used)
@@ -364,15 +382,15 @@ func (s *Store) AppendCrossAnalysisTurn(ctx context.Context, conversationID, use
 		}
 	}
 
-	if testHookBeforeConversationTimestampUpdate != nil {
-		testHookBeforeConversationTimestampUpdate(cancel)
+	if fi != nil && fi.beforeConversationTimestampUpdate != nil {
+		fi.beforeConversationTimestampUpdate(cancel)
 	}
 	if _, err := tx.Exec(queryCtx, `UPDATE conversations SET updated_at=now() WHERE id=$1`, conversationID); err != nil {
 		return model.Message{}, model.Message{}, err
 	}
 
-	if testHookBeforeCrossAnalysisCommit != nil {
-		testHookBeforeCrossAnalysisCommit(cancel)
+	if fi != nil && fi.beforeCommit != nil {
+		fi.beforeCommit(cancel)
 	}
 	if err := tx.Commit(queryCtx); err != nil {
 		return model.Message{}, model.Message{}, err

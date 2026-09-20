@@ -3,6 +3,7 @@ package execution
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/abedegno/muesli/internal/model"
@@ -150,5 +151,123 @@ func TestRunPropagatesGeneratorError(t *testing.T) {
 	prepared.Input.Template = twoSectionTemplate()
 	if _, err := NewExecutor(gen).Run(context.Background(), prepared); err == nil {
 		t.Fatal("expected an error, got nil")
+	}
+}
+
+// TestPrepareDocumentsSingleNoteModeNoCrossMeetingFraming proves
+// ModeSingleNoteSummary's corpus is exactly the single document's own
+// NotesMarkdown -- no multi-meeting directive, meeting delimiters, citation
+// numbering, or focus/citation framing -- unlike the default
+// ModeCrossAnalysis corpus (see TestPrepareDocumentsOneDocumentCompatibility,
+// which proves the OPPOSITE for the same one-document shape under the
+// default mode).
+func TestPrepareDocumentsSingleNoteModeNoCrossMeetingFraming(t *testing.T) {
+	const rawNotes = "- discussed Q3 roadmap\n- alice: ship by Friday"
+	input := ExecutionInput{
+		Template: model.Template{Sections: []model.TemplateSection{{Heading: "Overview", Instruction: "Summarize."}}},
+		Mode:     ModeSingleNoteSummary,
+		Documents: []Document{{
+			NoteID:        "note-1",
+			Segments:      []model.Segment{{StartMS: 0, EndMS: 100, Text: "hello", Speaker: "Alice"}},
+			NotesMarkdown: rawNotes,
+		}},
+	}
+	prepared, err := PrepareDocuments(input)
+	if err != nil {
+		t.Fatalf("PrepareDocuments: %v", err)
+	}
+	if prepared.Corpus != rawNotes {
+		t.Fatalf("corpus = %q, want exactly the document's own NotesMarkdown %q", prepared.Corpus, rawNotes)
+	}
+	for _, forbidden := range []string{
+		"MEETING", "analyzing multiple distinct meetings", "CITATIONS:", "FOCUS:", SystemDirective,
+	} {
+		if strings.Contains(prepared.Corpus, forbidden) {
+			t.Fatalf("corpus unexpectedly contains cross-meeting-only text %q:\n%s", forbidden, prepared.Corpus)
+		}
+	}
+	if len(prepared.SectionPrompts) != 0 {
+		t.Fatalf("expected no section prompts computed for ModeSingleNoteSummary (Admit is never called for it), got %+v", prepared.SectionPrompts)
+	}
+}
+
+// TestPrepareDocumentsSingleNoteModeRequiresExactlyOneDocument proves
+// ModeSingleNoteSummary rejects anything but exactly one document.
+func TestPrepareDocumentsSingleNoteModeRequiresExactlyOneDocument(t *testing.T) {
+	input := twoDocInput()
+	input.Mode = ModeSingleNoteSummary
+	if _, err := PrepareDocuments(input); !errors.Is(err, ErrSingleNoteModeRequiresOneDocument) {
+		t.Fatalf("got %v, want ErrSingleNoteModeRequiresOneDocument", err)
+	}
+}
+
+// TestRunSingleNoteModeSendsTranscriptNotDocuments proves the wire request
+// Run sends for ModeSingleNoteSummary matches the pre-#765 direct
+// plugin.Client.Generate call byte-for-byte in shape: Transcript carries the
+// document's segments, NotesMarkdown carries the document's own raw note
+// body verbatim (no cross-meeting framing), and Documents is never set.
+func TestRunSingleNoteModeSendsTranscriptNotDocuments(t *testing.T) {
+	const rawNotes = "- discussed Q3 roadmap"
+	segs := []model.Segment{{StartMS: 0, EndMS: 100, Text: "hello", Speaker: "Alice"}}
+	gen := &fakeGenerator{resp: plugin.GenerateResponse{
+		Summary: plugin.SummaryPayload{Sections: []model.SummarySection{{Heading: "Overview", ContentMarkdown: "done"}}},
+		Model:   "m1",
+	}}
+	input := ExecutionInput{
+		Template:     model.Template{Sections: []model.TemplateSection{{Heading: "Overview", Instruction: "Summarize."}}},
+		Mode:         ModeSingleNoteSummary,
+		Documents:    []Document{{NoteID: "note-1", Segments: segs, NotesMarkdown: rawNotes}},
+		SystemPrompt: "custom system prompt",
+	}
+	prepared, err := PrepareDocuments(input)
+	if err != nil {
+		t.Fatalf("PrepareDocuments: %v", err)
+	}
+	if _, err := NewExecutor(gen).Run(context.Background(), prepared); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if gen.lastReq.Documents != nil {
+		t.Fatalf("expected Documents unset for ModeSingleNoteSummary, got %+v", gen.lastReq.Documents)
+	}
+	if len(gen.lastReq.Transcript) != 1 || gen.lastReq.Transcript[0].Text != "hello" {
+		t.Fatalf("expected Transcript to carry the document's segments, got %+v", gen.lastReq.Transcript)
+	}
+	if gen.lastReq.NotesMarkdown != rawNotes {
+		t.Fatalf("NotesMarkdown = %q, want the document's own raw note body %q", gen.lastReq.NotesMarkdown, rawNotes)
+	}
+	if gen.lastReq.SystemPrompt != "custom system prompt" {
+		t.Fatalf("expected SystemPrompt forwarded, got %q", gen.lastReq.SystemPrompt)
+	}
+}
+
+// TestRunSingleNoteModeTrustsPluginSectionsWithoutValidation proves
+// ModeSingleNoteSummary does NOT apply ModeCrossAnalysis's strict
+// section-count/heading/order/emptiness validation: whatever sections the
+// plugin returns are trusted as-is and returned in Result.Sections, exactly
+// like the pre-refactor worker code (which persisted whatever
+// resp.Summary.Sections was, with no matching against the requested
+// template). Contrast with TestRunRejectsMismatchedSections, which proves
+// the OPPOSITE for the same mismatched shapes under the default mode.
+func TestRunSingleNoteModeTrustsPluginSectionsWithoutValidation(t *testing.T) {
+	mismatched := []model.SummarySection{
+		{Heading: "Unexpected Heading", ContentMarkdown: "d"},
+		{Heading: "Unexpected Heading", ContentMarkdown: ""}, // duplicate heading AND empty content
+	}
+	gen := &fakeGenerator{resp: plugin.GenerateResponse{Summary: plugin.SummaryPayload{Sections: mismatched}, Model: "m"}}
+	input := ExecutionInput{
+		Template:  model.Template{Sections: []model.TemplateSection{{Heading: "Overview", Instruction: "Summarize."}}},
+		Mode:      ModeSingleNoteSummary,
+		Documents: []Document{{NoteID: "note-1", Segments: []model.Segment{{StartMS: 0, Text: "hi"}}}},
+	}
+	prepared, err := PrepareDocuments(input)
+	if err != nil {
+		t.Fatalf("PrepareDocuments: %v", err)
+	}
+	res, err := NewExecutor(gen).Run(context.Background(), prepared)
+	if err != nil {
+		t.Fatalf("Run: expected no error (loose section handling), got %v", err)
+	}
+	if len(res.Sections) != len(mismatched) || res.Sections[0].Heading != "Unexpected Heading" {
+		t.Fatalf("expected the plugin's sections passed through unvalidated, got %+v", res.Sections)
 	}
 }

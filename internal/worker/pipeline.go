@@ -762,13 +762,20 @@ func (p *Processor) runSummarize(ctx context.Context, job model.Job) (bool, erro
 	// boundary (introduced alongside issue #765's cross-meeting analysis), so
 	// this after-summary path goes through it too rather than hand-building a
 	// plugin.GenerateRequest and calling the plugin client directly.
-	// SystemPrompt/Model/Temperature are forwarded unconditionally from the
-	// resolved template, exactly like internal/api/cross_analysis.go's
-	// prepareCrossAnalysisExecution -- behaviourally identical to only
-	// setting them when non-zero, since a zero value leaves the
-	// corresponding request field at its own zero value either way.
+	// ModeSingleNoteSummary tells the shared boundary to keep the wire
+	// request and response handling byte-for-byte/behaviorally identical to
+	// the direct plugin.Client.Generate call this replaced: no cross-meeting
+	// framing (multi-meeting directive, meeting delimiters, citation
+	// numbering) and no strict section validation -- see Mode's doc comment
+	// in internal/execution. SystemPrompt/Model/Temperature are forwarded
+	// unconditionally from the resolved template, exactly like
+	// internal/api/cross_analysis.go's prepareCrossAnalysisExecution --
+	// behaviourally identical to only setting them when non-zero, since a
+	// zero value leaves the corresponding request field at its own zero
+	// value either way.
 	prepared, err := execution.PrepareDocuments(execution.ExecutionInput{
 		Template: tmpl,
+		Mode:     execution.ModeSingleNoteSummary,
 		Documents: []execution.Document{{
 			NoteID:        job.NoteID,
 			Segments:      segments,

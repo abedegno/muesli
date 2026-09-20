@@ -184,6 +184,37 @@ func NewAgent() *Stub {
 	return s
 }
 
+// NewMismatchedSectionsAgent returns a stub that always responds with a
+// single, fixed section whose heading never matches any requested
+// template's sections -- simulating a plugin whose response does not
+// structurally match the request. Used to prove the ordinary (single-note)
+// after-summary path -- unlike cross-meeting analysis -- tolerates this
+// (see internal/execution.ModeSingleNoteSummary): the plugin's response is
+// trusted and persisted as-is, with no section-count/heading validation.
+func NewMismatchedSectionsAgent() *Stub {
+	s := &Stub{}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusOK) })
+	mux.HandleFunc("/info", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(plugin.Info{Name: "stub-mismatched-agent", Version: "0", PluginAPI: 1, Kind: "agent"})
+	})
+	mux.HandleFunc("/generate", func(w http.ResponseWriter, r *http.Request) {
+		s.recordBody(r)
+		if s.shouldFail() {
+			http.Error(w, "injected failure", http.StatusInternalServerError)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(plugin.GenerateResponse{
+			Summary: plugin.SummaryPayload{Sections: []model.SummarySection{
+				{Heading: "Completely Different Heading", ContentMarkdown: "unrelated content"},
+			}},
+			Model: "stub-mismatched",
+		})
+	})
+	s.srv = httptest.NewServer(mux)
+	return s
+}
+
 // NewTruncatedAgent returns a stub that echoes one section per requested
 // template section, like NewAgent, but with content that does NOT end in
 // terminal punctuation — simulating a response silently cut short by a

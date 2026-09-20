@@ -412,15 +412,16 @@ func countMessageSourcesForConversation(t *testing.T, pool *pgxpool.Pool, conver
 
 // TestAppendCrossAnalysisTurnRollsBackOnAssistantMessageInsertFailure forces
 // the assistant message insert (the second write of the transaction, after
-// the user message insert already succeeded) to fail via the
-// testHookBeforeAssistantMessageInsert fault-injection hook, and proves NO
-// partial turn survives: no stray user or assistant message row, no stray
-// source row, and no conversation timestamp bump -- plus that the failure
-// surfaces as an error from AppendCrossAnalysisTurn itself. Unlike the
+// the user message insert already succeeded) to fail via a call-scoped
+// ContextWithCrossAnalysisFaultInjection hook, and proves NO partial turn
+// survives: no stray user or assistant message row, no stray source row,
+// and no conversation timestamp bump -- plus that the failure surfaces as
+// an error from AppendCrossAnalysisTurn itself. Unlike the
 // source-insert-rollback test below, there is no data value that fails only
 // the assistant insert (both message inserts share the same conversation_id
-// FK and hardcoded, already-valid role literals), so this uses the hook
-// mechanism instead of a constraint violation.
+// FK and hardcoded, already-valid role literals), so this uses the
+// fault-injection hook instead of a constraint violation -- scoped to this
+// call's own context so it cannot race a t.Parallel() sibling test's call.
 func TestAppendCrossAnalysisTurnRollsBackOnAssistantMessageInsertFailure(t *testing.T) {
 	t.Parallel()
 	st, owner, pool := newStoreWithOwner(t)
@@ -436,11 +437,13 @@ func TestAppendCrossAnalysisTurnRollsBackOnAssistantMessageInsertFailure(t *test
 		t.Fatalf("ListMessages before: %v", err)
 	}
 
-	restore := store.SetTestHookBeforeAssistantMessageInsert(func(cancel context.CancelFunc) { cancel() })
-	defer restore()
+	// Scoped to THIS call only (via context.Value) -- a concurrently-running
+	// t.Parallel() sibling test's own AppendCrossAnalysisTurn call uses its
+	// own plain context.Background() and can never observe this injection.
+	injectedCtx := store.ContextWithCrossAnalysisFaultInjection(ctx, func(cancel context.CancelFunc) { cancel() }, nil, nil)
 
 	sources := []model.MessageSource{{N: 1, NoteID: strPtrCA(a.ID), TranscriptGeneration: 1, SegmentIndex: 0, Timestamp: 0, Snippet: "a one"}}
-	_, _, err = st.AppendCrossAnalysisTurn(ctx, conv.ID, "focus", "reply [1]", "test-model", nil, sources)
+	_, _, err = st.AppendCrossAnalysisTurn(injectedCtx, conv.ID, "focus", "reply [1]", "test-model", nil, sources)
 	if err == nil {
 		t.Fatal("expected an error from a forced assistant-message-insert failure, got nil")
 	}
@@ -468,7 +471,7 @@ func TestAppendCrossAnalysisTurnRollsBackOnAssistantMessageInsertFailure(t *test
 // TestAppendCrossAnalysisTurnRollsBackOnConversationTimestampUpdateFailure
 // forces the conversations.updated_at UPDATE (which runs after both
 // messages and every source row already succeeded, uncommitted, within the
-// transaction) to fail via the testHookBeforeConversationTimestampUpdate
+// transaction) to fail via a call-scoped ContextWithCrossAnalysisFaultInjection
 // hook, and proves the whole turn -- messages AND sources, not just the
 // timestamp -- rolls back, and that the failure surfaces as an error.
 func TestAppendCrossAnalysisTurnRollsBackOnConversationTimestampUpdateFailure(t *testing.T) {
@@ -487,14 +490,14 @@ func TestAppendCrossAnalysisTurnRollsBackOnConversationTimestampUpdateFailure(t 
 		t.Fatalf("ListMessages before: %v", err)
 	}
 
-	restore := store.SetTestHookBeforeConversationTimestampUpdate(func(cancel context.CancelFunc) { cancel() })
-	defer restore()
+	// Scoped to THIS call only -- see the assistant-message-insert test above.
+	injectedCtx := store.ContextWithCrossAnalysisFaultInjection(ctx, nil, func(cancel context.CancelFunc) { cancel() }, nil)
 
 	sources := []model.MessageSource{
 		{N: 1, NoteID: strPtrCA(a.ID), TranscriptGeneration: 1, SegmentIndex: 0, Timestamp: 0, Snippet: "a one"},
 		{N: 2, NoteID: strPtrCA(b.ID), TranscriptGeneration: 1, SegmentIndex: 1, Timestamp: 1000, Snippet: "b two"},
 	}
-	_, _, err = st.AppendCrossAnalysisTurn(ctx, conv.ID, "Compare A and B", "They differ [1][2]", "test-model", nil, sources)
+	_, _, err = st.AppendCrossAnalysisTurn(injectedCtx, conv.ID, "Compare A and B", "They differ [1][2]", "test-model", nil, sources)
 	if err == nil {
 		t.Fatal("expected an error from a forced conversation-timestamp-update failure, got nil")
 	}
@@ -522,7 +525,7 @@ func TestAppendCrossAnalysisTurnRollsBackOnConversationTimestampUpdateFailure(t 
 // TestAppendCrossAnalysisTurnRollsBackOnCommitFailure forces the final
 // tx.Commit call itself (after every insert and the timestamp update already
 // succeeded, uncommitted, within the transaction) to fail via the
-// testHookBeforeCrossAnalysisCommit hook, and proves the whole turn rolls
+// call-scoped ContextWithCrossAnalysisFaultInjection hook, and proves the whole turn rolls
 // back exactly as if an earlier row operation had failed, and that the
 // failure surfaces as an error from AppendCrossAnalysisTurn.
 func TestAppendCrossAnalysisTurnRollsBackOnCommitFailure(t *testing.T) {
@@ -540,11 +543,11 @@ func TestAppendCrossAnalysisTurnRollsBackOnCommitFailure(t *testing.T) {
 		t.Fatalf("ListMessages before: %v", err)
 	}
 
-	restore := store.SetTestHookBeforeCrossAnalysisCommit(func(cancel context.CancelFunc) { cancel() })
-	defer restore()
+	// Scoped to THIS call only -- see the assistant-message-insert test above.
+	injectedCtx := store.ContextWithCrossAnalysisFaultInjection(ctx, nil, nil, func(cancel context.CancelFunc) { cancel() })
 
 	sources := []model.MessageSource{{N: 1, NoteID: strPtrCA(a.ID), TranscriptGeneration: 1, SegmentIndex: 0, Timestamp: 0, Snippet: "a one"}}
-	_, _, err = st.AppendCrossAnalysisTurn(ctx, conv.ID, "focus", "reply [1]", "test-model", nil, sources)
+	_, _, err = st.AppendCrossAnalysisTurn(injectedCtx, conv.ID, "focus", "reply [1]", "test-model", nil, sources)
 	if err == nil {
 		t.Fatal("expected an error from a forced commit failure, got nil")
 	}
