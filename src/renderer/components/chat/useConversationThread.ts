@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { muesli } from '@/api'
-import type { ChatSource, Conversation, Message } from '../../../shared/types'
+import type { ChatSource, Conversation, Message, Template } from '../../../shared/types'
+import type { CrossAnalysisRequest } from '../../../shared/ipc'
 import { parseChatError, type ChatError } from './chatErrors'
 
 // Drives ONE conversation's message thread: loading its history, sending new
@@ -113,5 +114,71 @@ export function useConversationThread({
     [conversationId, noteId, onConversationCreated, sending],
   )
 
-  return { messages, sourcesByMessageId, loading, sending, error, send, setError }
+  // sendCrossAnalysis submits issue #765's cross-meeting analysis: an
+  // explicit ordered note-id list, a template id, and an optional focus.
+  // Reuses the SAME sending/error state and create-and-send-vs-existing
+  // branching as ordinary send(), so the conversation's existing in-flight
+  // guard, error area, and navigation continue to apply unchanged.
+  const sendCrossAnalysis = useCallback(
+    async (templateId: string, noteIds: string[], focus: string, templateName: string): Promise<boolean> => {
+      if (sending) return false
+      setError(null)
+      setSending(true)
+      const crossAnalysis: CrossAnalysisRequest = { template_id: templateId, note_ids: noteIds }
+      // Optimistic, server-equivalent descriptor: the same focus-plus-
+      // statement shape the server persists as the user turn, computed
+      // client-side so the bubble is not simply "Cross-meeting analysis" --
+      // it is removed/replaced the moment a real response (or an error)
+      // arrives.
+      const statement = `Cross-meeting analysis using template "${templateName}" across ${noteIds.length} meetings.`
+      const optimisticContent = focus ? `${focus}
+
+${statement}` : statement
+      const optimisticId = `local-${Date.now()}-${Math.random().toString(36).slice(2)}`
+      const optimisticMessage: Message = {
+        id: optimisticId,
+        conversation_id: conversationId ?? '',
+        role: 'user',
+        content: optimisticContent,
+        model: '',
+        created_at: new Date().toISOString(),
+      }
+      setMessages((prev) => [...prev, optimisticMessage])
+      try {
+        if (!conversationId) {
+          const res = await muesli.createConversation({ title: '', content: focus, cross_analysis: crossAnalysis })
+          const { message, ...conversation } = res
+          loadedIdRef.current = conversation.id
+          onConversationCreated?.(conversation as Conversation)
+          setMessages((prev) => {
+            const withoutOptimistic = prev.filter((m) => m.id !== optimisticId)
+            const userMessage: Message = { ...optimisticMessage, conversation_id: conversation.id }
+            return message ? [...withoutOptimistic, userMessage, message] : [...withoutOptimistic, userMessage]
+          })
+        } else {
+          const res = await muesli.sendMessage(conversationId, { content: focus, cross_analysis: crossAnalysis })
+          setMessages((prev) => [...prev.filter((m) => m.id !== optimisticId), { ...optimisticMessage, conversation_id: conversationId }, res.message])
+        }
+        return true
+      } catch (err) {
+        // Roll back the optimistic bubble -- neither path persisted it
+        // server-side on failure -- and use the existing chat error area.
+        setMessages((prev) => prev.filter((m) => m.id !== optimisticId))
+        setError(parseChatError(err))
+        return false
+      } finally {
+        setSending(false)
+      }
+    },
+    [conversationId, onConversationCreated, sending],
+  )
+
+  return { messages, sourcesByMessageId, loading, sending, error, send, sendCrossAnalysis, setError }
+}
+
+// crossAnalysisTemplateName is a small helper so callers (CrossAnalysisComposer's
+// host) can resolve a template's display name from its id without threading
+// the whole template list through this hook.
+export function crossAnalysisTemplateName(templates: Template[], templateId: string): string {
+  return templates.find((t) => t.id === templateId)?.name ?? ''
 }
