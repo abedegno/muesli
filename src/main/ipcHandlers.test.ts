@@ -1198,6 +1198,36 @@ describe('ipc handlers', () => {
     await expect(handlers.sendMessage('c1', { content: 'hi' })).rejects.toThrow('[500] internal error')
   })
 
+  // issue #765: cross-meeting analysis -- the generic bridge forwards
+  // cross_analysis (and an empty content/focus) through unchanged, exactly
+  // like every other request field.
+  it('sendMessage forwards cross_analysis unchanged through the generic bridge', async () => {
+    const seen: Array<{ body?: unknown }> = []
+    const fetchMock = async (_url: string | URL, init?: RequestInit): Promise<Response> => {
+      seen.push({ body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      return new Response(
+        JSON.stringify({ message: { id: 'm1', conversation_id: 'c1', role: 'assistant', content: 'ok', model: 'm', created_at: '' }, sources: [] }),
+        { status: 200 },
+      )
+    }
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    await handlers.sendMessage('c1', { content: '', cross_analysis: { template_id: 'tmpl-1', note_ids: ['note-1', 'note-2'] } })
+    expect(seen[0].body).toEqual({ content: '', cross_analysis: { template_id: 'tmpl-1', note_ids: ['note-1', 'note-2'] } })
+  })
+
+  it('surfaces a 412 stale-generation mismatch as a [412] message prefix', async () => {
+    const fetchMock = async (): Promise<Response> =>
+      new Response(JSON.stringify({ error: 'selected meetings changed, please retry' }), { status: 412 })
+    const tokenStore = new TokenStore(dir, fakeSafe)
+    tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
+    const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
+    await expect(
+      handlers.sendMessage('c1', { content: '', cross_analysis: { template_id: 'tmpl-1', note_ids: ['note-1', 'note-2'] } }),
+    ).rejects.toThrow('[412] selected meetings changed, please retry')
+  })
+
   it('exportNote fetches the note export and parses the suggested filename', async () => {
     const seen: Array<{ url: string; method?: string }> = []
     const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {

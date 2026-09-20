@@ -1,5 +1,7 @@
 package store
 
+import "context"
+
 // SetTestHookAfterPriorTranscriptRead installs the hook for tests in
 // package store_test and returns a restore function.
 func SetTestHookAfterPriorTranscriptRead(f func()) func() {
@@ -42,4 +44,27 @@ func SetTestHookAfterListReadableNotesRowsLoaded(f func(requesterID string)) fun
 		testHookAfterListReadableNotesRowsLoaded = prev
 		testHookAfterListReadableNotesRowsLoadedMu.Unlock()
 	}
+}
+
+// ContextWithCrossAnalysisFaultInjection returns a context that scopes the
+// given fault-injection hooks to the SPECIFIC AppendCrossAnalysisTurn call
+// made with the returned context -- see crossAnalysisFaultInjection's doc
+// comment in cross_analysis.go for why this is call-scoped (via
+// context.Value) rather than a global mutable hook variable: this file's
+// tests run under t.Parallel(), and AppendCrossAnalysisTurn calls made by
+// any OTHER test (or by production code) always use a context without this
+// value, so they can never observe -- or trigger -- a hook installed here.
+// Any of the three hook parameters may be nil to leave that step
+// uninjected.
+func ContextWithCrossAnalysisFaultInjection(
+	ctx context.Context,
+	beforeAssistantMessageInsert func(cancel context.CancelFunc),
+	beforeConversationTimestampUpdate func(cancel context.CancelFunc),
+	beforeCommit func(cancel context.CancelFunc),
+) context.Context {
+	return context.WithValue(ctx, crossAnalysisFaultInjectionKey{}, &crossAnalysisFaultInjection{
+		beforeAssistantMessageInsert:      beforeAssistantMessageInsert,
+		beforeConversationTimestampUpdate: beforeConversationTimestampUpdate,
+		beforeCommit:                      beforeCommit,
+	})
 }

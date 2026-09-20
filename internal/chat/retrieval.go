@@ -10,7 +10,6 @@ package chat
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"sort"
 	"strings"
@@ -20,13 +19,6 @@ import (
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/store"
 )
-
-// speakerAliasDirective is the fixed instruction line appended after the
-// "Speakers: ..." mapping line in the assembled transcript preface. It must
-// stay byte-identical to internal/worker/speaker_alias.go's
-// speakerAliasDirective -- both tell the agent to use the supplied alias
-// names verbatim rather than inventing its own.
-const speakerAliasDirective = "Use the provided speaker names verbatim; do not infer, abbreviate, or merge names."
 
 // defaultSemanticCandidates bounds how many nearest-neighbour notes we pull
 // from the vector index before blending with lexical scores and capping at k.
@@ -103,65 +95,17 @@ func (r *Retriever) NoteTranscript(ctx context.Context, ownerID, noteID string) 
 		return nil, err
 	}
 
-	segments, applied := applyAliases(tr.Segments, aliases)
+	// Copy-on-write alias substitution lives in internal/store (see its
+	// aliases.go) -- store never imports chat, so chat imports store's
+	// exported helpers instead of keeping an independent copy (issue #765's
+	// accepted plan, ruling 6).
+	segments, applied := store.ApplyAliases(tr.Segments, aliases)
 	text := assembleTranscriptText(segments)
 	if len(applied) > 0 {
-		text = aliasPreface(applied) + "\n\n" + text
+		text = store.AliasPreface(applied) + "\n\n" + text
 	}
 
 	return &NoteTranscript{NoteID: noteID, Segments: segments, Text: text}, nil
-}
-
-// applyAliases substitutes note-scoped speaker aliases into segments,
-// mirroring internal/worker/speaker_alias.go's applySpeakerAliases gating
-// exactly: only aliases whose raw speaker label is actually present on a
-// segment in this transcript are applied -- both for substitution and for the
-// preface built from the returned map. When aliases is empty or none apply,
-// it returns the input segments unchanged and a nil map.
-func applyAliases(segments []model.Segment, aliases map[string]string) ([]model.Segment, map[string]string) {
-	if len(aliases) == 0 {
-		return segments, nil
-	}
-
-	applied := make(map[string]string)
-	for _, seg := range segments {
-		if seg.Speaker == "" {
-			continue
-		}
-		if alias, ok := aliases[seg.Speaker]; ok && alias != "" {
-			applied[seg.Speaker] = alias
-		}
-	}
-	if len(applied) == 0 {
-		return segments, nil
-	}
-
-	out := make([]model.Segment, len(segments))
-	copy(out, segments)
-	for i := range out {
-		if alias, ok := applied[out[i].Speaker]; ok {
-			out[i].Speaker = alias
-		}
-	}
-	return out, applied
-}
-
-// aliasPreface renders the deterministic two-line "Speakers: RAW -> alias,
-// ..." + directive preface from an applied raw->alias map, sorted by raw
-// label. Byte-identical in wording/format to
-// internal/worker/speaker_alias.go's preface.
-func aliasPreface(applied map[string]string) string {
-	rawLabels := make([]string, 0, len(applied))
-	for raw := range applied {
-		rawLabels = append(rawLabels, raw)
-	}
-	sort.Strings(rawLabels)
-
-	pairs := make([]string, 0, len(rawLabels))
-	for _, raw := range rawLabels {
-		pairs = append(pairs, fmt.Sprintf("%s -> %s", raw, applied[raw]))
-	}
-	return "Speakers: " + strings.Join(pairs, ", ") + "\n" + speakerAliasDirective
 }
 
 // assembleTranscriptText renders segments into a single chat-context string,

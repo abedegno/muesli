@@ -201,3 +201,128 @@ func TestValidateGenerateSource(t *testing.T) {
 		t.Fatalf("valid calendar_event source rejected: %v", err)
 	}
 }
+
+// TestGenerateRequestDocumentsJSON round-trips a two-document ordered
+// GenerateRequest (issue #765's cross-meeting analysis input) end to end
+// through JSON, proving document order, segment order, and per-document
+// metadata all survive.
+func TestGenerateRequestDocumentsJSON(t *testing.T) {
+	req := GenerateRequest{
+		Documents: []Document{
+			{
+				NoteID:               "note-1",
+				Title:                "Sprint planning",
+				OccurredAt:           "2026-07-01T09:00:00Z",
+				TranscriptGeneration: 2,
+				Segments: []model.Segment{
+					{StartMS: 0, EndMS: 1000, Text: "Let's plan the sprint.", Source: "mic", Speaker: "Alice"},
+					{StartMS: 1000, EndMS: 2000, Text: "Sounds good.", Source: "mic", Speaker: "Bob"},
+				},
+			},
+			{
+				NoteID:               "note-2",
+				Title:                "Retro",
+				OccurredAt:           "2026-07-08T09:00:00Z",
+				TranscriptGeneration: 1,
+				Segments: []model.Segment{
+					{StartMS: 0, EndMS: 500, Text: "What went well?", Source: "mic", Speaker: "Alice"},
+				},
+			},
+		},
+		Template: TemplatePayload{Sections: []model.TemplateSection{{Heading: "Summary", Instruction: "Summarize."}}},
+		Config:   json.RawMessage(`{}`),
+	}
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	// Transcript is left nil (not coerced) when Documents is the chosen form;
+	// it still serializes the key (Transcript has no omitempty, matching the
+	// legacy "transcript": [] wire invariant) but as JSON null, which is how
+	// validateGenerateRequest's exclusivity check tells the two forms apart.
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal raw: %v", err)
+	}
+	if tr, ok := raw["transcript"]; !ok || string(tr) != "null" {
+		t.Fatalf("expected \"transcript\": null when Documents is used, got %s", data)
+	}
+	if _, ok := raw["documents"]; !ok {
+		t.Fatalf("expected \"documents\" present in JSON, got %s", data)
+	}
+
+	var got GenerateRequest
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(got.Documents) != 2 {
+		t.Fatalf("Documents len = %d, want 2", len(got.Documents))
+	}
+	if got.Documents[0].NoteID != "note-1" || got.Documents[1].NoteID != "note-2" {
+		t.Fatalf("document order not preserved: %+v", got.Documents)
+	}
+	if len(got.Documents[0].Segments) != 2 || got.Documents[0].Segments[1].Text != "Sounds good." {
+		t.Fatalf("segment order not preserved: %+v", got.Documents[0].Segments)
+	}
+}
+
+func TestValidateGenerateRequestDocumentsExclusivity(t *testing.T) {
+	sections := TemplatePayload{Sections: []model.TemplateSection{{Heading: "H", Instruction: "I"}}}
+	validDoc := Document{NoteID: "note-1", Segments: []model.Segment{}}
+
+	cases := []struct {
+		name    string
+		req     GenerateRequest
+		wantErr bool
+	}{
+		{
+			name:    "transcript only (legacy)",
+			req:     GenerateRequest{Transcript: []model.Segment{}, Template: sections, Config: json.RawMessage(`{}`)},
+			wantErr: false,
+		},
+		{
+			name:    "documents only",
+			req:     GenerateRequest{Documents: []Document{validDoc}, Template: sections, Config: json.RawMessage(`{}`)},
+			wantErr: false,
+		},
+		{
+			name:    "both forms rejected",
+			req:     GenerateRequest{Transcript: []model.Segment{}, Documents: []Document{validDoc}, Template: sections, Config: json.RawMessage(`{}`)},
+			wantErr: true,
+		},
+		{
+			name:    "neither form rejected",
+			req:     GenerateRequest{Template: sections, Config: json.RawMessage(`{}`)},
+			wantErr: true,
+		},
+		{
+			name: "duplicate document note ids rejected",
+			req: GenerateRequest{
+				Documents: []Document{validDoc, validDoc},
+				Template:  sections, Config: json.RawMessage(`{}`),
+			},
+			wantErr: true,
+		},
+		{
+			name: "blank document note id rejected",
+			req: GenerateRequest{
+				Documents: []Document{{NoteID: "  ", Segments: []model.Segment{}}},
+				Template:  sections, Config: json.RawMessage(`{}`),
+			},
+			wantErr: true,
+		},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateGenerateRequest(tc.req)
+			if tc.wantErr && err == nil {
+				t.Fatal("expected error, got nil")
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+		})
+	}
+}

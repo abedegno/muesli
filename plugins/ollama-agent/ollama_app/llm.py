@@ -4,7 +4,7 @@ import re
 import httpx
 
 from .config import Settings
-from .prompt import build_section_prompt
+from .prompt import build_documents_section_prompt, build_section_prompt
 from .schema import GenerateRequest, GenerateResponse, Summary, SummarySection
 
 
@@ -110,8 +110,17 @@ def generate(req: GenerateRequest, settings: Settings) -> GenerateResponse:
 
     sections: list[SummarySection] = []
     used_model = model
+    # issue #765's cross-meeting analysis: req.documents is present instead
+    # of req.transcript (the two are mutually exclusive -- see
+    # schema.GenerateRequest's validator). Every section is built from the
+    # already-rendered, already-admitted corpus in req.notes_markdown rather
+    # than from req.transcript.
+    use_documents = bool(req.documents)
     for tsec in req.template.sections:
-        prompt = build_section_prompt(req, tsec.heading, tsec.instruction)
+        if use_documents:
+            prompt = build_documents_section_prompt(req, tsec.heading, tsec.instruction)
+        else:
+            prompt = build_section_prompt(req, tsec.heading, tsec.instruction)
         if base_url:
             raw, used_model = _call_openai_compatible(base_url, api_key, model, prompt, temperature)
         else:

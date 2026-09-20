@@ -1035,6 +1035,108 @@ func TestPipelineSummaryTruncatedFlagged(t *testing.T) {
 	}
 }
 
+// TestPipelineSummarizeSendsTranscriptNotCrossMeetingCorpus proves the
+// ordinary (single-note) summarize path's actual wire request to the plugin
+// is unaffected by internal/execution's cross-meeting-analysis rendering:
+// it carries the aliased transcript segments via "transcript" (never
+// "documents"), and its "notes_markdown" is the raw note body with none of
+// cross-meeting analysis's framing text (no multi-meeting directive, no
+// meeting delimiters, no citation-instruction framing meant for multiple
+// sources). See internal/execution.ModeSingleNoteSummary.
+func TestPipelineSummarizeSendsTranscriptNotCrossMeetingCorpus(t *testing.T) {
+	proc, st, noteID, _, ag := pipelineFixture(t, "keep")
+	ctx := context.Background()
+
+	drain(t, proc, st)
+
+	n, _ := st.GetNoteByID(ctx, noteID)
+	if n.Status != model.NoteReady {
+		t.Fatalf("note status = %q, want ready", n.Status)
+	}
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(ag.LastBody(), &raw); err != nil {
+		t.Fatalf("unmarshal last /generate body: %v", err)
+	}
+	transcript, ok := raw["transcript"]
+	if !ok || string(transcript) == "null" {
+		t.Fatalf("expected a non-null \"transcript\" field, got body %s", ag.LastBody())
+	}
+	if docs, ok := raw["documents"]; ok && string(docs) != "null" {
+		t.Fatalf("expected no \"documents\" field for an ordinary single-note summary, got %s", docs)
+	}
+	notesMarkdown, ok := raw["notes_markdown"]
+	if !ok {
+		t.Fatalf("expected a \"notes_markdown\" field, got body %s", ag.LastBody())
+	}
+	for _, forbidden := range []string{
+		"MEETING", "analyzing multiple distinct meetings", "CITATIONS:", "FOCUS:",
+	} {
+		if strings.Contains(string(notesMarkdown), forbidden) {
+			t.Fatalf("notes_markdown unexpectedly contains cross-meeting-only text %q: %s", forbidden, notesMarkdown)
+		}
+	}
+}
+
+// TestPipelineSummarizeTrustsPluginSectionsWithoutValidation proves the
+// ordinary (single-note) summarize path -- unlike cross-meeting analysis --
+// does NOT reject a plugin response whose sections don't structurally match
+// the requested template (see internal/execution.ModeSingleNoteSummary):
+// the summary still reaches ready, storing exactly the mismatched section
+// the plugin returned, matching the pre-refactor worker's behavior of
+// trusting whatever the plugin returned with no section-count/heading
+// validation.
+func TestPipelineSummarizeTrustsPluginSectionsWithoutValidation(t *testing.T) {
+	ctx := context.Background()
+	st := store.New(testutil.NewPool(t))
+	cr := testCrypto(t)
+	_ = st.SeedBuiltInTemplates(ctx)
+
+	prov, err := storage.NewLocal(t.TempDir(), "http://example.test", "http://example.test", []byte("test-signing-key-0123456789"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tr := plugintest.NewTranscriber()
+	t.Cleanup(tr.Close)
+	ag := plugintest.NewMismatchedSectionsAgent()
+	t.Cleanup(ag.Close)
+
+	tp, _ := st.CreatePlugin(ctx, cr, model.Plugin{Kind: model.PluginTranscriber, Name: "t", EndpointURL: tr.URL(), Token: "x", Enabled: true, Config: json.RawMessage(`{}`)})
+	ap, _ := st.CreatePlugin(ctx, cr, model.Plugin{Kind: model.PluginAgent, Name: "a", EndpointURL: ag.URL(), Token: "x", Enabled: true, Config: json.RawMessage(`{}`)})
+	_ = st.SetDefaultPlugin(ctx, tp.ID)
+	_ = st.SetDefaultPlugin(ctx, ap.ID)
+
+	u, _ := st.CreateUser(ctx, "o@example.com", "h")
+	n, _ := st.CreateNote(ctx, u.ID, "M")
+	key := "notes/" + n.ID + "/audio/a.webm"
+	_, _ = prov.PresignUpload(key, time.Minute)
+	_ = st.SetNoteAudio(ctx, u.ID, n.ID, key)
+
+	cfg := config.Config{AudioRetention: "keep"}
+	proc := worker.NewProcessor(st, cr, prov, cfg, nil)
+	_, _ = st.EnqueueNoteJob(ctx, n.ID, model.JobTranscribe, json.RawMessage(`{"audio_key":"`+key+`"}`))
+
+	drain(t, proc, st)
+
+	nn, _ := st.GetNoteByID(ctx, n.ID)
+	if nn.Status != model.NoteReady {
+		t.Fatalf("note status = %q, want ready (a mismatched-sections plugin response must not fail an ordinary summary)", nn.Status)
+	}
+	sums, err := st.GetSummaries(ctx, n.ID)
+	if err != nil || len(sums) == 0 {
+		t.Fatalf("summaries: %v len=%d", err, len(sums))
+	}
+	for _, s := range sums {
+		if s.Status != model.SummaryReady {
+			t.Fatalf("summary not ready: %+v", s)
+		}
+		if len(s.Sections) != 1 || s.Sections[0].Heading != "Completely Different Heading" {
+			t.Fatalf("expected the plugin's mismatched section persisted as-is, got %+v", s.Sections)
+		}
+	}
+}
+
 // TestFinalizeNoteEnqueuesWebhookPerEnabledWebhook covers EXT01d requirement
 // 5a: an owner with an enabled webhook gets exactly one pending
 // webhook_deliveries row once their note reaches ready, and the payload

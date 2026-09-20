@@ -212,3 +212,96 @@ func TestTranscriptCoreJSONRoundTrip(t *testing.T) {
 		})
 	}
 }
+
+func TestCrossAnalysisNoteLimits(t *testing.T) {
+	t.Parallel()
+	if CrossAnalysisMinNotes != 2 {
+		t.Fatalf("CrossAnalysisMinNotes = %d, want 2", CrossAnalysisMinNotes)
+	}
+	if CrossAnalysisMaxNotes != 40 {
+		t.Fatalf("CrossAnalysisMaxNotes = %d, want 40", CrossAnalysisMaxNotes)
+	}
+}
+
+func TestMessageSourceJSONRoundTrip(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		value    MessageSource
+		wantKeys []string
+	}{
+		{
+			name: "fully populated with note id",
+			value: MessageSource{
+				N:                    1,
+				NoteID:               strPtr("note_1"),
+				TranscriptGeneration: 3,
+				SegmentIndex:         7,
+				Timestamp:            65000,
+				Snippet:              "We agreed to ship next week.",
+			},
+			wantKeys: []string{"n", "note_id", "transcript_generation", "segment_index", "timestamp", "snippet"},
+		},
+		{
+			name: "note id explicitly null (deleted note)",
+			value: MessageSource{
+				N:                    2,
+				NoteID:               nil,
+				TranscriptGeneration: 1,
+				SegmentIndex:         0,
+				Timestamp:            0,
+				Snippet:              "Historical snippet survives.",
+			},
+			// note_id is NOT omitempty: a deleted note's citation must still
+			// serialize an explicit JSON null, distinguishable from a missing
+			// field, so the renderer can render it unavailable/non-clickable.
+			wantKeys: []string{"n", "note_id", "transcript_generation", "segment_index", "timestamp", "snippet"},
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assertJSONRoundTrip(t, tc.value, tc.wantKeys)
+		})
+	}
+}
+
+func TestMessageSourcesOnMessage(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nil sources omitted from JSON", func(t *testing.T) {
+		t.Parallel()
+		msg := Message{
+			ID:             "msg_1",
+			ConversationID: "conv_1",
+			Role:           "assistant",
+			Content:        "Hello",
+			Model:          "gpt-test",
+			CreatedAt:      time.Date(2026, time.July, 12, 9, 0, 0, 0, time.UTC),
+		}
+		assertJSONRoundTrip(t, msg, []string{"id", "conversation_id", "role", "content", "model", "created_at"})
+	})
+
+	t.Run("populated sources round-trip in template order", func(t *testing.T) {
+		t.Parallel()
+		msg := Message{
+			ID:             "msg_2",
+			ConversationID: "conv_1",
+			Role:           "assistant",
+			Content:        "Across both meetings [1][2] the team agreed to ship.",
+			Model:          "gpt-test",
+			CreatedAt:      time.Date(2026, time.July, 12, 9, 0, 0, 0, time.UTC),
+			Sources: []MessageSource{
+				{N: 1, NoteID: strPtr("note_1"), TranscriptGeneration: 1, SegmentIndex: 0, Timestamp: 0, Snippet: "Meeting one decision."},
+				{N: 2, NoteID: strPtr("note_2"), TranscriptGeneration: 2, SegmentIndex: 4, Timestamp: 12000, Snippet: "Meeting two decision."},
+			},
+		}
+		got := assertJSONRoundTrip(t, msg, []string{"id", "conversation_id", "role", "content", "model", "created_at", "sources"})
+		if len(got.Sources) != 2 || got.Sources[0].N != 1 || got.Sources[1].N != 2 {
+			t.Fatalf("Sources round-trip mismatch: %+v", got.Sources)
+		}
+	})
+}

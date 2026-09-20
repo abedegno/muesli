@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/abedegno/muesli/internal/execution"
 )
 
 func TestBuildOllamaAgentCmdAndConfigJSON(t *testing.T) {
@@ -188,5 +190,34 @@ func TestStopAgentStartupCleanupDoesNotHangForever(t *testing.T) {
 	case <-exited:
 	case <-time.After(2 * time.Second):
 		t.Fatal("child process did not exit after stopAgentStartupCleanup's Kill fallback")
+	}
+}
+
+// TestAgentConfigJSONPublishesAdmissionMetadata proves the embedded local
+// Ollama agent's stored config JSON (issue #765) decodes cleanly through
+// internal/execution.ParseAdmissionConfig -- the exact same fields
+// internal/api's cross-analysis preflight will parse from a registered
+// agent plugin's Config -- and carries the declared defaults (8192 context /
+// 4096 output reserve / zero framing for Ollama's verbatim /api/generate)
+// plus the required byte_fallback_tokenizer capability.
+func TestAgentConfigJSONPublishesAdmissionMetadata(t *testing.T) {
+	t.Parallel()
+
+	cfg := agentConfigJSON("http://127.0.0.1:11434/", DefaultOllamaAgentModel, DefaultOllamaAgentTemperature)
+	admission, err := execution.ParseAdmissionConfig([]byte(cfg))
+	if err != nil {
+		t.Fatalf("ParseAdmissionConfig: %v", err)
+	}
+	if admission.ContextTokens != DefaultContextTokens {
+		t.Fatalf("ContextTokens = %d, want %d", admission.ContextTokens, DefaultContextTokens)
+	}
+	if admission.OutputReserveTokens != DefaultOutputReserveTokens {
+		t.Fatalf("OutputReserveTokens = %d, want %d", admission.OutputReserveTokens, DefaultOutputReserveTokens)
+	}
+	if admission.ProviderFramingTokens != DefaultOllamaFramingTokens {
+		t.Fatalf("ProviderFramingTokens = %d, want %d", admission.ProviderFramingTokens, DefaultOllamaFramingTokens)
+	}
+	if !admission.ByteFallbackTokenizer {
+		t.Fatal("expected ByteFallbackTokenizer = true")
 	}
 }

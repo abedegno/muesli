@@ -891,4 +891,82 @@ describe('MuesliClient', () => {
     const c = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
     await expect(c.sendMessage('c1', { content: 'hi' })).rejects.toMatchObject({ status: 500, message: 'internal error' })
   })
+
+  // issue #765: cross-meeting analysis contracts.
+  it('createConversation forwards cross_analysis with empty content (focus) unchanged', async () => {
+    const calls: Array<{ url: string; body?: unknown }> = []
+    const fetchMock: FetchLike = async (url, init) => {
+      calls.push({ url: String(url), body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      return new Response(JSON.stringify({ id: 'c1', title: '', created_at: '', updated_at: '' }), { status: 201 })
+    }
+    const c = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
+    await c.createConversation({
+      title: '',
+      content: '',
+      cross_analysis: { template_id: 'tmpl-1', note_ids: ['note-1', 'note-2'] },
+    })
+    expect(calls[0].body).toEqual({
+      title: '',
+      content: '',
+      cross_analysis: { template_id: 'tmpl-1', note_ids: ['note-1', 'note-2'] },
+    })
+  })
+
+  it('sendMessage forwards cross_analysis and round-trips message.sources', async () => {
+    const fetchMock: FetchLike = async () =>
+      new Response(
+        JSON.stringify({
+          message: {
+            id: 'm1',
+            conversation_id: 'c1',
+            role: 'assistant',
+            content: 'Across both meetings [1][2] the team agreed to ship.',
+            model: 'test-model',
+            created_at: '',
+            sources: [
+              { n: 1, note_id: 'note-1', transcript_generation: 1, segment_index: 0, timestamp: 0, snippet: 'a' },
+              { n: 2, note_id: null, transcript_generation: 2, segment_index: 3, timestamp: 5000, snippet: 'b (deleted note)' },
+            ],
+          },
+          sources: [],
+        }),
+        { status: 200 },
+      )
+    const c = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
+    const res = await c.sendMessage('c1', {
+      content: 'Compare decisions',
+      cross_analysis: { template_id: 'tmpl-1', note_ids: ['note-1', 'note-2'] },
+    })
+    expect(res.message.sources).toHaveLength(2)
+    expect(res.message.sources?.[1].note_id).toBeNull()
+  })
+
+  it('sendMessage rejects with ApiError(412) on a stale note-generation mismatch', async () => {
+    const fetchMock: FetchLike = async () =>
+      new Response(JSON.stringify({ error: 'selected meetings changed, please retry' }), { status: 412 })
+    const c = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
+    await expect(
+      c.sendMessage('c1', { content: '', cross_analysis: { template_id: 'tmpl-1', note_ids: ['note-1', 'note-2'] } }),
+    ).rejects.toMatchObject({ status: 412, message: 'selected meetings changed, please retry' })
+  })
+
+  it('sendMessage rejects with ApiError(413) and the server text for a budget/note-count limit', async () => {
+    const fetchMock: FetchLike = async () =>
+      new Response(JSON.stringify({ error: 'selected meetings exceed the model context budget' }), { status: 413 })
+    const c = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
+    await expect(
+      c.sendMessage('c1', { content: '', cross_analysis: { template_id: 'tmpl-1', note_ids: ['note-1', 'note-2'] } }),
+    ).rejects.toMatchObject({ status: 413, message: 'selected meetings exceed the model context budget' })
+  })
+
+  it('ordinary sendMessage/createConversation payloads are unchanged when cross_analysis is absent', async () => {
+    const calls: Array<{ body?: unknown }> = []
+    const fetchMock: FetchLike = async (_url, init) => {
+      calls.push({ body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      return new Response(JSON.stringify({ id: 'c1', title: '', created_at: '', updated_at: '' }), { status: 201 })
+    }
+    const c = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
+    await c.createConversation({ title: 'Q&A', note_id: 'note-1', content: 'Hi' })
+    expect(calls[0].body).toEqual({ title: 'Q&A', note_id: 'note-1', content: 'Hi' })
+  })
 })

@@ -207,3 +207,111 @@ func TestNewServerNormalizesLoopback(t *testing.T) {
 	}
 	_ = srv
 }
+
+// TestServeAgentDocuments exercises issue #765's document-based /generate
+// contract: a documents-only request is accepted, a transcript-only request
+// (legacy) is still accepted, and a request carrying BOTH or NEITHER form is
+// rejected with 400.
+func TestServeAgentDocuments(t *testing.T) {
+	addr := freeLoopbackAddr(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		done <- ServeAgent(ctx, Config{Name: "plug", Version: "1.0", Token: "secret", Addr: addr}, serveTestAgent{})
+	}()
+	waitForHTTP(t, "http://"+addr+"/health", nil)
+
+	post := func(t *testing.T, payload map[string]any) int {
+		t.Helper()
+		body, _ := json.Marshal(payload)
+		req, _ := http.NewRequest(http.MethodPost, "http://"+addr+"/generate", bytes.NewReader(body))
+		req.Header.Set("Authorization", "Bearer secret")
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatalf("generate: %v", err)
+		}
+		resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	doc := func(noteID string) map[string]any {
+		return map[string]any{
+			"note_id":               noteID,
+			"title":                 "Meeting " + noteID,
+			"transcript_generation": 1,
+			"segments":              []map[string]any{{"start_ms": 0, "end_ms": 1000, "text": "hi", "source": "mic"}},
+		}
+	}
+
+	t.Run("documents only accepted", func(t *testing.T) {
+		status := post(t, map[string]any{
+			"documents":      []map[string]any{doc("note-1"), doc("note-2")},
+			"notes_markdown": "",
+			"template":       map[string]any{"sections": []map[string]any{}},
+			"config":         map[string]any{},
+		})
+		if status != http.StatusOK {
+			t.Fatalf("documents-only status = %d, want 200", status)
+		}
+	})
+
+	t.Run("legacy transcript still accepted", func(t *testing.T) {
+		status := post(t, map[string]any{
+			"transcript":     []map[string]any{},
+			"notes_markdown": "",
+			"template":       map[string]any{"sections": []map[string]any{}},
+			"config":         map[string]any{},
+		})
+		if status != http.StatusOK {
+			t.Fatalf("legacy transcript status = %d, want 200", status)
+		}
+	})
+
+	t.Run("both forms rejected", func(t *testing.T) {
+		status := post(t, map[string]any{
+			"transcript":     []map[string]any{},
+			"documents":      []map[string]any{doc("note-1")},
+			"notes_markdown": "",
+			"template":       map[string]any{"sections": []map[string]any{}},
+			"config":         map[string]any{},
+		})
+		if status != http.StatusBadRequest {
+			t.Fatalf("both-forms status = %d, want 400", status)
+		}
+	})
+
+	t.Run("neither form rejected", func(t *testing.T) {
+		status := post(t, map[string]any{
+			"notes_markdown": "",
+			"template":       map[string]any{"sections": []map[string]any{}},
+			"config":         map[string]any{},
+		})
+		if status != http.StatusBadRequest {
+			t.Fatalf("neither-form status = %d, want 400", status)
+		}
+	})
+
+	t.Run("duplicate note ids rejected", func(t *testing.T) {
+		status := post(t, map[string]any{
+			"documents":      []map[string]any{doc("note-1"), doc("note-1")},
+			"notes_markdown": "",
+			"template":       map[string]any{"sections": []map[string]any{}},
+			"config":         map[string]any{},
+		})
+		if status != http.StatusBadRequest {
+			t.Fatalf("duplicate note_id status = %d, want 400", status)
+		}
+	})
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("ServeAgent: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for agent shutdown")
+	}
+}

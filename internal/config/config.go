@@ -52,6 +52,13 @@ type Config struct {
 
 	AllowedOrigins []string // MUESLI_ALLOWED_ORIGINS; comma-separated; empty = no cross-origin access
 
+	// CrossAnalysisMaxNotes overrides the shared cross-meeting analysis note
+	// count ceiling (model.CrossAnalysisMaxNotes, 40) -- issue #765. Zero,
+	// negative, or above the shared maximum all fall back to the shared
+	// maximum (see (*api.Server).crossAnalysisMaxNotes); only a positive
+	// value strictly below it lowers the ceiling.
+	CrossAnalysisMaxNotes int // MUESLI_CROSS_ANALYSIS_MAX_NOTES
+
 	// UploadAllowedContentTypes overrides the audio Content-Type allowlist
 	// enforced on the upload PUT path (internal/storage.Local.UploadHandler).
 	// Comma-separated, trimmed; empty = use storage.DefaultAllowedContentTypes.
@@ -160,6 +167,7 @@ func Load(get func(string) string) (Config, error) {
 		slog.Warn("config: MUESLI_EMBED_BACKFILL_BATCH_SIZE must be > 0, using default", "default", 500)
 		cfg.EmbedBackfillBatchSize = 500
 	}
+	cfg.CrossAnalysisMaxNotes = parseInt(get("MUESLI_CROSS_ANALYSIS_MAX_NOTES"), 0)
 	cfg.AudioRetention = def(get("MUESLI_AUDIO_RETENTION"), "keep")
 	cfg.TrashRetentionDays = parseIntPositive("MUESLI_TRASH_RETENTION_DAYS", get("MUESLI_TRASH_RETENTION_DAYS"), 30)
 	cfg.RateLoginRPS = parseFloatDef(get("MUESLI_RATE_LOGIN_RPS"), 5.0/60.0)

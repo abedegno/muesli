@@ -24,6 +24,21 @@ const (
 	DefaultOllamaAgentVersion     = "0.1.0"
 	DefaultOllamaAgentModel       = "llama3.2:3b"
 	DefaultOllamaAgentTemperature = 0.2
+
+	// DefaultContextTokens/DefaultOutputReserveTokens/DefaultOllamaFramingTokens
+	// are the embedded local Ollama agent's published admission-relevant
+	// context budget (issue #765's cross-meeting analysis) -- see
+	// internal/execution.AdmissionConfig, internal/execution.ParseAdmissionConfig,
+	// and the accepted plan's ruling 3. Serialized into agentConfigJSON below
+	// (this handle's stored plugin config) so internal/api's cross-analysis
+	// preflight can parse them from the plugin's own Config exactly like any
+	// other registered agent plugin (e.g. plugins/ollama-agent's /info, which
+	// publishes the same two numeric defaults). Ollama's /api/generate
+	// receives the prompt verbatim (no JSON-wrapped chat envelope), so its
+	// provider framing overhead is zero.
+	DefaultContextTokens       = 8192
+	DefaultOutputReserveTokens = 4096
+	DefaultOllamaFramingTokens = 0
 )
 
 type AgentHandle struct {
@@ -140,10 +155,20 @@ func agentConfigJSON(ollamaURL, model string, temperature float64) string {
 		Model       string  `json:"model"`
 		OllamaURL   string  `json:"ollama_url"`
 		Temperature float64 `json:"temperature"`
+		// Admission-relevant fields (issue #765) -- see the constants' doc
+		// comment above. Decoded by internal/execution.ParseAdmissionConfig.
+		ContextTokens         int  `json:"context_tokens"`
+		OutputReserveTokens   int  `json:"output_reserve_tokens"`
+		ProviderFramingTokens int  `json:"provider_framing_tokens"`
+		ByteFallbackTokenizer bool `json:"byte_fallback_tokenizer"`
 	}{
-		Model:       model,
-		OllamaURL:   normalizeOllamaBaseURL(ollamaURL),
-		Temperature: temperature,
+		Model:                 model,
+		OllamaURL:             normalizeOllamaBaseURL(ollamaURL),
+		Temperature:           temperature,
+		ContextTokens:         DefaultContextTokens,
+		OutputReserveTokens:   DefaultOutputReserveTokens,
+		ProviderFramingTokens: DefaultOllamaFramingTokens,
+		ByteFallbackTokenizer: true,
 	}
 	b, _ := json.Marshal(cfg)
 	return string(b)

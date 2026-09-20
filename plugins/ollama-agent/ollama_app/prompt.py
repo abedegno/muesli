@@ -42,3 +42,34 @@ def build_section_prompt(req: GenerateRequest, heading: str, instruction: str) -
         f'"{heading}" section, written only from the notes and transcript above) and '
         f'optional "refs" (a list of transcript indices that support it).'
     )
+
+
+DOCUMENTS_OUTPUT_INSTRUCTION = (
+    'Return a JSON object with "content_markdown" (the content for this section, '
+    "citing sources with the bracketed numbers given in the corpus above, e.g. "
+    '[1] or [2][3]) and optional "refs" (always omit or leave empty for a '
+    "cross-meeting analysis run -- citations live inline in content_markdown, not in refs)."
+)
+
+
+def build_documents_section_prompt(req: GenerateRequest, heading: str, instruction: str) -> str:
+    """Build the prompt for ONE section of a cross-meeting analysis run
+    (issue #765): req.documents is present instead of req.transcript.
+
+    req.notes_markdown carries the ALREADY-RENDERED corpus -- the exact
+    canonical text internal/execution (Go) built and admission-checked before
+    ever calling this plugin (see internal/execution/prompt.go's buildCorpus
+    and the shared goldens under internal/execution/testdata/cross_prompts,
+    mirrored here under tests/testdata/cross_prompts). It is forwarded
+    VERBATIM, byte-for-byte, into this section's prompt -- this function only
+    adds the section-specific instruction and output-format framing around
+    it, exactly like build_section_prompt does for the legacy transcript
+    path. Never re-derives or reformats the corpus from req.documents; doing
+    so would risk silently diverging from the byte-bounded prompt Go already
+    admitted.
+    """
+    return (
+        f"{req.notes_markdown}\n\n"
+        f"## The section to write\n{heading} — {instruction}\n\n"
+        f"## Output\n{DOCUMENTS_OUTPUT_INSTRUCTION}"
+    )

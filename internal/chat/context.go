@@ -19,7 +19,7 @@ import (
 // with bracketed markers (e.g. [1], [2]) matching the source numbers, and (c)
 // use speaker names verbatim as given in the sources -- mirroring the
 // verbatim-alias convention in internal/worker/speaker_alias.go's and
-// internal/chat/retrieval.go's speakerAliasDirective.
+// internal/store/aliases.go's speakerAliasDirective.
 const SystemDirective = "You are a note-taking assistant answering questions using only the numbered sources provided below. " +
 	"Base every claim strictly on those sources; do not use outside knowledge or speculate beyond what they say. " +
 	"Cite the source(s) supporting each claim inline with bracketed markers matching the source numbers, e.g. [1] or [2][3]. " +

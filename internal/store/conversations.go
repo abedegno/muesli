@@ -132,6 +132,12 @@ func (s *Store) AppendMessage(ctx context.Context, conversationID, role, content
 
 // ListMessages returns a conversation's messages in chronological order.
 // Owner-scoped: the conversation must belong to ownerID, or ErrNotFound.
+//
+// A second, bounded query joins message_sources for every message id just
+// loaded (issue #765) and populates model.Message.Sources only where rows
+// exist, ordered by citation number -- an ordinary (non-cross) message
+// simply has none and its Sources stays nil, matching its omitempty JSON
+// tag. This never falls back to a per-message query.
 func (s *Store) ListMessages(ctx context.Context, ownerID, conversationID string) ([]model.Message, error) {
 	var owned bool
 	if err := s.pool.QueryRow(ctx,
@@ -152,14 +158,56 @@ func (s *Store) ListMessages(ctx context.Context, ownerID, conversationID string
 	}
 	defer rows.Close()
 	out := []model.Message{}
+	ids := make([]string, 0)
 	for rows.Next() {
 		var m model.Message
 		if err := rows.Scan(&m.ID, &m.ConversationID, &m.Role, &m.Content, &m.Model, &m.TokensUsed, &m.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
+		ids = append(ids, m.ID)
 	}
-	return out, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return out, nil
+	}
+
+	// LEFT JOIN notes (not a bare column read) so a *soft-deleted* (trashed)
+	// note's citation goes inert immediately: n.id comes back NULL whenever
+	// the joined note is missing OR has deleted_at set, not only once the
+	// note is later hard-deleted and the FK's ON DELETE SET NULL fires. This
+	// matches ChatThread.tsx treating note_id !== null as the sole signal
+	// that a citation is clickable.
+	sourceRows, err := s.pool.Query(ctx,
+		`SELECT ms.message_id, ms.citation_number, n.id, ms.transcript_generation, ms.segment_index, ms.timestamp_ms, ms.snippet
+		   FROM message_sources ms
+		   LEFT JOIN notes n ON n.id = ms.note_id AND n.deleted_at IS NULL
+		  WHERE ms.message_id = ANY($1)
+		  ORDER BY ms.message_id, ms.citation_number`, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer sourceRows.Close()
+	sourcesByMessageID := make(map[string][]model.MessageSource)
+	for sourceRows.Next() {
+		var messageID string
+		var src model.MessageSource
+		if err := sourceRows.Scan(&messageID, &src.N, &src.NoteID, &src.TranscriptGeneration, &src.SegmentIndex, &src.Timestamp, &src.Snippet); err != nil {
+			return nil, err
+		}
+		sourcesByMessageID[messageID] = append(sourcesByMessageID[messageID], src)
+	}
+	if err := sourceRows.Err(); err != nil {
+		return nil, err
+	}
+	for i := range out {
+		if srcs, ok := sourcesByMessageID[out[i].ID]; ok {
+			out[i].Sources = srcs
+		}
+	}
+	return out, nil
 }
 
 // SetConversationTitleIfEmpty sets the title of a conversation ONLY if it is

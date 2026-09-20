@@ -54,4 +54,27 @@ describe('parseChatError', () => {
       message: 'internal error',
     })
   })
+
+  // issue #765: cross-meeting analysis introduces a dedicated 412
+  // ("stale-selection") kind, since Electron IPC preserves the numeric
+  // status but not a response-body discriminator field.
+  it('classifies 412 as a dedicated stale-selection kind', async () => {
+    const err = await bridgeChatError(412, 'selected meetings changed, please retry')
+
+    expect(parseChatError(err)).toEqual({
+      kind: 'stale-selection',
+      message: 'One or more selected meetings changed since you selected them. Please retry.',
+    })
+  })
+
+  // 413 (note-count or context-budget limit exceeded) stays generic and
+  // displays the SERVER's own message text verbatim -- no dedicated kind.
+  it('keeps 413 generic and surfaces the server message text', async () => {
+    const err = await bridgeChatError(413, 'selected meetings exceed the model context budget')
+
+    expect(parseChatError(err)).toEqual({
+      kind: 'generic',
+      message: 'selected meetings exceed the model context budget',
+    })
+  })
 })
