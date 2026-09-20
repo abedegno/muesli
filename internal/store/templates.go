@@ -219,6 +219,24 @@ func validateTemplatePhase(phase string) error {
 	}
 }
 
+// validateCrossAutoRun rejects the one phase/auto_run combination the
+// accepted spec for issue #765 forbids: a phase-cross template can never be
+// auto_run, because cross-meeting analysis is always an explicit,
+// user-initiated run over an explicitly chosen set of notes -- there is no
+// single note whose readiness could ever trigger it automatically. Called by
+// both CreateTemplate and UpdateTemplate so neither write path can create
+// (or migrate an existing template into) that state. This is an
+// application-level guard, not a database constraint (see the
+// cross_analysis_sources migration's comment and the accepted plan's
+// ruling 7) -- Store.TemplatesForSummary's phase filter is what protects any
+// pre-existing row that predates this guard.
+func validateCrossAutoRun(phase string, autoRun bool) error {
+	if phase == templatePhaseCross && autoRun {
+		return ValidationError("cross-phase templates cannot be auto-run")
+	}
+	return nil
+}
+
 func (s *Store) ListTemplates(ctx context.Context, ownerID string) ([]model.Template, error) {
 	rows, err := s.pool.Query(ctx,
 		`SELECT id, name, phase, sections, (owner_id IS NULL) AS built_in, auto_run,
@@ -343,6 +361,9 @@ func (s *Store) CreateTemplate(ctx context.Context, ownerID, name, phase string,
 	if err := validateTemplatePhase(phase); err != nil {
 		return model.Template{}, err
 	}
+	if err := validateCrossAutoRun(phase, autoRun); err != nil {
+		return model.Template{}, err
+	}
 	if err := validateTemplateOverrides(systemPrompt, modelName, temperature); err != nil {
 		return model.Template{}, err
 	}
@@ -429,6 +450,9 @@ func (s *Store) UpdateTemplate(ctx context.Context, ownerID, id, name, phase str
 		return err
 	}
 	if err := validateTemplatePhase(phase); err != nil {
+		return err
+	}
+	if err := validateCrossAutoRun(phase, autoRun); err != nil {
 		return err
 	}
 	if err := validateTemplateOverrides(systemPrompt, modelName, temperature); err != nil {

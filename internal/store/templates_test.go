@@ -296,3 +296,85 @@ func TestTemplatesForSummaryExcludesPreTemplates(t *testing.T) {
 		t.Fatalf("TemplatesForPhase(pre) must exclude after templates: %+v", forPre)
 	}
 }
+
+// TestCreateTemplateRejectsCrossAutoRun exercises the accepted spec for
+// issue #765: cross-phase templates are manual only. First a deliberately
+// invalid fixture (auto_run=false, so it should succeed) is created to prove
+// the phase itself is accepted, then the guard is exercised failing on
+// auto_run=true before being restored to a non-auto-run cross template.
+func TestCreateTemplateRejectsCrossAutoRun(t *testing.T) {
+	t.Parallel()
+	st, owner, _ := newStoreWithOwner(t)
+	ctx := context.Background()
+
+	// Phase cross is accepted on its own (manual run).
+	manual, err := st.CreateTemplate(ctx, owner, "Cross manual", "cross", secs(), false, "", "", nil)
+	if err != nil {
+		t.Fatalf("create manual cross template: %v", err)
+	}
+	if manual.Phase != "cross" || manual.AutoRun {
+		t.Fatalf("unexpected manual cross template: %+v", manual)
+	}
+
+	// cross + auto_run=true is rejected.
+	if _, err := st.CreateTemplate(ctx, owner, "Cross auto", "cross", secs(), true, "", "", nil); err == nil {
+		t.Fatal("expected CreateTemplate to reject cross+auto_run, got nil error")
+	} else if !errors.As(err, new(store.ValidationError)) {
+		t.Fatalf("expected a ValidationError, got %v (%T)", err, err)
+	}
+}
+
+// TestUpdateTemplateRejectsCrossAutoRun mirrors TestCreateTemplateRejectsCrossAutoRun
+// for UpdateTemplate: an existing after-phase template cannot be edited into
+// cross+auto_run.
+func TestUpdateTemplateRejectsCrossAutoRun(t *testing.T) {
+	t.Parallel()
+	st, owner, _ := newStoreWithOwner(t)
+	ctx := context.Background()
+
+	tmpl, err := st.CreateTemplate(ctx, owner, "Will become cross", "after", secs(), true, "", "", nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if err := st.UpdateTemplate(ctx, owner, tmpl.ID, tmpl.Name, "cross", secs(), true, "", "", nil); err == nil {
+		t.Fatal("expected UpdateTemplate to reject cross+auto_run, got nil error")
+	} else if !errors.As(err, new(store.ValidationError)) {
+		t.Fatalf("expected a ValidationError, got %v (%T)", err, err)
+	}
+
+	// Restoring to cross+manual succeeds.
+	if err := st.UpdateTemplate(ctx, owner, tmpl.ID, tmpl.Name, "cross", secs(), false, "", "", nil); err != nil {
+		t.Fatalf("update to manual cross: %v", err)
+	}
+}
+
+// TestTemplatesForSummaryExcludesCrossAutoRunLegacyRow proves the read-side
+// guard (Store.TemplatesForSummary's phase filter) protects a row that
+// predates the write-side validation added above -- inserted directly via
+// raw SQL, bypassing CreateTemplate/UpdateTemplate entirely, exactly as a
+// legacy row from before this guard existed would look.
+func TestTemplatesForSummaryExcludesCrossAutoRunLegacyRow(t *testing.T) {
+	t.Parallel()
+	st, owner, pool := newStoreWithOwner(t)
+	ctx := context.Background()
+
+	var legacyID string
+	err := pool.QueryRow(ctx,
+		`INSERT INTO templates (id, owner_id, name, phase, sections, auto_run)
+		 VALUES (gen_random_uuid(), $1, 'Legacy cross auto-run', 'cross', '[{"heading":"H","instruction":"I"}]'::jsonb, true)
+		 RETURNING id`, owner).Scan(&legacyID)
+	if err != nil {
+		t.Fatalf("insert legacy cross auto-run row: %v", err)
+	}
+
+	forSummary, err := st.TemplatesForSummary(ctx, owner)
+	if err != nil {
+		t.Fatalf("TemplatesForSummary: %v", err)
+	}
+	for _, tmpl := range forSummary {
+		if tmpl.ID == legacyID {
+			t.Fatalf("TemplatesForSummary must exclude a legacy cross+auto_run row, got it in %+v", forSummary)
+		}
+	}
+}
