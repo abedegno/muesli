@@ -506,15 +506,59 @@ type Conversation struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
+// CrossAnalysisMinNotes and CrossAnalysisMaxNotes are the shared note-count
+// bounds for a cross-meeting analysis run (issue #765): Go is authoritative;
+// TypeScript (src/shared/types.ts) mirrors the same two numbers. At least two
+// notes are required to make a "cross-meeting" run meaningful; forty is a
+// static fan-out safety ceiling on aggregate context size, not a product
+// entitlement.
+const (
+	CrossAnalysisMinNotes = 2
+	CrossAnalysisMaxNotes = 40
+)
+
+// MessageSource is one persisted citation attached to a cross-meeting
+// analysis assistant message (issue #765): the wire/storage fields needed to
+// render a citation chip and navigate it back to the originating meeting
+// segment. Keyed in storage by (message id, N) -- see
+// internal/store/cross_analysis.go's AppendCrossAnalysisTurn.
+//
+// MessageSource is deliberately independent from internal/chat.Source (the
+// existing ordinary, non-cross chat send-response citation shape): the two
+// are NOT unified in this slice (see the accepted spec's "Alternatives
+// considered"). internal/model must never import internal/chat, so this type
+// is defined here, not there.
+//
+// NoteID is a pointer so a citation whose note has since been deleted can be
+// represented explicitly as null (see internal/store/cross_analysis.go's
+// ON DELETE SET NULL join) -- the renderer treats a nil NoteID as an
+// unavailable, non-clickable citation while still showing the historical
+// snippet/text.
+type MessageSource struct {
+	N                    int     `json:"n"`
+	NoteID               *string `json:"note_id"`
+	TranscriptGeneration int     `json:"transcript_generation"`
+	SegmentIndex         int     `json:"segment_index"`
+	Timestamp            int     `json:"timestamp"`
+	Snippet              string  `json:"snippet"`
+}
+
 // Message is one turn within a Conversation.
+//
+// Sources is populated only for a cross-meeting analysis assistant message
+// (issue #765); every other message (ordinary global/note-scoped chat, user
+// turns) omits it entirely from JSON (omitempty) -- ordinary chat's own
+// send-response citations continue to be carried out-of-band as
+// internal/chat.Source and are never assigned here.
 type Message struct {
-	ID             string    `json:"id"`
-	ConversationID string    `json:"conversation_id"`
-	Role           string    `json:"role"`
-	Content        string    `json:"content"`
-	Model          string    `json:"model"`
-	TokensUsed     *int      `json:"tokens_used,omitempty"`
-	CreatedAt      time.Time `json:"created_at"`
+	ID             string          `json:"id"`
+	ConversationID string          `json:"conversation_id"`
+	Role           string          `json:"role"`
+	Content        string          `json:"content"`
+	Model          string          `json:"model"`
+	TokensUsed     *int            `json:"tokens_used,omitempty"`
+	CreatedAt      time.Time       `json:"created_at"`
+	Sources        []MessageSource `json:"sources,omitempty"`
 }
 
 // Event brief statuses (see model.EventBrief).
