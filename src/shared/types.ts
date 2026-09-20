@@ -410,7 +410,39 @@ export interface Conversation {
   updated_at: string
 }
 
-/** Server chat-message snapshot; role remains open-ended for forward-compatible rendering. */
+/**
+ * Cross-meeting analysis note-count bounds (issue #765), mirroring
+ * model.CrossAnalysisMinNotes/CrossAnalysisMaxNotes in internal/model/model.go.
+ * Go is authoritative; the renderer uses these only for client-side bounds
+ * (disabling "Run analysis", trimming an over-long selection) -- the server
+ * re-validates independently and is the final word.
+ */
+export const CROSS_ANALYSIS_MIN_NOTES = 2
+export const CROSS_ANALYSIS_MAX_NOTES = 40
+
+/**
+ * Server-persisted cross-meeting analysis citation (issue #765); distinct
+ * from ChatSource (ordinary chat's own send-response citation shape) -- see
+ * internal/model.MessageSource's doc comment. `note_id` is explicitly `null`
+ * (not merely absent) when the cited note has since been deleted: the
+ * renderer must treat that citation as unavailable and non-clickable while
+ * still showing its historical snippet/marker.
+ */
+export interface MessageSource {
+  n: number
+  note_id: string | null
+  transcript_generation: number
+  segment_index: number
+  timestamp: number
+  snippet: string
+}
+
+/**
+ * Server chat-message snapshot; role remains open-ended for forward-compatible rendering.
+ * `sources` is present only on a cross-meeting analysis assistant message
+ * (issue #765) -- absent for every ordinary chat message, including replies
+ * fetched via listMessages before this field existed.
+ */
 export interface Message {
   id: string
   conversation_id: string
@@ -419,6 +451,7 @@ export interface Message {
   model: string
   tokens_used?: number | null
   created_at: string
+  sources?: MessageSource[]
 }
 
 /** Server citation snapshot; `n` is 1-based and `timestamp` is milliseconds into audio. */

@@ -311,15 +311,30 @@ export interface SearchOptions {
 }
 
 /**
+ * Renderer-to-main `cross_analysis` payload (issue #765), optionally carried
+ * by both CreateConversationRequest and SendMessageRequest. Presence (not
+ * `content`) selects the cross-meeting analysis path server-side -- an
+ * absent field leaves ordinary chat/create-and-send entirely unchanged.
+ */
+export interface CrossAnalysisRequest {
+  template_id: string
+  note_ids: string[]
+}
+
+/**
  * Renderer-to-main `createConversation` payload handled by `createConversation`
  * in `src/main/ipcHandlers.ts`; content creates and sends the first message atomically,
- * while omitted/blank content creates an empty conversation.
+ * while omitted/blank content creates an empty conversation. `cross_analysis`
+ * (issue #765) selects the cross-meeting analysis create-and-send path
+ * instead -- `content` then carries the optional run focus, which MAY be
+ * empty even though `cross_analysis` is present.
  */
 export interface CreateConversationRequest {
   note_id?: string
   title: string
   model_override?: string
   content?: string
+  cross_analysis?: CrossAnalysisRequest
 }
 
 /**
@@ -331,10 +346,16 @@ export interface CreateConversationResponse extends Conversation {
   sources?: ChatSource[]
 }
 
-/** Renderer-to-main `sendMessage` payload handled by `sendMessage` in `src/main/ipcHandlers.ts`. */
+/**
+ * Renderer-to-main `sendMessage` payload handled by `sendMessage` in
+ * `src/main/ipcHandlers.ts`. `cross_analysis` (issue #765) selects the
+ * cross-meeting analysis send path instead of ordinary chat -- `content`
+ * then carries the optional run focus, which MAY be empty.
+ */
 export interface SendMessageRequest {
   content: string
   model_override?: string
+  cross_analysis?: CrossAnalysisRequest
 }
 
 /** Renderer-to-main `updatePerson` patch handled by `updatePerson` in `src/main/ipcHandlers.ts`. */
