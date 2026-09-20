@@ -64,6 +64,11 @@ func (s *Server) chatRetriever() *chat.Retriever {
 type sendMessageRequest struct {
 	Content       string  `json:"content"`
 	ModelOverride *string `json:"model_override"`
+	// CrossAnalysis, when present, selects issue #765's cross-meeting
+	// analysis path instead of ordinary chat -- see handleCrossAnalysisSend.
+	// Presence, not content, selects the path (ruling 5): Content may be
+	// empty when CrossAnalysis is set.
+	CrossAnalysis *crossAnalysisRequest `json:"cross_analysis,omitempty"`
 }
 
 // chatSendResponse is the body returned by a successful send: the persisted
@@ -88,7 +93,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	if strings.TrimSpace(req.Content) == "" {
+	if req.CrossAnalysis == nil && strings.TrimSpace(req.Content) == "" {
 		writeError(w, http.StatusBadRequest, "content is required")
 		return
 	}
@@ -100,6 +105,11 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	} else if err != nil {
 		log.Printf("handleSendMessage: get conversation: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	if req.CrossAnalysis != nil {
+		s.handleCrossAnalysisSend(w, r.Context(), uid, conv, *req.CrossAnalysis, req.Content)
 		return
 	}
 

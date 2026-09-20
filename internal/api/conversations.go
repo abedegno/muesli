@@ -28,6 +28,11 @@ type conversationRequest struct {
 	Title         string  `json:"title"`
 	ModelOverride *string `json:"model_override"`
 	Content       string  `json:"content,omitempty"`
+	// CrossAnalysis, when present, selects issue #765's cross-meeting
+	// analysis create-and-send path -- see handleCreateAndSendCrossAnalysis.
+	// Presence, not Content, selects the path: Content (the optional focus)
+	// may be empty.
+	CrossAnalysis *crossAnalysisRequest `json:"cross_analysis,omitempty"`
 }
 
 // conversationWithMessage is the create-and-send response body: the created
@@ -46,6 +51,12 @@ func (s *Server) handleCreateConversation(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
 	}
+
+	if req.CrossAnalysis != nil {
+		s.handleCreateAndSendCrossAnalysis(w, r.Context(), uid, req)
+		return
+	}
+
 	c, err := s.deps.Store.CreateConversation(r.Context(), uid, req.NoteID, req.Title, req.ModelOverride)
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
