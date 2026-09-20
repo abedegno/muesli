@@ -10,6 +10,24 @@ PLUGIN_API = 1
 NAME = "muesli-ollama-agent"
 VERSION = "0.1.0"
 
+# Admission-relevant context budget published on /info (issue #765's
+# cross-meeting analysis -- see internal/execution.AdmissionConfig and the
+# accepted plan's ruling 3). context_tokens/output_reserve_tokens are the
+# same defaults internal/embedded's built-in agent serializes into its own
+# stored config (internal/embedded/agent.go's agentConfigJSON), so a caller
+# decoding either sees identical numbers. provider_framing_tokens is
+# backend-dependent: Ollama's /api/generate receives the prompt verbatim (no
+# JSON-wrapped chat envelope), so its framing overhead is zero; the fixed
+# OpenAI-compatible chat-completions envelope (role/content JSON structure,
+# tested against real request bodies) costs a small, conservative constant
+# instead. byte_fallback_tokenizer is always true: this agent has declared
+# (and this /info response proves) the fallback-tokenizer capability the
+# accepted plan requires callers to check before admitting a prompt.
+DEFAULT_CONTEXT_TOKENS = 8192
+DEFAULT_OUTPUT_RESERVE_TOKENS = 4096
+OLLAMA_PROVIDER_FRAMING_TOKENS = 0
+OPENAI_PROVIDER_FRAMING_TOKENS = 64
+
 # Default = local Ollama (privacy). BYO cloud is opt-in via base_url + api_key.
 CONFIG_SCHEMA = {
     "type": "object",
@@ -77,6 +95,7 @@ def create_app(settings: Settings) -> FastAPI:
                     },
                 },
             }
+        provider_framing_tokens = OPENAI_PROVIDER_FRAMING_TOKENS if s.base_url else OLLAMA_PROVIDER_FRAMING_TOKENS
         return {
             "name": NAME,
             "version": VERSION,
@@ -84,6 +103,10 @@ def create_app(settings: Settings) -> FastAPI:
             "kind": "agent",
             "config_schema": config_schema,
             "available_models": available_models,
+            "context_tokens": DEFAULT_CONTEXT_TOKENS,
+            "output_reserve_tokens": DEFAULT_OUTPUT_RESERVE_TOKENS,
+            "provider_framing_tokens": provider_framing_tokens,
+            "byte_fallback_tokenizer": True,
         }
 
     # /health is intentionally UNAUTHENTICATED so scale-to-zero / k8s readiness

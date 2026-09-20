@@ -97,3 +97,42 @@ def test_info_ollama_unreachable_falls_back_to_free_text_model(auth_headers):
     body = r.json()
     assert body["available_models"] == []
     assert "enum" not in body["config_schema"]["properties"]["model"]
+
+
+def test_info_exposes_admission_metadata(client, auth_headers):
+    """issue #765's cross-meeting analysis: /info publishes the byte-bound
+    admission fields internal/execution.ParseAdmissionConfig (Go) decodes --
+    integer context_tokens/output_reserve_tokens/provider_framing_tokens and
+    a required byte_fallback_tokenizer capability flag."""
+    r = client.get("/info", headers=auth_headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert isinstance(body["context_tokens"], int) and body["context_tokens"] >= 1
+    assert isinstance(body["output_reserve_tokens"], int) and body["output_reserve_tokens"] >= 0
+    assert isinstance(body["provider_framing_tokens"], int) and body["provider_framing_tokens"] >= 0
+    assert body["byte_fallback_tokenizer"] is True
+    # Defaults for local (non-base_url) Ollama mode: verbatim /api/generate has
+    # zero provider framing overhead.
+    assert body["context_tokens"] == 8192
+    assert body["output_reserve_tokens"] == 4096
+    assert body["provider_framing_tokens"] == 0
+    # config_schema keeps its existing additionalProperties: False -- the
+    # admission fields are NOT part of the admin-facing connection schema.
+    assert body["config_schema"]["additionalProperties"] is False
+
+
+def test_info_admission_metadata_openai_framing(auth_headers):
+    """The fixed OpenAI-compatible chat envelope costs a small, tested,
+    nonzero conservative framing constant, distinct from Ollama's zero."""
+    from ollama_app.config import Settings
+    from ollama_app.main import create_app
+
+    settings = Settings(auth_token="test-token", base_url="https://api.example.com", api_key="sk-test")
+    app = create_app(settings)
+    from starlette.testclient import TestClient
+
+    with TestClient(app, base_url="http://plugin") as c:
+        r = c.get("/info", headers=auth_headers)
+    assert r.status_code == 200
+    body = r.json()
+    assert body["provider_framing_tokens"] > 0

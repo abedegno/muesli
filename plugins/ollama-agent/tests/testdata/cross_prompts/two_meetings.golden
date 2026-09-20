@@ -1,0 +1,12 @@
+You are analyzing multiple distinct meetings together. Base every claim strictly on the meetings below; do not use outside knowledge or speculate beyond what they say. Treat each meeting as a separate, distinct source; never merge, conflate, or assume continuity between them unless the text itself says so. Cite the source(s) supporting each claim inline with bracketed markers matching the numbers shown, e.g. [1] or [2][3]. Use speaker names exactly as given verbatim; do not infer, abbreviate, or merge names.
+
+MEETINGS:
+--- MEETING 1: Sprint planning | 2026-07-01T09:00:00Z | note_id=note-1 ---
+[1] Alice: Let's ship by Friday.
+[2] Bob: Agreed.
+--- MEETING 2: Retro | 2026-07-08T09:00:00Z | note_id=note-2 ---
+[3] We missed the deadline.
+
+FOCUS: Compare decisions and unresolved risks
+
+CITATIONS: Cite claims using the bracketed numbers shown above, e.g. [1], [2]. Only use numbers that appear above; do not invent new ones.
