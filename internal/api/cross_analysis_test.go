@@ -690,8 +690,12 @@ func TestCrossAnalysisSendGuardReleasedOnPreflightFailure(t *testing.T) {
 
 	a := createCrossReadyNote(t, st, owner, "A", "a text")
 	b := createCrossReadyNote(t, st, owner, "B", "b text")
+	// Sections must match fakeCrossAgent's fixed two-section response
+	// (Decisions, Risks) -- execution rejects a response whose section
+	// count/names don't match the template, exactly like
+	// TestCrossAnalysisSendToExistingHappyPath's template.
 	tmpl, err := st.CreateTemplate(context.Background(), owner, "Cross", "cross",
-		[]model.TemplateSection{{Heading: "H", Instruction: "I"}}, false, "", "", nil)
+		[]model.TemplateSection{{Heading: "Decisions", Instruction: "List decisions."}, {Heading: "Risks", Instruction: "List risks."}}, false, "", "", nil)
 	if err != nil {
 		t.Fatalf("CreateTemplate: %v", err)
 	}
