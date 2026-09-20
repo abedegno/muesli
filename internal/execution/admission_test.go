@@ -125,3 +125,36 @@ func TestAdmitInvalidUTF8Replacement(t *testing.T) {
 		t.Fatalf("expected rejection one byte under budget, got %v", err)
 	}
 }
+
+func TestParseAdmissionConfig(t *testing.T) {
+	valid := `{"model":"llama3.2","ollama_url":"http://x","temperature":0.2,"context_tokens":8192,"output_reserve_tokens":4096,"provider_framing_tokens":0,"byte_fallback_tokenizer":true}`
+	cfg, err := ParseAdmissionConfig([]byte(valid))
+	if err != nil {
+		t.Fatalf("ParseAdmissionConfig: %v", err)
+	}
+	if cfg.ContextTokens != 8192 || cfg.OutputReserveTokens != 4096 || cfg.ProviderFramingTokens != 0 || !cfg.ByteFallbackTokenizer {
+		t.Fatalf("unexpected cfg: %+v", cfg)
+	}
+
+	cases := []struct {
+		name string
+		raw  string
+	}{
+		{"empty", ""},
+		{"malformed json", "{not json"},
+		{"missing byte_fallback_tokenizer", `{"context_tokens":8192,"output_reserve_tokens":4096,"provider_framing_tokens":0}`},
+		{"false byte_fallback_tokenizer", `{"context_tokens":8192,"output_reserve_tokens":4096,"provider_framing_tokens":0,"byte_fallback_tokenizer":false}`},
+		{"missing context_tokens", `{"output_reserve_tokens":4096,"provider_framing_tokens":0,"byte_fallback_tokenizer":true}`},
+		{"non-positive context_tokens", `{"context_tokens":0,"output_reserve_tokens":0,"provider_framing_tokens":0,"byte_fallback_tokenizer":true}`},
+		{"negative output_reserve_tokens", `{"context_tokens":100,"output_reserve_tokens":-1,"provider_framing_tokens":0,"byte_fallback_tokenizer":true}`},
+		{"reserves consume entire context", `{"context_tokens":100,"output_reserve_tokens":60,"provider_framing_tokens":40,"byte_fallback_tokenizer":true}`},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := ParseAdmissionConfig([]byte(tc.raw)); err != ErrInvalidAdmissionConfig {
+				t.Fatalf("got %v, want ErrInvalidAdmissionConfig", err)
+			}
+		})
+	}
+}

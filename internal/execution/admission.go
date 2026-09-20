@@ -1,6 +1,9 @@
 package execution
 
-import "errors"
+import (
+	"encoding/json"
+	"errors"
+)
 
 // AdmissionConfig is the byte-conservative context budget an agent plugin
 // declares (see internal/embedded/agent.go and plugins/ollama-agent's
@@ -54,4 +57,48 @@ func Admit(prepared PreparedExecution, cfg AdmissionConfig) error {
 		}
 	}
 	return nil
+}
+
+// admissionConfigJSON is the JSON shape an agent plugin's config publishes
+// for admission (see plugins/ollama-agent's /info and
+// internal/embedded/agent.go's agentConfigJSON). Pointer fields distinguish
+// "absent" from "zero" so ParseAdmissionConfig can fail closed on a missing
+// field rather than silently defaulting it.
+type admissionConfigJSON struct {
+	ContextTokens         *int  `json:"context_tokens"`
+	OutputReserveTokens   *int  `json:"output_reserve_tokens"`
+	ProviderFramingTokens *int  `json:"provider_framing_tokens"`
+	ByteFallbackTokenizer *bool `json:"byte_fallback_tokenizer"`
+}
+
+// ParseAdmissionConfig decodes raw (an agent plugin's config or /info JSON)
+// into an AdmissionConfig, failing closed -- a non-nil error, never a
+// heuristic fallback -- on malformed JSON, any missing numeric/boolean
+// field, a false/absent byte_fallback_tokenizer capability, or invalid
+// numeric values (see Admit's own validation, applied here too so a caller
+// never has to call both to be safe).
+func ParseAdmissionConfig(raw []byte) (AdmissionConfig, error) {
+	if len(raw) == 0 {
+		return AdmissionConfig{}, ErrInvalidAdmissionConfig
+	}
+	var fields admissionConfigJSON
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return AdmissionConfig{}, ErrInvalidAdmissionConfig
+	}
+	if fields.ContextTokens == nil || fields.OutputReserveTokens == nil || fields.ProviderFramingTokens == nil || fields.ByteFallbackTokenizer == nil {
+		return AdmissionConfig{}, ErrInvalidAdmissionConfig
+	}
+	cfg := AdmissionConfig{
+		ContextTokens:         *fields.ContextTokens,
+		OutputReserveTokens:   *fields.OutputReserveTokens,
+		ProviderFramingTokens: *fields.ProviderFramingTokens,
+		ByteFallbackTokenizer: *fields.ByteFallbackTokenizer,
+	}
+	if cfg.ContextTokens <= 0 || cfg.OutputReserveTokens < 0 || cfg.ProviderFramingTokens < 0 || !cfg.ByteFallbackTokenizer {
+		return AdmissionConfig{}, ErrInvalidAdmissionConfig
+	}
+	if cfg.ContextTokens-cfg.OutputReserveTokens-cfg.ProviderFramingTokens <= 0 {
+		return AdmissionConfig{}, ErrInvalidAdmissionConfig
+	}
+	return cfg, nil
 }
