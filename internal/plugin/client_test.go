@@ -461,3 +461,63 @@ func TestHTTPErrorTruncatesLongBody(t *testing.T) {
 		t.Errorf("Error() for 80-char body = %q, should not be truncated", gs)
 	}
 }
+
+// TestGenerateDocumentsOmitsTranscriptField exercises issue #765's
+// cross-meeting analysis input shape: when the caller supplies Documents,
+// the wire request must NOT also send "transcript" (nil-coerced to []) --
+// the two forms are mutually exclusive on the wire, matching
+// internal/pluginkit's validateGenerateRequest.
+func TestGenerateDocumentsOmitsTranscriptField(t *testing.T) {
+	var raw map[string]json.RawMessage
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&raw)
+		_ = json.NewEncoder(w).Encode(plugin.GenerateResponse{Model: "stub"})
+	}))
+	defer srv.Close()
+
+	c := plugin.New(srv.URL, "tok")
+	_, err := c.Generate(context.Background(), plugin.GenerateRequest{
+		Documents: []plugin.Document{
+			{
+				NoteID:               "note-1",
+				Title:                "Sprint planning",
+				TranscriptGeneration: 1,
+				Segments:             []model.Segment{{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic"}},
+			},
+			{
+				NoteID:               "note-2",
+				Title:                "Retro",
+				TranscriptGeneration: 1,
+				Segments:             []model.Segment{{StartMS: 0, EndMS: 1000, Text: "hi", Source: "mic"}},
+			},
+		},
+		Template: plugin.TemplatePayload{Sections: []model.TemplateSection{{Heading: "Overview", Instruction: "Summarise."}}},
+		Config:   json.RawMessage(`{}`),
+	})
+	if err != nil {
+		t.Fatalf("generate: %v", err)
+	}
+	// Transcript is not omitempty (so legacy callers keep sending an explicit
+	// "transcript": []) -- when Documents is used instead, the client leaves
+	// Transcript nil, which still serializes the key but as JSON null, letting
+	// the exclusivity check on the receiving end (Transcript == nil) work.
+	transcriptRaw, ok := raw["transcript"]
+	if !ok {
+		t.Fatalf("transcript key must still be present (as null) when Documents is used, got body %v", raw)
+	}
+	if string(transcriptRaw) != "null" {
+		t.Fatalf("transcript = %s, want null when Documents is used", transcriptRaw)
+	}
+	docsRaw, ok := raw["documents"]
+	if !ok {
+		t.Fatal("documents field missing from request body")
+	}
+	var docs []plugin.Document
+	if err := json.Unmarshal(docsRaw, &docs); err != nil {
+		t.Fatalf("unmarshal documents: %v", err)
+	}
+	if len(docs) != 2 || docs[0].NoteID != "note-1" || docs[1].NoteID != "note-2" {
+		t.Fatalf("documents not preserved in order: %+v", docs)
+	}
+}

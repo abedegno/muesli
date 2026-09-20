@@ -101,6 +101,26 @@ type TranscriptSource struct {
 	TargetRevision int    `json:"target_revision"`
 }
 
+// Document is one ordered input document (e.g. one meeting's transcript)
+// supplied to a /generate request via GenerateRequest.Documents (issue
+// #765's cross-meeting analysis). Multiple documents are never concatenated
+// into a single transcript: each keeps its own note identity, date, and
+// segment indices so citations and meeting boundaries never collide. Mirrors
+// (github.com/abedegno/muesli/internal/plugin).Document.
+type Document struct {
+	NoteID string `json:"note_id"`
+	Title  string `json:"title"`
+	// OccurredAt is an RFC3339 timestamp; empty when unknown.
+	OccurredAt string `json:"occurred_at,omitempty"`
+	// TranscriptGeneration is the transcript generation this document's
+	// Segments were captured at.
+	TranscriptGeneration int             `json:"transcript_generation"`
+	Segments             []model.Segment `json:"segments"`
+	// NotesMarkdown is this document's own note body, when supported by the
+	// caller ("only if already supported" -- see the accepted spec).
+	NotesMarkdown string `json:"notes_markdown,omitempty"`
+}
+
 // GenerateRequest is the POST /generate body.
 //
 // SystemPrompt, Model, and Temperature are optional per-template agent
@@ -110,6 +130,12 @@ type TranscriptSource struct {
 //
 // Source is optional and nil for every pre-existing caller (after-summary,
 // chat), which keeps them wire-compatible. See GenerateSource.
+//
+// Transcript and Documents are mutually exclusive: exactly one must be
+// supplied (see validateGenerateRequest, enforced for every plugin serving
+// this contract through AgentHandler). Every pre-existing caller supplies
+// Transcript; a cross-meeting analysis run supplies Documents instead, one
+// per selected note, in request order.
 type GenerateRequest struct {
 	Transcript    []model.Segment `json:"transcript"`
 	NotesMarkdown string          `json:"notes_markdown"`
@@ -120,6 +146,7 @@ type GenerateRequest struct {
 	Model         string          `json:"model,omitempty"`
 	Temperature   *float64        `json:"temperature,omitempty"`
 	Source        *GenerateSource `json:"source,omitempty"`
+	Documents     []Document      `json:"documents,omitempty"`
 }
 
 // SummaryPayload is the produced summary in a /generate reply.

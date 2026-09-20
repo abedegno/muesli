@@ -317,8 +317,17 @@ func validateTranscribeRequest(req TranscribeRequest) error {
 }
 
 func validateGenerateRequest(req GenerateRequest) error {
-	if req.Transcript == nil {
-		return errors.New("transcript is required")
+	hasTranscript := req.Transcript != nil
+	hasDocuments := len(req.Documents) > 0
+	switch {
+	case hasTranscript && hasDocuments:
+		return errors.New("exactly one of transcript or documents may be supplied, not both")
+	case !hasTranscript && !hasDocuments:
+		return errors.New("transcript or documents is required")
+	case hasDocuments:
+		if err := validateDocuments(req.Documents); err != nil {
+			return err
+		}
 	}
 	if len(req.Config) == 0 || string(req.Config) == "null" {
 		return errors.New("config is required")
@@ -327,6 +336,28 @@ func validateGenerateRequest(req GenerateRequest) error {
 		return errors.New("template is required")
 	}
 	return validateGenerateSource(req.Source)
+}
+
+// validateDocuments validates GenerateRequest.Documents (issue #765's
+// cross-meeting analysis): every document needs a non-blank, unique note id
+// and a non-nil (possibly empty) ordered segment list. Segment/document
+// order itself is preserved as received -- this only rejects malformed or
+// duplicate input, it never reorders.
+func validateDocuments(docs []Document) error {
+	seen := make(map[string]struct{}, len(docs))
+	for i, d := range docs {
+		if strings.TrimSpace(d.NoteID) == "" {
+			return fmt.Errorf("documents[%d].note_id is required", i)
+		}
+		if _, dup := seen[d.NoteID]; dup {
+			return fmt.Errorf("documents[%d]: duplicate note_id %q", i, d.NoteID)
+		}
+		seen[d.NoteID] = struct{}{}
+		if d.Segments == nil {
+			return fmt.Errorf("documents[%d].segments is required", i)
+		}
+	}
+	return nil
 }
 
 // validateGenerateSource validates an optional GenerateRequest.Source only

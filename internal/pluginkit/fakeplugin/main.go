@@ -82,12 +82,29 @@ func scriptedSegments() []model.Segment {
 
 type fakeAgent struct{}
 
+// Generate produces one deterministic section per requested template
+// section. When the request carries Documents (issue #765's cross-meeting
+// analysis), each section's content also cites every document once, in
+// document order, using sequential "[n]" markers -- [1] for the first
+// document, [2] for the second, and so on. This mirrors the numbering
+// internal/execution assigns while building the prompt (each selected
+// document's first segment gets the next citation number in document
+// order), so a caller driving this fake end to end can assert that every
+// selected document is actually cited and navigable.
 func (fakeAgent) Generate(_ context.Context, req pluginkit.GenerateRequest) (pluginkit.GenerateResponse, error) {
+	citations := ""
+	for i := range req.Documents {
+		citations += fmt.Sprintf(" [%d]", i+1)
+	}
 	sections := make([]model.SummarySection, 0, len(req.Template.Sections))
 	for _, sec := range req.Template.Sections {
+		content := "Summary for " + sec.Heading + "."
+		if citations != "" {
+			content += citations
+		}
 		sections = append(sections, model.SummarySection{
 			Heading:         sec.Heading,
-			ContentMarkdown: "Summary for " + sec.Heading + ".",
+			ContentMarkdown: content,
 		})
 	}
 	return pluginkit.GenerateResponse{

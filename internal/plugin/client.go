@@ -130,6 +130,28 @@ type TranscriptSource struct {
 	TargetRevision int    `json:"target_revision"`
 }
 
+// Document is one ordered input document (e.g. one meeting's transcript)
+// supplied to a /generate request via GenerateRequest.Documents (issue
+// #765's cross-meeting analysis). Multiple documents are never concatenated
+// into a single transcript: each keeps its own note identity, date, and
+// segment indices so citations and meeting boundaries never collide. Mirrors
+// pluginkit.Document.
+type Document struct {
+	NoteID string `json:"note_id"`
+	Title  string `json:"title"`
+	// OccurredAt is an RFC3339 timestamp (the note's started_at, falling back
+	// to created_at); empty when unknown.
+	OccurredAt string `json:"occurred_at,omitempty"`
+	// TranscriptGeneration is the transcript generation this document's
+	// Segments were captured at -- carried through so the caller can detect a
+	// transcript replaced between preflight and invocation.
+	TranscriptGeneration int             `json:"transcript_generation"`
+	Segments             []model.Segment `json:"segments"`
+	// NotesMarkdown is this document's own note body, when supported by the
+	// caller ("only if already supported" -- see the accepted spec).
+	NotesMarkdown string `json:"notes_markdown,omitempty"`
+}
+
 // GenerateRequest is the POST /generate body.
 //
 // SystemPrompt, Model, and Temperature are optional per-template agent
@@ -140,6 +162,12 @@ type TranscriptSource struct {
 //
 // Source is optional and nil for every pre-existing caller (after-summary,
 // chat) -- see GenerateSource.
+//
+// Transcript and Documents are mutually exclusive: exactly one must be
+// supplied (see internal/pluginkit's validateGenerateRequest, the shared
+// enforcement point every plugin HTTP boundary goes through). Every
+// pre-existing caller supplies Transcript; a cross-meeting analysis run
+// supplies Documents instead, one per selected note, in request order.
 type GenerateRequest struct {
 	Transcript    []model.Segment `json:"transcript"`
 	NotesMarkdown string          `json:"notes_markdown"`
@@ -150,6 +178,7 @@ type GenerateRequest struct {
 	Model         string          `json:"model,omitempty"`
 	Temperature   *float64        `json:"temperature,omitempty"`
 	Source        *GenerateSource `json:"source,omitempty"`
+	Documents     []Document      `json:"documents,omitempty"`
 }
 
 // SummaryPayload is the produced summary in a /generate reply.
@@ -239,10 +268,14 @@ func (c *Client) Transcribe(ctx context.Context, req TranscribeRequest) (Transcr
 }
 
 func (c *Client) Generate(ctx context.Context, req GenerateRequest) (GenerateResponse, error) {
-	// A nil transcript slice marshals to JSON null, which the agent contract
-	// rejects (transcript must be a list). Coerce to an empty slice so we always
-	// send "transcript": [] — e.g. for silent/very short audio with no segments.
-	if req.Transcript == nil {
+	// A nil transcript slice marshals to an omitted field (Transcript is now
+	// omitempty) rather than JSON null. Legacy single-transcript callers still
+	// coerce nil to an empty (never-omitted) slice so they keep sending
+	// "transcript": [] exactly as before — e.g. for silent/very short audio
+	// with no segments — UNLESS this is a documents-based call (Documents
+	// non-empty), in which case Transcript must stay unset so the plugin sees
+	// exactly one of the two forms (see GenerateRequest's doc comment).
+	if req.Transcript == nil && len(req.Documents) == 0 {
 		req.Transcript = []model.Segment{}
 	}
 	var out GenerateResponse
