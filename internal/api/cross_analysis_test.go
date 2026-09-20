@@ -664,3 +664,73 @@ func TestCrossAnalysisSendInFlightConflict409(t *testing.T) {
 		t.Fatalf("status = %d, want 409; body=%s", rec.Code, rec.Body)
 	}
 }
+
+// TestCrossAnalysisSendGuardReleasedOnPreflightFailure proves the send guard
+// that handleCrossAnalysisSend acquires before preflight is released on a
+// preflight failure -- not just on the happy path covered by
+// TestCrossAnalysisSendInFlightConflict409's already-held case. It sends a
+// malformed cross_analysis payload (a single note_id, below
+// model.CrossAnalysisMinNotes) through the real HTTP handler for an existing
+// conversation, asserts the expected 400, then immediately sends a valid
+// cross_analysis payload through the SAME handler for the SAME conversation.
+// The second send can only succeed if the guard held during the first,
+// failed send was actually released via defer rather than left held.
+func TestCrossAnalysisSendGuardReleasedOnPreflightFailure(t *testing.T) {
+	t.Parallel()
+	titleGen := &fakeChatGenerator{resp: plugin.GenerateResponse{
+		Summary: plugin.SummaryPayload{Sections: []model.SummarySection{{Heading: "Title", ContentMarkdown: "Cross meeting recap"}}},
+		Model:   "cross-agent-model",
+	}}
+	gen := fakeCrossAgent(t)
+	multi := &multiGenerator{byCallCount: []ChatGenerator{gen, titleGen}}
+	srv, st := newChatTestServer(t, multi)
+	cr, _ := crypto.New("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+	createDefaultAgentPlugin(t, st, cr, crossAdmissionConfig(nil))
+	owner, hdr := newCrossTestOwner(t, srv, st, "cross-guard-release@example.com")
+
+	a := createCrossReadyNote(t, st, owner, "A", "a text")
+	b := createCrossReadyNote(t, st, owner, "B", "b text")
+	tmpl, err := st.CreateTemplate(context.Background(), owner, "Cross", "cross",
+		[]model.TemplateSection{{Heading: "H", Instruction: "I"}}, false, "", "", nil)
+	if err != nil {
+		t.Fatalf("CreateTemplate: %v", err)
+	}
+
+	convRec := doGuardJSON(t, srv, http.MethodPost, "/api/conversations", map[string]any{"title": "", "content": ""}, hdr)
+	if convRec.Code != http.StatusCreated {
+		t.Fatalf("create conversation=%d body=%s", convRec.Code, convRec.Body)
+	}
+	var conv struct {
+		ID string `json:"id"`
+	}
+	_ = json.Unmarshal(convRec.Body.Bytes(), &conv)
+
+	// First send: only one note_id, below CrossAnalysisMinNotes, fails
+	// preflight validation with a 400 -- exercised through the real
+	// handler so the guard is acquired and then must be released on this
+	// error path, not just the happy path.
+	failRec := doGuardJSON(t, srv, http.MethodPost, "/api/conversations/"+conv.ID+"/messages", map[string]any{
+		"content": "Compare decisions and risks",
+		"cross_analysis": map[string]any{
+			"template_id": tmpl.ID,
+			"note_ids":    []string{a.ID},
+		},
+	}, hdr)
+	if failRec.Code != http.StatusBadRequest {
+		t.Fatalf("first send status = %d, want 400; body=%s", failRec.Code, failRec.Body)
+	}
+
+	// Second send on the SAME conversation, now with a valid payload: this
+	// can only reach 200 if the guard from the failed first send was
+	// released rather than left held.
+	rec := doGuardJSON(t, srv, http.MethodPost, "/api/conversations/"+conv.ID+"/messages", map[string]any{
+		"content": "Compare decisions and risks",
+		"cross_analysis": map[string]any{
+			"template_id": tmpl.ID,
+			"note_ids":    []string{a.ID, b.ID},
+		},
+	}, hdr)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("second send status = %d, want 200 (guard should have been released after the first failure); body=%s", rec.Code, rec.Body)
+	}
+}
