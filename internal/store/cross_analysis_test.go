@@ -7,6 +7,7 @@ import (
 
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/store"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func crossReadyNote(t *testing.T, st *store.Store, ownerID, title string, segs []model.Segment) model.Note {
@@ -391,5 +392,179 @@ func TestAppendCrossAnalysisTurnNoteDeletionUnlinksSourceWithoutDeletingText(t *
 	}
 	if len(purgedGot.Sources) != 1 || purgedGot.Sources[0].NoteID != nil {
 		t.Fatalf("expected the source's note_id to remain nulled after purge, got %+v", purgedGot.Sources)
+	}
+}
+
+// countMessageSourcesForConversation counts every message_sources row
+// belonging to any message in conversationID -- used by the transactional
+// fault-injection tests below to prove a forced mid-transaction failure
+// leaves behind no stray source row, not just no stray message.
+func countMessageSourcesForConversation(t *testing.T, pool *pgxpool.Pool, conversationID string) int {
+	t.Helper()
+	var n int
+	if err := pool.QueryRow(context.Background(),
+		`SELECT count(*) FROM message_sources ms JOIN messages m ON m.id = ms.message_id WHERE m.conversation_id = $1`,
+		conversationID).Scan(&n); err != nil {
+		t.Fatalf("count message_sources: %v", err)
+	}
+	return n
+}
+
+// TestAppendCrossAnalysisTurnRollsBackOnAssistantMessageInsertFailure forces
+// the assistant message insert (the second write of the transaction, after
+// the user message insert already succeeded) to fail via the
+// testHookBeforeAssistantMessageInsert fault-injection hook, and proves NO
+// partial turn survives: no stray user or assistant message row, no stray
+// source row, and no conversation timestamp bump -- plus that the failure
+// surfaces as an error from AppendCrossAnalysisTurn itself. Unlike the
+// source-insert-rollback test below, there is no data value that fails only
+// the assistant insert (both message inserts share the same conversation_id
+// FK and hardcoded, already-valid role literals), so this uses the hook
+// mechanism instead of a constraint violation.
+func TestAppendCrossAnalysisTurnRollsBackOnAssistantMessageInsertFailure(t *testing.T) {
+	t.Parallel()
+	st, owner, pool := newStoreWithOwner(t)
+	ctx := context.Background()
+
+	a := crossReadyNote(t, st, owner, "A", twoSegs("a"))
+	conv, err := st.CreateConversation(ctx, owner, nil, "", nil)
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+	before, err := st.ListMessages(ctx, owner, conv.ID)
+	if err != nil {
+		t.Fatalf("ListMessages before: %v", err)
+	}
+
+	restore := store.SetTestHookBeforeAssistantMessageInsert(func(cancel context.CancelFunc) { cancel() })
+	defer restore()
+
+	sources := []model.MessageSource{{N: 1, NoteID: strPtrCA(a.ID), TranscriptGeneration: 1, SegmentIndex: 0, Timestamp: 0, Snippet: "a one"}}
+	_, _, err = st.AppendCrossAnalysisTurn(ctx, conv.ID, "focus", "reply [1]", "test-model", nil, sources)
+	if err == nil {
+		t.Fatal("expected an error from a forced assistant-message-insert failure, got nil")
+	}
+
+	after, err := st.ListMessages(ctx, owner, conv.ID)
+	if err != nil {
+		t.Fatalf("ListMessages after: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("expected no messages persisted after a rolled-back turn, before=%d after=%d", len(before), len(after))
+	}
+	if n := countMessageSourcesForConversation(t, pool, conv.ID); n != 0 {
+		t.Fatalf("expected no source rows persisted after a rolled-back turn, got %d", n)
+	}
+
+	afterConv, err := st.GetConversation(ctx, owner, conv.ID)
+	if err != nil {
+		t.Fatalf("GetConversation: %v", err)
+	}
+	if !afterConv.UpdatedAt.Equal(conv.UpdatedAt) {
+		t.Fatalf("expected updated_at unchanged after a rolled-back turn, before=%v after=%v", conv.UpdatedAt, afterConv.UpdatedAt)
+	}
+}
+
+// TestAppendCrossAnalysisTurnRollsBackOnConversationTimestampUpdateFailure
+// forces the conversations.updated_at UPDATE (which runs after both
+// messages and every source row already succeeded, uncommitted, within the
+// transaction) to fail via the testHookBeforeConversationTimestampUpdate
+// hook, and proves the whole turn -- messages AND sources, not just the
+// timestamp -- rolls back, and that the failure surfaces as an error.
+func TestAppendCrossAnalysisTurnRollsBackOnConversationTimestampUpdateFailure(t *testing.T) {
+	t.Parallel()
+	st, owner, pool := newStoreWithOwner(t)
+	ctx := context.Background()
+
+	a := crossReadyNote(t, st, owner, "A", twoSegs("a"))
+	b := crossReadyNote(t, st, owner, "B", twoSegs("b"))
+	conv, err := st.CreateConversation(ctx, owner, nil, "", nil)
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+	before, err := st.ListMessages(ctx, owner, conv.ID)
+	if err != nil {
+		t.Fatalf("ListMessages before: %v", err)
+	}
+
+	restore := store.SetTestHookBeforeConversationTimestampUpdate(func(cancel context.CancelFunc) { cancel() })
+	defer restore()
+
+	sources := []model.MessageSource{
+		{N: 1, NoteID: strPtrCA(a.ID), TranscriptGeneration: 1, SegmentIndex: 0, Timestamp: 0, Snippet: "a one"},
+		{N: 2, NoteID: strPtrCA(b.ID), TranscriptGeneration: 1, SegmentIndex: 1, Timestamp: 1000, Snippet: "b two"},
+	}
+	_, _, err = st.AppendCrossAnalysisTurn(ctx, conv.ID, "Compare A and B", "They differ [1][2]", "test-model", nil, sources)
+	if err == nil {
+		t.Fatal("expected an error from a forced conversation-timestamp-update failure, got nil")
+	}
+
+	after, err := st.ListMessages(ctx, owner, conv.ID)
+	if err != nil {
+		t.Fatalf("ListMessages after: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("expected no messages persisted after a rolled-back turn, before=%d after=%d", len(before), len(after))
+	}
+	if n := countMessageSourcesForConversation(t, pool, conv.ID); n != 0 {
+		t.Fatalf("expected no source rows persisted after a rolled-back turn, got %d", n)
+	}
+
+	afterConv, err := st.GetConversation(ctx, owner, conv.ID)
+	if err != nil {
+		t.Fatalf("GetConversation: %v", err)
+	}
+	if !afterConv.UpdatedAt.Equal(conv.UpdatedAt) {
+		t.Fatalf("expected updated_at unchanged after a rolled-back turn, before=%v after=%v", conv.UpdatedAt, afterConv.UpdatedAt)
+	}
+}
+
+// TestAppendCrossAnalysisTurnRollsBackOnCommitFailure forces the final
+// tx.Commit call itself (after every insert and the timestamp update already
+// succeeded, uncommitted, within the transaction) to fail via the
+// testHookBeforeCrossAnalysisCommit hook, and proves the whole turn rolls
+// back exactly as if an earlier row operation had failed, and that the
+// failure surfaces as an error from AppendCrossAnalysisTurn.
+func TestAppendCrossAnalysisTurnRollsBackOnCommitFailure(t *testing.T) {
+	t.Parallel()
+	st, owner, pool := newStoreWithOwner(t)
+	ctx := context.Background()
+
+	a := crossReadyNote(t, st, owner, "A", twoSegs("a"))
+	conv, err := st.CreateConversation(ctx, owner, nil, "", nil)
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+	before, err := st.ListMessages(ctx, owner, conv.ID)
+	if err != nil {
+		t.Fatalf("ListMessages before: %v", err)
+	}
+
+	restore := store.SetTestHookBeforeCrossAnalysisCommit(func(cancel context.CancelFunc) { cancel() })
+	defer restore()
+
+	sources := []model.MessageSource{{N: 1, NoteID: strPtrCA(a.ID), TranscriptGeneration: 1, SegmentIndex: 0, Timestamp: 0, Snippet: "a one"}}
+	_, _, err = st.AppendCrossAnalysisTurn(ctx, conv.ID, "focus", "reply [1]", "test-model", nil, sources)
+	if err == nil {
+		t.Fatal("expected an error from a forced commit failure, got nil")
+	}
+
+	after, err := st.ListMessages(ctx, owner, conv.ID)
+	if err != nil {
+		t.Fatalf("ListMessages after: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("expected no messages persisted after a rolled-back turn, before=%d after=%d", len(before), len(after))
+	}
+	if n := countMessageSourcesForConversation(t, pool, conv.ID); n != 0 {
+		t.Fatalf("expected no source rows persisted after a rolled-back turn, got %d", n)
+	}
+
+	afterConv, err := st.GetConversation(ctx, owner, conv.ID)
+	if err != nil {
+		t.Fatalf("GetConversation: %v", err)
+	}
+	if !afterConv.UpdatedAt.Equal(conv.UpdatedAt) {
+		t.Fatalf("expected updated_at unchanged after a rolled-back turn, before=%v after=%v", conv.UpdatedAt, afterConv.UpdatedAt)
 	}
 }

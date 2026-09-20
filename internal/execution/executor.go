@@ -183,6 +183,12 @@ type Result struct {
 	Sources    []SourceRef
 	Model      string
 	TokensUsed *int
+	// Usage is the plugin's raw token-usage report, when it sent one -- nil
+	// otherwise. TokensUsed above is the same value in the shape cross-analysis
+	// persistence needs; Usage is preserved in full so callers with their own
+	// heuristics over both TokensUsed and MaxTokens (e.g. internal/worker's
+	// DetectTruncation) do not need a second plugin call to get it.
+	Usage *plugin.GenerateUsage
 }
 
 // ErrSectionMismatch is returned by Run when the plugin's response sections
@@ -242,7 +248,7 @@ func (e *Executor) Run(ctx context.Context, prepared PreparedExecution) (Result,
 		t := resp.Usage.TokensUsed
 		tokensUsed = &t
 	}
-	return Result{Sections: sections, Sources: prepared.Sources, Model: resp.Model, TokensUsed: tokensUsed}, nil
+	return Result{Sections: sections, Sources: prepared.Sources, Model: resp.Model, TokensUsed: tokensUsed, Usage: resp.Usage}, nil
 }
 
 // validateSections proves got is exactly want, positionally: same length, no

@@ -145,15 +145,23 @@ func NewAgent() *Stub {
 			http.Error(w, "injected failure", http.StatusInternalServerError)
 			return
 		}
-		// Mirror the real agent contract: transcript must be a JSON list, never
-		// null. Decode into a raw map first so we can reject "transcript": null
-		// with 422 the way the Pydantic-backed agent does.
+		// Mirror the real agent contract (internal/pluginkit's
+		// validateGenerateRequest): exactly one of "transcript" (a JSON list,
+		// never null) or a non-empty "documents" list must be present -- a
+		// single-note summary request supplies Transcript, a cross-meeting
+		// analysis request supplies Documents instead (issue #765). Decode into
+		// a raw map first so we can reject an absent/null transcript with a
+		// non-documents request with 422 the way the Pydantic-backed agent does.
 		var raw map[string]json.RawMessage
 		if err := json.Unmarshal(s.LastBody(), &raw); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
 			return
 		}
-		if t, ok := raw["transcript"]; !ok || string(t) == "null" {
+		t, hasTranscript := raw["transcript"]
+		transcriptValid := hasTranscript && string(t) != "null"
+		d, hasDocuments := raw["documents"]
+		documentsValid := hasDocuments && string(d) != "null" && string(d) != "[]"
+		if !transcriptValid && !documentsValid {
 			http.Error(w, `{"detail":[{"type":"list_type","loc":["body","transcript"],"msg":"Input should be a valid list","input":null}]}`, http.StatusUnprocessableEntity)
 			return
 		}

@@ -1,5 +1,7 @@
 package store
 
+import "context"
+
 // SetTestHookAfterPriorTranscriptRead installs the hook for tests in
 // package store_test and returns a restore function.
 func SetTestHookAfterPriorTranscriptRead(f func()) func() {
@@ -42,4 +44,32 @@ func SetTestHookAfterListReadableNotesRowsLoaded(f func(requesterID string)) fun
 		testHookAfterListReadableNotesRowsLoaded = prev
 		testHookAfterListReadableNotesRowsLoadedMu.Unlock()
 	}
+}
+
+// SetTestHookBeforeAssistantMessageInsert installs the hook for tests in
+// package store_test and returns a restore function. See
+// testHookBeforeAssistantMessageInsert's doc comment in cross_analysis.go.
+func SetTestHookBeforeAssistantMessageInsert(f func(cancel context.CancelFunc)) func() {
+	prev := testHookBeforeAssistantMessageInsert
+	testHookBeforeAssistantMessageInsert = f
+	return func() { testHookBeforeAssistantMessageInsert = prev }
+}
+
+// SetTestHookBeforeConversationTimestampUpdate installs the hook for tests
+// in package store_test and returns a restore function. See
+// testHookBeforeConversationTimestampUpdate's doc comment in
+// cross_analysis.go.
+func SetTestHookBeforeConversationTimestampUpdate(f func(cancel context.CancelFunc)) func() {
+	prev := testHookBeforeConversationTimestampUpdate
+	testHookBeforeConversationTimestampUpdate = f
+	return func() { testHookBeforeConversationTimestampUpdate = prev }
+}
+
+// SetTestHookBeforeCrossAnalysisCommit installs the hook for tests in
+// package store_test and returns a restore function. See
+// testHookBeforeCrossAnalysisCommit's doc comment in cross_analysis.go.
+func SetTestHookBeforeCrossAnalysisCommit(f func(cancel context.CancelFunc)) func() {
+	prev := testHookBeforeCrossAnalysisCommit
+	testHookBeforeCrossAnalysisCommit = f
+	return func() { testHookBeforeCrossAnalysisCommit = prev }
 }

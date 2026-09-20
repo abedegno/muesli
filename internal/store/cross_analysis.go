@@ -286,6 +286,22 @@ func truncateRunesEllipsis(s string, max int) string {
 	return string(r[:max]) + "..."
 }
 
+// testHookBeforeAssistantMessageInsert, testHookBeforeConversationTimestampUpdate,
+// and testHookBeforeCrossAnalysisCommit are test-only fault-injection points
+// for AppendCrossAnalysisTurn's transactional steps. Each is invoked (when
+// set by a test) with the transaction's own cancel func immediately before
+// the named step, letting a test force that EXACT step -- and only that
+// step -- to fail deterministically (via cancel()), without racing real
+// timing or needing a step-specific data-driven constraint violation (unlike
+// the source-row insert, whose failure the existing rollback test already
+// triggers genuinely via a source citing a nonexistent note id). nil in
+// production; never touched outside tests.
+var (
+	testHookBeforeAssistantMessageInsert      func(cancel context.CancelFunc)
+	testHookBeforeConversationTimestampUpdate func(cancel context.CancelFunc)
+	testHookBeforeCrossAnalysisCommit         func(cancel context.CancelFunc)
+)
+
 // AppendCrossAnalysisTurn atomically persists the complete cross-meeting
 // analysis turn (issue #765): the user message, the assistant message, and
 // every one of its source rows, then bumps the conversation's updated_at --
@@ -298,13 +314,24 @@ func truncateRunesEllipsis(s string, max int) string {
 // This never falls back to independent AppendMessage calls -- see the
 // accepted spec's "Persistence" section.
 func (s *Store) AppendCrossAnalysisTurn(ctx context.Context, conversationID, userContent, assistantContent, assistantModel string, tokensUsed *int, sources []model.MessageSource) (userMsg model.Message, assistantMsg model.Message, err error) {
-	tx, err := s.pool.Begin(ctx)
+	// A cancelable child context lets a test's fault-injection hook (above)
+	// force one exact subsequent statement to fail. cancel is always called
+	// via defer regardless, which is a no-op once the transaction has already
+	// committed or been rolled back.
+	queryCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	tx, err := s.pool.Begin(queryCtx)
 	if err != nil {
 		return model.Message{}, model.Message{}, err
 	}
-	defer tx.Rollback(ctx)
+	// Rolled back on a fresh, never-canceled context: a fault-injection hook
+	// (or a real caller-context cancellation) may have already canceled
+	// queryCtx by the time this deferred rollback runs, and that must never
+	// stop the transaction from actually rolling back.
+	defer tx.Rollback(context.Background())
 
-	err = tx.QueryRow(ctx,
+	err = tx.QueryRow(queryCtx,
 		`INSERT INTO messages (conversation_id, role, content, model, tokens_used)
 		 VALUES ($1,'user',$2,'',NULL)
 		 RETURNING id, conversation_id, role, content, model, tokens_used, created_at`,
@@ -314,7 +341,10 @@ func (s *Store) AppendCrossAnalysisTurn(ctx context.Context, conversationID, use
 		return model.Message{}, model.Message{}, err
 	}
 
-	err = tx.QueryRow(ctx,
+	if testHookBeforeAssistantMessageInsert != nil {
+		testHookBeforeAssistantMessageInsert(cancel)
+	}
+	err = tx.QueryRow(queryCtx,
 		`INSERT INTO messages (conversation_id, role, content, model, tokens_used)
 		 VALUES ($1,'assistant',$2,$3,$4)
 		 RETURNING id, conversation_id, role, content, model, tokens_used, created_at`,
@@ -325,7 +355,7 @@ func (s *Store) AppendCrossAnalysisTurn(ctx context.Context, conversationID, use
 	}
 
 	for _, src := range sources {
-		if _, err := tx.Exec(ctx,
+		if _, err := tx.Exec(queryCtx,
 			`INSERT INTO message_sources (message_id, citation_number, note_id, transcript_generation, segment_index, timestamp_ms, snippet)
 			 VALUES ($1,$2,$3,$4,$5,$6,$7)`,
 			assistantMsg.ID, src.N, src.NoteID, src.TranscriptGeneration, src.SegmentIndex, src.Timestamp,
@@ -334,11 +364,17 @@ func (s *Store) AppendCrossAnalysisTurn(ctx context.Context, conversationID, use
 		}
 	}
 
-	if _, err := tx.Exec(ctx, `UPDATE conversations SET updated_at=now() WHERE id=$1`, conversationID); err != nil {
+	if testHookBeforeConversationTimestampUpdate != nil {
+		testHookBeforeConversationTimestampUpdate(cancel)
+	}
+	if _, err := tx.Exec(queryCtx, `UPDATE conversations SET updated_at=now() WHERE id=$1`, conversationID); err != nil {
 		return model.Message{}, model.Message{}, err
 	}
 
-	if err := tx.Commit(ctx); err != nil {
+	if testHookBeforeCrossAnalysisCommit != nil {
+		testHookBeforeCrossAnalysisCommit(cancel)
+	}
+	if err := tx.Commit(queryCtx); err != nil {
 		return model.Message{}, model.Message{}, err
 	}
 

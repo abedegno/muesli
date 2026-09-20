@@ -19,6 +19,7 @@ import (
 	"github.com/abedegno/muesli/internal/config"
 	"github.com/abedegno/muesli/internal/crypto"
 	"github.com/abedegno/muesli/internal/embed"
+	"github.com/abedegno/muesli/internal/execution"
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/plugin"
 	"github.com/abedegno/muesli/internal/storage"
@@ -756,19 +757,37 @@ func (p *Processor) runSummarize(ctx context.Context, job model.Job) (bool, erro
 	}
 	segments, notesMarkdown := applySpeakerAliases(transcript.Segments, body, aliasMap)
 
-	client := plugin.New(plug.EndpointURL, plug.Token)
-	genReq := plugin.GenerateRequest{
-		Transcript:    segments,
-		NotesMarkdown: notesMarkdown,
-		Template:      plugin.TemplatePayload{Sections: tmpl.Sections},
-		Config:        plug.Config,
+	// A single-note summary is a one-document execution.PrepareDocuments /
+	// Executor.Run call: internal/execution is the sole template-running
+	// boundary (introduced alongside issue #765's cross-meeting analysis), so
+	// this after-summary path goes through it too rather than hand-building a
+	// plugin.GenerateRequest and calling the plugin client directly.
+	// SystemPrompt/Model/Temperature are forwarded unconditionally from the
+	// resolved template, exactly like internal/api/cross_analysis.go's
+	// prepareCrossAnalysisExecution -- behaviourally identical to only
+	// setting them when non-zero, since a zero value leaves the
+	// corresponding request field at its own zero value either way.
+	prepared, err := execution.PrepareDocuments(execution.ExecutionInput{
+		Template: tmpl,
+		Documents: []execution.Document{{
+			NoteID:        job.NoteID,
+			Segments:      segments,
+			NotesMarkdown: notesMarkdown,
+		}},
+		Config:       plug.Config,
+		SystemPrompt: tmpl.SystemPrompt,
+		Model:        tmpl.Model,
+		Temperature:  tmpl.Temperature,
+	})
+	if err != nil {
+		// Only reachable if the resolved template somehow has no sections --
+		// template creation/update already rejects that, so this is a terminal
+		// data-integrity issue, not a transient one worth retrying.
+		return false, err
 	}
-	// Only set the optional per-template agent overrides when the resolved
-	// template actually has them; absent template values leave the request
-	// fields at their zero value, preserving current behaviour (the agent
-	// falls back to its own default system prompt / plugin Config).
-	applyTemplateOverrides(&genReq, tmpl)
-	resp, err := client.Generate(ctx, genReq)
+
+	client := plugin.New(plug.EndpointURL, plug.Token)
+	result, err := execution.NewExecutor(client).Run(ctx, prepared)
 	if err != nil {
 		// Do NOT mark the summary failed or finalize here: the job row is still
 		// 'running' at this point. Process settles the job first, then (on a
@@ -777,8 +796,8 @@ func (p *Processor) runSummarize(ctx context.Context, job model.Job) (bool, erro
 		return isRetryable(err), err
 	}
 
-	truncated := DetectTruncation(resp.Summary.Sections, resp.Usage)
-	if err := p.store.CompleteSummary(ctx, pl.SummaryID, plug.Name, resp.Model, resp.Summary.Sections, truncated); err != nil {
+	truncated := DetectTruncation(result.Sections, result.Usage)
+	if err := p.store.CompleteSummary(ctx, pl.SummaryID, plug.Name, result.Model, result.Sections, truncated); err != nil {
 		return true, err
 	}
 	// Readiness is checked by Process AFTER it marks this job done, so the
