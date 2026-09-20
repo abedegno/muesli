@@ -114,12 +114,32 @@ func TestMessageSourcesMigrationShape(t *testing.T) {
 	}
 
 	// An index on note_id exists (for reverse lookups / cleanup scans).
+	//
+	// Deliberately NOT `pg_indexes`: that view's indexdef column is
+	// computed by calling pg_get_indexdef(indexrelid) for every index in
+	// the ENTIRE cluster before this query's own WHERE clause ever
+	// filters down to this schema/table -- so under this suite's
+	// concurrent per-test schemas (testutil.NewPool creates one schema
+	// per test and drops it via t.Cleanup, and CI runs `go test -p 4
+	// -parallel 2`), a sibling test's schema/index being dropped in the
+	// moment between pg_indexes' internal snapshot and its
+	// pg_get_indexdef call for that now-gone relation fails this ENTIRE
+	// query with "could not open relation with OID ..." even though that
+	// unrelated index would have been filtered out anyway. Querying
+	// pg_index/pg_class/pg_namespace/pg_attribute directly instead scopes
+	// to this table's oid (via pg_namespace.nspname = current_schema())
+	// before ever inspecting indkey, and never opens any relation outside
+	// this test's own schema, so it can't be hit by concurrent teardown
+	// elsewhere.
 	var indexCount int
 	err = pool.QueryRow(ctx, `
 		SELECT count(*)
-		FROM pg_indexes
-		WHERE tablename = 'message_sources' AND indexdef ILIKE '%note_id%'
-		  AND schemaname = current_schema()`).Scan(&indexCount)
+		FROM pg_index i
+		JOIN pg_class t ON t.oid = i.indrelid
+		JOIN pg_namespace n ON n.oid = t.relnamespace
+		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(i.indkey)
+		WHERE t.relname = 'message_sources' AND n.nspname = current_schema()
+		  AND a.attname = 'note_id'`).Scan(&indexCount)
 	if err != nil {
 		t.Fatalf("query indexes: %v", err)
 	}
