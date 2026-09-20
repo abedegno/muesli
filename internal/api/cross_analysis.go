@@ -384,8 +384,13 @@ func (s *Server) handleCreateAndSendCrossAnalysis(w http.ResponseWriter, ctx con
 
 	if err != nil {
 		// errNoDefaultAgentPlugin, deferred: the conversation now exists but
-		// remains empty and titleless.
-		writeError(w, http.StatusUnprocessableEntity, "no default agent configured")
+		// remains empty and titleless. Re-resolve the default agent
+		// immediately before responding, to guard against the race where an
+		// agent plugin becomes the default in the window between preflight's
+		// lookup and here: that agent was never admitted by preflight (never
+		// ran through prepareCrossAnalysisExecution / admission budget
+		// checks), so reporting "no default agent configured" would be wrong.
+		s.resolveDeferredNoDefaultAgentPlugin(ctx, w)
 		return
 	}
 
@@ -401,4 +406,31 @@ func (s *Server) handleCreateAndSendCrossAnalysis(w http.ResponseWriter, ctx con
 		return
 	}
 	writeJSON(w, http.StatusCreated, conversationWithMessage{Conversation: conv, Message: msg})
+}
+
+// resolveDeferredNoDefaultAgentPlugin re-resolves the default agent plugin
+// immediately before create-and-send responds to a deferred
+// errNoDefaultAgentPlugin (ruling 2), and writes the correct response for
+// the race between preflight's DefaultPlugin lookup and this point:
+//
+//   - still absent (store.ErrNotFound): the original 422 "no default agent
+//     configured" stands, unchanged.
+//   - present now, or the re-check itself errors for any other reason: that
+//     agent (or condition) was never validated/admitted by preflight (it
+//     never ran through prepareCrossAnalysisExecution / admission budget
+//     checks), so the handler fails closed with a sanitized 500, mirroring
+//     writeCrossAnalysisPreflightError's default case and the cerr handling
+//     above in handleCreateAndSendCrossAnalysis.
+func (s *Server) resolveDeferredNoDefaultAgentPlugin(ctx context.Context, w http.ResponseWriter) {
+	_, err := s.deps.Store.DefaultPlugin(ctx, s.deps.Crypto, model.PluginAgent)
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusUnprocessableEntity, "no default agent configured")
+		return
+	}
+	if err != nil {
+		log.Printf("handleCreateAndSendCrossAnalysis: default agent re-check: %v", err)
+	} else {
+		log.Printf("handleCreateAndSendCrossAnalysis: default agent became available after preflight deferred its error; failing closed since it was never admitted")
+	}
+	writeError(w, http.StatusInternalServerError, "internal error")
 }

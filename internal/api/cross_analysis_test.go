@@ -446,6 +446,52 @@ func TestCrossAnalysisMissingAgentPostCreation422(t *testing.T) {
 	}
 }
 
+// TestCrossAnalysisDeferredRecheckAfterCreation covers the fix for the
+// preflight-to-creation race: create-and-send's deferred
+// errNoDefaultAgentPlugin branch must re-resolve the default agent
+// immediately before responding rather than trusting the stale preflight
+// result. It calls resolveDeferredNoDefaultAgentPlugin directly (unexported,
+// reachable from this in-package test file) so the store's default-agent
+// state at response time can be set up precisely for each case, the same
+// way TestCrossAnalysisPluginChangedAfterPreflight500 isolates its own
+// preflight-to-invocation race window.
+func TestCrossAnalysisDeferredRecheckAfterCreation(t *testing.T) {
+	t.Parallel()
+
+	t.Run("still absent keeps the 422", func(t *testing.T) {
+		t.Parallel()
+		gen := fakeCrossAgent(t)
+		srv, _ := newChatTestServer(t, gen) // no default agent plugin registered
+
+		w := httptest.NewRecorder()
+		srv.resolveDeferredNoDefaultAgentPlugin(context.Background(), w)
+
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("status = %d, want 422; body=%s", w.Code, w.Body)
+		}
+	})
+
+	t.Run("now present fails closed with 500", func(t *testing.T) {
+		t.Parallel()
+		gen := fakeCrossAgent(t)
+		srv, st := newChatTestServer(t, gen)
+		cr, _ := crypto.New("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+		// Simulates a default agent plugin becoming available in the race
+		// window between preflight's lookup (which produced the deferred
+		// errNoDefaultAgentPlugin) and this re-check: that agent was never
+		// admitted by preflight, so the handler must not silently report
+		// "no default agent configured" -- it must fail closed instead.
+		createDefaultAgentPlugin(t, st, cr, crossAdmissionConfig(nil))
+
+		w := httptest.NewRecorder()
+		srv.resolveDeferredNoDefaultAgentPlugin(context.Background(), w)
+
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want 500; body=%s", w.Code, w.Body)
+		}
+	})
+}
+
 // TestCrossAnalysisGenerationMismatch412 calls preflightCrossDocuments and
 // invokeCrossAnalysis directly (both unexported, reachable from this
 // in-package test file) so a transcript replacement can be injected exactly
