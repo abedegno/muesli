@@ -174,11 +174,18 @@ func (s *Store) ListMessages(ctx context.Context, ownerID, conversationID string
 		return out, nil
 	}
 
+	// LEFT JOIN notes (not a bare column read) so a *soft-deleted* (trashed)
+	// note's citation goes inert immediately: n.id comes back NULL whenever
+	// the joined note is missing OR has deleted_at set, not only once the
+	// note is later hard-deleted and the FK's ON DELETE SET NULL fires. This
+	// matches ChatThread.tsx treating note_id !== null as the sole signal
+	// that a citation is clickable.
 	sourceRows, err := s.pool.Query(ctx,
-		`SELECT message_id, citation_number, note_id, transcript_generation, segment_index, timestamp_ms, snippet
-		   FROM message_sources
-		  WHERE message_id = ANY($1)
-		  ORDER BY message_id, citation_number`, ids)
+		`SELECT ms.message_id, ms.citation_number, n.id, ms.transcript_generation, ms.segment_index, ms.timestamp_ms, ms.snippet
+		   FROM message_sources ms
+		   LEFT JOIN notes n ON n.id = ms.note_id AND n.deleted_at IS NULL
+		  WHERE ms.message_id = ANY($1)
+		  ORDER BY ms.message_id, ms.citation_number`, ids)
 	if err != nil {
 		return nil, err
 	}

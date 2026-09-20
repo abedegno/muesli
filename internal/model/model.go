@@ -529,11 +529,13 @@ const (
 // considered"). internal/model must never import internal/chat, so this type
 // is defined here, not there.
 //
-// NoteID is a pointer so a citation whose note has since been deleted can be
-// represented explicitly as null (see internal/store/cross_analysis.go's
-// ON DELETE SET NULL join) -- the renderer treats a nil NoteID as an
-// unavailable, non-clickable citation while still showing the historical
-// snippet/text.
+// NoteID is a pointer so a citation whose note has since been deleted
+// (soft-deleted/trashed, or hard-deleted) can be represented explicitly as
+// null (see internal/store/conversations.go's ListMessages LEFT JOIN notes,
+// which nulls it out the moment the note is trashed, and the FK's
+// ON DELETE SET NULL for the hard-delete case) -- the renderer treats a nil
+// NoteID as an unavailable, non-clickable citation while still showing the
+// historical snippet/text.
 type MessageSource struct {
 	N                    int     `json:"n"`
 	NoteID               *string `json:"note_id"`

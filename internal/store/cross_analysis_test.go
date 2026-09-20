@@ -325,9 +325,14 @@ func TestAppendCrossAnalysisTurnRollsBackOnSourceFailure(t *testing.T) {
 }
 
 // TestAppendCrossAnalysisTurnNoteDeletionUnlinksSourceWithoutDeletingText
-// proves the message_sources migration's ON DELETE SET NULL: deleting a
-// cited note nulls out that citation's navigation target but leaves the
-// historical assistant text (and its message row) intact.
+// proves a cited note's citation goes inert (its note_id reads back null)
+// the moment the note is soft-deleted (trashed) -- NOT only once it is later
+// purged. Note deletion in this app is soft-delete first (DeleteNote sets
+// notes.deleted_at); ListMessages' join to notes must already treat a
+// trashed note as unavailable, since the FK's ON DELETE SET NULL only fires
+// on the row's actual (hard) removal, which trashing alone does not do. The
+// test also confirms the historical assistant text survives untouched, and
+// that a later hard purge leaves the citation just as inert.
 func TestAppendCrossAnalysisTurnNoteDeletionUnlinksSourceWithoutDeletingText(t *testing.T) {
 	t.Parallel()
 	st, owner, _ := newStoreWithOwner(t)
@@ -344,32 +349,47 @@ func TestAppendCrossAnalysisTurnNoteDeletionUnlinksSourceWithoutDeletingText(t *
 		t.Fatalf("AppendCrossAnalysisTurn: %v", err)
 	}
 
-	// Deleting a note is soft-delete (trash); the message_sources FK only
-	// fires on the row's actual removal, so purge it after trashing.
+	findAssistantMsg := func() model.Message {
+		t.Helper()
+		msgs, err := st.ListMessages(ctx, owner, conv.ID)
+		if err != nil {
+			t.Fatalf("ListMessages: %v", err)
+		}
+		for i := range msgs {
+			if msgs[i].ID == assistantMsg.ID {
+				return msgs[i]
+			}
+		}
+		t.Fatal("expected the assistant message to be present")
+		return model.Message{}
+	}
+
+	// Trash (soft-delete) the note WITHOUT purging it. The citation must
+	// already be inert at this point -- this is the required behavior, not
+	// a byproduct of eventual hard deletion.
 	if err := st.DeleteNote(ctx, owner, a.ID); err != nil {
 		t.Fatalf("DeleteNote: %v", err)
 	}
+
+	trashedGot := findAssistantMsg()
+	if trashedGot.Content != "reply [1]" {
+		t.Fatalf("expected historical text unchanged after trashing, got %q", trashedGot.Content)
+	}
+	if len(trashedGot.Sources) != 1 || trashedGot.Sources[0].NoteID != nil {
+		t.Fatalf("expected the source's note_id to already be nulled (unavailable citation) once the note is merely trashed, got %+v", trashedGot.Sources)
+	}
+
+	// A further permanent purge must leave the citation just as inert (and
+	// the historical text still intact).
 	if _, err := st.PurgeNote(ctx, owner, a.ID); err != nil {
 		t.Fatalf("PurgeNote: %v", err)
 	}
 
-	msgs, err := st.ListMessages(ctx, owner, conv.ID)
-	if err != nil {
-		t.Fatalf("ListMessages: %v", err)
+	purgedGot := findAssistantMsg()
+	if purgedGot.Content != "reply [1]" {
+		t.Fatalf("expected historical text unchanged after purge, got %q", purgedGot.Content)
 	}
-	var got *model.Message
-	for i := range msgs {
-		if msgs[i].ID == assistantMsg.ID {
-			got = &msgs[i]
-		}
-	}
-	if got == nil {
-		t.Fatal("expected the assistant message to survive note deletion")
-	}
-	if got.Content != "reply [1]" {
-		t.Fatalf("expected historical text unchanged, got %q", got.Content)
-	}
-	if len(got.Sources) != 1 || got.Sources[0].NoteID != nil {
-		t.Fatalf("expected the source's note_id to be nulled (unavailable citation), got %+v", got.Sources)
+	if len(purgedGot.Sources) != 1 || purgedGot.Sources[0].NoteID != nil {
+		t.Fatalf("expected the source's note_id to remain nulled after purge, got %+v", purgedGot.Sources)
 	}
 }
