@@ -222,3 +222,42 @@ func TestSetConversationTitleIfEmpty(t *testing.T) {
 		t.Fatalf("expected title unchanged at %q, got %q", "Preset Title", got3.Title)
 	}
 }
+
+// TestListMessagesOmitsSourcesForOrdinaryMessages proves an ordinary
+// (non-cross) AppendMessage-created message has no rows in message_sources
+// and so ListMessages leaves its Sources nil (omitted from JSON via
+// omitempty) -- the sources join added for issue #765 must never invent
+// citations for pre-existing, non-cross messages.
+func TestListMessagesOmitsSourcesForOrdinaryMessages(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+
+	owner, err := st.CreateUser(ctx, "ordinary-sources-owner@example.com", "h")
+	if err != nil {
+		t.Fatalf("create owner: %v", err)
+	}
+	conv, err := st.CreateConversation(ctx, owner.ID, nil, "", nil)
+	if err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+	if _, err := st.AppendMessage(ctx, conv.ID, "user", "hi", "", nil); err != nil {
+		t.Fatalf("append user message: %v", err)
+	}
+	if _, err := st.AppendMessage(ctx, conv.ID, "assistant", "hello", "test-model", nil); err != nil {
+		t.Fatalf("append assistant message: %v", err)
+	}
+
+	msgs, err := st.ListMessages(ctx, owner.ID, conv.ID)
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages, got %d", len(msgs))
+	}
+	for _, m := range msgs {
+		if m.Sources != nil {
+			t.Fatalf("expected nil Sources for ordinary message %+v", m)
+		}
+	}
+}

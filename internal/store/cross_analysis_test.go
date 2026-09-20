@@ -230,3 +230,146 @@ func TestVerifyCrossAnalysisGenerations(t *testing.T) {
 		t.Fatalf("got %v, want ErrGenerationMismatch", err)
 	}
 }
+
+func strPtrCA(s string) *string { return &s }
+
+// TestAppendCrossAnalysisTurnCommitsAtomically proves a successful call
+// persists both messages, every source row, and bumps the conversation's
+// timestamp together.
+func TestAppendCrossAnalysisTurnCommitsAtomically(t *testing.T) {
+	t.Parallel()
+	st, owner, _ := newStoreWithOwner(t)
+	ctx := context.Background()
+
+	a := crossReadyNote(t, st, owner, "A", twoSegs("a"))
+	b := crossReadyNote(t, st, owner, "B", twoSegs("b"))
+	conv, err := st.CreateConversation(ctx, owner, nil, "", nil)
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+
+	tokens := 99
+	sources := []model.MessageSource{
+		{N: 1, NoteID: strPtrCA(a.ID), TranscriptGeneration: 1, SegmentIndex: 0, Timestamp: 0, Snippet: "a one"},
+		{N: 2, NoteID: strPtrCA(b.ID), TranscriptGeneration: 1, SegmentIndex: 1, Timestamp: 1000, Snippet: "b two"},
+	}
+	userMsg, assistantMsg, err := st.AppendCrossAnalysisTurn(ctx, conv.ID, "Compare A and B", "They differ [1][2]", "test-model", &tokens, sources)
+	if err != nil {
+		t.Fatalf("AppendCrossAnalysisTurn: %v", err)
+	}
+	if userMsg.Role != "user" || assistantMsg.Role != "assistant" {
+		t.Fatalf("unexpected roles: user=%q assistant=%q", userMsg.Role, assistantMsg.Role)
+	}
+	if len(assistantMsg.Sources) != 2 {
+		t.Fatalf("expected 2 sources on returned assistant message, got %+v", assistantMsg.Sources)
+	}
+
+	msgs, err := st.ListMessages(ctx, owner, conv.ID)
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	if len(msgs) != 2 {
+		t.Fatalf("expected 2 messages after reload, got %d", len(msgs))
+	}
+	if len(msgs[0].Sources) != 0 {
+		t.Fatalf("expected user message to have no sources, got %+v", msgs[0].Sources)
+	}
+	if len(msgs[1].Sources) != 2 || msgs[1].Sources[0].N != 1 || msgs[1].Sources[1].N != 2 {
+		t.Fatalf("expected 2 ordered sources on assistant message after reload, got %+v", msgs[1].Sources)
+	}
+	if msgs[1].Sources[0].NoteID == nil || *msgs[1].Sources[0].NoteID != a.ID {
+		t.Fatalf("unexpected source note id: %+v", msgs[1].Sources[0])
+	}
+
+	afterConv, err := st.GetConversation(ctx, owner, conv.ID)
+	if err != nil {
+		t.Fatalf("GetConversation: %v", err)
+	}
+	if !afterConv.UpdatedAt.After(conv.UpdatedAt) && !afterConv.UpdatedAt.Equal(conv.UpdatedAt) {
+		t.Fatalf("expected updated_at to advance: before=%v after=%v", conv.UpdatedAt, afterConv.UpdatedAt)
+	}
+}
+
+// TestAppendCrossAnalysisTurnRollsBackOnSourceFailure forces the source-row
+// insert to fail (a citation pointing at a note id that does not exist,
+// violating the FK) and proves NEITHER message nor any source is left
+// behind -- the whole transaction rolls back, never a user-only turn.
+func TestAppendCrossAnalysisTurnRollsBackOnSourceFailure(t *testing.T) {
+	t.Parallel()
+	st, owner, _ := newStoreWithOwner(t)
+	ctx := context.Background()
+
+	conv, err := st.CreateConversation(ctx, owner, nil, "", nil)
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+	before, err := st.ListMessages(ctx, owner, conv.ID)
+	if err != nil {
+		t.Fatalf("ListMessages before: %v", err)
+	}
+
+	badNoteID := "00000000-0000-0000-0000-000000000000"
+	sources := []model.MessageSource{{N: 1, NoteID: &badNoteID, TranscriptGeneration: 1, SegmentIndex: 0, Timestamp: 0, Snippet: "x"}}
+	_, _, err = st.AppendCrossAnalysisTurn(ctx, conv.ID, "focus", "reply [1]", "test-model", nil, sources)
+	if err == nil {
+		t.Fatal("expected an error from a source row referencing a nonexistent note, got nil")
+	}
+
+	after, err := st.ListMessages(ctx, owner, conv.ID)
+	if err != nil {
+		t.Fatalf("ListMessages after: %v", err)
+	}
+	if len(after) != len(before) {
+		t.Fatalf("expected no messages persisted after a rolled-back turn, before=%d after=%d", len(before), len(after))
+	}
+}
+
+// TestAppendCrossAnalysisTurnNoteDeletionUnlinksSourceWithoutDeletingText
+// proves the message_sources migration's ON DELETE SET NULL: deleting a
+// cited note nulls out that citation's navigation target but leaves the
+// historical assistant text (and its message row) intact.
+func TestAppendCrossAnalysisTurnNoteDeletionUnlinksSourceWithoutDeletingText(t *testing.T) {
+	t.Parallel()
+	st, owner, _ := newStoreWithOwner(t)
+	ctx := context.Background()
+
+	a := crossReadyNote(t, st, owner, "Deletable", twoSegs("del"))
+	conv, err := st.CreateConversation(ctx, owner, nil, "", nil)
+	if err != nil {
+		t.Fatalf("CreateConversation: %v", err)
+	}
+	sources := []model.MessageSource{{N: 1, NoteID: strPtrCA(a.ID), TranscriptGeneration: 1, SegmentIndex: 0, Timestamp: 0, Snippet: "del one"}}
+	_, assistantMsg, err := st.AppendCrossAnalysisTurn(ctx, conv.ID, "focus", "reply [1]", "test-model", nil, sources)
+	if err != nil {
+		t.Fatalf("AppendCrossAnalysisTurn: %v", err)
+	}
+
+	// Deleting a note is soft-delete (trash); the message_sources FK only
+	// fires on the row's actual removal, so purge it after trashing.
+	if err := st.DeleteNote(ctx, owner, a.ID); err != nil {
+		t.Fatalf("DeleteNote: %v", err)
+	}
+	if _, err := st.PurgeNote(ctx, owner, a.ID); err != nil {
+		t.Fatalf("PurgeNote: %v", err)
+	}
+
+	msgs, err := st.ListMessages(ctx, owner, conv.ID)
+	if err != nil {
+		t.Fatalf("ListMessages: %v", err)
+	}
+	var got *model.Message
+	for i := range msgs {
+		if msgs[i].ID == assistantMsg.ID {
+			got = &msgs[i]
+		}
+	}
+	if got == nil {
+		t.Fatal("expected the assistant message to survive note deletion")
+	}
+	if got.Content != "reply [1]" {
+		t.Fatalf("expected historical text unchanged, got %q", got.Content)
+	}
+	if len(got.Sources) != 1 || got.Sources[0].NoteID != nil {
+		t.Fatalf("expected the source's note_id to be nulled (unavailable citation), got %+v", got.Sources)
+	}
+}

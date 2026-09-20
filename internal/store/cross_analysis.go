@@ -271,3 +271,77 @@ func (s *Store) VerifyCrossAnalysisGenerations(ctx context.Context, generations 
 	}
 	return nil
 }
+
+// crossAnalysisSnippetMaxRunes bounds a persisted citation snippet's length
+// (the "bounded display snippet" the accepted spec's Persistence section
+// requires) -- protects row/response size regardless of how long the
+// originating transcript segment's text is.
+const crossAnalysisSnippetMaxRunes = 500
+
+func truncateRunesEllipsis(s string, max int) string {
+	r := []rune(s)
+	if len(r) <= max {
+		return s
+	}
+	return string(r[:max]) + "..."
+}
+
+// AppendCrossAnalysisTurn atomically persists the complete cross-meeting
+// analysis turn (issue #765): the user message, the assistant message, and
+// every one of its source rows, then bumps the conversation's updated_at --
+// all in ONE transaction. Both messages and every source must already be
+// fully constructed by the caller (see internal/execution.Result and the API
+// layer's conversion to model.MessageSource); an error at any statement or
+// at commit rolls back everything, so a reader never observes a user-only
+// turn or a message whose citations are missing after reload.
+//
+// This never falls back to independent AppendMessage calls -- see the
+// accepted spec's "Persistence" section.
+func (s *Store) AppendCrossAnalysisTurn(ctx context.Context, conversationID, userContent, assistantContent, assistantModel string, tokensUsed *int, sources []model.MessageSource) (userMsg model.Message, assistantMsg model.Message, err error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return model.Message{}, model.Message{}, err
+	}
+	defer tx.Rollback(ctx)
+
+	err = tx.QueryRow(ctx,
+		`INSERT INTO messages (conversation_id, role, content, model, tokens_used)
+		 VALUES ($1,'user',$2,'',NULL)
+		 RETURNING id, conversation_id, role, content, model, tokens_used, created_at`,
+		conversationID, userContent).
+		Scan(&userMsg.ID, &userMsg.ConversationID, &userMsg.Role, &userMsg.Content, &userMsg.Model, &userMsg.TokensUsed, &userMsg.CreatedAt)
+	if err != nil {
+		return model.Message{}, model.Message{}, err
+	}
+
+	err = tx.QueryRow(ctx,
+		`INSERT INTO messages (conversation_id, role, content, model, tokens_used)
+		 VALUES ($1,'assistant',$2,$3,$4)
+		 RETURNING id, conversation_id, role, content, model, tokens_used, created_at`,
+		conversationID, assistantContent, assistantModel, tokensUsed).
+		Scan(&assistantMsg.ID, &assistantMsg.ConversationID, &assistantMsg.Role, &assistantMsg.Content, &assistantMsg.Model, &assistantMsg.TokensUsed, &assistantMsg.CreatedAt)
+	if err != nil {
+		return model.Message{}, model.Message{}, err
+	}
+
+	for _, src := range sources {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO message_sources (message_id, citation_number, note_id, transcript_generation, segment_index, timestamp_ms, snippet)
+			 VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+			assistantMsg.ID, src.N, src.NoteID, src.TranscriptGeneration, src.SegmentIndex, src.Timestamp,
+			truncateRunesEllipsis(src.Snippet, crossAnalysisSnippetMaxRunes)); err != nil {
+			return model.Message{}, model.Message{}, err
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `UPDATE conversations SET updated_at=now() WHERE id=$1`, conversationID); err != nil {
+		return model.Message{}, model.Message{}, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return model.Message{}, model.Message{}, err
+	}
+
+	assistantMsg.Sources = sources
+	return userMsg, assistantMsg, nil
+}
