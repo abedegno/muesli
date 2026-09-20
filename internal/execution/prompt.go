@@ -70,17 +70,43 @@ func buildCorpus(input ExecutionInput, sources []SourceRef) string {
 	return b.String()
 }
 
+// documentsOutputInstruction MUST stay byte-identical to
+// plugins/ollama-agent/ollama_app/prompt.py's DOCUMENTS_OUTPUT_INSTRUCTION.
+// buildSectionPrompt below reconstructs the exact envelope
+// build_documents_section_prompt sends to the model (corpus, then this
+// output framing) so that Admit's byte count is a real, provable upper
+// bound over the prompt actually transmitted -- not an estimate against a
+// different, shorter placeholder envelope. If either side's literal text
+// changes, update both together and regenerate
+// testdata/cross_prompts/two_meetings_decisions_section.golden (and its
+// mirror under plugins/ollama-agent/tests/testdata/cross_prompts) via
+// WRITE_GOLDEN=1, then re-verify parity with the Python test.
+const documentsOutputInstruction = "Return a JSON object with \"content_markdown\" (the content for this section, " +
+	"citing sources with the bracketed numbers given in the corpus above, e.g. " +
+	"[1] or [2][3]) and optional \"refs\" (always omit or leave empty for a " +
+	"cross-meeting analysis run -- citations live inline in content_markdown, not in refs)."
+
 // buildSectionPrompt appends one section's heading/instruction to the
-// shared corpus, forming the complete, self-contained prompt Admit uses to
-// conservatively bound that section (see admission.go). It is never sent to
-// the plugin as a single blob -- only used for the budget estimate.
+// shared corpus, forming the complete, self-contained prompt Admit checks
+// against the byte budget (see admission.go). Its exact byte layout --
+// "\n\n## The section to write\n{heading} — {instruction}\n\n## Output\n" plus
+// documentsOutputInstruction -- mirrors
+// plugins/ollama-agent/ollama_app/prompt.py's build_documents_section_prompt
+// byte-for-byte (that function forwards req.notes_markdown, which is always
+// this exact corpus, verbatim). This package's Executor always sends
+// Documents (PrepareDocuments rejects an empty Documents slice), so that is
+// the only prompt-building path the plugin ever takes for these requests --
+// admission therefore measures the real prompt the model receives, not a
+// synthetic stand-in. See testdata/cross_prompts/two_meetings_decisions_section.golden
+// and the parity test in plugins/ollama-agent/tests for the byte-identity proof.
 func buildSectionPrompt(corpus string, section model.TemplateSection) string {
 	var b strings.Builder
 	b.WriteString(corpus)
-	b.WriteString("\n\nSECTION: ")
+	b.WriteString("\n\n## The section to write\n")
 	b.WriteString(section.Heading)
-	b.WriteString("\nINSTRUCTION: ")
+	b.WriteString(" — ")
 	b.WriteString(section.Instruction)
-	b.WriteString("\n\nOUTPUT: Respond with the content for this section only, in markdown, using the citations as specified above.")
+	b.WriteString("\n\n## Output\n")
+	b.WriteString(documentsOutputInstruction)
 	return b.String()
 }

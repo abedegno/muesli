@@ -160,3 +160,37 @@ func TestPrepareDocumentsGoldenCorpus(t *testing.T) {
 		t.Fatalf("corpus does not match golden.\ngot:\n%s\nwant:\n%s", prepared.Corpus, string(golden))
 	}
 }
+
+// TestBuildSectionPromptMatchesProviderEnvelopeGolden proves the exact
+// prompt Admit measures (buildSectionPrompt's output) is byte-for-byte the
+// same envelope plugins/ollama-agent/ollama_app/prompt.py's
+// build_documents_section_prompt sends to the model -- not a shorter
+// synthetic placeholder. plugins/ollama-agent/tests's
+// test_documents_prompt.py builds the identical prompt from the same
+// shared golden corpus and section heading/instruction and asserts it
+// matches this same fixture, so any future drift between the two envelopes
+// fails a test on both sides rather than silently under-counting the real
+// admitted byte budget.
+func TestBuildSectionPromptMatchesProviderEnvelopeGolden(t *testing.T) {
+	prepared, err := PrepareDocuments(twoDocInput())
+	if err != nil {
+		t.Fatalf("PrepareDocuments: %v", err)
+	}
+	if len(prepared.SectionPrompts) == 0 || prepared.SectionPrompts[0].Heading != "Decisions" {
+		t.Fatalf("unexpected section prompts: %+v", prepared.SectionPrompts)
+	}
+	got := prepared.SectionPrompts[0].Prompt
+	const goldenPath = "testdata/cross_prompts/two_meetings_decisions_section.golden"
+	if os.Getenv("WRITE_GOLDEN") == "1" {
+		if err := os.WriteFile(goldenPath, []byte(got), 0o644); err != nil {
+			t.Fatalf("write golden: %v", err)
+		}
+	}
+	golden, err := os.ReadFile(goldenPath)
+	if err != nil {
+		t.Fatalf("read golden: %v", err)
+	}
+	if got != string(golden) {
+		t.Fatalf("section prompt does not match golden.\ngot:\n%s\nwant:\n%s", got, string(golden))
+	}
+}
