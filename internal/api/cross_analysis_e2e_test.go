@@ -26,6 +26,15 @@ import (
 // that scope note).
 func TestCrossAnalysisEndToEnd(t *testing.T) {
 	t.Parallel()
+	// gen answers the cross-analysis Run() call; titleGen answers the
+	// SEPARATE title-generation call invokeCrossAnalysis fires right after
+	// (this conversation is created with an empty title, so it's a first
+	// exchange). Both calls go through the same injected ChatGenerator, so
+	// wiring a single stateful fake here would let the later title call
+	// silently overwrite gen.lastReq -- multiGenerator (see
+	// cross_analysis_test.go) scripts one response per call so the
+	// assertions below observe the cross-analysis request, not the title
+	// request, exactly like TestCrossAnalysisSendToExistingHappyPath.
 	gen := &fakeChatGenerator{resp: plugin.GenerateResponse{
 		Summary: plugin.SummaryPayload{Sections: []model.SummarySection{
 			{Heading: "Decisions", ContentMarkdown: "Sprint decided to ship Friday [1]; retro flagged the slip [2]."},
@@ -33,7 +42,12 @@ func TestCrossAnalysisEndToEnd(t *testing.T) {
 		Model: "e2e-agent-model",
 		Usage: &plugin.GenerateUsage{TokensUsed: 7},
 	}}
-	srv, st := newChatTestServer(t, gen)
+	titleGen := &fakeChatGenerator{resp: plugin.GenerateResponse{
+		Summary: plugin.SummaryPayload{Sections: []model.SummarySection{{Heading: "Title", ContentMarkdown: "Cross meeting recap"}}},
+		Model:   "e2e-agent-model",
+	}}
+	multi := &multiGenerator{byCallCount: []ChatGenerator{gen, titleGen}}
+	srv, st := newChatTestServer(t, multi)
 	cr, _ := crypto.New("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	createDefaultAgentPlugin(t, st, cr, crossAdmissionConfig(nil))
 	owner, hdr := newCrossTestOwner(t, srv, st, "cross-e2e@example.com")
@@ -152,8 +166,29 @@ func TestCrossAnalysisEndToEnd(t *testing.T) {
 // TestCrossAnalysisGenerationMismatch412's doc comment for why).
 func TestCrossAnalysisEndToEndGenerationChangeBeforeInvocation412(t *testing.T) {
 	t.Parallel()
-	gen := fakeCrossAgent(t)
-	srv, st := newChatTestServer(t, gen)
+	// gen's response must match this test's own one-section template ("H"),
+	// not the two-section "Decisions"/"Risks" shape fakeCrossAgent returns
+	// for OTHER tests' two-section templates -- Run() validates section
+	// headings positionally against the template it was given. titleGen
+	// answers the separate title-generation call invokeCrossAnalysis makes
+	// after a successful first exchange (this conversation is created with
+	// an empty title); wiring both calls through one stateful fake would
+	// let the title call overwrite gen.lastReq after the assertions below
+	// run, exactly as it does for TestCrossAnalysisEndToEnd -- see
+	// multiGenerator's doc comment.
+	gen := &fakeChatGenerator{resp: plugin.GenerateResponse{
+		Summary: plugin.SummaryPayload{Sections: []model.SummarySection{
+			{Heading: "H", ContentMarkdown: "ok [1]."},
+		}},
+		Model: "cross-agent-model",
+		Usage: &plugin.GenerateUsage{TokensUsed: 3},
+	}}
+	titleGen := &fakeChatGenerator{resp: plugin.GenerateResponse{
+		Summary: plugin.SummaryPayload{Sections: []model.SummarySection{{Heading: "Title", ContentMarkdown: "Cross e2e gen"}}},
+		Model:   "cross-agent-model",
+	}}
+	multi := &multiGenerator{byCallCount: []ChatGenerator{gen, titleGen}}
+	srv, st := newChatTestServer(t, multi)
 	cr, _ := crypto.New("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
 	createDefaultAgentPlugin(t, st, cr, crossAdmissionConfig(nil))
 	owner, _ := newCrossTestOwner(t, srv, st, "cross-e2e-generation@example.com")

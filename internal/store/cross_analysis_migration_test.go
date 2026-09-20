@@ -24,7 +24,7 @@ func TestMessageSourcesMigrationShape(t *testing.T) {
 	rows, err := pool.Query(ctx, `
 		SELECT column_name, is_nullable
 		FROM information_schema.columns
-		WHERE table_name = 'message_sources'`)
+		WHERE table_name = 'message_sources' AND table_schema = current_schema()`)
 	if err != nil {
 		t.Fatalf("query columns: %v", err)
 	}
@@ -64,6 +64,7 @@ func TestMessageSourcesMigrationShape(t *testing.T) {
 		JOIN information_schema.key_column_usage kcu
 		  ON tc.constraint_name = kcu.constraint_name AND tc.table_schema = kcu.table_schema
 		WHERE tc.table_name = 'message_sources' AND tc.constraint_type = 'PRIMARY KEY'
+		  AND tc.table_schema = current_schema()
 		ORDER BY kcu.ordinal_position`)
 	if err != nil {
 		t.Fatalf("query pk: %v", err)
@@ -87,7 +88,8 @@ func TestMessageSourcesMigrationShape(t *testing.T) {
 		FROM information_schema.referential_constraints rc
 		JOIN information_schema.key_column_usage kcu
 		  ON rc.constraint_name = kcu.constraint_name AND rc.constraint_schema = kcu.table_schema
-		WHERE kcu.table_name = 'message_sources' AND kcu.column_name = 'note_id'`).Scan(&noteDeleteRule)
+		WHERE kcu.table_name = 'message_sources' AND kcu.column_name = 'note_id'
+		  AND kcu.table_schema = current_schema()`).Scan(&noteDeleteRule)
 	if err != nil {
 		t.Fatalf("query note_id delete rule: %v", err)
 	}
@@ -102,7 +104,8 @@ func TestMessageSourcesMigrationShape(t *testing.T) {
 		FROM information_schema.referential_constraints rc
 		JOIN information_schema.key_column_usage kcu
 		  ON rc.constraint_name = kcu.constraint_name AND rc.constraint_schema = kcu.table_schema
-		WHERE kcu.table_name = 'message_sources' AND kcu.column_name = 'message_id'`).Scan(&messageDeleteRule)
+		WHERE kcu.table_name = 'message_sources' AND kcu.column_name = 'message_id'
+		  AND kcu.table_schema = current_schema()`).Scan(&messageDeleteRule)
 	if err != nil {
 		t.Fatalf("query message_id delete rule: %v", err)
 	}
@@ -115,7 +118,8 @@ func TestMessageSourcesMigrationShape(t *testing.T) {
 	err = pool.QueryRow(ctx, `
 		SELECT count(*)
 		FROM pg_indexes
-		WHERE tablename = 'message_sources' AND indexdef ILIKE '%note_id%'`).Scan(&indexCount)
+		WHERE tablename = 'message_sources' AND indexdef ILIKE '%note_id%'
+		  AND schemaname = current_schema()`).Scan(&indexCount)
 	if err != nil {
 		t.Fatalf("query indexes: %v", err)
 	}
