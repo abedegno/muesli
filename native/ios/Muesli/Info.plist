@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>Muesli</string>
+	<key>CFBundleShortVersionString</key>
+	<string>1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSRequiresIPhoneOS</key>
+	<true/>
+	<key>UILaunchScreen</key>
+	<dict/>
+	<key>UISupportedInterfaceOrientations</key>
+	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
+		<string>UIInterfaceOrientationLandscapeRight</string>
+	</array>
+
+	<!-- Camera: QR scanning during local pairing (issue #767). Manual entry
+	     is always offered as a fallback, so this permission is optional at
+	     the product level even though the string must exist to request it. -->
+	<key>NSCameraUsageDescription</key>
+	<string>Muesli uses the camera to scan the pairing code shown on your computer when connecting to a local Muesli server. You can also enter the code manually.</string>
+
+	<!-- Local network: required on iOS 14+ to reach a private-network origin
+	     (192.168.x.x / 10.x.x.x / fd00::/8 etc.) for local pairing. Denial is
+	     handled by the pairing flow with guidance to Settings, per the
+	     accepted spec -- there is no bypass. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Muesli needs local network access to connect to a Muesli server running on your computer.</string>
+
+	<!-- ATS stays at its secure default (HTTPS-only, no arbitrary-loads
+	     exception) for every hosted connection. Local trust is established
+	     exclusively through certificate pinning in APIClient's
+	     PinningSessionDelegate, never through an ATS exception -- release
+	     builds never weaken ATS or accept a user-supplied certificate
+	     through the hosted sign-in path. -->
+</dict>
+</plist>

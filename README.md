@@ -112,6 +112,16 @@ npm run dev
 
 Point it at your running server: <http://localhost:8080>.
 
+## Native iOS client
+
+A read-only, native SwiftUI iOS app lives at [`native/ios`](native/ios) (issue
+#767): browse your existing notes and read their authored body and generated
+summaries, over the same hosted server or from a paired local Electron
+instance ("Allow iOS access" in Settings). Note creation, audio capture, and
+Android are explicitly out of scope for this first slice. See
+[`native/ios/README.md`](native/ios/README.md) for project setup, the mobile
+API contract it consumes, and this repo's local-pairing security model.
+
 ## How it works
 
 ```

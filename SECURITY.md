@@ -33,8 +33,21 @@ Please give us a reasonable window to fix the issue before any public disclosure
 ## Scope
 
 In scope: the Muesli server, the reference plugins (`plugins/`), the desktop
-client, the admin UI, and the deployment artifacts (`Dockerfile`,
-`docker-compose.yml`).
+client, the admin UI, the native iOS client (`native/ios`), and the
+deployment artifacts (`Dockerfile`, `docker-compose.yml`).
+
+**Native iOS local pairing (issue #767):** "Allow iOS access" in the desktop
+Settings is off by default. When enabled, Electron self-signs an ECDSA P-256
+certificate for exactly one desktop-selected private-network address (never a
+wildcard bind) and displays a QR/manual pairing payload containing only the
+HTTPS origin, its SHA-256 SubjectPublicKeyInfo fingerprint, and a
+human-readable verification phrase — never a password, token, or session.
+The iOS client's `URLSession` delegate pins to that exact fingerprint for
+that exact origin only; it never weakens App Transport Security globally and
+never affects hosted-connection trust. Pairing establishes endpoint trust
+only — the normal `POST /api/login` call still authenticates the person.
+"Reset iOS access" rotates the key/certificate and invalidates every existing
+pairing.
 
 The plugin trust boundary matters: the server makes outbound HTTP calls to
 configured plugin URLs and passes them presigned audio URLs. Issues such as
