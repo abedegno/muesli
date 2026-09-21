@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
+import QRCode from 'qrcode'
 import { muesli } from '@/api'
 import { Button } from '@/components/ui/Button'
 import { Checkbox } from '@/components/ui/Checkbox'
@@ -234,6 +235,7 @@ function IosAccessSection() {
   const [candidates, setCandidates] = useState<IosAccessCandidate[]>([])
   const [selectedKey, setSelectedKey] = useState('')
   const [pairing, setPairing] = useState<IosAccessEnableResult | null>(null)
+  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [message, setMessage] = useState('Checking local network addresses…')
   const { notify } = useToast()
@@ -245,6 +247,27 @@ function IosAccessSection() {
     }
     sectionRef.current?.focus()
   }, [location.hash])
+
+  // Renders an actual scannable QR code image client-side (canvas, no native
+  // bindings) from the same payload the manual-entry text field shows — the
+  // iOS app's QRScannerView needs a real image to scan, not just the raw
+  // JSON string.
+  useEffect(() => {
+    if (!pairing) {
+      setQrDataUrl(null)
+      return
+    }
+    let cancelled = false
+    QRCode.toDataURL(pairing.qrPayload, { margin: 1, width: 220 })
+      .then((dataUrl) => {
+        if (!cancelled) setQrDataUrl(dataUrl)
+      })
+      .catch((err: unknown) => {
+        console.error('failed to render pairing QR code', err)
+        if (!cancelled) setQrDataUrl(null)
+      })
+    return () => { cancelled = true }
+  }, [pairing])
 
   useEffect(() => {
     let cancelled = false
@@ -294,22 +317,22 @@ function IosAccessSection() {
   }
 
   async function handleReset() {
-    // "Reset & rotate certificate" is disable-then-re-enable on the same
-    // address — the only combination the fd-3 control protocol exposes today
-    // (see src/main/iosAccess/controller.ts, which has only enable/disable).
-    // It always regenerates the pairing display; the certificate itself is
-    // only regenerated server-side once its persisted copy has expired.
+    // "Reset & rotate certificate" invalidates the persisted certificate for
+    // the selected address and re-enables on it (muesli:iosAccessReset ->
+    // IOSAccessController.reset -> the fd-3 'reset' command ->
+    // ListenerController.Reset -> iosaccess.ResetCertificate), so this
+    // genuinely issues a new certificate. Plain disable()+enable() reuses
+    // the still-valid persisted certificate and rotates nothing.
+    const pair = candidates.find((c) => candidateKey(c) === selectedKey)
+    if (!pair) {
+      setMessage('Choose a network address first.')
+      return
+    }
     setBusy(true)
     try {
-      await muesli.iosAccessDisable()
-      const pair = candidates.find((c) => candidateKey(c) === selectedKey)
-      if (pair) {
-        const result = await muesli.iosAccessEnable(pair)
-        setPairing(result)
-        setMessage('')
-      } else {
-        setPairing(null)
-      }
+      const result = await muesli.iosAccessReset(pair)
+      setPairing(result)
+      setMessage('')
     } catch (err) {
       console.error('failed to reset local iOS access', err)
       notify(err instanceof Error ? err.message : 'Could not reset iOS access', 'error')
@@ -355,9 +378,18 @@ function IosAccessSection() {
         <div className="mt-3 space-y-2 text-sm">
           <p><span className="font-medium">Address:</span> {pairing.origin}</p>
           <p><span className="font-medium">Verification phrase:</span> {pairing.phrase}</p>
+          {qrDataUrl ? (
+            <img
+              src={qrDataUrl}
+              alt="Pairing QR code — scan with the Muesli iOS app"
+              width={220}
+              height={220}
+              className="rounded-[var(--radius)] border border-input"
+            />
+          ) : null}
           <div>
             <label className="block text-sm" htmlFor="ios-access-pairing-code">
-              Pairing code (scan as a QR code from the iOS app, or paste into its manual-entry field)
+              Pairing code (scan the QR code above from the iOS app, or paste this into its manual-entry field)
             </label>
             <Input
               id="ios-access-pairing-code"

@@ -32,6 +32,12 @@ type ListenerControl interface {
 	// Disable closes the listener if one is running. Safe to call when
 	// already disabled.
 	Disable() error
+	// Reset invalidates the persisted certificate for pair.Address (Enable
+	// alone reuses a still-valid persisted certificate, so it never actually
+	// rotates anything) and then re-enables on pair, exactly like Enable
+	// otherwise -- same revalidation-against-a-fresh-snapshot requirement,
+	// same "no partial bind on failure" requirement.
+	Reset(ctx context.Context, pair InterfaceAddressPair) (ListenerInfo, error)
 }
 
 // InterfaceAddressSource abstracts OS interface enumeration so callers can
@@ -94,6 +100,11 @@ type ControlAction string
 const (
 	ControlEnable  ControlAction = "enable"
 	ControlDisable ControlAction = "disable"
+	// ControlReset invalidates the persisted certificate for the given pair
+	// and re-enables on it, so a client can force a brand new certificate
+	// without waiting for the persisted one to expire ("Reset & rotate
+	// certificate" in the desktop Settings UI).
+	ControlReset ControlAction = "reset"
 )
 
 // ControlRequest is one line of the fd-3 protocol, Electron -> Go.
@@ -175,6 +186,19 @@ func (c *ControlServer) handleLine(ctx context.Context, line []byte) ControlResp
 			return ControlResponse{ID: req.ID, Error: err.Error()}
 		}
 		return ControlResponse{ID: req.ID, OK: true}
+	case ControlReset:
+		if req.Pair == nil {
+			return ControlResponse{ID: req.ID, Error: "missing pair"}
+		}
+		info, err := c.target.Reset(ctx, *req.Pair)
+		if err != nil {
+			return ControlResponse{ID: req.ID, Error: err.Error()}
+		}
+		return ControlResponse{
+			ID: req.ID, OK: true,
+			Port: info.Port, Origin: info.Origin,
+			FingerprintHex: info.FingerprintHex, Phrase: info.Phrase,
+		}
 	default:
 		return ControlResponse{ID: req.ID, Error: fmt.Sprintf("unknown action %q", req.Action)}
 	}

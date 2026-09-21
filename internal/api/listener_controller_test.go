@@ -216,6 +216,88 @@ func TestListenerControllerWatchdogClosesOnAddressDisappearance(t *testing.T) {
 	_ = ctrl.Disable()
 }
 
+func TestListenerControllerResetRotatesCertificate(t *testing.T) {
+	t.Parallel()
+	srv := api.NewServer(api.Deps{})
+	source := &fakeSource{pairs: []iosaccess.InterfaceAddressPair{loopbackPair}}
+	ctrl := api.NewListenerController(srv, t.TempDir(), source)
+	t.Cleanup(func() { _ = ctrl.Disable() })
+
+	first, err := ctrl.Enable(context.Background(), loopbackPair)
+	if err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+
+	// Regression guard for the bug this Reset fixes: Disable then Enable
+	// alone reuses the still-valid persisted certificate, so it must NOT be
+	// mistaken for a real rotation.
+	_ = ctrl.Disable()
+	reEnabled, err := ctrl.Enable(context.Background(), loopbackPair)
+	if err != nil {
+		t.Fatalf("re-enable: %v", err)
+	}
+	if reEnabled.FingerprintHex != first.FingerprintHex {
+		t.Fatalf("test assumption violated: plain disable+enable already rotates the certificate")
+	}
+
+	reset, err := ctrl.Reset(context.Background(), loopbackPair)
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if reset.FingerprintHex == "" {
+		t.Fatalf("expected a fingerprint after reset")
+	}
+	if reset.FingerprintHex == first.FingerprintHex {
+		t.Fatalf("expected Reset to rotate to a different certificate, got the same fingerprint %q", reset.FingerprintHex)
+	}
+	if reset.Port == 0 {
+		t.Fatalf("expected a nonzero ephemeral port after reset")
+	}
+
+	// The listener is actually re-bound and serving with the new certificate.
+	client := pinnedHTTPSClient(t, reset.FingerprintHex)
+	resp, err := client.Get(fmt.Sprintf("https://127.0.0.1:%d/healthz", reset.Port))
+	if err != nil {
+		t.Fatalf("get after reset: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d after reset", resp.StatusCode)
+	}
+
+	// The old certificate is no longer accepted by a client pinned to it.
+	oldPinnedClient := pinnedHTTPSClient(t, first.FingerprintHex)
+	if _, err := oldPinnedClient.Get(fmt.Sprintf("https://127.0.0.1:%d/healthz", reset.Port)); err == nil {
+		t.Fatalf("expected the pre-reset fingerprint to be rejected by the post-reset listener")
+	}
+
+	if enabled, unusable, _ := ctrl.Status(); !enabled || unusable {
+		t.Fatalf("expected reset to leave the listener enabled and usable, got enabled=%v unusable=%v", enabled, unusable)
+	}
+}
+
+func TestListenerControllerResetRejectsGoneCandidate(t *testing.T) {
+	t.Parallel()
+	srv := api.NewServer(api.Deps{})
+	source := &fakeSource{pairs: []iosaccess.InterfaceAddressPair{loopbackPair}}
+	ctrl := api.NewListenerController(srv, t.TempDir(), source)
+	t.Cleanup(func() { _ = ctrl.Disable() })
+
+	if _, err := ctrl.Enable(context.Background(), loopbackPair); err != nil {
+		t.Fatalf("enable: %v", err)
+	}
+
+	// The candidate disappears before Reset is called -- Reset must revalidate
+	// exactly like Enable, not blindly rebind.
+	source.set(nil)
+	if _, err := ctrl.Reset(context.Background(), loopbackPair); err == nil {
+		t.Fatalf("expected reset to fail when the candidate is no longer in the snapshot")
+	}
+	if enabled, _, _ := ctrl.Status(); enabled {
+		t.Fatalf("must not report enabled after a rejected reset")
+	}
+}
+
 // PEM sanity: the certificate served really is the one LoadOrCreateCertificate
 // persisted (i.e. the controller isn't generating an unrelated ad hoc cert).
 func TestListenerControllerServesPersistedCertificate(t *testing.T) {

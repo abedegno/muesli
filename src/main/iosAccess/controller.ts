@@ -77,7 +77,7 @@ interface ControlRequestPair {
 
 interface ControlRequest {
   id: string
-  action: 'enable' | 'disable'
+  action: 'enable' | 'disable' | 'reset'
   pair?: ControlRequestPair
 }
 
@@ -115,9 +115,9 @@ interface PendingRequest {
 }
 
 /**
- * IOSAccessController owns exactly one enable/disable relationship with the
- * embedded process's control channel — state belongs to this one instance
- * (issue #767 / AGENTS.md: no package-level session state).
+ * IOSAccessController owns exactly one enable/disable/reset relationship
+ * with the embedded process's control channel — state belongs to this one
+ * instance (issue #767 / AGENTS.md: no package-level session state).
  */
 export class IOSAccessController {
   private readonly channel: ControlChannel
@@ -128,6 +128,7 @@ export class IOSAccessController {
   private closed = false
   private inFlightEnable: Promise<EnableResult> | null = null
   private inFlightDisable: Promise<void> | null = null
+  private inFlightReset: Promise<EnableResult> | null = null
 
   constructor(
     channel: ControlChannel,
@@ -173,6 +174,25 @@ export class IOSAccessController {
     return promise
   }
 
+  /**
+   * Invalidates the persisted certificate for pair's address and re-enables
+   * on it (Go's ListenerController.Reset), so the desktop's "Reset & rotate
+   * certificate" action genuinely issues a new certificate — plain
+   * disable()+enable() reuses the still-valid persisted certificate and
+   * rotates nothing. Concurrent callers while a reset is already in flight
+   * are coalesced onto the same request rather than issuing a duplicate.
+   */
+  async reset(pair: NetworkCandidateTriple): Promise<EnableResult> {
+    if (this.inFlightReset) return this.inFlightReset
+    const promise = this.sendRequest('reset', pair)
+      .then((resp) => this.toEnableResult(resp))
+      .finally(() => {
+        this.inFlightReset = null
+      })
+    this.inFlightReset = promise
+    return promise
+  }
+
   private toEnableResult(resp: ControlResponse): EnableResult {
     const origin = resp.origin ?? ''
     const fingerprintHex = resp.fingerprint_sha256 ?? ''
@@ -187,7 +207,7 @@ export class IOSAccessController {
     }
   }
 
-  private sendRequest(action: 'enable' | 'disable', pair?: NetworkCandidateTriple): Promise<ControlResponse> {
+  private sendRequest(action: 'enable' | 'disable' | 'reset', pair?: NetworkCandidateTriple): Promise<ControlResponse> {
     if (this.closed) {
       return Promise.reject(new Error('ios access control channel is closed'))
     }

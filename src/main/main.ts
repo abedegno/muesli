@@ -389,6 +389,7 @@ app.whenReady().then(async () => {
     ipcMain.handle(IPC.iosAccessEnumerate, () => handlers.iosAccessEnumerate())
     ipcMain.handle(IPC.iosAccessEnable, (_e, pair: IosAccessCandidate) => handlers.iosAccessEnable(pair))
     ipcMain.handle(IPC.iosAccessDisable, () => handlers.iosAccessDisable())
+    ipcMain.handle(IPC.iosAccessReset, (_e, pair: IosAccessCandidate) => handlers.iosAccessReset(pair))
     ipcMain.handle(IPC.getFull, (_e, id: string) => handlers.getFull(id))
     ipcMain.handle(IPC.createNote, (_e, title: string) => handlers.createNote(title))
     ipcMain.handle(IPC.startNoteCapture, (_e, id: string) => handlers.startNoteCapture(id))

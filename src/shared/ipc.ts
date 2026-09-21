@@ -156,6 +156,7 @@ export const IPC = {
   iosAccessEnumerate: 'muesli:iosAccessEnumerate',
   iosAccessEnable: 'muesli:iosAccessEnable',
   iosAccessDisable: 'muesli:iosAccessDisable',
+  iosAccessReset: 'muesli:iosAccessReset',
 } as const
 
 /** Main-to-renderer `authInvalidated` push emitted by auth handling in `src/main/ipcHandlers.ts`. */
@@ -600,4 +601,11 @@ export interface MuesliBridge {
   iosAccessEnumerate(): Promise<IosAccessEnumerateResult>
   iosAccessEnable(pair: IosAccessCandidate): Promise<IosAccessEnableResult>
   iosAccessDisable(): Promise<void>
+  /**
+   * Invalidates the persisted certificate for pair's address and re-enables
+   * on it, issuing a genuinely new certificate — unlike iosAccessDisable()
+   * followed by iosAccessEnable(), which reuses the still-valid persisted
+   * certificate and rotates nothing.
+   */
+  iosAccessReset(pair: IosAccessCandidate): Promise<IosAccessEnableResult>
 }

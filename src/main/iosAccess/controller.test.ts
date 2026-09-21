@@ -117,6 +117,68 @@ describe('IOSAccessController.disable', () => {
   })
 })
 
+describe('IOSAccessController.reset', () => {
+  it('sends a well-formed reset request and resolves with a fresh pairing display', async () => {
+    const channel = new FakeChannel()
+    const controller = new IOSAccessController(channel)
+
+    const promise = controller.reset(en0Pair)
+    expect(channel.lastRequest()).toEqual({
+      id: 'req-1',
+      action: 'reset',
+      pair: { InterfaceName: 'en0', Address: '192.168.1.20', Family: 'ipv4' },
+    })
+
+    channel.emitLine(
+      JSON.stringify({
+        id: 'req-1',
+        ok: true,
+        port: 54322,
+        origin: 'https://192.168.1.20:54322',
+        fingerprint_sha256: 'ef'.repeat(32),
+        phrase: 'IJ-KL',
+      }),
+    )
+
+    const result = await promise
+    expect(result.origin).toBe('https://192.168.1.20:54322')
+    expect(result.port).toBe(54322)
+    expect(result.phrase).toBe('IJ-KL')
+    expect(result.fingerprintHex).toBe('ef'.repeat(32))
+  })
+
+  it('rejects on an error response', async () => {
+    const channel = new FakeChannel()
+    const controller = new IOSAccessController(channel)
+    const promise = controller.reset(en0Pair)
+    channel.emitLine(JSON.stringify({ id: 'req-1', ok: false, error: 'candidate gone' }))
+    await expect(promise).rejects.toThrow('candidate gone')
+  })
+
+  it('coalesces concurrent reset calls onto one in-flight request', async () => {
+    const channel = new FakeChannel()
+    const controller = new IOSAccessController(channel)
+    const p1 = controller.reset(en0Pair)
+    const p2 = controller.reset(en0Pair)
+    expect(channel.sent).toHaveLength(1) // only one request dispatched
+    channel.emitLine(JSON.stringify({ id: 'req-1', ok: true, origin: 'https://x:1', fingerprint_sha256: 'aa', phrase: 'P' }))
+    const [r1, r2] = await Promise.all([p1, p2])
+    expect(r1).toEqual(r2)
+  })
+
+  it('does not coalesce with a concurrent enable — reset and enable are tracked independently', async () => {
+    const channel = new FakeChannel()
+    const controller = new IOSAccessController(channel)
+    const enablePromise = controller.enable(en0Pair)
+    const resetPromise = controller.reset(en0Pair)
+    expect(channel.sent).toHaveLength(2)
+    expect(channel.sent.map((s) => (JSON.parse(s) as { action: string }).action)).toEqual(['enable', 'reset'])
+    channel.emitLine(JSON.stringify({ id: 'req-1', ok: true, origin: 'https://x:1', fingerprint_sha256: 'aa', phrase: 'P' }))
+    channel.emitLine(JSON.stringify({ id: 'req-2', ok: true, origin: 'https://x:2', fingerprint_sha256: 'bb', phrase: 'Q' }))
+    await Promise.all([enablePromise, resetPromise])
+  })
+})
+
 describe('IOSAccessController timeouts and channel close', () => {
   beforeEach(() => {
     vi.useFakeTimers()

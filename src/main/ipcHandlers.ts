@@ -40,6 +40,7 @@ interface HandlerDeps {
     enumerate(): IosAccessEnumerateResult
     enable(pair: IosAccessCandidate): Promise<IosAccessEnableResult>
     disable(): Promise<void>
+    reset(pair: IosAccessCandidate): Promise<IosAccessEnableResult>
   }
 }
 
@@ -155,6 +156,7 @@ interface Handlers {
   iosAccessEnumerate(): Promise<IosAccessEnumerateResult>
   iosAccessEnable(pair: IosAccessCandidate): Promise<IosAccessEnableResult>
   iosAccessDisable(): Promise<void>
+  iosAccessReset(pair: IosAccessCandidate): Promise<IosAccessEnableResult>
 }
 
 const AUTH_INVALIDATED_MESSAGE = 'Your saved sign-in is no longer valid for this server. Sign in again to reconnect.'
@@ -833,6 +835,11 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     async iosAccessDisable() {
       if (!deps.iosAccess) throw new Error('local iOS access is not available')
       await deps.iosAccess.disable()
+    },
+
+    async iosAccessReset(pair) {
+      if (!deps.iosAccess) throw new Error('local iOS access is not available')
+      return deps.iosAccess.reset(pair)
     },
   }
 }

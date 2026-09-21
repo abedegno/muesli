@@ -132,6 +132,20 @@ func (c *ListenerController) Enable(ctx context.Context, pair iosaccess.Interfac
 	return info, nil
 }
 
+// Reset invalidates the persisted certificate for pair.Address (issue
+// #767's "Reset & rotate certificate": Enable alone reuses a still-valid
+// persisted certificate via iosaccess.LoadOrCreateCertificate, so calling
+// Disable then Enable never actually rotates anything) and then re-enables
+// on pair — which, with the old certificate/key files gone, regenerates and
+// persists a brand new certificate/key pair before rebinding, exactly like
+// a first-ever Enable for that address.
+func (c *ListenerController) Reset(ctx context.Context, pair iosaccess.InterfaceAddressPair) (iosaccess.ListenerInfo, error) {
+	if err := iosaccess.ResetCertificate(c.certDir, pair.Address); err != nil {
+		return iosaccess.ListenerInfo{}, fmt.Errorf("reset certificate: %w", err)
+	}
+	return c.Enable(ctx, pair)
+}
+
 // Disable closes the listener if one is running. Safe to call repeatedly.
 func (c *ListenerController) Disable() error {
 	c.mu.Lock()

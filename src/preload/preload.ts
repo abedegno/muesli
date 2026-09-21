@@ -148,6 +148,7 @@ const bridge: MuesliBridge = {
   iosAccessEnumerate: () => ipcRenderer.invoke(IPC.iosAccessEnumerate),
   iosAccessEnable: (pair) => ipcRenderer.invoke(IPC.iosAccessEnable, pair),
   iosAccessDisable: () => ipcRenderer.invoke(IPC.iosAccessDisable),
+  iosAccessReset: (pair) => ipcRenderer.invoke(IPC.iosAccessReset, pair),
   onUploadProgress: (cb: (p: UploadProgress) => void) => {
     const listener = (_e: unknown, p: UploadProgress) => cb(p)
     ipcRenderer.on(IPC.uploadProgress, listener)

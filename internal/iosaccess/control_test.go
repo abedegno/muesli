@@ -19,6 +19,9 @@ type fakeControlTarget struct {
 	enableResult iosaccess.ListenerInfo
 	disableCalls int
 	disableErr   error
+	resetCalls   []iosaccess.InterfaceAddressPair
+	resetErr     error
+	resetResult  iosaccess.ListenerInfo
 }
 
 func (f *fakeControlTarget) Enable(_ context.Context, pair iosaccess.InterfaceAddressPair) (iosaccess.ListenerInfo, error) {
@@ -32,6 +35,14 @@ func (f *fakeControlTarget) Enable(_ context.Context, pair iosaccess.InterfaceAd
 func (f *fakeControlTarget) Disable() error {
 	f.disableCalls++
 	return f.disableErr
+}
+
+func (f *fakeControlTarget) Reset(_ context.Context, pair iosaccess.InterfaceAddressPair) (iosaccess.ListenerInfo, error) {
+	f.resetCalls = append(f.resetCalls, pair)
+	if f.resetErr != nil {
+		return iosaccess.ListenerInfo{}, f.resetErr
+	}
+	return f.resetResult, nil
 }
 
 func runOneLine(t *testing.T, target iosaccess.ListenerControl, requestJSON string) iosaccess.ControlResponse {
@@ -93,6 +104,44 @@ func TestControlServerDisable(t *testing.T) {
 	}
 	if target.disableCalls != 1 {
 		t.Fatalf("disable not dispatched")
+	}
+}
+
+func TestControlServerResetSuccess(t *testing.T) {
+	target := &fakeControlTarget{resetResult: iosaccess.ListenerInfo{
+		Port: 54322, Origin: "https://192.168.1.20:54322", FingerprintHex: "ef", Phrase: "IJ-KL",
+	}}
+	resp := runOneLine(t, target, `{"id":"req-6","action":"reset","pair":{"InterfaceName":"en0","Address":"192.168.1.20","Family":"ipv4"}}`)
+	if !resp.OK || resp.ID != "req-6" || resp.Port != 54322 || resp.Origin != "https://192.168.1.20:54322" || resp.FingerprintHex != "ef" || resp.Phrase != "IJ-KL" {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	if len(target.resetCalls) != 1 || target.resetCalls[0].Address != "192.168.1.20" {
+		t.Fatalf("reset not dispatched with the right pair: %+v", target.resetCalls)
+	}
+	// Reset must not fall back to (or additionally dispatch) Enable/Disable
+	// itself -- that's ListenerController.Reset's job, not the control
+	// protocol's.
+	if len(target.enableCalls) != 0 || target.disableCalls != 0 {
+		t.Fatalf("reset must not also dispatch enable/disable at the control-protocol layer")
+	}
+}
+
+func TestControlServerResetFailure(t *testing.T) {
+	target := &fakeControlTarget{resetErr: errors.New("candidate gone")}
+	resp := runOneLine(t, target, `{"id":"req-7","action":"reset","pair":{"InterfaceName":"en0","Address":"192.168.1.20","Family":"ipv4"}}`)
+	if resp.OK || resp.Error != "candidate gone" || resp.ID != "req-7" {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+}
+
+func TestControlServerResetMissingPair(t *testing.T) {
+	target := &fakeControlTarget{}
+	resp := runOneLine(t, target, `{"id":"req-8","action":"reset"}`)
+	if resp.OK || resp.Error == "" {
+		t.Fatalf("expected an error for a missing pair: %+v", resp)
+	}
+	if len(target.resetCalls) != 0 {
+		t.Fatalf("must not dispatch Reset without a pair")
 	}
 }
 
