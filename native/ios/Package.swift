@@ -15,11 +15,14 @@
 // as a target here. `swift test` runs `MuesliTests` (pure XCTest, no UI
 // host) only.
 //
-// This manifest itself has never been resolved or built by a real Swift
-// toolchain (none is available in the sandbox this repo was authored in —
-// see the "Environment limitation" section of native/ios/README.md). Treat
-// it the same way as the rest of native/ios: carefully reasoned, not
-// compiler-verified.
+// This manifest was authored without a Swift toolchain available in the
+// sandbox this repo was originally written in (see the "Environment
+// limitation" section of native/ios/README.md), but it is no longer
+// compiler-unverified: CI's "ios (swift)" job (.github/workflows/ci.yml)
+// runs `swift build --package-path native/ios` and
+// `swift test --package-path native/ios` on a macOS runner for every PR,
+// giving this manifest and the Muesli/MuesliTests targets real compiler
+// evidence on every change.
 import PackageDescription
 
 let package = Package(

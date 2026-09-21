@@ -352,6 +352,18 @@ jobs:
       - name: Test coverage
         run: npm run test:coverage
 
+  ios:
+    name: ios (swift)
+    runs-on: macos-latest
+    needs: [classify-changes]
+    if: needs.classify-changes.outputs.exempt != 'true'
+    steps:
+      - uses: actions/checkout@v7
+      - name: swift build
+        run: swift build --package-path native/ios
+      - name: swift test
+        run: swift test --package-path native/ios
+
   pluginkit-conformance:
     name: pluginkit-conformance
     runs-on: ubuntu-latest
