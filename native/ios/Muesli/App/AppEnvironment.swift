@@ -8,16 +8,44 @@ import Foundation
 public final class AppEnvironment: ObservableObject {
     public let credentialStore: CredentialStore
     public let sessionStore: SessionStore
-    @Published public var configuration: ServerConfiguration?
+    private let configurationStore: ConfigurationStore
 
-    public init(credentialStore: CredentialStore) {
+    /// The selected server (hosted or paired-local). Persisted via
+    /// `configurationStore` on every change (issue #767 repair round) so a
+    /// relaunch never silently reverts to nil -- see `ConfigurationStore`'s
+    /// doc comment for why that mattered.
+    @Published public var configuration: ServerConfiguration? {
+        didSet {
+            if let configuration {
+                try? configurationStore.saveConfiguration(configuration)
+            } else {
+                configurationStore.clearConfiguration()
+            }
+        }
+    }
+
+    public init(
+        credentialStore: CredentialStore, configurationStore: ConfigurationStore = InMemoryConfigurationStore()
+    ) {
         self.credentialStore = credentialStore
+        self.configurationStore = configurationStore
         self.sessionStore = SessionStore(credentialStore: credentialStore)
+        // Restore the persisted configuration -- and, if a token is still
+        // saved for it, the signed-in session -- before the root view ever
+        // renders, so a relaunch with a saved token (and, for a local
+        // connection, its still-valid pin) re-enters the notes list instead
+        // of bouncing back to sign-in/pairing.
+        if let restored = configurationStore.loadConfiguration() {
+            self.configuration = restored
+            self.sessionStore.restoreIfPossible(configuration: restored)
+        }
     }
 
     #if canImport(Security)
         public static func live() -> AppEnvironment {
-            AppEnvironment(credentialStore: KeychainCredentialStore())
+            AppEnvironment(
+                credentialStore: KeychainCredentialStore(),
+                configurationStore: UserDefaultsConfigurationStore())
         }
     #endif
 

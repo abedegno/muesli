@@ -1,5 +1,22 @@
 import SwiftUI
 
+/// Resolves which `ServerConfiguration` "Sign In" submits against (issue
+/// #767 repair round). A completed local pairing pins an origin and
+/// certificate fingerprint on `AppEnvironment.configuration`; that trust
+/// must never be discarded in favor of a fresh, unpinned
+/// `ServerConfiguration` built from Sign In's own, separately-typed (and,
+/// right after pairing, still-empty) server-URL field. Extracted as a pure
+/// function so this choice is unit-testable without a SwiftUI host.
+enum SignInConfigurationResolver {
+    static func resolve(pairedConfiguration: ServerConfiguration?, serverURLText: String) -> ServerConfiguration? {
+        if let pairedConfiguration, pairedConfiguration.isLocal {
+            return pairedConfiguration
+        }
+        guard let origin = try? ServerConfigurationValidator.normalize(serverURLText) else { return nil }
+        return ServerConfiguration(origin: origin)
+    }
+}
+
 /// Hosted sign-in (server URL, email, password) and an entry point into
 /// local pairing (issue #767). Contains no network/trust/Keychain logic --
 /// it only calls into SessionStore.
@@ -14,12 +31,22 @@ struct SignInView: View {
         NavigationStack {
             Form {
                 Section("Server") {
-                    TextField("https://your-muesli-server.example", text: $serverURLText)
-                        .textContentType(.URL)
-                        .keyboardType(.URL)
-                        .autocapitalization(.none)
-                        .accessibilityLabel("Server URL")
-                        .accessibilityIdentifier("signIn.serverURLField")
+                    // Once local pairing has pinned an origin/certificate,
+                    // sign-in must submit against that exact endpoint --
+                    // never a fresh, unpinned one built from this field, so
+                    // the field is replaced with a read-only confirmation
+                    // of what was paired instead of accepting further edits.
+                    if let paired = environment.configuration, paired.isLocal {
+                        LabeledContent("Paired server", value: paired.origin.absoluteString)
+                            .accessibilityIdentifier("signIn.pairedServerAddress")
+                    } else {
+                        TextField("https://your-muesli-server.example", text: $serverURLText)
+                            .textContentType(.URL)
+                            .keyboardType(.URL)
+                            .autocapitalization(.none)
+                            .accessibilityLabel("Server URL")
+                            .accessibilityIdentifier("signIn.serverURLField")
+                    }
                 }
                 Section("Account") {
                     TextField("Email", text: $email)
@@ -56,8 +83,10 @@ struct SignInView: View {
     }
 
     private func signIn() async {
-        guard let origin = try? ServerConfigurationValidator.normalize(serverURLText) else { return }
-        let configuration = ServerConfiguration(origin: origin)
+        guard
+            let configuration = SignInConfigurationResolver.resolve(
+                pairedConfiguration: environment.configuration, serverURLText: serverURLText)
+        else { return }
         environment.configuration = configuration
         await environment.sessionStore.signIn(configuration: configuration, email: email, password: password)
     }

@@ -53,4 +53,43 @@ final class AppEnvironmentTests: XCTestCase {
         XCTAssertNotNil(reason)
         XCTAssertNil(store.loadToken(account: localConfig.keychainAccount))
     }
+
+    // MARK: - Configuration persistence (issue #767 repair round)
+
+    func testConfigurationChangePersistsToConfigurationStore() throws {
+        let credentialStore = InMemoryCredentialStore()
+        let configurationStore = InMemoryConfigurationStore()
+        let env = AppEnvironment(credentialStore: credentialStore, configurationStore: configurationStore)
+        XCTAssertNil(configurationStore.loadConfiguration())
+
+        env.configuration = localConfig
+
+        XCTAssertEqual(configurationStore.loadConfiguration(), localConfig)
+    }
+
+    func testInitRestoresPersistedConfigurationAndSignedInSession() throws {
+        let credentialStore = InMemoryCredentialStore()
+        try credentialStore.saveToken("saved-token", account: localConfig.keychainAccount)
+        let configurationStore = InMemoryConfigurationStore(localConfig)
+
+        let env = AppEnvironment(credentialStore: credentialStore, configurationStore: configurationStore)
+
+        // Proves production startup's equivalent -- AppEnvironment.live()
+        // constructs the same way -- actually calls
+        // SessionStore.restoreIfPossible before any view renders, so a
+        // relaunch with a saved token re-enters the notes list instead of
+        // bouncing back to pairing/sign-in.
+        XCTAssertEqual(env.configuration, localConfig)
+        XCTAssertEqual(env.sessionStore.state, .signedIn(localConfig))
+    }
+
+    func testInitWithNoPersistedConfigurationStaysSignedOut() {
+        let credentialStore = InMemoryCredentialStore()
+        let configurationStore = InMemoryConfigurationStore()
+
+        let env = AppEnvironment(credentialStore: credentialStore, configurationStore: configurationStore)
+
+        XCTAssertNil(env.configuration)
+        XCTAssertEqual(env.sessionStore.state, .signedOut(reason: nil))
+    }
 }
