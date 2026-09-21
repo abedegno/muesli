@@ -7,14 +7,36 @@ instance. Note creation, audio capture, transcripts, search, and Android are
 explicitly out of scope for this first slice — see the accepted spec in
 issue #767 for the full product behavior this implements.
 
-## Environment limitation (read this first)
+## Environment/verification status (read this first)
 
 **This source tree was authored and unit-tested logically in a Linux sandbox
-with no Xcode, no macOS, and no Swift toolchain available.** `swift`/`swiftc`
-do not exist in that environment, so none of the Swift code here could be
-compiled, type-checked, or run — not even `swift build`. Every file was
-written and reviewed by careful manual reading, and several pieces that are
-easy to get subtly wrong were specifically de-risked during development:
+with no Xcode, no macOS, and no Swift toolchain available** -- `swift`/
+`swiftc`/`xcodebuild` do not exist there, so none of the Swift code here
+could be compiled, type-checked, or run locally by whoever wrote it. That is
+no longer the whole story, though: this repository's CI has an `ios
+(swift)` check (`.github/workflows/ci.yml`) that runs on a macOS runner with
+a real Xcode/Swift toolchain, on every pull request, and it does build and
+test this code for real -- `xcodebuild build`/`xcodebuild test` against an
+iOS Simulator destination, both currently green (`** BUILD SUCCEEDED **`,
+"Executed 84 tests, with 0 failures."). Treat that CI check, not this
+sandbox, as the source of truth for whether the Swift here compiles and its
+unit tests pass.
+
+What CI's green check does **not** yet prove, and what remains a real,
+honestly-stated limitation:
+
+- No one has run this app interactively on a real device or simulator, or
+  exercised `MuesliUITests` (still not wired into any build -- see
+  "Building" below), so behavioral correctness beyond what `MuesliTests`'
+  unit tests assert (in particular the pairing/scan/Local-Network-denial
+  UI flows) is unverified against real iOS.
+- `LocalNetworkPermission`'s classifier (see "What's implemented" below) is
+  a best-effort guess at iOS's actual error shape for a denied Local
+  Network permission, never checked against a real device/simulator with
+  the permission actually denied.
+
+Several pieces that are easy to get subtly wrong were specifically
+de-risked during development, independent of a compiler:
 
 - The SPKI SHA-256 pinning fingerprint (`APIClient.swift`,
   `PinningSessionDelegate.spkiSHA256Hex`) uses a fixed, well-known 26-byte
@@ -32,61 +54,63 @@ easy to get subtly wrong were specifically de-risked during development:
   `pairing.test.ts` both check against a fixture value computed
   independently with Python's stdlib `base64.b32encode`.
 
-Treat this as a solid, carefully-reasoned first pass that **must be opened in
-Xcode and built before it can be trusted** — expect to fix minor API-surface
-mistakes (an availability check, an argument label) that only a real
-compiler can catch. This is called out explicitly, per this task's
-instructions, rather than silently presented as verified.
-
 ## Building
 
-There is now a checked-in `Package.swift` at the root of this directory —
-a plain-text, diffable Swift Package Manager manifest that points its
-`Muesli` library target and `MuesliTests` test target directly at the
+`Package.swift` at the root of this directory is a plain-text, diffable
+Swift Package Manager manifest that points its target paths directly at the
 existing `Muesli/` and `MuesliTests/` directories (no restructuring into an
-SPM-conventional `Sources/`/`Tests/` layout was needed). It declares
-`platforms: [.iOS(.v17)]` to match the deployment target below. **This
-manifest has never been resolved or built by a real Swift toolchain** (see
-the limitation above) — it makes the project _structurally_ buildable, not
-compiler-verified.
+SPM-conventional `Sources/`/`Tests/` layout was needed). Its `Muesli`
+product is declared as `.iOSApplication` -- SwiftPM's native "describe a
+real, installable iOS app from a package manifest, no `.xcodeproj`
+required" support -- so this directory **is** a real iOS app project, not
+just a compiled library: opening it in Xcode (or running `xcodebuild`
+against it, below) gives you an actual `Muesli.app` you can build, install,
+and launch on a simulator or device, with no manual "create an Xcode
+project and copy the sources in" step. (An earlier revision of this
+manifest declared a plain `.library` product, which could not do this --
+see git history if you need the prior state.)
 
 With Xcode installed:
 
 ```bash
 cd native/ios
-swift build                 # compiles the Muesli library target
-swift test                  # runs MuesliTests (pure XCTest, no UI host)
-# or, for a full run against a simulator (also exercises MuesliTests the
-# way Xcode's own Test navigator would):
+xcodebuild build -scheme Muesli -destination 'generic/platform=iOS Simulator'
 xcodebuild test -scheme Muesli -destination 'platform=iOS Simulator,name=iPhone 15'
 ```
 
-`scripts/run-integration-tests.sh` runs this same sequence automatically
-when a Swift toolchain is present, and skips it with a clear message
-otherwise.
+`xcodebuild test` installs and launches the real app on the simulator as
+the host for `MuesliTests`. Opening `native/ios` directly in Xcode (File ->
+Open... on this directory or `Package.swift`) exposes the same `Muesli`
+scheme for building/running/debugging interactively -- no separate
+`.xcodeproj` to create or maintain.
 
-`MuesliUITests` (the XCUITest skeleton) is deliberately **not** an SPM test
-target — XCUITest needs a real host `.app` launched against a simulator,
-which only a real Xcode project/scheme can provide, not plain `swift test`.
-To run it, or to work in Xcode's editor/debugger generally:
+`scripts/run-integration-tests.sh` runs an equivalent sequence
+automatically when a Swift toolchain is present, and skips it with a clear
+message otherwise. CI's `ios (swift)` job (`.github/workflows/ci.yml`) runs
+the same two `xcodebuild` invocations above on every PR.
 
-1. In Xcode: **File → New → Project → iOS → App**, name it `Muesli`,
-   interface **SwiftUI**, language **Swift**, minimum deployment target
-   **iOS 17**.
-2. Delete the generated `ContentView.swift`/`MuesliApp.swift` placeholders.
-3. Drag `Muesli/`, `MuesliTests/`, and `MuesliUITests/` from this directory
-   into the project navigator, letting Xcode create matching groups. When
-   prompted, add `MuesliTests`/`MuesliUITests` files to a new Unit
-   Test/UI Test target (Xcode offers to create these automatically; add
-   `XCTest` as their only dependency).
-4. Replace the generated `Info.plist` with `Muesli/Info.plist` (or merge its
-   keys — `NSCameraUsageDescription` and `NSLocalNetworkUsageDescription` are
-   required for pairing to work).
-5. No third-party dependencies — no Swift Package Manager packages beyond
-   this repo's own manifest, no CocoaPods. Only `Foundation`, `SwiftUI`,
-   `Security`, `CryptoKit`, and `AVFoundation` (all system frameworks).
-6. Build (⌘B) and fix whatever a real compiler surfaces; run the unit
-   tests (⌘U) before trusting any of this against a real server.
+`MuesliUITests` (the XCUITest skeleton) is still deliberately **not** a
+declared target in `Package.swift` -- XCUITest needs a real host `.app`
+target and a UI Test bundle target wired to it, and SwiftPM's manifest
+support has no first-class "UI test target" declaration the way an Xcode
+project does (only `.iOSApplication` app products and library/executable
+targets). Now that opening this directory in Xcode gives you the real
+`Muesli` app/scheme, running `MuesliUITests` needs one remaining manual
+step, scoped to just the UI tests:
+
+1. In Xcode, with `native/ios` open: **File -> New -> Target -> iOS UI
+   Testing Bundle**, name it `MuesliUITests`, and point its "Target to be
+   Tested" at the `Muesli` app.
+2. Add the existing `MuesliUITests/MuesliUITests.swift` file to that new
+   target (or point the target's sources at the `MuesliUITests/` directory)
+   instead of the placeholder Xcode generates.
+3. Run it (⌘U with the `MuesliUITests` target selected, or via the Test
+   navigator) against a simulator.
+
+No third-party dependencies either way -- no Swift Package Manager packages
+beyond this repo's own manifest, no CocoaPods. Only `Foundation`,
+`SwiftUI`, `Security`, `CryptoKit`, and `AVFoundation` (all system
+frameworks).
 
 ## Layout
 
@@ -109,14 +133,14 @@ Muesli/
 MuesliTests/      XCTest unit tests (no network; StubURLProtocol stands in
                   for real HTTP)
 MuesliUITests/    XCUITest skeleton (see the limitation note in the test
-                  file itself — only the sign-in flow is covered; extend
-                  pairing/list/reader/accessibility coverage once this
-                  builds in a real Xcode project)
+                  file itself — only the sign-in flow is covered; not yet
+                  wired into a UI Test target, see "Building" above; extend
+                  pairing/list/reader/accessibility coverage once it is)
 ```
 
-## What's implemented vs. what needs finishing in Xcode
+## What's implemented vs. what needs finishing on a real device/simulator
 
-Implemented and unit-tested (logically, per the limitation above):
+Implemented and unit-tested (CI-verified -- see "Building" above):
 
 - Hosted origin normalization/validation (`ServerConfigurationValidator`).
 - Local pairing payload decode/validate, including private-network host
@@ -134,14 +158,18 @@ Implemented and unit-tested (logically, per the limitation above):
 - `SafeMarkdownView`: native selectable text, non-HTTP(S) link schemes
   stripped, graceful literal fallback on parse failure.
 
-Also now implemented (same unverified-by-compiler caveat as everything
-above):
+Also implemented and unit-tested:
 
 - `AVFoundation`'s `AVCaptureMetadataOutput`-based QR scanning
   (`QRScannerView.swift`), wired into `PairingView` alongside manual entry
   (the accepted spec's always-available fallback, unchanged) via the shared
   `PairingCodeIntake` decode path so a scanned code is validated exactly
-  like a typed one.
+  like a typed one. The input/output capture-session wiring is factored
+  into a pure, generic `configureCaptureIO` function so its failure path
+  (removing an already-added device input if attaching the metadata output
+  fails, rather than leaking it) is unit-tested
+  (`QRScannerSessionConfigurationTests.swift`) without needing a real
+  capture device.
 - Local-Network-permission denial guidance: `PairingView` now verifies the
   paired origin is reachable (`LocalConnectionProbe`) before saving trust,
   classifies a connection failure that looks like a denied Local Network
@@ -150,15 +178,16 @@ above):
   `UIApplication.openSettingsURLString` deep link to Settings. The
   Info.plist string was already in place.
 
-Needs finishing once this can actually build:
+Needs finishing on a real device/simulator (see "Environment/verification
+status" above):
 
 - `LocalNetworkPermission`'s classifier is a best-effort guess at iOS's
   actual error shape for a denied Local Network permission, never checked
-  against a real device/simulator with the permission actually denied —
-  verify and adjust it first once this can build.
-- Expanding `MuesliUITests` beyond the sign-in skeleton once there is a real
-  simulator to iterate against (including the new scan/permission-guidance
-  flows, which XCUITest can exercise but XCTest unit tests cannot).
+  against a real device/simulator with the permission actually denied.
+- Wiring `MuesliUITests` into a UI Test target (see "Building" above) and
+  expanding it beyond the sign-in skeleton (including the new
+  scan/permission-guidance flows, which XCUITest can exercise but XCTest
+  unit tests cannot).
 
 ## Mobile API contract
 
