@@ -383,13 +383,27 @@ jobs:
 
           echo "== xcrun simctl list devices available -j =="
           xcrun simctl list devices available -j > /tmp/simctl-devices.json
-          device=$(jq -r '.devices | to_entries[] | select(.key | contains("iOS")) | .value[] | select(.isAvailable and (.name | contains("iPhone"))) | .name' /tmp/simctl-devices.json | tail -n1)
-          if [ -z "$device" ]; then
+          # Match by UDID (platform=iOS Simulator,id=<udid>), not by name: a
+          # bare 'name=' destination implicitly requests OS=latest, and a
+          # given device name (e.g. "iPhone 16e") may only exist paired with
+          # an older runtime, which then fails to resolve at all.
+          device_line=$(jq -r '
+            .devices
+            | to_entries[]
+            | select(.key | contains("iOS"))
+            | .value[]
+            | select(.isAvailable and (.name | contains("iPhone")))
+            | "\(.udid)\t\(.name)"
+          ' /tmp/simctl-devices.json | tail -n1)
+          if [ -z "$device_line" ]; then
             echo "no available iOS Simulator iPhone device found" >&2
             exit 1
           fi
-          echo "device=$device" >> "$GITHUB_OUTPUT"
-          echo "Resolved scheme='$scheme' device='$device'"
+          device_udid=$(printf '%s' "$device_line" | cut -f1)
+          device_name=$(printf '%s' "$device_line" | cut -f2)
+          echo "device_udid=$device_udid" >> "$GITHUB_OUTPUT"
+          echo "device_name=$device_name" >> "$GITHUB_OUTPUT"
+          echo "Resolved scheme='$scheme' device='$device_name' ($device_udid)"
       - name: xcodebuild build (iOS Simulator)
         run: |
           set -euo pipefail
@@ -402,7 +416,7 @@ jobs:
           set -euo pipefail
           xcodebuild test \
             -scheme "${{ steps.discover.outputs.scheme }}" \
-            -destination "platform=iOS Simulator,name=${{ steps.discover.outputs.device }}" \
+            -destination "platform=iOS Simulator,id=${{ steps.discover.outputs.device_udid }}" \
             -skipMacroValidation
 
   pluginkit-conformance:
