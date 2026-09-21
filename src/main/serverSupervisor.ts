@@ -10,6 +10,13 @@ export interface ServerSupervisor {
   logPath: string
   waitUntilHealthy(fetchImpl: typeof fetch): Promise<void>
   shutdown(): Promise<void>
+  /**
+   * The duplex fd-3 pipe to the embedded server's local iOS access control
+   * channel (issue #767), present on every launch (child.stdio[3]) but
+   * inert on the Go side until a request is sent. Undefined only in test
+   * doubles that don't model a 4-entry stdio array.
+   */
+  iosAccessChannel?: NodeJS.ReadWriteStream
 }
 
 export interface ServerSupervisorOptions {
@@ -129,6 +136,7 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
   private readonly onSecondInstance?: () => void
   private readonly onUnexpectedExit?: (info: { code: number | null; signal: NodeJS.Signals | null }) => void
   private readonly logStream: WriteStream | null
+  readonly iosAccessChannel?: NodeJS.ReadWriteStream
   private shutdownPromise: Promise<void> | null = null
   private quitting = false
   private childExited = false
@@ -138,6 +146,11 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
 
   constructor(child: ChildProcessWithoutNullStreams, baseUrl: string, logPath: string, logStream: WriteStream | null, opts: Required<Pick<ServerSupervisorOptions, 'healthPollIntervalMs' | 'healthTimeoutMs' | 'killTimeoutMs'>> & Pick<ServerSupervisorOptions, 'onSecondInstance' | 'onUnexpectedExit'> & { embeddedAppDataPath?: string }) {
     this.child = child
+    // child.stdio[3] is the extra fd-3 pipe (see the spawn() call below); real
+    // ChildProcess instances always have it once spawned with a 4-entry stdio
+    // array, test doubles may not model it.
+    const stdio = (child as unknown as { stdio?: unknown[] }).stdio
+    this.iosAccessChannel = stdio?.[3] as NodeJS.ReadWriteStream | undefined
     this.baseUrl = baseUrl
     this.logPath = logPath
     this.healthUrl = makeHealthUrl(baseUrl)
@@ -358,8 +371,11 @@ export async function startServerSupervisor(opts: ServerSupervisorOptions = {}):
         : { MUESLI_APPDATA: join(userDataPath, 'embedded-server') }),
       MUESLI_ADDR: `${addr.host}:${addr.port}`,
       MUESLI_PARENT_PID: String(process.pid),
+      // issue #767: fd 3 is always opened (inert until a request arrives)
+      // so "Allow iOS access" never needs to restart the embedded server.
+      MUESLI_IOS_ACCESS_FD: '3',
     },
-    stdio: ['ignore', 'pipe', 'pipe'],
+    stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
   }) as unknown as ChildProcessWithoutNullStreams
 
   const supervisor = new EmbeddedServerSupervisorImpl(child, baseUrl, logPath, logStream, {

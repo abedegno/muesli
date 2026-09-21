@@ -1211,7 +1211,18 @@ func (s *Store) PurgeExpired(ctx context.Context, olderThan time.Duration) ([]st
 
 // snippet turns Markdown body text into a short, single-line preview: strips
 // leading heading/list marks and collapses lines, capped at 160 runes.
+// snippet bounds the desktop note-list preview at 160 Unicode scalars. See
+// snippetN for the shared implementation (issue #767 adds a 240-rune mobile
+// variant, snippetN(body, mobileSnippetMaxRunes)).
 func snippet(body string) string {
+	return snippetN(body, 160)
+}
+
+// snippetN is a Markdown-to-plain-text note preview bounded to maxRunes
+// Unicode scalars: it strips heading/quote/list markers line by line, joins
+// non-empty lines with single spaces, and truncates once the accumulated
+// preview reaches maxRunes.
+func snippetN(body string, maxRunes int) string {
 	fields := strings.FieldsFunc(body, func(r rune) bool { return r == '\n' || r == '\r' })
 	var b strings.Builder
 	for _, line := range fields {
@@ -1240,13 +1251,13 @@ func snippet(body string) string {
 			b.WriteByte(' ')
 		}
 		b.WriteString(line)
-		if len([]rune(b.String())) >= 160 {
+		if len([]rune(b.String())) >= maxRunes {
 			break
 		}
 	}
 	r := []rune(b.String())
-	if len(r) > 160 {
-		return string(r[:160])
+	if len(r) > maxRunes {
+		return string(r[:maxRunes])
 	}
 	return string(r)
 }

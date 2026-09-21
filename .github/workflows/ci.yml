@@ -352,6 +352,73 @@ jobs:
       - name: Test coverage
         run: npm run test:coverage
 
+  ios:
+    name: ios (swift)
+    runs-on: macos-latest
+    needs: [classify-changes]
+    if: needs.classify-changes.outputs.exempt != 'true'
+    defaults:
+      run:
+        working-directory: native/ios
+    steps:
+      - uses: actions/checkout@v7
+      - name: Discover scheme and simulator destination
+        id: discover
+        run: |
+          set -euo pipefail
+          echo "== xcodebuild -list -json =="
+          xcodebuild -list -json > /tmp/xcodebuild-list.json
+          cat /tmp/xcodebuild-list.json
+          schemes_json=$(jq -c '(.project // .workspace).schemes' /tmp/xcodebuild-list.json)
+          if [ "$(echo "$schemes_json" | jq 'length')" -eq 0 ]; then
+            echo "no schemes found in xcodebuild -list output" >&2
+            exit 1
+          fi
+          if echo "$schemes_json" | jq -e 'index("Muesli") != null' > /dev/null; then
+            scheme=Muesli
+          else
+            scheme=$(echo "$schemes_json" | jq -r '.[0]')
+          fi
+          echo "scheme=$scheme" >> "$GITHUB_OUTPUT"
+
+          echo "== xcrun simctl list devices available -j =="
+          xcrun simctl list devices available -j > /tmp/simctl-devices.json
+          # Match by UDID (platform=iOS Simulator,id=<udid>), not by name: a
+          # bare 'name=' destination implicitly requests OS=latest, and a
+          # given device name (e.g. "iPhone 16e") may only exist paired with
+          # an older runtime, which then fails to resolve at all.
+          device_line=$(jq -r '
+            .devices
+            | to_entries[]
+            | select(.key | contains("iOS"))
+            | .value[]
+            | select(.isAvailable and (.name | contains("iPhone")))
+            | "\(.udid)\t\(.name)"
+          ' /tmp/simctl-devices.json | tail -n1)
+          if [ -z "$device_line" ]; then
+            echo "no available iOS Simulator iPhone device found" >&2
+            exit 1
+          fi
+          device_udid=$(printf '%s' "$device_line" | cut -f1)
+          device_name=$(printf '%s' "$device_line" | cut -f2)
+          echo "device_udid=$device_udid" >> "$GITHUB_OUTPUT"
+          echo "device_name=$device_name" >> "$GITHUB_OUTPUT"
+          echo "Resolved scheme='$scheme' device='$device_name' ($device_udid)"
+      - name: xcodebuild build (iOS Simulator)
+        run: |
+          set -euo pipefail
+          xcodebuild build \
+            -scheme "${{ steps.discover.outputs.scheme }}" \
+            -destination 'generic/platform=iOS Simulator' \
+            -skipMacroValidation
+      - name: xcodebuild test (iOS Simulator)
+        run: |
+          set -euo pipefail
+          xcodebuild test \
+            -scheme "${{ steps.discover.outputs.scheme }}" \
+            -destination "platform=iOS Simulator,id=${{ steps.discover.outputs.device_udid }}" \
+            -skipMacroValidation
+
   pluginkit-conformance:
     name: pluginkit-conformance
     runs-on: ubuntu-latest

@@ -22,6 +22,18 @@ const listPlugins = vi.fn()
 const checkPluginHealth = vi.fn()
 const setStreamingTranscriber = vi.fn()
 const clearStreamingTranscriber = vi.fn()
+const iosAccessEnumerate = vi.fn()
+const iosAccessEnable = vi.fn()
+const iosAccessDisable = vi.fn()
+const iosAccessReset = vi.fn()
+const writeClipboardText = vi.fn()
+const qrCodeToDataURL = vi.fn()
+
+vi.mock('qrcode', () => ({
+  default: {
+    toDataURL: (text: string, opts?: unknown) => qrCodeToDataURL(text, opts),
+  },
+}))
 
 vi.mock('@/api', () => ({
   muesli: {
@@ -42,6 +54,11 @@ vi.mock('@/api', () => ({
     checkPluginHealth: (id: string) => checkPluginHealth(id),
     setStreamingTranscriber: (req: { url: string; token: string }) => setStreamingTranscriber(req),
     clearStreamingTranscriber: () => clearStreamingTranscriber(),
+    iosAccessEnumerate: () => iosAccessEnumerate(),
+    iosAccessEnable: (pair: unknown) => iosAccessEnable(pair),
+    iosAccessDisable: () => iosAccessDisable(),
+    iosAccessReset: (pair: unknown) => iosAccessReset(pair),
+    writeClipboardText: (text: string) => writeClipboardText(text),
   },
 }))
 
@@ -68,6 +85,12 @@ afterEach(() => {
     checkPluginHealth.mockResolvedValue({ healthy: true })
     setStreamingTranscriber.mockImplementation(async ({ url }: { url: string }) => ({ id: 'stream-1', kind: 'streaming-transcriber', name: 'Streaming transcriber', endpoint_url: url, enabled: true, is_default: true }))
     clearStreamingTranscriber.mockResolvedValue(undefined)
+    iosAccessEnumerate.mockResolvedValue({ candidates: [], autoSelected: null })
+    iosAccessEnable.mockResolvedValue({ origin: 'https://192.168.1.5:9443', port: 9443, fingerprintHex: 'ab'.repeat(32), phrase: 'ABCD-EFGH', qrPayload: '{"v":1}' })
+    iosAccessDisable.mockResolvedValue(undefined)
+    iosAccessReset.mockResolvedValue({ origin: 'https://192.168.1.5:9443', port: 9444, fingerprintHex: 'cd'.repeat(32), phrase: 'WXYZ-9876', qrPayload: '{"v":1,"spki_sha256":"cd"}' })
+    qrCodeToDataURL.mockResolvedValue('data:image/png;base64,mock-qr-data')
+    writeClipboardText.mockResolvedValue(undefined)
   })
 
 function renderScreen(serverUrl = 'http://localhost:8080') {
@@ -552,5 +575,207 @@ describe('SettingsScreen', () => {
     await user.click(await screen.findByRole('button', { name: 'Connect Microsoft Calendar' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('microsoft connect failed')
+  })
+
+  it('auto-selects the single eligible address and enables iOS access', async () => {
+    const user = userEvent.setup()
+    iosAccessEnumerate.mockResolvedValue({
+      candidates: [{ interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' }],
+      autoSelected: { interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' },
+    })
+
+    renderScreen()
+
+    const enableButton = await screen.findByRole('button', { name: 'Allow iOS access' })
+    expect(enableButton).toBeEnabled()
+
+    await user.click(enableButton)
+
+    await waitFor(() => expect(iosAccessEnable).toHaveBeenCalledWith({ interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' }))
+    expect(await screen.findByText('ABCD-EFGH')).toBeInTheDocument()
+    expect(screen.getByText('https://192.168.1.5:9443')).toBeInTheDocument()
+  })
+
+  it('shows a message and disables enabling when no eligible address is found', async () => {
+    iosAccessEnumerate.mockResolvedValue({ candidates: [], autoSelected: null })
+
+    renderScreen()
+
+    expect(await screen.findByText('No eligible local network address was found on this Mac.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Allow iOS access' })).toBeDisabled()
+  })
+
+  it('lets the user choose among several eligible addresses', async () => {
+    iosAccessEnumerate.mockResolvedValue({
+      candidates: [
+        { interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' },
+        { interfaceName: 'en1', address: '10.0.0.2', family: 'ipv4' },
+      ],
+      autoSelected: null,
+    })
+
+    renderScreen()
+
+    const select = await screen.findByLabelText('Network address')
+    expect(select).toHaveValue('')
+    expect(screen.getByRole('button', { name: 'Allow iOS access' })).toBeDisabled()
+  })
+
+  it('disables iOS access and clears the pairing display', async () => {
+    const user = userEvent.setup()
+    iosAccessEnumerate.mockResolvedValue({
+      candidates: [{ interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' }],
+      autoSelected: { interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' },
+    })
+
+    renderScreen()
+
+    await user.click(await screen.findByRole('button', { name: 'Allow iOS access' }))
+    await screen.findByText('ABCD-EFGH')
+
+    await user.click(screen.getByRole('button', { name: 'Disable' }))
+
+    await waitFor(() => expect(iosAccessDisable).toHaveBeenCalledTimes(1))
+    expect(screen.queryByText('ABCD-EFGH')).not.toBeInTheDocument()
+  })
+
+  it('resets iOS access via a real reset call, not disable+enable, and shows the rotated certificate', async () => {
+    const user = userEvent.setup()
+    iosAccessEnumerate.mockResolvedValue({
+      candidates: [{ interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' }],
+      autoSelected: { interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' },
+    })
+
+    renderScreen()
+
+    await user.click(await screen.findByRole('button', { name: 'Allow iOS access' }))
+    await screen.findByText('ABCD-EFGH')
+
+    await user.click(screen.getByRole('button', { name: 'Reset & rotate certificate' }))
+
+    await waitFor(() =>
+      expect(iosAccessReset).toHaveBeenCalledWith({ interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' }),
+    )
+    // The rotated certificate's phrase replaces the old one; "Reset & rotate
+    // certificate" must never fall back to disable()+enable() (which would
+    // reuse the still-valid persisted certificate and not rotate anything).
+    expect(await screen.findByText('WXYZ-9876')).toBeInTheDocument()
+    expect(screen.queryByText('ABCD-EFGH')).not.toBeInTheDocument()
+    expect(iosAccessDisable).not.toHaveBeenCalled()
+    expect(iosAccessEnable).toHaveBeenCalledTimes(1) // only the initial "Allow iOS access" click
+  })
+
+  it('shows an error when resetting iOS access fails', async () => {
+    const user = userEvent.setup()
+    iosAccessEnumerate.mockResolvedValue({
+      candidates: [{ interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' }],
+      autoSelected: { interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' },
+    })
+    iosAccessReset.mockRejectedValue(new Error('reset failed: candidate gone'))
+
+    renderScreen()
+
+    await user.click(await screen.findByRole('button', { name: 'Allow iOS access' }))
+    await screen.findByText('ABCD-EFGH')
+
+    await user.click(screen.getByRole('button', { name: 'Reset & rotate certificate' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('reset failed: candidate gone')
+    // The stale (pre-reset) pairing display must not silently look valid.
+    expect(screen.getByText('ABCD-EFGH')).toBeInTheDocument()
+  })
+
+  it('copies the pairing code to the clipboard', async () => {
+    const user = userEvent.setup()
+    iosAccessEnumerate.mockResolvedValue({
+      candidates: [{ interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' }],
+      autoSelected: { interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' },
+    })
+
+    renderScreen()
+
+    await user.click(await screen.findByRole('button', { name: 'Allow iOS access' }))
+    await screen.findByText('ABCD-EFGH')
+
+    await user.click(screen.getByRole('button', { name: 'Copy pairing code' }))
+
+    await waitFor(() => expect(writeClipboardText).toHaveBeenCalledWith('{"v":1}'))
+  })
+
+  it('renders a real scannable QR code image for the pairing payload, alongside the text fallback', async () => {
+    const user = userEvent.setup()
+    iosAccessEnumerate.mockResolvedValue({
+      candidates: [{ interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' }],
+      autoSelected: { interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' },
+    })
+
+    renderScreen()
+
+    await user.click(await screen.findByRole('button', { name: 'Allow iOS access' }))
+    await screen.findByText('ABCD-EFGH')
+
+    await waitFor(() => expect(qrCodeToDataURL).toHaveBeenCalledWith('{"v":1}', expect.anything()))
+    const qrImage = await screen.findByRole('img', { name: /pairing qr code/i })
+    expect(qrImage).toHaveAttribute('src', 'data:image/png;base64,mock-qr-data')
+
+    // The manual-entry text fallback stays available alongside the QR image.
+    expect(screen.getByLabelText(/pairing code/i)).toHaveValue('{"v":1}')
+  })
+
+  it('keeps the manual-entry text field working even if QR code rendering fails', async () => {
+    const user = userEvent.setup()
+    iosAccessEnumerate.mockResolvedValue({
+      candidates: [{ interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' }],
+      autoSelected: { interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' },
+    })
+    qrCodeToDataURL.mockRejectedValue(new Error('canvas unavailable'))
+
+    renderScreen()
+
+    await user.click(await screen.findByRole('button', { name: 'Allow iOS access' }))
+    await screen.findByText('ABCD-EFGH')
+
+    await waitFor(() => expect(qrCodeToDataURL).toHaveBeenCalled())
+    expect(screen.queryByRole('img', { name: /pairing qr code/i })).not.toBeInTheDocument()
+    expect(screen.getByLabelText(/pairing code/i)).toHaveValue('{"v":1}')
+  })
+
+  it('re-renders the QR code for the rotated payload after Reset & rotate certificate', async () => {
+    const user = userEvent.setup()
+    iosAccessEnumerate.mockResolvedValue({
+      candidates: [{ interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' }],
+      autoSelected: { interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' },
+    })
+    qrCodeToDataURL.mockResolvedValueOnce('data:image/png;base64,first-qr')
+    qrCodeToDataURL.mockResolvedValueOnce('data:image/png;base64,rotated-qr')
+
+    renderScreen()
+
+    await user.click(await screen.findByRole('button', { name: 'Allow iOS access' }))
+    await screen.findByText('ABCD-EFGH')
+    await waitFor(() => expect(screen.getByRole('img', { name: /pairing qr code/i })).toHaveAttribute('src', 'data:image/png;base64,first-qr'))
+
+    await user.click(screen.getByRole('button', { name: 'Reset & rotate certificate' }))
+
+    await screen.findByText('WXYZ-9876')
+    await waitFor(() =>
+      expect(qrCodeToDataURL).toHaveBeenCalledWith('{"v":1,"spki_sha256":"cd"}', expect.anything()),
+    )
+    await waitFor(() => expect(screen.getByRole('img', { name: /pairing qr code/i })).toHaveAttribute('src', 'data:image/png;base64,rotated-qr'))
+  })
+
+  it('shows an error when enabling iOS access fails', async () => {
+    const user = userEvent.setup()
+    iosAccessEnumerate.mockResolvedValue({
+      candidates: [{ interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' }],
+      autoSelected: { interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' },
+    })
+    iosAccessEnable.mockRejectedValue(new Error('control channel is closed'))
+
+    renderScreen()
+
+    await user.click(await screen.findByRole('button', { name: 'Allow iOS access' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('control channel is closed')
   })
 })

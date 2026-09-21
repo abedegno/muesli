@@ -153,6 +153,10 @@ export const IPC = {
   writeClipboardText: 'muesli:writeClipboardText',
   getDigestConfig: 'muesli:getDigestConfig',
   updateDigestConfig: 'muesli:updateDigestConfig',
+  iosAccessEnumerate: 'muesli:iosAccessEnumerate',
+  iosAccessEnable: 'muesli:iosAccessEnable',
+  iosAccessDisable: 'muesli:iosAccessDisable',
+  iosAccessReset: 'muesli:iosAccessReset',
 } as const
 
 /** Main-to-renderer `authInvalidated` push emitted by auth handling in `src/main/ipcHandlers.ts`. */
@@ -413,6 +417,35 @@ export interface MeetingDetectionAutoRecordPayload {
 export type TrayNavigationTarget = '/new' | '/settings'
 
 /**
+ * One eligible (interface name, address, family) triple for local iOS access
+ * (issue #767 Task 6), as reported by `src/main/iosAccess/controller.ts`'s
+ * `enumerate()`. Renderer-facing mirror of `NetworkCandidateTriple` /
+ * `NetworkCandidate` so the Settings UI never imports main-process code.
+ */
+export interface IosAccessCandidate {
+  interfaceName: string
+  address: string
+  family: 'ipv4' | 'ipv6'
+}
+
+/** Result of `iosAccessEnumerate`, handled by `iosAccessEnumerate` in `src/main/ipcHandlers.ts`. */
+export interface IosAccessEnumerateResult {
+  candidates: IosAccessCandidate[]
+  /** Set only when exactly one eligible candidate exists. */
+  autoSelected: IosAccessCandidate | null
+}
+
+/** Result of `iosAccessEnable`, handled by `iosAccessEnable` in `src/main/ipcHandlers.ts`. */
+export interface IosAccessEnableResult {
+  origin: string
+  port: number
+  fingerprintHex: string
+  phrase: string
+  /** Compact JSON string for the QR code / manual-entry display. */
+  qrPayload: string
+}
+
+/**
  * Awaited renderer-facing API exposed by preload. Promise methods invoke their
  * matching `IPC` channel; most delegate to same-named handlers returned by
  * `createHandlers` in `src/main/ipcHandlers.ts`, while OS/audio/export/meeting
@@ -564,4 +597,15 @@ export interface MuesliBridge {
   writeClipboardText(text: string): Promise<void>
   getDigestConfig(): Promise<DigestConfig>
   updateDigestConfig(cadence: DigestConfig['cadence']): Promise<DigestConfig>
+  // --- Local iOS access (issue #767 Task 6) ---
+  iosAccessEnumerate(): Promise<IosAccessEnumerateResult>
+  iosAccessEnable(pair: IosAccessCandidate): Promise<IosAccessEnableResult>
+  iosAccessDisable(): Promise<void>
+  /**
+   * Invalidates the persisted certificate for pair's address and re-enables
+   * on it, issuing a genuinely new certificate — unlike iosAccessDisable()
+   * followed by iosAccessEnable(), which reuses the still-valid persisted
+   * certificate and rotates nothing.
+   */
+  iosAccessReset(pair: IosAccessCandidate): Promise<IosAccessEnableResult>
 }

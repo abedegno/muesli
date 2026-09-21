@@ -3,9 +3,11 @@ import { appendFileSync, mkdirSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, safeStorage, session, shell, Tray } from 'electron'
-import { IPC, type AuthInvalidatedNotice, type ConnectRequest, type CreateConversationRequest, type DiarizationReviewUpdate, type ExportRequestOptions, type MeetingDetectionEventPayload, type SearchOptions, type SendMessageRequest, type TrayNavigationTarget, type UpdateActionItemRequest, type UpdatePersonRequest, type UploadAudioRequest } from '../shared/ipc'
+import { IPC, type AuthInvalidatedNotice, type ConnectRequest, type CreateConversationRequest, type DiarizationReviewUpdate, type ExportRequestOptions, type IosAccessCandidate, type MeetingDetectionEventPayload, type SearchOptions, type SendMessageRequest, type TrayNavigationTarget, type UpdateActionItemRequest, type UpdatePersonRequest, type UploadAudioRequest } from '../shared/ipc'
 import type { CalendarEvent, CreateShareRequest, DigestConfig, EmbeddedStartupStatus, RetranscribeNoteRequest, RuleGroup, TemplatePhase, TemplateSection } from '../shared/types'
 import { createHandlers } from './ipcHandlers'
+import { IOSAccessController, ProcessControlChannel } from './iosAccess/controller'
+import { systemRawInterfaces } from './iosAccess/systemInterfaces'
 import { makeMicPermission } from './micPermission'
 import { resolveAudiotapBin } from './resourcePaths'
 import { startEmbeddedStartupMonitor } from './embeddedStartupMonitor'
@@ -247,12 +249,22 @@ app.whenReady().then(async () => {
       emit: (event) => mainWindow?.webContents.send(IPC.livePromptsEvent, event),
     })
     livePrompts = livePromptRelay
+    // issue #767 Task 6: the embedded server always opens fd 3 (inert until a
+    // request arrives, see MUESLI_IOS_ACCESS_FD above), so the controller can
+    // be built unconditionally whenever a real ChildProcess supplied it.
+    // Only test-double supervisors (no 4-entry stdio array) leave it undefined.
+    const iosAccessController = supervisor.iosAccessChannel
+      ? new IOSAccessController(new ProcessControlChannel(supervisor.iosAccessChannel), {
+          listInterfaces: systemRawInterfaces,
+        })
+      : null
     const handlers = createHandlers({
       tokenStore,
       fetch: fetchImpl,
       embedded: true,
       embeddedBaseUrl: supervisor.baseUrl,
       secretStore,
+      iosAccess: iosAccessController ?? undefined,
       onAuthInvalidated: (notice: AuthInvalidatedNotice) => {
         mainWindow?.webContents.send(IPC.authInvalidated, notice)
       },
@@ -374,6 +386,10 @@ app.whenReady().then(async () => {
     })
     ipcMain.handle(IPC.getDigestConfig, () => handlers.getDigestConfig())
     ipcMain.handle(IPC.updateDigestConfig, (_e, cadence: DigestConfig['cadence']) => handlers.updateDigestConfig(cadence))
+    ipcMain.handle(IPC.iosAccessEnumerate, () => handlers.iosAccessEnumerate())
+    ipcMain.handle(IPC.iosAccessEnable, (_e, pair: IosAccessCandidate) => handlers.iosAccessEnable(pair))
+    ipcMain.handle(IPC.iosAccessDisable, () => handlers.iosAccessDisable())
+    ipcMain.handle(IPC.iosAccessReset, (_e, pair: IosAccessCandidate) => handlers.iosAccessReset(pair))
     ipcMain.handle(IPC.getFull, (_e, id: string) => handlers.getFull(id))
     ipcMain.handle(IPC.createNote, (_e, title: string) => handlers.createNote(title))
     ipcMain.handle(IPC.startNoteCapture, (_e, id: string) => handlers.startNoteCapture(id))

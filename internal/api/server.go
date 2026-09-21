@@ -199,6 +199,15 @@ func (s *Server) routes() {
 		r.Get("/api/notes/{id}/related", s.handleRelatedNotes)
 		r.Delete("/api/shares/{token}", s.handleRevokeShare)
 
+		// Mobile API (issue #767): field-minimized, bounded, keyset-paginated
+		// notes for the native iOS client. Registered on the same
+		// authenticated + body-limited router group as the desktop routes so
+		// both the loopback listener and the additional private iOS TLS
+		// listener (internal/api/listener_controller.go) expose identical
+		// behavior via one implementation.
+		r.Get("/api/mobile/v1/notes", s.handleListMobileNotes)
+		r.Get("/api/mobile/v1/notes/{id}", s.handleGetMobileNoteDetail)
+
 		r.Get("/api/smart-lists", s.handleListSmartLists)
 		r.Get("/api/smart-lists/trash", s.handleListTrashedSmartLists)
 		r.Post("/api/smart-lists", s.handleCreateSmartList)

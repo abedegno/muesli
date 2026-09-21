@@ -1,0 +1,104 @@
+{
+  "_comment": "Shared Node/Go test vectors for issue #767's local iOS access candidate enumeration. Each case is a raw OS-style interface snapshot (name + CIDR/plain addresses, as net.Interfaces()/os.networkInterfaces() would report for an already-active, non-loopback interface) and the exact eligible InterfaceAddressPair/NetworkCandidate set both languages must independently derive, with no cross-language calls between the two test suites.",
+  "cases": [
+    {
+      "name": "zero interfaces",
+      "interfaces": [],
+      "expected": []
+    },
+    {
+      "name": "single eligible ipv4 address auto-selects",
+      "interfaces": [{ "name": "en0", "addresses": ["192.168.1.20/24"] }],
+      "expected": [{ "interfaceName": "en0", "address": "192.168.1.20", "family": "ipv4" }]
+    },
+    {
+      "name": "single eligible ipv6 ULA address",
+      "interfaces": [{ "name": "en0", "addresses": ["fd12:3456:789a:1::20/64"] }],
+      "expected": [{ "interfaceName": "en0", "address": "fd12:3456:789a:1::20", "family": "ipv6" }]
+    },
+    {
+      "name": "dual stack single interface yields two candidates",
+      "interfaces": [
+        { "name": "en0", "addresses": ["192.168.1.20/24", "fd12:3456:789a:1::20/64"] }
+      ],
+      "expected": [
+        { "interfaceName": "en0", "address": "192.168.1.20", "family": "ipv4" },
+        { "interfaceName": "en0", "address": "fd12:3456:789a:1::20", "family": "ipv6" }
+      ]
+    },
+    {
+      "name": "same interface multiple eligible ipv4 addresses",
+      "interfaces": [{ "name": "en0", "addresses": ["192.168.1.20/24", "192.168.1.21/24"] }],
+      "expected": [
+        { "interfaceName": "en0", "address": "192.168.1.20", "family": "ipv4" },
+        { "interfaceName": "en0", "address": "192.168.1.21", "family": "ipv4" }
+      ]
+    },
+    {
+      "name": "ethernet wifi and vpn interfaces each contribute one pair",
+      "interfaces": [
+        { "name": "en0", "addresses": ["192.168.1.20/24"] },
+        { "name": "en1", "addresses": ["192.168.86.5/24"] },
+        { "name": "utun0", "addresses": ["10.8.0.5/24"] }
+      ],
+      "expected": [
+        { "interfaceName": "en0", "address": "192.168.1.20", "family": "ipv4" },
+        { "interfaceName": "en1", "address": "192.168.86.5", "family": "ipv4" },
+        { "interfaceName": "utun0", "address": "10.8.0.5", "family": "ipv4" }
+      ]
+    },
+    {
+      "name": "same address present on two interfaces yields two distinct pairs",
+      "interfaces": [
+        { "name": "en0", "addresses": ["192.168.1.20/24"] },
+        { "name": "utun0", "addresses": ["192.168.1.20/24"] }
+      ],
+      "expected": [
+        { "interfaceName": "en0", "address": "192.168.1.20", "family": "ipv4" },
+        { "interfaceName": "utun0", "address": "192.168.1.20", "family": "ipv4" }
+      ]
+    },
+    {
+      "name": "excludes loopback wildcard link-local and public addresses",
+      "interfaces": [
+        { "name": "lo0", "addresses": ["127.0.0.1/8", "::1/128"] },
+        {
+          "name": "en0",
+          "addresses": [
+            "0.0.0.0/0",
+            "169.254.1.5/16",
+            "fe80::1/64",
+            "8.8.8.8/32",
+            "2001:4860:4860::8888/128"
+          ]
+        }
+      ],
+      "expected": []
+    },
+    {
+      "name": "excludes public alongside one eligible private address on the same interface",
+      "interfaces": [{ "name": "en0", "addresses": ["203.0.113.5/24", "10.0.0.4/24"] }],
+      "expected": [{ "interfaceName": "en0", "address": "10.0.0.4", "family": "ipv4" }]
+    },
+    {
+      "name": "rfc1918 ranges 10 172-16-31 and 192-168 all eligible",
+      "interfaces": [
+        {
+          "name": "en0",
+          "addresses": ["10.1.2.3/8", "172.16.0.9/12", "172.31.255.1/12", "192.168.0.1/16"]
+        }
+      ],
+      "expected": [
+        { "interfaceName": "en0", "address": "10.1.2.3", "family": "ipv4" },
+        { "interfaceName": "en0", "address": "172.16.0.9", "family": "ipv4" },
+        { "interfaceName": "en0", "address": "172.31.255.1", "family": "ipv4" },
+        { "interfaceName": "en0", "address": "192.168.0.1", "family": "ipv4" }
+      ]
+    },
+    {
+      "name": "172-15 and 172-32 are outside the RFC1918 block and excluded",
+      "interfaces": [{ "name": "en0", "addresses": ["172.15.0.1/16", "172.32.0.1/16"] }],
+      "expected": []
+    }
+  ]
+}

@@ -3,7 +3,7 @@ import { writeFile } from 'node:fs/promises'
 import JSZip from 'jszip'
 import { fullNoteToMarkdown } from '../renderer/lib/noteMarkdown'
 import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, DigestConfig, DiarizationReview, Folder, FolderVisibility, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, Plugin, PluginHealth, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchResult, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from '../shared/types'
-import type { ConnectRequest, CreateConversationRequest, CreateConversationResponse, DiarizationReviewUpdate, ExportRequestOptions, ListNoteActionItemsResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdateActionItemRequest, UpdatePersonRequest, UploadAudioRequest } from '../shared/ipc'
+import type { ConnectRequest, CreateConversationRequest, CreateConversationResponse, DiarizationReviewUpdate, ExportRequestOptions, IosAccessCandidate, IosAccessEnableResult, IosAccessEnumerateResult, ListNoteActionItemsResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdateActionItemRequest, UpdatePersonRequest, UploadAudioRequest } from '../shared/ipc'
 import { INSECURE_CONNECTION_CODE, isInsecureRemote } from '../shared/url'
 import type { AuthInvalidatedNotice } from '../shared/ipc'
 import type { UploadProgress } from './uploadMachine'
@@ -29,6 +29,19 @@ interface HandlerDeps {
   makeClient?: (baseUrl: string) => Pick<MuesliClient, 'setupNeeded' | 'setup' | 'login' | 'createToken'>
   generatePassword?: () => string
   log?: (msg: string, err?: unknown) => void
+  /**
+   * Local iOS access control surface (issue #767 Task 6), backed by
+   * `IOSAccessController` over the embedded server's fd-3 channel. Undefined
+   * when the supervisor exposed no channel (test doubles, or a supervisor
+   * built without a 4-entry stdio array) — the handlers below reject rather
+   * than silently no-op in that case.
+   */
+  iosAccess?: {
+    enumerate(): IosAccessEnumerateResult
+    enable(pair: IosAccessCandidate): Promise<IosAccessEnableResult>
+    disable(): Promise<void>
+    reset(pair: IosAccessCandidate): Promise<IosAccessEnableResult>
+  }
 }
 
 interface Handlers {
@@ -140,6 +153,10 @@ interface Handlers {
   openMicrosoftCalendarOAuthStart(): Promise<void>
   getDigestConfig(): Promise<DigestConfig>
   updateDigestConfig(cadence: DigestConfig['cadence']): Promise<DigestConfig>
+  iosAccessEnumerate(): Promise<IosAccessEnumerateResult>
+  iosAccessEnable(pair: IosAccessCandidate): Promise<IosAccessEnableResult>
+  iosAccessDisable(): Promise<void>
+  iosAccessReset(pair: IosAccessCandidate): Promise<IosAccessEnableResult>
 }
 
 const AUTH_INVALIDATED_MESSAGE = 'Your saved sign-in is no longer valid for this server. Sign in again to reconnect.'
@@ -803,6 +820,26 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       } catch (err) {
         return { success: false as const, error: err instanceof Error ? err.message : String(err) }
       }
+    },
+
+    async iosAccessEnumerate() {
+      if (!deps.iosAccess) throw new Error('local iOS access is not available')
+      return deps.iosAccess.enumerate()
+    },
+
+    async iosAccessEnable(pair) {
+      if (!deps.iosAccess) throw new Error('local iOS access is not available')
+      return deps.iosAccess.enable(pair)
+    },
+
+    async iosAccessDisable() {
+      if (!deps.iosAccess) throw new Error('local iOS access is not available')
+      await deps.iosAccess.disable()
+    },
+
+    async iosAccessReset(pair) {
+      if (!deps.iosAccess) throw new Error('local iOS access is not available')
+      return deps.iosAccess.reset(pair)
     },
   }
 }

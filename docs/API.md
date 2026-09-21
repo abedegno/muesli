@@ -1447,3 +1447,92 @@ Re-enqueues a failed job.
   - `404`: job not found or associated note not found
   - `409`: job is not in `failed` state
   - `500`: database error
+
+## Mobile API (iOS)
+
+Field-minimized, bounded, keyset-paginated endpoints for the native iOS
+client (issue #767 — see [`native/ios/README.md`](../native/ios/README.md)).
+Same authentication and owner scoping as every other authenticated endpoint;
+registered on the desktop's loopback listener and, for local Electron
+"Allow iOS access" connections, on an additional private TLS listener
+serving the identical handlers.
+
+#### `GET /api/mobile/v1/notes`
+
+Paginated list of the authenticated identity's live (non-deleted) notes,
+ordered `pinned DESC, created_at DESC, id DESC`.
+
+- Auth: required
+- Query params:
+  - `limit` — integer 1-100, default 30
+  - `cursor` — opaque, versioned, base64url-encoded keyset cursor from a
+    previous response's `next_cursor`; omit for the first page
+- Response `200`:
+  ```json
+  {
+    "items": [
+      {
+        "id": "...",
+        "title": "...",
+        "status": "ready",
+        "pinned": false,
+        "started_at": "2026-01-01T00:00:00Z",
+        "ended_at": "2026-01-01T00:30:00Z",
+        "created_at": "2026-01-01T00:00:00Z",
+        "updated_at": "2026-01-01T00:31:00Z",
+        "snippet": "...",
+        "tags": ["..."]
+      }
+    ],
+    "next_cursor": "..."
+  }
+  ```
+  `items` and each item's `tags` are always arrays, never null. `next_cursor`
+  is omitted once the traversal reaches its final page. `started_at`/
+  `ended_at` are omitted when unset.
+- Errors:
+  - `400 {"error":"invalid limit"}`: `limit` outside 1-100 or non-integer
+  - `400 {"error":"invalid cursor"}`: malformed, wrong-versioned, or
+    unparseable cursor
+  - `401`: not authenticated
+  - `500`: database error
+  - `503`: authentication storage unavailable
+
+#### `GET /api/mobile/v1/notes/{id}`
+
+Owner-scoped note detail: metadata, authored Markdown body, and every
+summary in `created_at ASC, id ASC` order.
+
+- Auth: required
+- Response `200`:
+  ```json
+  {
+    "note": {
+      "id": "...",
+      "title": "...",
+      "status": "ready",
+      "pinned": false,
+      "created_at": "2026-01-01T00:00:00Z",
+      "updated_at": "2026-01-01T00:31:00Z",
+      "tags": ["..."]
+    },
+    "body_markdown": "...",
+    "summaries": [
+      {
+        "id": "...",
+        "template_name": "...",
+        "status": "ready",
+        "truncated": false,
+        "sections": [{ "heading": "...", "content_markdown": "..." }]
+      }
+    ]
+  }
+  ```
+  `note` has the list item's fields minus `snippet`. `summaries` and each
+  summary's `sections` are always arrays, never null.
+- Errors:
+  - `404 {"error":"not found"}`: invalid UUID, deleted, absent, or another
+    owner's note — all four cases are intentionally indistinguishable
+  - `401`: not authenticated
+  - `500`: database error
+  - `503`: authentication storage unavailable
