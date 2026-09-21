@@ -373,6 +373,14 @@ func run(ctx context.Context, cfg config.Config) (err error) {
 	}
 
 	srv := api.NewServer(api.Deps{Store: st, Storage: prov, Crypto: cr, Worker: wpool, Config: cfg, Embedder: emb, BackupRunner: backup.PgDumpRunner{}, EmbeddedProgress: startupReporter})
+
+	// Issue #767: opt-in local iOS access control channel. A no-op unless
+	// Electron has set MUESLI_IOS_ACCESS_FD for this launch (desktop-only;
+	// never set for hosted/CI deployments).
+	if _, err := maybeStartIOSAccessControl(ctx, srv); err != nil {
+		slog.Error("ios access control", "error", err)
+	}
+
 	slog.Info("muesli listening", "addr", cfg.Addr)
 	fmt.Print(readyBanner(cfg.PublicURL))
 	if completeEmbeddedStartup != nil {
