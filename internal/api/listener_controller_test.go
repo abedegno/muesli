@@ -24,6 +24,13 @@ type fakeSource struct {
 	mu    sync.Mutex
 	pairs []iosaccess.InterfaceAddressPair
 	err   error
+	// onSnapshot, if set, is invoked once by the next Snapshot call and then
+	// cleared (one-shot) -- a test-only hook that lets a test pause a
+	// watcher goroutine synchronously inside its ticker-branch Snapshot
+	// call, deterministically reproducing the exact stale-watcher race
+	// window (already past the select, mid-iteration, when a concurrent
+	// Enable cancels it) instead of relying on real goroutine timing.
+	onSnapshot func()
 }
 
 func (f *fakeSource) set(pairs []iosaccess.InterfaceAddressPair) {
@@ -32,7 +39,22 @@ func (f *fakeSource) set(pairs []iosaccess.InterfaceAddressPair) {
 	f.pairs = pairs
 }
 
+func (f *fakeSource) setOnSnapshot(hook func()) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.onSnapshot = hook
+}
+
 func (f *fakeSource) Snapshot(context.Context) ([]iosaccess.InterfaceAddressPair, error) {
+	f.mu.Lock()
+	hook := f.onSnapshot
+	f.onSnapshot = nil
+	f.mu.Unlock()
+
+	if hook != nil {
+		hook()
+	}
+
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.err != nil {
@@ -214,6 +236,78 @@ func TestListenerControllerWatchdogClosesOnAddressDisappearance(t *testing.T) {
 		t.Fatalf("expected re-enable to succeed cleanly, got enabled=%v unusable=%v", enabled, unusable)
 	}
 	_ = ctrl.Disable()
+}
+
+func TestListenerControllerStaleWatchdogDoesNotCloseNewGeneration(t *testing.T) {
+	t.Parallel()
+	srv := api.NewServer(api.Deps{})
+	source := &fakeSource{pairs: []iosaccess.InterfaceAddressPair{loopbackPair}}
+	ctrl := api.NewListenerControllerWithWatchInterval(srv, t.TempDir(), source, 20*time.Millisecond)
+	t.Cleanup(func() { _ = ctrl.Disable() })
+
+	if _, err := ctrl.Enable(context.Background(), loopbackPair); err != nil {
+		t.Fatalf("enable (first generation): %v", err)
+	}
+	firstUnusableCh := ctrl.UnusableCh()
+
+	// Pause the first generation's watchdog goroutine synchronously inside
+	// its next Snapshot call -- i.e. already past the ticker-branch select,
+	// committed to processing this tick -- exactly the moment the reviewer
+	// described: a concurrent Enable's cancellation cannot un-commit a
+	// watcher that's already this far into an iteration.
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	source.setOnSnapshot(func() {
+		close(entered)
+		<-release
+	})
+
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for the first generation's watchdog to enter Snapshot")
+	}
+
+	// While the stale watcher is blocked mid-iteration, re-enable on the
+	// SAME address pair -- a new generation, with a new unusableCh, but an
+	// address pair that Equal()s the stale watcher's captured one.
+	second, err := ctrl.Enable(context.Background(), loopbackPair)
+	if err != nil {
+		t.Fatalf("enable (second generation): %v", err)
+	}
+	secondUnusableCh := ctrl.UnusableCh()
+	if secondUnusableCh == firstUnusableCh {
+		t.Fatalf("expected the second Enable to produce a distinct unusableCh")
+	}
+
+	// Now make the address look gone, and let the stale watcher's blocked
+	// Snapshot call return -- it proceeds to its failure path believing
+	// itself current, since its captured address pair still Equal()s
+	// ctrl's (new) current pair.
+	source.set(nil)
+	close(release)
+
+	select {
+	case <-firstUnusableCh:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for the stale watchdog to finish its failure path")
+	}
+
+	// The stale watcher must not have torn down the second generation.
+	if enabled, unusable, pair := ctrl.Status(); !enabled || unusable || pair == nil {
+		t.Fatalf("stale first-generation watchdog closed the second generation: enabled=%v unusable=%v pair=%v", enabled, unusable, pair)
+	}
+
+	// And the second generation's listener is still actually serving.
+	client := pinnedHTTPSClient(t, second.FingerprintHex)
+	resp, err := client.Get(fmt.Sprintf("https://127.0.0.1:%d/healthz", second.Port))
+	if err != nil {
+		t.Fatalf("expected the second generation's listener to still accept connections: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status %d", resp.StatusCode)
+	}
 }
 
 func TestListenerControllerResetRotatesCertificate(t *testing.T) {

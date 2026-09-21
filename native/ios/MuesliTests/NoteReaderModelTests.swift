@@ -73,6 +73,15 @@ final class NoteReaderModelTests: XCTestCase {
         XCTAssertTrue(called)
     }
 
+    func testLocalTrustChangedCallsOnLocalTrustChanged() async {
+        StubURLProtocol.enqueueFailure(URLError(.serverCertificateUntrusted))
+        let model = makeModel()
+        var called = false
+        model.onLocalTrustChanged = { called = true }
+        await model.load()
+        XCTAssertTrue(called)
+    }
+
     func testRefreshDoesNotPollOnItsOwn() async {
         // Only one request is ever made unless refresh() is called explicitly.
         StubURLProtocol.enqueue(status: 200, json: detailJSON())

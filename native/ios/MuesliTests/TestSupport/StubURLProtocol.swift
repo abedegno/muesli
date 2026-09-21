@@ -17,8 +17,17 @@ final class StubURLProtocol: URLProtocol {
         }
     }
 
-    /// FIFO queue of (matcher, stub) pairs consumed in order per request.
-    static var queue: [(matches: (URLRequest) -> Bool, stub: Stub)] = []
+    /// Either a canned HTTP response or a transport-level failure -- the
+    /// latter is what lets a test drive APIClient.performRequest's
+    /// URLError-to-APIClientError.localTrustChanged mapping through a real
+    /// request, the same way a Stub drives an HTTP-status response.
+    enum Outcome {
+        case response(Stub)
+        case failure(Error)
+    }
+
+    /// FIFO queue of (matcher, outcome) pairs consumed in order per request.
+    static var queue: [(matches: (URLRequest) -> Bool, outcome: Outcome)] = []
     static var recordedRequests: [URLRequest] = []
 
     static func reset() {
@@ -27,7 +36,13 @@ final class StubURLProtocol: URLProtocol {
     }
 
     static func enqueue(status: Int, json: String, matches: @escaping (URLRequest) -> Bool = { _ in true }) {
-        queue.append((matches, Stub(status: status, json: json)))
+        queue.append((matches, .response(Stub(status: status, json: json))))
+    }
+
+    /// Enqueues a transport-level failure (e.g. `URLError(.serverCertificateUntrusted)`)
+    /// for the next matching request, instead of a canned HTTP response.
+    static func enqueueFailure(_ error: Error, matches: @escaping (URLRequest) -> Bool = { _ in true }) {
+        queue.append((matches, .failure(error)))
     }
 
     static func makeSession() -> URLSession {
@@ -45,13 +60,18 @@ final class StubURLProtocol: URLProtocol {
             client?.urlProtocol(self, didFailWithError: URLError(.unsupportedURL))
             return
         }
-        let stub = Self.queue[index].stub
+        let outcome = Self.queue[index].outcome
         Self.queue.remove(at: index)
-        let response = HTTPURLResponse(
-            url: request.url!, statusCode: stub.status, httpVersion: "HTTP/1.1", headerFields: stub.headers)!
-        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: stub.body)
-        client?.urlProtocolDidFinishLoading(self)
+        switch outcome {
+        case .response(let stub):
+            let response = HTTPURLResponse(
+                url: request.url!, statusCode: stub.status, httpVersion: "HTTP/1.1", headerFields: stub.headers)!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: stub.body)
+            client?.urlProtocolDidFinishLoading(self)
+        case .failure(let error):
+            client?.urlProtocol(self, didFailWithError: error)
+        }
     }
 
     override func stopLoading() {}

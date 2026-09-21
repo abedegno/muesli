@@ -217,7 +217,16 @@ func (c *ListenerController) watch(ctx context.Context, bound iosaccess.Interfac
 			c.mu.Lock()
 			// Only act if we're still watching the same generation (Enable
 			// or Disable may have already superseded this goroutine).
-			if c.pair != nil && c.pair.Equal(bound) {
+			// Address-pair equality alone is not enough: a re-enable on the
+			// exact same pair produces a new generation with an equal pair,
+			// so a stale watcher whose cancellation raced with this ticker
+			// branch (already past the select, mid-iteration, when Enable
+			// cancelled it) would otherwise still match and tear down the
+			// new listener. unusableCh is generation-specific -- compare it
+			// by identity against the controller's CURRENT one, under the
+			// same lock, so only the watcher that actually owns the live
+			// generation can act.
+			if c.pair != nil && c.pair.Equal(bound) && c.unusableCh == unusableCh {
 				c.disableLocked()
 				c.unusable = true
 			}

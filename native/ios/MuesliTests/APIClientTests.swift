@@ -91,6 +91,19 @@ final class APIClientTests: XCTestCase {
         }
     }
 
+    func testCertificateErrorThrowsLocalTrustChanged() async {
+        StubURLProtocol.enqueueFailure(URLError(.serverCertificateUntrusted))
+        let client = makeClient()
+        do {
+            _ = try await client.listNotes(limit: 30, cursor: nil)
+            XCTFail("expected an error")
+        } catch let error as APIClientError {
+            XCTAssertEqual(error, .localTrustChanged)
+        } catch {
+            XCTFail("wrong error type: \(error)")
+        }
+    }
+
     func test404SurfacesServerError() async {
         StubURLProtocol.enqueue(status: 404, json: "{\"error\":\"not found\"}")
         let client = makeClient()

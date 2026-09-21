@@ -111,4 +111,17 @@ final class NotesListModelTests: XCTestCase {
             XCTFail("401 must not surface as a generic list error state")
         }
     }
+
+    func testLocalTrustChangedCallsOnLocalTrustChangedAndDoesNotSetErrorState() async {
+        StubURLProtocol.enqueueFailure(URLError(.serverCertificateUntrusted))
+        let model = makeModel()
+        var localTrustChangedCalled = false
+        model.onLocalTrustChanged = { localTrustChangedCalled = true }
+        await model.loadFirstPage()
+        XCTAssertTrue(localTrustChangedCalled)
+        XCTAssertEqual(model.items, [])
+        if case .error = model.loadState {
+            XCTFail("a local trust change must not surface as a generic list error state")
+        }
+    }
 }
