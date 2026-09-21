@@ -127,7 +127,7 @@ public final class APIClient {
         } catch let error as APIClientError {
             throw error
         } catch let urlError as URLError where urlError.code == .serverCertificateUntrusted
-            || urlError.code == .secureConnectionFailed:
+            || urlError.code == .secureConnectionFailed {
             throw APIClientError.localTrustChanged
         } catch {
             throw APIClientError.transport(error.localizedDescription)
