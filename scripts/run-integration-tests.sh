@@ -48,12 +48,23 @@ go test ./internal/iosaccess/... ./internal/api/... -run 'TestListenerController
 echo "== client (node): iOS pairing/network-candidate shared vectors + Electron controller =="
 npx vitest run src/main/iosAccess/ src/main/serverSupervisor.test.ts
 
-echo "== native iOS: unit tests (requires macOS + Xcode; see native/ios/README.md) =="
-if ! command -v xcodebuild >/dev/null 2>&1; then
-  echo "xcodebuild not found; skipping. This phase cannot run outside macOS."
+echo "== native iOS: build + unit tests (native/ios/Package.swift; see native/ios/README.md) =="
+if ! command -v swift >/dev/null 2>&1; then
+  echo "swift not found; skipping. This phase cannot run outside macOS with Xcode's Swift toolchain."
 else
-  echo "No .xcodeproj is checked in yet (native/ios/README.md explains why and how to create one)."
-  echo "Once created: xcodebuild test -project native/ios/Muesli.xcodeproj -scheme Muesli -destination 'platform=iOS Simulator,name=iPhone 15'"
+  (cd native/ios && swift build)
+  if command -v xcodebuild >/dev/null 2>&1; then
+    # xcodebuild can build+test an SPM package directly against a simulator
+    # destination once it declares an iOS platform, without a checked-in
+    # .xcodeproj — this also exercises MuesliTests the same way Xcode's own
+    # Test navigator would.
+    (cd native/ios && xcodebuild test -scheme Muesli -destination 'platform=iOS Simulator,name=iPhone 15')
+  else
+    # No Xcode: fall back to plain SwiftPM testing. This still runs
+    # MuesliTests (pure XCTest, no UI host) but cannot run MuesliUITests,
+    # which needs a real .app + simulator that only xcodebuild provides.
+    (cd native/ios && swift test)
+  fi
 fi
 
 echo "done."

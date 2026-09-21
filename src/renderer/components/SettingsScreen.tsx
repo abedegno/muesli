@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { loadCalendarPrefs, saveCalendarPrefs } from '@/lib/calendarPrefs'
 import { useToast } from '@/components/ui/Toast'
+import type { IosAccessCandidate, IosAccessEnableResult } from '../../shared/ipc'
 import type { DigestConfig, Plugin, PluginHealth } from '../../shared/types'
 
 type Theme = 'system' | 'light' | 'dark'
@@ -20,6 +21,7 @@ type HealthState =
 
 const AI_SECTION_ID = 'ai-transcription'
 const CALENDAR_SECTION_ID = 'calendar'
+const IOS_ACCESS_SECTION_ID = 'ios-access'
 
 function pluginHealthMessage(health: PluginHealth, endpoint: string): string {
   if (health.healthy) return 'Connection healthy.'
@@ -222,6 +224,168 @@ function CalendarSection() {
   )
 }
 
+function candidateKey(c: IosAccessCandidate): string {
+  return `${c.interfaceName}|${c.address}|${c.family}`
+}
+
+function IosAccessSection() {
+  const sectionRef = useRef<HTMLElement | null>(null)
+  const location = useLocation()
+  const [candidates, setCandidates] = useState<IosAccessCandidate[]>([])
+  const [selectedKey, setSelectedKey] = useState('')
+  const [pairing, setPairing] = useState<IosAccessEnableResult | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [message, setMessage] = useState('Checking local network addresses…')
+  const { notify } = useToast()
+
+  useEffect(() => {
+    if (location.hash !== `#${IOS_ACCESS_SECTION_ID}`) return
+    if (typeof sectionRef.current?.scrollIntoView === 'function') {
+      sectionRef.current.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    }
+    sectionRef.current?.focus()
+  }, [location.hash])
+
+  useEffect(() => {
+    let cancelled = false
+    void muesli.iosAccessEnumerate()
+      .then((result) => {
+        if (cancelled) return
+        setCandidates(result.candidates)
+        if (result.autoSelected) setSelectedKey(candidateKey(result.autoSelected))
+        setMessage(result.candidates.length === 0 ? 'No eligible local network address was found on this Mac.' : '')
+      })
+      .catch(() => {
+        if (!cancelled) setMessage('Could not check local network addresses.')
+      })
+    return () => { cancelled = true }
+  }, [])
+
+  async function handleEnable() {
+    const pair = candidates.find((c) => candidateKey(c) === selectedKey)
+    if (!pair) {
+      setMessage('Choose a network address first.')
+      return
+    }
+    setBusy(true)
+    try {
+      const result = await muesli.iosAccessEnable(pair)
+      setPairing(result)
+      setMessage('')
+    } catch (err) {
+      console.error('failed to enable local iOS access', err)
+      notify(err instanceof Error ? err.message : 'Could not allow iOS access', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleDisable() {
+    setBusy(true)
+    try {
+      await muesli.iosAccessDisable()
+      setPairing(null)
+    } catch (err) {
+      console.error('failed to disable local iOS access', err)
+      notify(err instanceof Error ? err.message : 'Could not disable iOS access', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  async function handleReset() {
+    // "Reset & rotate certificate" is disable-then-re-enable on the same
+    // address — the only combination the fd-3 control protocol exposes today
+    // (see src/main/iosAccess/controller.ts, which has only enable/disable).
+    // It always regenerates the pairing display; the certificate itself is
+    // only regenerated server-side once its persisted copy has expired.
+    setBusy(true)
+    try {
+      await muesli.iosAccessDisable()
+      const pair = candidates.find((c) => candidateKey(c) === selectedKey)
+      if (pair) {
+        const result = await muesli.iosAccessEnable(pair)
+        setPairing(result)
+        setMessage('')
+      } else {
+        setPairing(null)
+      }
+    } catch (err) {
+      console.error('failed to reset local iOS access', err)
+      notify(err instanceof Error ? err.message : 'Could not reset iOS access', 'error')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section
+      id={IOS_ACCESS_SECTION_ID}
+      ref={sectionRef}
+      tabIndex={-1}
+      className="mb-6 scroll-mt-6"
+      aria-labelledby="ios-access-heading"
+    >
+      <h2 id="ios-access-heading" className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">Allow iOS access</h2>
+      <p className="text-sm text-muted-foreground">
+        Let the Muesli iOS app browse your notes directly from this Mac over your local network, without a hosted server. Pair by scanning the code shown here from the iOS app, or enter it manually.
+      </p>
+      {candidates.length > 1 ? (
+        <div className="mt-3">
+          <label className="block text-sm" htmlFor="ios-access-address">Network address</label>
+          <Select
+            id="ios-access-address"
+            value={selectedKey}
+            onChange={(e) => setSelectedKey(e.target.value)}
+            disabled={busy || !!pairing}
+          >
+            {!selectedKey ? <option value="" disabled>Choose an address…</option> : null}
+            {candidates.map((c) => (
+              <option key={candidateKey(c)} value={candidateKey(c)}>{c.address} ({c.interfaceName})</option>
+            ))}
+          </Select>
+        </div>
+      ) : null}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button disabled={busy || !!pairing || !selectedKey} onClick={handleEnable}>Allow iOS access</Button>
+        <Button variant="secondary" disabled={busy || !pairing} onClick={handleDisable}>Disable</Button>
+        <Button variant="secondary" disabled={busy || !pairing} onClick={handleReset}>Reset &amp; rotate certificate</Button>
+      </div>
+      {pairing ? (
+        <div className="mt-3 space-y-2 text-sm">
+          <p><span className="font-medium">Address:</span> {pairing.origin}</p>
+          <p><span className="font-medium">Verification phrase:</span> {pairing.phrase}</p>
+          <div>
+            <label className="block text-sm" htmlFor="ios-access-pairing-code">
+              Pairing code (scan as a QR code from the iOS app, or paste into its manual-entry field)
+            </label>
+            <Input
+              id="ios-access-pairing-code"
+              readOnly
+              value={pairing.qrPayload}
+              onFocus={(e) => e.currentTarget.select()}
+            />
+          </div>
+          <Button
+            variant="secondary"
+            onClick={async () => {
+              try {
+                await muesli.writeClipboardText(pairing.qrPayload)
+                notify('Pairing code copied', 'info')
+              } catch (err) {
+                console.error('failed to copy pairing code', err)
+              }
+            }}
+          >
+            Copy pairing code
+          </Button>
+        </div>
+      ) : null}
+      <p className="mt-2 text-sm text-muted-foreground" aria-live="polite">{message}</p>
+    </section>
+  )
+}
+
 export function SettingsScreen({
   onDisconnected,
   onResetToBuiltIn,
@@ -357,6 +521,7 @@ export function SettingsScreen({
         </Button>
       </section>
       <CalendarSection />
+      <IosAccessSection />
       <section className="mb-6">
         <label htmlFor="keep-running-in-background" className="flex items-center gap-2 text-sm">
           <Checkbox

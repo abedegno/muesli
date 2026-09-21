@@ -22,6 +22,10 @@ const listPlugins = vi.fn()
 const checkPluginHealth = vi.fn()
 const setStreamingTranscriber = vi.fn()
 const clearStreamingTranscriber = vi.fn()
+const iosAccessEnumerate = vi.fn()
+const iosAccessEnable = vi.fn()
+const iosAccessDisable = vi.fn()
+const writeClipboardText = vi.fn()
 
 vi.mock('@/api', () => ({
   muesli: {
@@ -42,6 +46,10 @@ vi.mock('@/api', () => ({
     checkPluginHealth: (id: string) => checkPluginHealth(id),
     setStreamingTranscriber: (req: { url: string; token: string }) => setStreamingTranscriber(req),
     clearStreamingTranscriber: () => clearStreamingTranscriber(),
+    iosAccessEnumerate: () => iosAccessEnumerate(),
+    iosAccessEnable: (pair: unknown) => iosAccessEnable(pair),
+    iosAccessDisable: () => iosAccessDisable(),
+    writeClipboardText: (text: string) => writeClipboardText(text),
   },
 }))
 
@@ -68,6 +76,10 @@ afterEach(() => {
     checkPluginHealth.mockResolvedValue({ healthy: true })
     setStreamingTranscriber.mockImplementation(async ({ url }: { url: string }) => ({ id: 'stream-1', kind: 'streaming-transcriber', name: 'Streaming transcriber', endpoint_url: url, enabled: true, is_default: true }))
     clearStreamingTranscriber.mockResolvedValue(undefined)
+    iosAccessEnumerate.mockResolvedValue({ candidates: [], autoSelected: null })
+    iosAccessEnable.mockResolvedValue({ origin: 'https://192.168.1.5:9443', port: 9443, fingerprintHex: 'ab'.repeat(32), phrase: 'ABCD-EFGH', qrPayload: '{"v":1}' })
+    iosAccessDisable.mockResolvedValue(undefined)
+    writeClipboardText.mockResolvedValue(undefined)
   })
 
 function renderScreen(serverUrl = 'http://localhost:8080') {
@@ -552,5 +564,118 @@ describe('SettingsScreen', () => {
     await user.click(await screen.findByRole('button', { name: 'Connect Microsoft Calendar' }))
 
     expect(await screen.findByRole('alert')).toHaveTextContent('microsoft connect failed')
+  })
+
+  it('auto-selects the single eligible address and enables iOS access', async () => {
+    const user = userEvent.setup()
+    iosAccessEnumerate.mockResolvedValue({
+      candidates: [{ interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' }],
+      autoSelected: { interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' },
+    })
+
+    renderScreen()
+
+    const enableButton = await screen.findByRole('button', { name: 'Allow iOS access' })
+    expect(enableButton).toBeEnabled()
+
+    await user.click(enableButton)
+
+    await waitFor(() => expect(iosAccessEnable).toHaveBeenCalledWith({ interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' }))
+    expect(await screen.findByText('ABCD-EFGH')).toBeInTheDocument()
+    expect(screen.getByText('https://192.168.1.5:9443')).toBeInTheDocument()
+  })
+
+  it('shows a message and disables enabling when no eligible address is found', async () => {
+    iosAccessEnumerate.mockResolvedValue({ candidates: [], autoSelected: null })
+
+    renderScreen()
+
+    expect(await screen.findByText('No eligible local network address was found on this Mac.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Allow iOS access' })).toBeDisabled()
+  })
+
+  it('lets the user choose among several eligible addresses', async () => {
+    iosAccessEnumerate.mockResolvedValue({
+      candidates: [
+        { interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' },
+        { interfaceName: 'en1', address: '10.0.0.2', family: 'ipv4' },
+      ],
+      autoSelected: null,
+    })
+
+    renderScreen()
+
+    const select = await screen.findByLabelText('Network address')
+    expect(select).toHaveValue('')
+    expect(screen.getByRole('button', { name: 'Allow iOS access' })).toBeDisabled()
+  })
+
+  it('disables iOS access and clears the pairing display', async () => {
+    const user = userEvent.setup()
+    iosAccessEnumerate.mockResolvedValue({
+      candidates: [{ interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' }],
+      autoSelected: { interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' },
+    })
+
+    renderScreen()
+
+    await user.click(await screen.findByRole('button', { name: 'Allow iOS access' }))
+    await screen.findByText('ABCD-EFGH')
+
+    await user.click(screen.getByRole('button', { name: 'Disable' }))
+
+    await waitFor(() => expect(iosAccessDisable).toHaveBeenCalledTimes(1))
+    expect(screen.queryByText('ABCD-EFGH')).not.toBeInTheDocument()
+  })
+
+  it('resets iOS access by disabling then re-enabling the same address', async () => {
+    const user = userEvent.setup()
+    iosAccessEnumerate.mockResolvedValue({
+      candidates: [{ interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' }],
+      autoSelected: { interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' },
+    })
+
+    renderScreen()
+
+    await user.click(await screen.findByRole('button', { name: 'Allow iOS access' }))
+    await screen.findByText('ABCD-EFGH')
+    iosAccessEnable.mockClear()
+
+    await user.click(screen.getByRole('button', { name: 'Reset & rotate certificate' }))
+
+    await waitFor(() => expect(iosAccessDisable).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(iosAccessEnable).toHaveBeenCalledWith({ interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' }))
+  })
+
+  it('copies the pairing code to the clipboard', async () => {
+    const user = userEvent.setup()
+    iosAccessEnumerate.mockResolvedValue({
+      candidates: [{ interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' }],
+      autoSelected: { interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' },
+    })
+
+    renderScreen()
+
+    await user.click(await screen.findByRole('button', { name: 'Allow iOS access' }))
+    await screen.findByText('ABCD-EFGH')
+
+    await user.click(screen.getByRole('button', { name: 'Copy pairing code' }))
+
+    await waitFor(() => expect(writeClipboardText).toHaveBeenCalledWith('{"v":1}'))
+  })
+
+  it('shows an error when enabling iOS access fails', async () => {
+    const user = userEvent.setup()
+    iosAccessEnumerate.mockResolvedValue({
+      candidates: [{ interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' }],
+      autoSelected: { interfaceName: 'en0', address: '192.168.1.5', family: 'ipv4' },
+    })
+    iosAccessEnable.mockRejectedValue(new Error('control channel is closed'))
+
+    renderScreen()
+
+    await user.click(await screen.findByRole('button', { name: 'Allow iOS access' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('control channel is closed')
   })
 })
