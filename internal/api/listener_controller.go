@@ -37,6 +37,13 @@ type ListenerController struct {
 	httpSrv  *http.Server
 	cancel   context.CancelFunc
 	unusable bool
+	// unusableCh is closed exactly once by watch, at the moment it detects
+	// the currently bound pair has disappeared and force-closes the
+	// listener. It gives callers (tests, and any future Electron-facing
+	// "became unusable" notification) a real event to wait on instead of
+	// polling Status(). Reset to nil whenever the listener is (re)enabled or
+	// disabled.
+	unusableCh chan struct{}
 }
 
 // NewListenerController constructs a controller for srv's router. certDir is
@@ -112,13 +119,15 @@ func (c *ListenerController) Enable(ctx context.Context, pair iosaccess.Interfac
 	}
 
 	p := pair
+	uc := make(chan struct{})
 	c.pair = &p
 	c.ln = tlsLn
 	c.httpSrv = httpSrv
 	c.cancel = cancel
 	c.unusable = false
+	c.unusableCh = uc
 
-	go c.watch(watchCtx, p)
+	go c.watch(watchCtx, p, uc)
 
 	return info, nil
 }
@@ -144,6 +153,19 @@ func (c *ListenerController) disableLocked() {
 	}
 	c.ln = nil
 	c.pair = nil
+	c.unusableCh = nil
+}
+
+// UnusableCh returns the channel for the most recent Enable call, which
+// watch closes exactly once if and when it detects the bound pair has
+// disappeared and force-closes the listener. It returns nil if no listener
+// is currently enabled (never called, or the most recent call was Disable).
+// Callers must fetch it after Enable succeeds; a new Enable replaces it with
+// a fresh channel for the new generation.
+func (c *ListenerController) UnusableCh() <-chan struct{} {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.unusableCh
 }
 
 // Status reports whether a listener is currently running and whether the
@@ -165,7 +187,7 @@ func (c *ListenerController) Status() (enabled bool, unusable bool, pair *iosacc
 // no longer present — an address change, a moved interface, or an
 // enumeration error are all treated the same: stop, mark unusable, and make
 // no further bind attempt until a fresh Enable call.
-func (c *ListenerController) watch(ctx context.Context, bound iosaccess.InterfaceAddressPair) {
+func (c *ListenerController) watch(ctx context.Context, bound iosaccess.InterfaceAddressPair, unusableCh chan struct{}) {
 	ticker := time.NewTicker(c.watchInterval)
 	defer ticker.Stop()
 	for {
@@ -186,6 +208,7 @@ func (c *ListenerController) watch(ctx context.Context, bound iosaccess.Interfac
 				c.unusable = true
 			}
 			c.mu.Unlock()
+			close(unusableCh)
 			return
 		}
 	}

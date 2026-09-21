@@ -174,14 +174,17 @@ func TestListenerControllerWatchdogClosesOnAddressDisappearance(t *testing.T) {
 	}
 
 	// The candidate disappears from the live snapshot (e.g. Wi-Fi dropped).
+	// UnusableCh is a real production signal (internal/api.ListenerController),
+	// closed by the watchdog goroutine itself exactly when it force-closes the
+	// listener -- waiting on it, rather than polling Status() on a wall-clock
+	// deadline, makes this test's synchronization deterministic.
+	unusableCh := ctrl.UnusableCh()
 	source.set(nil)
 
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if enabled, unusable, _ := ctrl.Status(); !enabled && unusable {
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
+	select {
+	case <-unusableCh:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timed out waiting for the watchdog to detect the disappeared address")
 	}
 	enabled, unusable, _ := ctrl.Status()
 	if enabled || !unusable {
@@ -193,9 +196,12 @@ func TestListenerControllerWatchdogClosesOnAddressDisappearance(t *testing.T) {
 		t.Fatalf("expected the watchdog-closed listener to reject new connections")
 	}
 
-	// The address reappearing must NOT auto-rebind — only an explicit Enable does.
+	// The address reappearing must NOT auto-rebind -- only an explicit Enable
+	// does. The watchdog goroutine that just detected the disappearance has
+	// already returned (closing unusableCh was its final act before that
+	// return), so there is no live watcher left to react to this change --
+	// Status is checked immediately, with nothing to wait on.
 	source.set([]iosaccess.InterfaceAddressPair{loopbackPair})
-	time.Sleep(100 * time.Millisecond)
 	if enabled, _, _ := ctrl.Status(); enabled {
 		t.Fatalf("must not auto-rebind without an explicit Enable")
 	}

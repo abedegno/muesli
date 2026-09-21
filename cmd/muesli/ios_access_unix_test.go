@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"syscall"
 	"testing"
-	"time"
 
 	"github.com/abedegno/muesli/internal/api"
 	"github.com/abedegno/muesli/internal/iosaccess"
@@ -71,7 +70,9 @@ func TestMaybeStartIOSAccessControlRealFDRoundTrip(t *testing.T) {
 	if !disableResp.OK || disableResp.ID != "e2e-2" {
 		t.Fatalf("unexpected disable response: %+v", disableResp)
 	}
-
-	// Give the server goroutine a moment before cleanup closes its fd.
-	time.Sleep(10 * time.Millisecond)
+	// disableResp.OK already confirms ctrl.Disable() ran to completion: the
+	// ControlServer goroutine dispatches each line synchronously
+	// (handleLine calls target.Disable() and only then writes the response
+	// we just read off electronEnd), so there is nothing further to wait
+	// for here.
 }
