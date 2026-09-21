@@ -57,7 +57,17 @@
 // (.github/workflows/ci.yml) builds and tests it for real, against an iOS
 // Simulator destination via `xcodebuild`, on a macOS runner for every PR,
 // and will fail loudly if anything here doesn't match SwiftPM's actual API.
+//
+// `.iOSApplication` (and the platform-family/orientation members used
+// below, e.g. `.phone`/`.portrait`/`.landscapeLeft`/`.landscapeRight`) live
+// in `AppleProductTypes`, a separate module from `PackageDescription`
+// itself -- shipped inside Xcode's toolchain (not the open-source
+// swift.org toolchain), which is exactly why this only needs to resolve
+// under `xcodebuild` (real Xcode, as CI's macOS runner has) rather than a
+// bare `swift build`/`swift test` command-line toolchain. Both imports are
+// required for the manifest to parse at all.
 import PackageDescription
+import AppleProductTypes
 
 let package = Package(
     name: "Muesli",
