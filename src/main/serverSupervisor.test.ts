@@ -53,6 +53,7 @@ type FakeChild = EventEmitter & {
   pid: number
   stdout: PassThrough
   stderr: PassThrough
+  stdio: [null, PassThrough, PassThrough, PassThrough]
   exitCode: number | null
   signalCode: NodeJS.Signals | null
   kill: ReturnType<typeof vi.fn>
@@ -63,6 +64,8 @@ function createFakeChild(mode: 'exits-on-sigkill' | 'never-exits' = 'exits-on-si
   child.pid = 4242
   child.stdout = new PassThrough()
   child.stderr = new PassThrough()
+  // Index 3 mirrors the real fd-3 iOS access control pipe (issue #767).
+  child.stdio = [null, child.stdout, child.stderr, new PassThrough()]
   child.exitCode = null
   child.signalCode = null
   child.kill = vi.fn((signal?: NodeJS.Signals | number) => {
@@ -155,9 +158,11 @@ describe('serverSupervisor', () => {
           MUESLI_ADDR: '127.0.0.1:4567',
           MUESLI_APPDATA: '/tmp/userData/embedded-server',
           MUESLI_PARENT_PID: String(process.pid),
+          MUESLI_IOS_ACCESS_FD: '3',
         }),
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
       }))
+      expect(supervisor?.iosAccessChannel).toBe(child.stdio[3])
     } finally {
       if (originalAppData === undefined) {
         delete process.env.MUESLI_APPDATA
@@ -352,7 +357,7 @@ describe('serverSupervisor', () => {
         MUESLI_ADDR: '127.0.0.1:4572',
         MUESLI_APPDATA: '/tmp/userData/embedded-server',
       }),
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
     }))
   })
 
