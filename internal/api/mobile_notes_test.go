@@ -289,11 +289,17 @@ func TestMobileNotes500(t *testing.T) {
 	var n struct{ ID string }
 	_ = json.Unmarshal(rec.Body.Bytes(), &n)
 
-	// The auth middleware only touches app_tokens, so dropping note_bodies
+	// The auth middleware only touches app_tokens, so breaking note_bodies
 	// (joined by both mobile queries) still lets auth succeed but breaks the
-	// store call itself with a genuine pgx error.
-	if _, err := st.Pool().Exec(t.Context(), "DROP TABLE IF EXISTS note_bodies CASCADE"); err != nil {
-		t.Fatalf("drop table: %v", err)
+	// store call itself with a genuine pgx error. Dropping the column the
+	// query actually selects (nb.content) rather than the whole table keeps
+	// this immune to Postgres's search_path fallback to the always-present,
+	// always-empty public.note_bodies: the table itself still exists in this
+	// test's own schema, so unqualified references keep resolving to it
+	// (never falling through to public), and the missing column produces a
+	// genuine "column does not exist" error on both mobile routes.
+	if _, err := st.Pool().Exec(t.Context(), "ALTER TABLE note_bodies DROP COLUMN content"); err != nil {
+		t.Fatalf("alter table: %v", err)
 	}
 
 	rec = doJSON(t, srv, http.MethodGet, "/api/mobile/v1/notes", nil, hdr)
