@@ -49,7 +49,7 @@ jobs:
       - name: Go tests (macOS-sensitive packages)
         run: go test ./internal/embedded/...
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
 
@@ -223,7 +223,7 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: '1.25.11'
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '20'
 
