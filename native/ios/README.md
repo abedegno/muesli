@@ -18,9 +18,11 @@ no longer the whole story, though: this repository's CI has an `ios
 a real Xcode/Swift toolchain, on every pull request, and it does build and
 test this code for real -- `xcodebuild build`/`xcodebuild test` against an
 iOS Simulator destination, both currently green (`** BUILD SUCCEEDED **`,
-"Executed 84 tests, with 0 failures."). Treat that CI check, not this
-sandbox, as the source of truth for whether the Swift here compiles and its
-unit tests pass.
+and every `MuesliTests` unit test passing with 0 failures -- see that job's
+own log for the exact, and inevitably moving, test count rather than a
+number pinned here that would just go stale as tests are added). Treat that
+CI check, not this sandbox, as the source of truth for whether the Swift
+here compiles and its unit tests pass.
 
 What CI's green check does **not** yet prove, and what remains a real,
 honestly-stated limitation:

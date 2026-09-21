@@ -14,54 +14,76 @@ final class QRScannerSessionConfigurationTests: XCTestCase {
     /// Bare marker types standing in for `AVCaptureInput`/`AVCaptureOutput`
     /// -- `configureCaptureIO` is generic over `CaptureSessionPort`'s
     /// associated types, so these never need to be real capture objects.
-    final class FakeInput {}
-    final class FakeOutput {}
+    /// Each instance carries an `id` so a test can assert *which* input
+    /// was removed (object identity), not just that removal happened.
+    final class FakeInput {
+        let id: String
+        init(id: String = "input") { self.id = id }
+    }
+    final class FakeOutput {
+        let id: String
+        init(id: String = "output") { self.id = id }
+    }
+
+    /// A single, call-ordered event log -- rather than separate
+    /// added/removed arrays -- so tests can assert the exact *sequence* of
+    /// calls `configureCaptureIO` makes, not just how many of each
+    /// happened. Separate counters would still pass a broken
+    /// implementation that, say, called `removeInput` before `addInput`,
+    /// or removed an input that was never added.
+    enum Event: Equatable {
+        case addedInput(String)
+        case addedOutput(String)
+        case removedInput(String)
+    }
 
     final class FakeSessionPort: CaptureSessionPort {
         var canAddInputResult = true
         var canAddOutputResult = true
-
-        private(set) var addedInputs: [FakeInput] = []
-        private(set) var removedInputs: [FakeInput] = []
-        private(set) var addedOutputs: [FakeOutput] = []
+        private(set) var events: [Event] = []
 
         func canAddInput(_ input: FakeInput) -> Bool { canAddInputResult }
-        func addInput(_ input: FakeInput) { addedInputs.append(input) }
-        func removeInput(_ input: FakeInput) { removedInputs.append(input) }
+        func addInput(_ input: FakeInput) { events.append(.addedInput(input.id)) }
+        func removeInput(_ input: FakeInput) { events.append(.removedInput(input.id)) }
         func canAddOutput(_ output: FakeOutput) -> Bool { canAddOutputResult }
-        func addOutput(_ output: FakeOutput) { addedOutputs.append(output) }
+        func addOutput(_ output: FakeOutput) { events.append(.addedOutput(output.id)) }
     }
 
     func testAddsBothInputAndOutputWhenBothCanBeAdded() {
         let port = FakeSessionPort()
-        let input = FakeInput()
-        let output = FakeOutput()
+        let input = FakeInput(id: "the-input")
+        let output = FakeOutput(id: "the-output")
 
         let succeeded = configureCaptureIO(session: port, input: input, output: output)
 
         XCTAssertTrue(succeeded)
-        XCTAssertEqual(port.addedInputs.count, 1)
-        XCTAssertEqual(port.addedOutputs.count, 1)
-        XCTAssertTrue(port.removedInputs.isEmpty)
+        XCTAssertEqual(port.events, [.addedInput("the-input"), .addedOutput("the-output")])
     }
 
-    func testRemovesTheAlreadyAddedInputWhenOutputCannotBeAdded() {
+    func testRemovesTheSameInputItAddedWhenOutputCannotBeAdded() {
         // This is the failure path finding #2 flags: the device input was
         // already successfully attached (canAddInput/addInput both ran)
-        // before the output attach fails. The fix must roll that input back
-        // out rather than leaving an acquired capture device attached to a
-        // session that never fully configured.
+        // before the output attach fails. The fix must roll that SAME
+        // input back out, in that order, rather than leaving an acquired
+        // capture device attached to a session that never fully
+        // configured -- or, worse, removing something it never added. An
+        // ordered event log (rather than separate add/remove counters)
+        // is required to actually prove the ordering: counters alone
+        // would still pass if removeInput were called before addInput, or
+        // if it "removed" an input that was never added.
         let port = FakeSessionPort()
         port.canAddOutputResult = false
-        let input = FakeInput()
-        let output = FakeOutput()
+        let input = FakeInput(id: "the-input")
+        let output = FakeOutput(id: "the-output")
 
         let succeeded = configureCaptureIO(session: port, input: input, output: output)
 
         XCTAssertFalse(succeeded)
-        XCTAssertEqual(port.addedInputs.count, 1, "the input must have been attempted before the output")
-        XCTAssertEqual(port.removedInputs.count, 1, "a failed output attach must remove the input it added")
-        XCTAssertTrue(port.addedOutputs.isEmpty, "the output must never be added once canAddOutput fails")
+        XCTAssertEqual(
+            port.events,
+            [.addedInput("the-input"), .removedInput("the-input")],
+            "the input must be added, then removed (the same instance, in that order), and the output must never be added"
+        )
     }
 
     func testAddsNeitherInputNorOutputWhenInputCannotBeAdded() {
@@ -73,8 +95,6 @@ final class QRScannerSessionConfigurationTests: XCTestCase {
         let succeeded = configureCaptureIO(session: port, input: input, output: output)
 
         XCTAssertFalse(succeeded)
-        XCTAssertTrue(port.addedInputs.isEmpty)
-        XCTAssertTrue(port.removedInputs.isEmpty)
-        XCTAssertTrue(port.addedOutputs.isEmpty)
+        XCTAssertEqual(port.events, [])
     }
 }
