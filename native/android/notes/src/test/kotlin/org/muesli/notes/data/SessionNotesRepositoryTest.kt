@@ -490,7 +490,49 @@ class SessionNotesRepositoryTest {
         api.enqueueList(null, ApiResult.Failure(ApiFailure.SessionEnded))
         repo.loadFirstPage(session)
         assertEquals(NotesListState.InitialLoading, repo.state.value)
-        assertTrue(sessionSource.invalidated.contains(session.id))
+        assertTrue(sessionSource.invalidated.contains(session.id to session.generation))
+    }
+
+    @Test
+    fun `a late pagination 401 for a same-id but superseded-generation session does not invalidate or clear the replacement`() = runTest {
+        val (api, sessionSource, repo) = harness()
+        val sessionGen1 = FakeAuthenticatedSession("s1", generation = 1)
+        val sessionGen2 = FakeAuthenticatedSession("s1", generation = 2)
+        sessionSource.set(sessionGen1)
+
+        api.enqueueList(null, ApiResult.Success(testPage("p1", 2, nextCursor = "c1")))
+        repo.loadFirstPage(sessionGen1)
+        val beforeRows = (repo.state.value as NotesListState.Content).rows.map { it.id }
+
+        // A pagination request is admitted and in flight, tagged with
+        // generation 1 -- the repository's own activeSessionGeneration
+        // bookkeeping (updated only by loadFirstPage) still says
+        // generation 1 too, so this repository-local isCurrent() check
+        // will pass for the stale generation-1 401 below.
+        api.enqueueList("c1", ApiResult.Failure(ApiFailure.SessionEnded))
+        val gate = api.gateList("c1")
+        val job = launch { repo.loadNextPage(sessionGen1) }
+        runCurrent() // request admitted, in flight
+
+        // sessionSource -- the authoritative source, independent of this
+        // repository's bookkeeping -- moves on to a same-id, later-
+        // generation replacement (e.g. a token refresh) WITHOUT the list
+        // view model having started generation 2's own load yet.
+        sessionSource.set(sessionGen2)
+
+        gate.complete(Unit)
+        job.join()
+
+        assertTrue(
+            "a stale-generation list/pagination 401 must not invalidate the live (generation 2) session",
+            sessionSource.invalidated.isEmpty(),
+        )
+        assertEquals(sessionGen2, sessionSource.session.value)
+        assertEquals(
+            "generation 2's repository state must remain untouched by the late generation-1 401",
+            beforeRows,
+            (repo.state.value as NotesListState.Content).rows.map { it.id },
+        )
     }
 
     // --- sign-out / stale session ---

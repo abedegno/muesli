@@ -16,10 +16,13 @@ interface SessionSource {
     val session: StateFlow<AuthenticatedSession?>
 
     /**
-     * Ends the session identified by [expectedSessionId]. A no-op if the
-     * current session no longer matches (it was already replaced or
-     * cleared), so a late-arriving 401 from a superseded session can never
-     * clobber a session the user has since re-established.
+     * Ends the session identified by the full [expectedSessionId] +
+     * [expectedGeneration] identity. A no-op if the current session no
+     * longer matches that exact identity -- checked atomically against the
+     * live session, not id alone -- so a late-arriving 401 from a
+     * superseded session can never clobber a session the user has since
+     * re-established, including a same-id replacement (e.g. a token
+     * refresh) that bumped only the generation.
      */
-    fun invalidate(expectedSessionId: SessionId)
+    fun invalidate(expectedSessionId: SessionId, expectedGeneration: Long)
 }

@@ -243,8 +243,25 @@ class SessionNotesRepository(
         matchesActiveSession(session) && collectionGeneration == requestGeneration
 
     private fun handleSessionEnded(session: AuthenticatedSession) {
-        sessionSource.invalidate(session.id)
-        clear()
+        // isCurrent()/matchesActiveSession() only reflect this repository's
+        // own local bookkeeping (activeSessionId/activeSessionGeneration),
+        // which this repository's owner (a view model) updates by calling
+        // loadFirstPage() -- and that can lag behind SessionSource itself
+        // emitting a same-id, later-generation replacement (e.g. a token
+        // refresh) before the owner has started that generation's load. So
+        // a passed isCurrent() check alone is not sufficient here: verify
+        // against SessionSource's live session -- the authoritative
+        // identity, independent of this repository's bookkeeping -- by
+        // both id AND generation, as a single atomic snapshot read, before
+        // invalidating or clearing anything. Otherwise a late 401 tagged
+        // with a superseded generation could invalidate/clear a same-id
+        // session that has since replaced it.
+        val current = sessionSource.session.value
+        val stillLive = current != null && current.id == session.id && current.generation == session.generation
+        if (stillLive) {
+            sessionSource.invalidate(session.id, session.generation)
+            clear()
+        }
     }
 
     private fun installFirstPage(items: List<NoteListItem>, nextCursor: String?) {

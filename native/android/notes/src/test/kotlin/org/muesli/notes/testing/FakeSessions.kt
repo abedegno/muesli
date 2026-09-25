@@ -18,11 +18,12 @@ class FakeSessionSource(initial: AuthenticatedSession? = null) : SessionSource {
     private val _session = MutableStateFlow(initial)
     override val session = _session
 
-    val invalidated = mutableListOf<SessionId>()
+    val invalidated = mutableListOf<Pair<SessionId, Long>>()
 
-    override fun invalidate(expectedSessionId: SessionId) {
-        if (_session.value?.id == expectedSessionId) {
-            invalidated.add(expectedSessionId)
+    override fun invalidate(expectedSessionId: SessionId, expectedGeneration: Long) {
+        val current = _session.value
+        if (current != null && current.id == expectedSessionId && current.generation == expectedGeneration) {
+            invalidated.add(expectedSessionId to expectedGeneration)
             _session.value = null
         }
     }
