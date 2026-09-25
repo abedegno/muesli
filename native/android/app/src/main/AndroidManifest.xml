@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Issue #768 Task 6: the minimal, runnable Android host application. Wires
+  the self-contained :notes library (Tasks 1-5) behind a real login screen.
+  Declares INTERNET permission for the login/notes API calls, and allows
+  cleartext traffic so a local dev server (plain http) works without extra
+  setup.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:name=".MuesliApplication"
+        android:label="Muesli"
+        android:usesCleartextTraffic="true"
+        android:allowBackup="false">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

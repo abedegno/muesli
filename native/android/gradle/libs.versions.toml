@@ -5,6 +5,7 @@ composeBom = "2024.10.01"
 coroutines = "1.9.0"
 lifecycle = "2.8.7"
 navigationCompose = "2.8.4"
+activityCompose = "1.9.3"
 okhttp = "4.12.0"
 serializationJson = "1.7.3"
 junit = "4.13.2"
@@ -28,6 +29,8 @@ lifecycle-runtime-compose = { module = "androidx.lifecycle:lifecycle-runtime-com
 navigation-compose = { module = "androidx.navigation:navigation-compose", version.ref = "navigationCompose" }
 navigation-testing = { module = "androidx.navigation:navigation-testing", version.ref = "navigationCompose" }
 
+androidx-activity-compose = { module = "androidx.activity:activity-compose", version.ref = "activityCompose" }
+
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "composeBom" }
 compose-ui = { module = "androidx.compose.ui:ui" }
 compose-ui-tooling = { module = "androidx.compose.ui:ui-tooling" }
@@ -49,6 +52,7 @@ androidx-test-espresso-core = { module = "androidx.test.espresso:espresso-core",
 
 [plugins]
 android-library = { id = "com.android.library", version.ref = "agp" }
+android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-serialization = { id = "org.jetbrains.kotlin.plugin.serialization", version.ref = "kotlin" }
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
