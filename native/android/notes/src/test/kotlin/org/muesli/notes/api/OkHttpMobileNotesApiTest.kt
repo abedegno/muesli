@@ -1,11 +1,18 @@
 package org.muesli.notes.api
 
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.runTest
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
+import okhttp3.Response
+import okhttp3.ResponseBody
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.SocketPolicy
+import okio.Buffer
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -14,7 +21,9 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 private class FixedSession(
     override val baseUrl: String,
@@ -196,6 +205,21 @@ class OkHttpMobileNotesApiTest {
     }
 
     @Test
+    fun `failure while reading the response body maps to Network`() = runTest {
+        // Headers/status arrive fine (onResponse succeeds) but the socket is
+        // cut mid-body, so response.body?.string() throws IOException *after*
+        // await() has already returned successfully.
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBody("{\"data\":\"" + "x".repeat(64 * 1024) + "\"}")
+                .setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY),
+        )
+        val result = api.listNotes(session(), limit = 30, cursor = null) as ApiResult.Failure
+        assertTrue(result.reason is ApiFailure.Network)
+    }
+
+    @Test
     fun `cancellation propagates instead of becoming a failure`() = runTest {
         server.enqueue(
             MockResponse().setResponseCode(200).setBody(fixture("list_empty.json")).setBodyDelay(5, TimeUnit.SECONDS),
@@ -203,5 +227,52 @@ class OkHttpMobileNotesApiTest {
         val job = launch { api.listNotes(session(), limit = 30, cursor = null) }
         job.cancelAndJoin()
         assertTrue(job.isCancelled)
+    }
+
+    @Test
+    fun `response is closed instead of leaked when cancellation races with its arrival`() = runTest {
+        val bodyClosed = AtomicBoolean(false)
+        val interceptorEntered = CountDownLatch(1)
+        val proceedWithResponse = CountDownLatch(1)
+        // An interceptor that hands back a response *without* ever touching a
+        // real connection, so cancelling the call can't abort delivery - this
+        // reproduces the race where onResponse still fires after the awaiting
+        // coroutine has already been cancelled.
+        val racyClient = OkHttpClient.Builder()
+            .addInterceptor { chain ->
+                interceptorEntered.countDown()
+                assertTrue(proceedWithResponse.await(2, TimeUnit.SECONDS))
+                val trackedBody = object : ResponseBody() {
+                    override fun contentType() = "application/json".toMediaType()
+                    override fun contentLength() = -1L
+                    override fun source() = Buffer().writeUtf8("{}")
+                    override fun close() {
+                        bodyClosed.set(true)
+                        super.close()
+                    }
+                }
+                Response.Builder()
+                    .request(chain.request())
+                    .protocol(Protocol.HTTP_1_1)
+                    .code(200)
+                    .message("OK")
+                    .body(trackedBody)
+                    .build()
+            }
+            .build()
+        val racyApi = OkHttpMobileNotesApi(racyClient)
+
+        // Runs on a real dispatcher (not the test scheduler) so it actually
+        // executes concurrently with the blocking latches below.
+        val job = launch(Dispatchers.IO) { racyApi.listNotes(session(), limit = 30, cursor = null) }
+        assertTrue(interceptorEntered.await(2, TimeUnit.SECONDS))
+        job.cancelAndJoin()
+        proceedWithResponse.countDown()
+
+        val deadline = System.currentTimeMillis() + 2_000
+        while (!bodyClosed.get() && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10)
+        }
+        assertTrue("response/body must be closed, not leaked, when cancellation races with arrival", bodyClosed.get())
     }
 }

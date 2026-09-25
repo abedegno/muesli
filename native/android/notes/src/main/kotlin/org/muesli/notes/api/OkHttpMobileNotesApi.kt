@@ -79,7 +79,16 @@ class OkHttpMobileNotesApi(
         } catch (e: IOException) {
             return ApiResult.Failure(ApiFailure.Network(e.message))
         }
-        return response.use(onResponse)
+        return try {
+            response.use(onResponse)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: IOException) {
+            // The response headers arrived but the body could not be read
+            // (connection reset, truncated stream, etc.) - still a network
+            // failure per the documented ApiFailure.Network contract.
+            ApiResult.Failure(ApiFailure.Network(e.message))
+        }
     }
 
     private inline fun <reified D, T> decodeOrMalformed(
@@ -108,7 +117,10 @@ private suspend fun Call.await(): Response = suspendCancellableCoroutine { cont 
         }
 
         override fun onResponse(call: Call, response: Response) {
-            cont.resume(response)
+            // Use the onCancellation form so a response that arrives just as
+            // (or after) the coroutine is cancelled is still closed, rather
+            // than leaking its body/connection.
+            cont.resume(response) { _, _, _ -> response.close() }
         }
     })
 }
