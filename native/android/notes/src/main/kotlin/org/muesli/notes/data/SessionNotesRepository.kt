@@ -249,17 +249,18 @@ class SessionNotesRepository(
         // loadFirstPage() -- and that can lag behind SessionSource itself
         // emitting a same-id, later-generation replacement (e.g. a token
         // refresh) before the owner has started that generation's load. So
-        // a passed isCurrent() check alone is not sufficient here: verify
-        // against SessionSource's live session -- the authoritative
-        // identity, independent of this repository's bookkeeping -- by
-        // both id AND generation, as a single atomic snapshot read, before
-        // invalidating or clearing anything. Otherwise a late 401 tagged
-        // with a superseded generation could invalidate/clear a same-id
-        // session that has since replaced it.
-        val current = sessionSource.session.value
-        val stillLive = current != null && current.id == session.id && current.generation == session.generation
-        if (stillLive) {
-            sessionSource.invalidate(session.id, session.generation)
+        // a passed isCurrent() check alone is not sufficient here. Do NOT
+        // separately read sessionSource.session.value and then decide
+        // whether to clear -- that reopens a check-then-act race where a
+        // concurrent replacement could land between the read and the
+        // clear. Instead, gate clearing entirely on invalidate()'s own
+        // return value: it performs the identity check and the mutation as
+        // one atomic compare-and-set, so `true` here is a guarantee -- not
+        // a snapshot that can go stale -- that this exact (id, generation)
+        // was still live at the moment it was ended, and only then is it
+        // safe to also clear this repository's own state.
+        val ended = sessionSource.invalidate(session.id, session.generation)
+        if (ended) {
             clear()
         }
     }

@@ -20,11 +20,27 @@ class FakeSessionSource(initial: AuthenticatedSession? = null) : SessionSource {
 
     val invalidated = mutableListOf<Pair<SessionId, Long>>()
 
-    override fun invalidate(expectedSessionId: SessionId, expectedGeneration: Long) {
-        val current = _session.value
-        if (current != null && current.id == expectedSessionId && current.generation == expectedGeneration) {
-            invalidated.add(expectedSessionId to expectedGeneration)
-            _session.value = null
+    // A genuine atomic compare-and-set, not a separate read/check/write:
+    // MutableStateFlow.compareAndSet only succeeds if the flow's value is
+    // still exactly the `current` snapshot this loop just read, so a
+    // concurrent set() landing between the read and the CAS attempt makes
+    // the CAS fail (not silently overwrite the replacement) and this loop
+    // re-reads and re-checks the fresh value instead of ever writing over
+    // it. There is no window in which an unobserved concurrent
+    // replacement can be clobbered.
+    override fun invalidate(expectedSessionId: SessionId, expectedGeneration: Long): Boolean {
+        while (true) {
+            val current = _session.value
+            if (current == null || current.id != expectedSessionId || current.generation != expectedGeneration) {
+                return false
+            }
+            if (_session.compareAndSet(current, null)) {
+                invalidated.add(expectedSessionId to expectedGeneration)
+                return true
+            }
+            // `current` changed concurrently between the read above and the
+            // CAS attempt -- retry against the fresh value rather than
+            // treating the stale read as authoritative.
         }
     }
 

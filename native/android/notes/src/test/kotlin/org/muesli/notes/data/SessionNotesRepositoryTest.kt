@@ -535,6 +535,36 @@ class SessionNotesRepositoryTest {
         )
     }
 
+    @Test
+    fun `SessionSource invalidate is a true compare-and-set keyed on the full id-and-generation identity`() = runTest {
+        val (_, sessionSource, _) = harness()
+        val sessionGen1 = FakeAuthenticatedSession("s1", generation = 1)
+        val sessionGen2 = FakeAuthenticatedSession("s1", generation = 2)
+        sessionSource.set(sessionGen1)
+
+        // The live session has already moved on to a same-id generation-2
+        // replacement by the time the stale generation-1 identity is
+        // presented: the compare-and-set must fail -- returning `false`,
+        // not merely producing no visible side effect -- and leave the
+        // live session exactly as it was.
+        sessionSource.set(sessionGen2)
+        assertFalse(
+            "invalidate() must return false for a superseded (id, generation) identity",
+            sessionSource.invalidate(sessionGen1.id, sessionGen1.generation),
+        )
+        assertEquals(sessionGen2, sessionSource.session.value)
+        assertTrue(sessionSource.invalidated.isEmpty())
+
+        // The CURRENT (id, generation) identity's compare-and-set must
+        // succeed -- returning `true` -- and actually clear the session.
+        assertTrue(
+            "invalidate() must return true for the identity that is still live",
+            sessionSource.invalidate(sessionGen2.id, sessionGen2.generation),
+        )
+        assertNull(sessionSource.session.value)
+        assertTrue(sessionSource.invalidated.contains(sessionGen2.id to sessionGen2.generation))
+    }
+
     // --- sign-out / stale session ---
 
     @Test
