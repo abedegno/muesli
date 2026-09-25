@@ -36,6 +36,26 @@ class SessionNotesRepositoryTest {
         Triple(api, sessionSource, SessionNotesRepository(api, sessionSource))
     }
 
+    /**
+     * Builds a 5-page window (pages 2-5 retained, backward key = page 1's
+     * null requestCursor) so [SessionNotesRepository.loadPreviousPage] has
+     * something to admit, for tests that exercise the backward-direction
+     * operation gate.
+     */
+    private suspend fun buildFivePageWindowWithBackwardKey(
+        api: FakeMobileNotesApi,
+        repo: SessionNotesRepository,
+        session: FakeAuthenticatedSession,
+    ) {
+        api.enqueueList(null, ApiResult.Success(testPage("pg1", 1, nextCursor = "c1")))
+        api.enqueueList("c1", ApiResult.Success(testPage("pg2", 1, nextCursor = "c2")))
+        api.enqueueList("c2", ApiResult.Success(testPage("pg3", 1, nextCursor = "c3")))
+        api.enqueueList("c3", ApiResult.Success(testPage("pg4", 1, nextCursor = "c4")))
+        api.enqueueList("c4", ApiResult.Success(testPage("pg5", 1, nextCursor = "c5")))
+        repo.loadFirstPage(session)
+        repeat(4) { repo.loadNextPage(session) }
+    }
+
     // --- first page ---
 
     @Test
@@ -201,6 +221,108 @@ class SessionNotesRepositoryTest {
         }
     }
 
+    @Test
+    fun `duplicate previous-page trigger while one is in flight issues no second request`() = runTest {
+        val (api, _, repo) = harness()
+        val session = FakeAuthenticatedSession("s1")
+        buildFivePageWindowWithBackwardKey(api, repo, session)
+
+        api.enqueueList(null, ApiResult.Success(testPage("pg1", 1, nextCursor = "c1")))
+        val callsBefore = api.listCalls.size
+        val gate = api.gateList(null)
+        val job1 = launch { repo.loadPreviousPage(session) }
+        runCurrent()
+        val job2 = launch { repo.loadPreviousPage(session) }
+        runCurrent()
+        assertEquals(callsBefore + 1, api.listCalls.size)
+
+        gate.complete(Unit)
+        job1.join()
+        job2.join()
+        val content = repo.state.value as NotesListState.Content
+        assertEquals(PreviousPageStatus.IDLE, content.previousPageStatus)
+        assertEquals(listOf("pg1-0", "pg2-0", "pg3-0", "pg4-0"), content.rows.map { it.id })
+    }
+
+    @Test
+    fun `refresh trigger during in-flight previous-page is ignored, both outcomes`() = runTest {
+        for (previousPageSucceeds in listOf(true, false)) {
+            val (api, _, repo) = harness()
+            val session = FakeAuthenticatedSession("s1")
+            buildFivePageWindowWithBackwardKey(api, repo, session)
+
+            if (previousPageSucceeds) {
+                api.enqueueList(null, ApiResult.Success(testPage("pg1", 1, nextCursor = "c1")))
+            } else {
+                api.enqueueList(null, ApiResult.Failure(ApiFailure.Http(500)))
+            }
+            val gate = api.gateList(null)
+            val previousJob = launch { repo.loadPreviousPage(session) }
+            runCurrent()
+
+            val callsBeforeRefreshAttempt = api.listCalls.size
+            val refreshJob = launch { repo.refresh(session) }
+            runCurrent()
+            assertEquals(
+                "refresh must not call the API while previous-page is in flight",
+                callsBeforeRefreshAttempt,
+                api.listCalls.size,
+            )
+
+            gate.complete(Unit)
+            previousJob.join()
+            refreshJob.join()
+
+            val content = repo.state.value as NotesListState.Content
+            assertEquals(RefreshStatus.IDLE, content.refreshStatus)
+            assertEquals(
+                if (previousPageSucceeds) PreviousPageStatus.IDLE else PreviousPageStatus.PREVIOUS_PAGE_FAILED,
+                content.previousPageStatus,
+            )
+        }
+    }
+
+    @Test
+    fun `previous-page trigger during in-flight refresh is ignored, both outcomes`() = runTest {
+        for (refreshSucceeds in listOf(true, false)) {
+            val (api, _, repo) = harness()
+            val session = FakeAuthenticatedSession("s1")
+            buildFivePageWindowWithBackwardKey(api, repo, session)
+
+            if (refreshSucceeds) {
+                api.enqueueList(null, ApiResult.Success(testPage("q1", 1, nextCursor = "d1")))
+            } else {
+                api.enqueueList(null, ApiResult.Failure(ApiFailure.Http(500)))
+            }
+            val gate = api.gateList(null)
+            val refreshJob = launch { repo.refresh(session) }
+            runCurrent()
+
+            val callsBeforePreviousAttempt = api.listCalls.size
+            val previousJob = launch { repo.loadPreviousPage(session) }
+            runCurrent()
+            assertEquals(
+                "previous-page must not call the API while refresh is in flight",
+                callsBeforePreviousAttempt,
+                api.listCalls.size,
+            )
+
+            gate.complete(Unit)
+            refreshJob.join()
+            previousJob.join()
+
+            val state = repo.state.value
+            val content = state as NotesListState.Content
+            if (refreshSucceeds) {
+                assertEquals(listOf("q1-0"), content.rows.map { it.id })
+                assertEquals(PreviousPageStatus.IDLE, content.previousPageStatus)
+            } else {
+                assertEquals(RefreshStatus.REFRESH_FAILED, content.refreshStatus)
+                assertEquals(listOf("pg2-0", "pg3-0", "pg4-0", "pg5-0"), content.rows.map { it.id })
+            }
+        }
+    }
+
     // --- refresh atomic replace / restore ---
 
     @Test
@@ -253,6 +375,85 @@ class SessionNotesRepositoryTest {
             finalContent.rows.map { it.id },
         )
     }
+
+    @Test
+    fun `a same-id but older-generation session (such as a token refresh) is rejected outright`() = runTest {
+        val (api, _, repo) = harness()
+        val sessionGen1 = FakeAuthenticatedSession("s1", generation = 1)
+        val sessionGen2 = FakeAuthenticatedSession("s1", generation = 2)
+        api.enqueueList(null, ApiResult.Success(testPage("p1", 1, nextCursor = "c1")))
+        repo.loadFirstPage(sessionGen1)
+        api.enqueueList(null, ApiResult.Success(testPage("q1", 1, nextCursor = null)))
+        repo.loadFirstPage(sessionGen2) // same id, bumped generation -- e.g. token refresh
+
+        // A call still carrying the stale generation-1 session must be
+        // rejected before ever reaching the network, not merely have its
+        // eventual result discarded.
+        repo.loadNextPage(sessionGen1)
+        repo.loadPreviousPage(sessionGen1)
+        repo.refresh(sessionGen1)
+        assertTrue(
+            "no request should have been admitted for the stale-generation session",
+            api.listCalls.none { it.cursor == "c1" },
+        )
+        val content = repo.state.value as NotesListState.Content
+        assertEquals(listOf("q1-0"), content.rows.map { it.id })
+    }
+
+    @Test
+    fun `a pagination result from a same-id but superseded-generation session is discarded`() = runTest {
+        val (api, _, repo) = harness()
+        val sessionGen1 = FakeAuthenticatedSession("s1", generation = 1)
+        val sessionGen2 = FakeAuthenticatedSession("s1", generation = 2)
+        api.enqueueList(null, ApiResult.Success(testPage("p1", 2, nextCursor = "c1")))
+        repo.loadFirstPage(sessionGen1)
+
+        api.enqueueList("c1", ApiResult.Success(testPage("p2", 1, nextCursor = null)))
+        val gate = api.gateList("c1")
+        val paginationJob = launch { repo.loadNextPage(sessionGen1) }
+        runCurrent() // pagination is in flight, tagged with generation 1
+
+        // The host refreshes the token: a new AuthenticatedSession with the
+        // SAME id but a bumped generation replaces the old one, without any
+        // change to the session id the earlier gap in this check missed.
+        api.enqueueList(null, ApiResult.Success(testPage("q1", 1, nextCursor = null)))
+        repo.loadFirstPage(sessionGen2)
+        val freshContent = repo.state.value as NotesListState.Content
+        assertEquals(listOf("q1-0"), freshContent.rows.map { it.id })
+
+        gate.complete(Unit)
+        paginationJob.join()
+        val finalContent = repo.state.value as NotesListState.Content
+        assertEquals(
+            "a same-id but stale-generation pagination result must never apply",
+            listOf("q1-0"),
+            finalContent.rows.map { it.id },
+        )
+    }
+
+    @Test
+    fun `a late detail 401 for a same-id but superseded-generation session does not invalidate the replacement`() = runTest {
+        val (api, sessionSource, repo) = harness()
+        val sessionGen1 = FakeAuthenticatedSession("s1", generation = 1)
+        val sessionGen2 = FakeAuthenticatedSession("s1", generation = 2)
+        sessionSource.set(sessionGen1)
+
+        // sessionSource has already moved on to generation 2 (e.g. a token
+        // refresh) by the time a detail request still tagged with the old
+        // generation-1 session comes back 401.
+        sessionSource.set(sessionGen2)
+
+        api.enqueueDetail("n1", ApiResult.Failure(ApiFailure.SessionEnded))
+        val result = repo.noteDetail(sessionGen1, "n1")
+
+        assertEquals(ApiFailure.SessionEnded, (result as ApiResult.Failure).reason)
+        assertTrue(
+            "a stale-generation 401 must not invalidate the current (generation 2) session",
+            sessionSource.invalidated.isEmpty(),
+        )
+        assertEquals(sessionGen2, sessionSource.session.value)
+    }
+
     @Test
     fun `refresh failure restores the exact pre-refresh snapshot and retry succeeds`() = runTest {
         val (api, _, repo) = harness()

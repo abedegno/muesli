@@ -12,6 +12,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import org.muesli.notes.detail.NoteDetailState
 
@@ -66,7 +68,16 @@ private fun NoteDetailContent(state: NoteDetailState.Content) {
                 .verticalScroll(rememberScrollState())
                 .padding(16.dp),
         ) {
-            Text(text = detail.title.ifBlank { "Untitled note" }, style = MaterialTheme.typography.headlineSmall)
+            if (detail.title.isNotBlank()) {
+                Text(text = detail.title, style = MaterialTheme.typography.headlineSmall)
+            } else {
+                // The contract never sends a blank title as meaningful
+                // content, so nothing is rendered visually here (a neutral
+                // empty presentation) -- the accessibility label is the only
+                // place "Untitled note" appears, never as fabricated visible
+                // text.
+                Spacer(modifier = Modifier.semantics { contentDescription = "Untitled note" })
+            }
             if (detail.tags.isNotEmpty()) {
                 Spacer(Modifier.height(4.dp))
                 Text(text = detail.tags.joinToString(), style = MaterialTheme.typography.labelMedium)

@@ -9,6 +9,7 @@ import org.junit.Test
 import org.muesli.notes.api.ContractViolationException
 import org.muesli.notes.api.MobileNoteDetailResponseDto
 import org.muesli.notes.api.MobileNoteItemDto
+import org.muesli.notes.api.MobileNotesListResponseDto
 import org.muesli.notes.api.toDomain
 import java.time.Instant
 
@@ -90,6 +91,26 @@ class NoteMappingTest {
         assertEquals("s1", detail.summaries[0].id)
         assertEquals("H", detail.summaries[0].sections[0].heading)
         assertTrue(detail.summaries[1].sections.isEmpty())
+    }
+
+    @Test
+    fun `an absent next_cursor maps to null`() {
+        val raw = """{"items":[]}"""
+        val page = json.decodeFromString<MobileNotesListResponseDto>(raw).toDomain()
+        assertEquals(null, page.nextCursor)
+    }
+
+    @Test
+    fun `next_cursor is passed through exactly as decoded, with no blank-string coercion`() {
+        // #767's next_cursor is `omitempty`: the server never emits a blank
+        // string, only omits the field entirely. This asserts the client
+        // does not inspect/reinterpret the cursor's own content -- a
+        // present-but-unusual value (even a blank one, however the server
+        // could never actually send it) is passed through opaquely rather
+        // than being coerced to null.
+        val raw = """{"items":[],"next_cursor":""}"""
+        val page = json.decodeFromString<MobileNotesListResponseDto>(raw).toDomain()
+        assertEquals("", page.nextCursor)
     }
 
     @Test

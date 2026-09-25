@@ -83,6 +83,25 @@ class NotesListViewModelTest {
     }
 
     @Test
+    fun `a same-id but newer-generation session (such as a token refresh) is treated as a transition and reloads`() = runTest {
+        val sessionGen1 = FakeAuthenticatedSession("s1", generation = 1)
+        val sessionGen2 = FakeAuthenticatedSession("s1", generation = 2)
+        val sessionSource = FakeSessionSource(sessionGen1)
+        val repository = FakeNotesRepository()
+        NotesListViewModel(sessionSource, repository)
+        dispatcher.scheduler.advanceUntilIdle()
+        assertEquals(listOf(sessionGen1), repository.loadFirstPageCalls)
+
+        sessionSource.set(sessionGen2)
+        dispatcher.scheduler.advanceUntilIdle()
+        assertEquals(
+            "a bumped generation on the same session id must still trigger a fresh load",
+            listOf(sessionGen1, sessionGen2),
+            repository.loadFirstPageCalls,
+        )
+    }
+
+    @Test
     fun `loadNextPage, loadPreviousPage, refresh, and retry forward to the repository with the current session`() = runTest {
         val session = FakeAuthenticatedSession("s1")
         val sessionSource = FakeSessionSource(session)

@@ -45,6 +45,11 @@ class SessionNotesRepository(
     // (admission) or immediately after an awaited call has been confirmed
     // current via isCurrent (application) -- both are single-writer points.
     private var activeSessionId: SessionId? = null
+    // The AuthenticatedSession's own generation (host-supplied: bumped on
+    // token refresh/re-auth even when the session id itself is unchanged),
+    // distinct from collectionGeneration below (this repository's own
+    // per-refresh pagination-chain counter).
+    private var activeSessionGeneration: Long = -1
     private var collectionGeneration: Long = 0
     private val pages = ArrayDeque<RetainedPage>()
     private var cursorBeforeWindow: EdgeKey? = null
@@ -52,6 +57,7 @@ class SessionNotesRepository(
 
     override suspend fun loadFirstPage(session: AuthenticatedSession) {
         activeSessionId = session.id
+        activeSessionGeneration = session.generation
         collectionGeneration += 1
         val requestGeneration = collectionGeneration
         pages.clear()
@@ -74,7 +80,7 @@ class SessionNotesRepository(
     }
 
     override suspend fun loadNextPage(session: AuthenticatedSession) {
-        if (session.id != activeSessionId) return
+        if (!matchesActiveSession(session)) return
         val requestGeneration = collectionGeneration
         // `cursor` may legitimately be null (reloading the very first page),
         // so admission is tracked separately rather than via `cursor`'s
@@ -111,7 +117,7 @@ class SessionNotesRepository(
     }
 
     override suspend fun loadPreviousPage(session: AuthenticatedSession) {
-        if (session.id != activeSessionId) return
+        if (!matchesActiveSession(session)) return
         val requestGeneration = collectionGeneration
         var admitted = false
         var cursor: String? = null
@@ -144,7 +150,7 @@ class SessionNotesRepository(
     }
 
     override suspend fun refresh(session: AuthenticatedSession) {
-        if (session.id != activeSessionId) return
+        if (!matchesActiveSession(session)) return
         val requestGeneration = collectionGeneration
         val snapshot = gate.withLock {
             val content = _state.value as? NotesListState.Content ?: return@withLock null
@@ -189,14 +195,25 @@ class SessionNotesRepository(
 
     override suspend fun noteDetail(session: AuthenticatedSession, noteId: String): ApiResult<NoteDetail> {
         val result = api.getNote(session, noteId)
+        // A detail fetch doesn't touch the collection window/generation, but a
+        // late 401 must still only invalidate a session that is genuinely
+        // still current -- checked against SessionSource directly (the
+        // authoritative "current session", independent of whatever the list
+        // screen has loaded) by both id AND generation, so an old request
+        // can never invalidate a same-id replacement session (e.g. a token
+        // refresh) that has since taken its place.
         if (result is ApiResult.Failure && result.reason == ApiFailure.SessionEnded) {
-            handleSessionEnded(session)
+            val current = sessionSource.session.value
+            if (current != null && current.id == session.id && current.generation == session.generation) {
+                handleSessionEnded(session)
+            }
         }
         return result
     }
 
     override fun clear() {
         activeSessionId = null
+        activeSessionGeneration = -1
         collectionGeneration += 1
         pages.clear()
         cursorBeforeWindow = null
@@ -219,8 +236,11 @@ class SessionNotesRepository(
             content.previousPageStatus == PreviousPageStatus.LOADING_PREVIOUS_PAGE ||
             content.refreshStatus == RefreshStatus.REFRESHING
 
+    private fun matchesActiveSession(session: AuthenticatedSession): Boolean =
+        activeSessionId == session.id && activeSessionGeneration == session.generation
+
     private fun isCurrent(session: AuthenticatedSession, requestGeneration: Long): Boolean =
-        activeSessionId == session.id && collectionGeneration == requestGeneration
+        matchesActiveSession(session) && collectionGeneration == requestGeneration
 
     private fun handleSessionEnded(session: AuthenticatedSession) {
         sessionSource.invalidate(session.id)

@@ -26,7 +26,10 @@ class NotesListViewModel(
 
     val state: StateFlow<NotesListState> = repository.state
 
-    private var observedSessionId: SessionId? = null
+    // Tracks (id, generation) rather than just id: a host can replace the
+    // AuthenticatedSession (e.g. on token refresh / re-auth) while keeping
+    // the same id, and that must still be treated as a session transition.
+    private var observedSessionKey: Pair<SessionId, Long>? = null
 
     init {
         viewModelScope.launch {
@@ -35,9 +38,9 @@ class NotesListViewModel(
     }
 
     private fun onSessionChanged(session: AuthenticatedSession?) {
-        val newId = session?.id
-        if (newId == observedSessionId) return
-        observedSessionId = newId
+        val newKey = session?.let { it.id to it.generation }
+        if (newKey == observedSessionKey) return
+        observedSessionKey = newKey
         if (session == null) {
             repository.clear()
         } else {

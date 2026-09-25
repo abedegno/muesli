@@ -1,7 +1,9 @@
 package org.muesli.notes.detail
 
+import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.cancel
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runTest
@@ -194,6 +196,57 @@ class NoteDetailViewModelTest {
         dispatcher.scheduler.advanceUntilIdle()
         assertEquals("account switch's own fetch result must win, not the stale one", afterSwitch, viewModel.state.value)
         assertEquals(listOf(sessionA to "n1", sessionB to "n1"), repository.noteDetailCalls)
+    }
+
+    @Test
+    fun `a same-id but newer-generation session (such as a token refresh) discards a stale in-flight result and reloads`() = runTest {
+        val sessionGen1 = FakeAuthenticatedSession("s1", generation = 1)
+        val sessionGen2 = FakeAuthenticatedSession("s1", generation = 2)
+        val sessionSource = FakeSessionSource(sessionGen1)
+        val repository = FakeNotesRepository()
+        val gate = repository.gateDetail("n1")
+        repository.enqueueDetail("n1", ApiResult.Success(completeDetail(id = "n1")))
+        val viewModel = NoteDetailViewModel("n1", sessionSource, repository)
+        dispatcher.scheduler.runCurrent()
+
+        sessionSource.set(sessionGen2)
+        repository.enqueueDetail("n1", ApiResult.Success(optionalAbsentDetail(id = "n1")))
+        dispatcher.scheduler.advanceUntilIdle()
+        val afterGenerationBump = viewModel.state.value as NoteDetailState.Content
+        assertTrue("generation 2's own fetch must publish", afterGenerationBump.detail.tags.isEmpty())
+
+        gate.complete(Unit)
+        dispatcher.scheduler.advanceUntilIdle()
+        assertEquals(
+            "generation 1's stale result must never overwrite generation 2's, even with the same session id",
+            afterGenerationBump,
+            viewModel.state.value,
+        )
+        assertEquals(listOf(sessionGen1 to "n1", sessionGen2 to "n1"), repository.noteDetailCalls)
+    }
+
+    @Test
+    fun `cancelling the view model scope (as onCleared does) discards a late in-flight result`() = runTest {
+        val session = FakeAuthenticatedSession("s1")
+        val sessionSource = FakeSessionSource(session)
+        val repository = FakeNotesRepository()
+        val gate = repository.gateDetail("n1")
+        repository.enqueueDetail("n1", ApiResult.Success(completeDetail()))
+        val viewModel = NoteDetailViewModel("n1", sessionSource, repository)
+        dispatcher.scheduler.runCurrent() // in flight, awaiting the gate
+
+        // onCleared() itself is not visible to call directly from a test,
+        // but it works by cancelling viewModelScope -- cancelling it here
+        // has the identical effect on any in-flight launch this class made.
+        viewModel.viewModelScope.cancel()
+        gate.complete(Unit)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            "a result completing after the screen's view model scope is cancelled must never update state",
+            NoteDetailState.Loading,
+            viewModel.state.value,
+        )
     }
 
     @Test

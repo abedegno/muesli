@@ -26,9 +26,14 @@ import org.muesli.notes.model.NoteListItem
  */
 @Composable
 fun NoteRow(item: NoteListItem, onClick: (String) -> Unit, modifier: Modifier = Modifier) {
-    val title = item.title.ifBlank { "Untitled note" }
+    val hasTitle = item.title.isNotBlank()
+    // The contract never sends a blank title as meaningful content, so the
+    // visible UI renders nothing for it (a neutral empty presentation) --
+    // "Untitled note" is used only in the accessibility label below, never
+    // as fabricated visible text, so a screen reader user still gets a
+    // sensible announcement for an otherwise-blank row.
     val label = buildString {
-        append(title)
+        append(if (hasTitle) item.title else "Untitled note")
         if (item.pinned) append(", pinned")
         if (item.tags.isNotEmpty()) append(", tags: ").append(item.tags.joinToString())
     }
@@ -43,7 +48,14 @@ fun NoteRow(item: NoteListItem, onClick: (String) -> Unit, modifier: Modifier = 
                 role = Role.Button
             },
     ) {
-        Text(text = title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (hasTitle) {
+            Text(
+                text = item.title,
+                style = MaterialTheme.typography.titleMedium,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
         if (item.snippet.isNotBlank()) {
             Text(
                 text = item.snippet,

@@ -31,7 +31,10 @@ class NoteDetailViewModel(
     val state: StateFlow<NoteDetailState> = _state.asStateFlow()
 
     private var requestGeneration = 0L
-    private var observedSessionId: SessionId? = null
+    // Tracks (id, generation) rather than just id: a host can replace the
+    // AuthenticatedSession (e.g. on token refresh / re-auth) while keeping
+    // the same id, and that must still be treated as a session transition.
+    private var observedSessionKey: Pair<SessionId, Long>? = null
 
     init {
         viewModelScope.launch {
@@ -40,9 +43,9 @@ class NoteDetailViewModel(
     }
 
     private fun onSessionChanged(session: AuthenticatedSession?) {
-        val newId = session?.id
-        if (newId == observedSessionId) return
-        observedSessionId = newId
+        val newKey = session?.let { it.id to it.generation }
+        if (newKey == observedSessionKey) return
+        observedSessionKey = newKey
         if (session == null) {
             requestGeneration += 1 // discard any in-flight request tied to the former session
             _state.value = NoteDetailState.Loading
@@ -63,7 +66,9 @@ class NoteDetailViewModel(
         _state.value = NoteDetailState.Loading
         viewModelScope.launch {
             val result = repository.noteDetail(session, noteId)
-            if (generation != requestGeneration || sessionSource.session.value?.id != session.id) {
+            val current = sessionSource.session.value
+            val sessionStillActive = current != null && current.id == session.id && current.generation == session.generation
+            if (generation != requestGeneration || !sessionStillActive) {
                 return@launch // superseded retry, disposed screen, or session/account change
             }
             _state.value = when (result) {

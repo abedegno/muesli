@@ -106,8 +106,15 @@ internal fun MobileNoteItemDto.toDomain(): NoteListItem {
     )
 }
 
+// The cursor is opaque per #767 (internal/api/mobile_notes.go): the field is
+// `json:"next_cursor,omitempty"`, so the server represents terminality by
+// OMITTING the field (decodes to null here), never by emitting a blank
+// string -- encodeMobileCursor always produces a non-empty value when the
+// field is present at all. The client must not inspect or reinterpret the
+// cursor's own content, so it is passed through exactly as decoded, with no
+// blank-string special case.
 internal fun MobileNotesListResponseDto.toDomain(): NotesPage =
-    NotesPage(items = items.map { it.toDomain() }, nextCursor = nextCursor?.takeIf { it.isNotBlank() })
+    NotesPage(items = items.map { it.toDomain() }, nextCursor = nextCursor)
 
 internal fun MobileSummarySectionDto.toDomain(): NoteSummarySection = NoteSummarySection(heading, contentMarkdown)
 
