@@ -1,5 +1,5 @@
 # CPU-default image. For GPU, see README (CUDA base + WHISPER_DEVICE=cuda).
-FROM python:3.12-slim
+FROM python:3.14-slim
 
 # faster-whisper (ctranslate2) needs libgomp at runtime. ffmpeg is used by the
 # opt-in multitrack (channel-per-speaker) mode to probe/split audio channels.
