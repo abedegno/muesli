@@ -40,9 +40,12 @@ class FakeMobileNotesApi : MobileNotesApi {
 
     override suspend fun listNotes(session: AuthenticatedSession, limit: Int, cursor: String?): ApiResult<NotesPage> {
         listCalls.add(ListCall(session.id, limit, cursor))
-        listGates[cursor]?.await()
+        // Claim this call's response synchronously (before any suspension) so
+        // call order always matches enqueue order regardless of gate timing.
         val queue = listResponses[cursor] ?: error("no fake list response enqueued for cursor=$cursor")
-        return queue.removeFirstOrNull() ?: error("fake list response queue exhausted for cursor=$cursor")
+        val response = queue.removeFirstOrNull() ?: error("fake list response queue exhausted for cursor=$cursor")
+        listGates[cursor]?.await()
+        return response
     }
 
     override suspend fun getNote(session: AuthenticatedSession, noteId: String): ApiResult<NoteDetail> {
