@@ -8,11 +8,17 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
+import org.muesli.notes.api.ApiResult
+import org.muesli.notes.data.SessionNotesRepository
 import org.muesli.notes.testing.FakeAuthenticatedSession
+import org.muesli.notes.testing.FakeMobileNotesApi
 import org.muesli.notes.testing.FakeNotesRepository
 import org.muesli.notes.testing.FakeSessionSource
+import org.muesli.notes.testing.testPage
 
 /**
  * View-model tests (issue #768 Task 3): session-change reactions (load on
@@ -314,5 +320,163 @@ class NotesListViewModelTest {
             repository.loadNextPageCancelledCount,
         )
         gate.complete(Unit)
+    }
+
+    // --- overlap regression: cancellation must not leave the repository stuck busy ---
+    //
+    // The tests above use FakeNotesRepository, which only records that a
+    // cancellation happened. That is not enough to catch the real regression:
+    // SessionNotesRepository's loadNextPage/loadPreviousPage/refresh each mark
+    // their published status busy *before* awaiting the network call, and
+    // originally had no recovery path if that await was cancelled out from
+    // under them (as launchWithSession does for every overlapping intent) --
+    // the status stayed busy forever and every later intent then no-opped
+    // against isBusy(). Catching that requires the real ViewModel wired to the
+    // real SessionNotesRepository, asserting both that the overlapping
+    // request actually reached the API (proof the repository was no longer
+    // stuck rejecting it) and that the final published status recovered.
+
+    /**
+     * Builds a 5-page window through the real [NotesListViewModel] /
+     * [SessionNotesRepository] combo: page 1 (requestCursor null) is evicted
+     * once a 5th page is appended past the repository's retained-page cap,
+     * which is what gives [NotesListViewModel.loadPreviousPage] a backward
+     * edge key to admit.
+     */
+    private suspend fun buildFivePageWindow(viewModel: NotesListViewModel, api: FakeMobileNotesApi) {
+        api.enqueueList(null, ApiResult.Success(testPage("pg1", 1, nextCursor = "c1")))
+        dispatcher.scheduler.advanceUntilIdle()
+        api.enqueueList("c1", ApiResult.Success(testPage("pg2", 1, nextCursor = "c2")))
+        viewModel.loadNextPage()
+        dispatcher.scheduler.advanceUntilIdle()
+        api.enqueueList("c2", ApiResult.Success(testPage("pg3", 1, nextCursor = "c3")))
+        viewModel.loadNextPage()
+        dispatcher.scheduler.advanceUntilIdle()
+        api.enqueueList("c3", ApiResult.Success(testPage("pg4", 1, nextCursor = "c4")))
+        viewModel.loadNextPage()
+        dispatcher.scheduler.advanceUntilIdle()
+        api.enqueueList("c4", ApiResult.Success(testPage("pg5", 1, nextCursor = "c5")))
+        viewModel.loadNextPage()
+        dispatcher.scheduler.advanceUntilIdle()
+    }
+
+    @Test
+    fun `an overlapping next-page intent cancels the first request and the repository recovers to idle, not stuck busy`() = runTest {
+        val session = FakeAuthenticatedSession("s1")
+        val sessionSource = FakeSessionSource(session)
+        val api = FakeMobileNotesApi()
+        val repository = SessionNotesRepository(api, sessionSource)
+        val viewModel = NotesListViewModel(sessionSource, repository)
+
+        api.enqueueList(null, ApiResult.Success(testPage("p1", 2, nextCursor = "c1")))
+        dispatcher.scheduler.advanceUntilIdle() // initial load completes
+
+        val gate = api.gateList("c1")
+        api.enqueueList("c1", ApiResult.Success(testPage("orphaned", 1, nextCursor = "cx"))) // consumed then discarded: this request is cancelled
+        val job1 = viewModel.loadNextPage()
+        dispatcher.scheduler.runCurrent() // reach the gated await inside loadNextPage, still in-flight
+
+        api.enqueueList("c1", ApiResult.Success(testPage("p2", 1, nextCursor = "c2"))) // the overlapping intent's own request
+        val job2 = viewModel.loadNextPage()
+        dispatcher.scheduler.advanceUntilIdle() // job1 must be cancelled and restore IDLE before job2's admission check runs
+
+        assertTrue("the first request must actually be cancelled, not orphaned", job1!!.isCancelled)
+
+        gate.complete(Unit)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            "both the cancelled and the overlapping request must have reached the API -- the second is only admitted if the repository recovered from the first request's cancellation instead of staying stuck busy",
+            2,
+            api.listCalls.count { it.cursor == "c1" },
+        )
+        val content = viewModel.state.value as NotesListState.Content
+        assertEquals(
+            "pagination status must not be left stuck at LOADING_NEXT_PAGE by the cancelled first request",
+            PaginationStatus.IDLE,
+            content.paginationStatus,
+        )
+        assertEquals(listOf("p1-0", "p1-1", "p2-0"), content.rows.map { it.id })
+        assertFalse(job2!!.isCancelled)
+    }
+
+    @Test
+    fun `an overlapping previous-page intent cancels the first request and the repository recovers to idle, not stuck busy`() = runTest {
+        val session = FakeAuthenticatedSession("s1")
+        val sessionSource = FakeSessionSource(session)
+        val api = FakeMobileNotesApi()
+        val repository = SessionNotesRepository(api, sessionSource)
+        val viewModel = NotesListViewModel(sessionSource, repository)
+        buildFivePageWindow(viewModel, api)
+        val callsBeforeOverlap = api.listCalls.count { it.cursor == null }
+
+        val gate = api.gateList(null)
+        api.enqueueList(null, ApiResult.Success(testPage("orphaned-prev", 1, nextCursor = "cx"))) // consumed then discarded: this request is cancelled
+        val job1 = viewModel.loadPreviousPage()
+        dispatcher.scheduler.runCurrent() // reach the gated await inside loadPreviousPage, still in-flight
+
+        api.enqueueList(null, ApiResult.Success(testPage("pg0", 1, nextCursor = "c0"))) // the overlapping intent's own request
+        val job2 = viewModel.loadPreviousPage()
+        dispatcher.scheduler.advanceUntilIdle() // job1 must be cancelled and restore IDLE before job2's admission check runs
+
+        assertTrue("the first request must actually be cancelled, not orphaned", job1!!.isCancelled)
+
+        gate.complete(Unit)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            "both the cancelled and the overlapping request must have reached the API -- the second is only admitted if the repository recovered from the first request's cancellation instead of staying stuck busy",
+            2,
+            api.listCalls.count { it.cursor == null } - callsBeforeOverlap,
+        )
+        val content = viewModel.state.value as NotesListState.Content
+        assertEquals(
+            "previous-page status must not be left stuck at LOADING_PREVIOUS_PAGE by the cancelled first request",
+            PreviousPageStatus.IDLE,
+            content.previousPageStatus,
+        )
+        assertEquals(listOf("pg0-0", "pg2-0", "pg3-0", "pg4-0"), content.rows.map { it.id })
+        assertFalse(job2!!.isCancelled)
+    }
+
+    @Test
+    fun `an overlapping refresh intent cancels the first request and the repository recovers to idle, not stuck busy`() = runTest {
+        val session = FakeAuthenticatedSession("s1")
+        val sessionSource = FakeSessionSource(session)
+        val api = FakeMobileNotesApi()
+        val repository = SessionNotesRepository(api, sessionSource)
+        val viewModel = NotesListViewModel(sessionSource, repository)
+
+        api.enqueueList(null, ApiResult.Success(testPage("p1", 2, nextCursor = "c1")))
+        dispatcher.scheduler.advanceUntilIdle() // initial load completes
+        val callsBeforeOverlap = api.listCalls.count { it.cursor == null }
+
+        val gate = api.gateList(null)
+        api.enqueueList(null, ApiResult.Success(testPage("orphaned-refresh", 1, nextCursor = "cx"))) // consumed then discarded: this request is cancelled
+        val job1 = viewModel.refresh()
+        dispatcher.scheduler.runCurrent() // reach the gated await inside refresh, still in-flight
+
+        api.enqueueList(null, ApiResult.Success(testPage("refreshed", 2, nextCursor = "c2"))) // the overlapping intent's own request
+        val job2 = viewModel.refresh()
+        dispatcher.scheduler.advanceUntilIdle() // job1 must be cancelled and restore IDLE before job2's admission check runs
+
+        assertTrue("the first request must actually be cancelled, not orphaned", job1!!.isCancelled)
+
+        gate.complete(Unit)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            "both the cancelled and the overlapping refresh request must have reached the API -- the second is only admitted if the repository recovered from the first request's cancellation instead of staying stuck busy",
+            2,
+            api.listCalls.count { it.cursor == null } - callsBeforeOverlap,
+        )
+        val content = viewModel.state.value as NotesListState.Content
+        assertEquals(
+            "refresh status must not be left stuck at REFRESHING by the cancelled first request",
+            RefreshStatus.IDLE,
+            content.refreshStatus,
+        )
+        assertEquals(listOf("refreshed-0", "refreshed-1"), content.rows.map { it.id })
+        assertFalse(job2!!.isCancelled)
     }
 }

@@ -1,5 +1,6 @@
 package org.muesli.notes.data
 
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -98,7 +99,22 @@ class SessionNotesRepository(
         if (!admitted) return
 
         val consumingAfterWindow = cursorAfterWindow != null
-        val result = api.listNotes(session, PAGE_LIMIT, cursor)
+        val result = try {
+            api.listNotes(session, PAGE_LIMIT, cursor)
+        } catch (cancellation: CancellationException) {
+            // The in-flight call was cancelled (e.g. an overlapping intent
+            // superseded it) before it reached a terminal outcome, which
+            // otherwise leaves paginationStatus stuck at LOADING_NEXT_PAGE
+            // forever -- isBusy() would then reject every future intent.
+            // Restore IDLE, but only if this request is still the one the
+            // repository considers current; a stale/superseded request must
+            // never clobber a newer request's own status. Always rethrow so
+            // structured concurrency isn't broken.
+            if (isCurrent(session, requestGeneration)) {
+                publishContent(paginationStatus = PaginationStatus.IDLE)
+            }
+            throw cancellation
+        }
         if (!isCurrent(session, requestGeneration)) return
         when (result) {
             is ApiResult.Success -> {
@@ -131,7 +147,17 @@ class SessionNotesRepository(
         }
         if (!admitted) return
 
-        val result = api.listNotes(session, PAGE_LIMIT, cursor)
+        val result = try {
+            api.listNotes(session, PAGE_LIMIT, cursor)
+        } catch (cancellation: CancellationException) {
+            // See the matching comment in loadNextPage: without this, a
+            // cancelled previous-page load leaves previousPageStatus stuck
+            // at LOADING_PREVIOUS_PAGE forever.
+            if (isCurrent(session, requestGeneration)) {
+                publishContent(previousPageStatus = PreviousPageStatus.IDLE)
+            }
+            throw cancellation
+        }
         if (!isCurrent(session, requestGeneration)) return
         when (result) {
             is ApiResult.Success -> {
@@ -166,7 +192,19 @@ class SessionNotesRepository(
             snap
         } ?: return
 
-        val result = api.listNotes(session, PAGE_LIMIT, cursor = null)
+        val result = try {
+            api.listNotes(session, PAGE_LIMIT, cursor = null)
+        } catch (cancellation: CancellationException) {
+            // See the matching comment in loadNextPage: without this, a
+            // cancelled refresh leaves refreshStatus stuck at REFRESHING
+            // forever. The pre-refresh pages/cursors were never touched
+            // (the snapshot above is only for restoring after a completed
+            // failure), so resetting just refreshStatus is sufficient.
+            if (isCurrent(session, requestGeneration)) {
+                publishContent(refreshStatus = RefreshStatus.IDLE)
+            }
+            throw cancellation
+        }
         if (!isCurrent(session, requestGeneration)) return
         when (result) {
             is ApiResult.Success -> {
