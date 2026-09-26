@@ -64,6 +64,11 @@ class NotesListViewModel(
 
     private fun launchWithSession(block: suspend (AuthenticatedSession) -> Unit): Job? {
         val session = sessionSource.session.value ?: return null
+        // Cancel whatever this view model previously tracked before losing
+        // the only reference to it -- otherwise an overlapping intent (e.g.
+        // a second pagination call while the first is still in flight)
+        // would silently orphan the still-running original request.
+        currentJob?.cancel()
         val job = viewModelScope.launch { block(session) }
         currentJob = job
         return job

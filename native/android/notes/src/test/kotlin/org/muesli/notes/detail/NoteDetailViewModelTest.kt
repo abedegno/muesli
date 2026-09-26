@@ -339,4 +339,31 @@ class NoteDetailViewModelTest {
         )
         gate.complete(Unit)
     }
+
+    @Test
+    fun `a same-id but newer-generation session replacement (such as a token refresh) cancels the in-flight fetch`() = runTest {
+        val sessionGen1 = FakeAuthenticatedSession("s1", generation = 1)
+        val sessionGen2 = FakeAuthenticatedSession("s1", generation = 2)
+        val sessionSource = FakeSessionSource(sessionGen1)
+        val repository = FakeNotesRepository()
+        val gate = repository.gateDetail("n1")
+        repository.enqueueDetail("n1", ApiResult.Success(completeDetail(id = "n1")))
+        NoteDetailViewModel("n1", sessionSource, repository)
+        dispatcher.scheduler.runCurrent() // reach the gated await for generation 1
+
+        // This is a session *replacement* (the host swapping in a
+        // same-id, newer-generation AuthenticatedSession, e.g. a token
+        // refresh), not a call to retry() -- it must go through the same
+        // onSessionChanged -> load() cancellation path.
+        repository.enqueueDetail("n1", ApiResult.Success(completeDetail(id = "n1")))
+        sessionSource.set(sessionGen2)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            "a bumped generation on the same session id must cancel the prior generation's in-flight fetch",
+            1,
+            repository.noteDetailCancelledCount,
+        )
+        gate.complete(Unit)
+    }
 }

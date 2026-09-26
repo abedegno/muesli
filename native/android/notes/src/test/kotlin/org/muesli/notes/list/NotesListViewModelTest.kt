@@ -109,9 +109,17 @@ class NotesListViewModelTest {
         val viewModel = NotesListViewModel(sessionSource, repository)
         dispatcher.scheduler.advanceUntilIdle()
 
+        // Each call is allowed to complete before the next fires: since a
+        // view model now cancels its previously tracked job before
+        // launching a new one (so an overlapping intent can never orphan a
+        // still-running request), firing these back-to-back with no yield
+        // between them would cancel each one before it ever started.
         viewModel.loadNextPage()
+        dispatcher.scheduler.advanceUntilIdle()
         viewModel.loadPreviousPage()
+        dispatcher.scheduler.advanceUntilIdle()
         viewModel.refresh()
+        dispatcher.scheduler.advanceUntilIdle()
         viewModel.retryInitialLoad()
         dispatcher.scheduler.advanceUntilIdle()
 
@@ -207,6 +215,101 @@ class NotesListViewModelTest {
 
         assertEquals(
             "sign-out must cancel the coroutine actually running the in-flight next-page load",
+            1,
+            repository.loadNextPageCancelledCount,
+        )
+        gate.complete(Unit)
+    }
+
+    @Test
+    fun `signing out cancels an in-flight previous-page load, not just discards its result`() = runTest {
+        val session = FakeAuthenticatedSession("s1")
+        val sessionSource = FakeSessionSource(session)
+        val repository = FakeNotesRepository()
+        val viewModel = NotesListViewModel(sessionSource, repository)
+        dispatcher.scheduler.advanceUntilIdle() // let the initial (ungated) first-page load finish
+
+        val gate = repository.gatePreviousPage()
+        viewModel.loadPreviousPage()
+        dispatcher.scheduler.runCurrent() // reach the gated await inside loadPreviousPage
+
+        sessionSource.set(null)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            "sign-out must cancel the coroutine actually running the in-flight previous-page load",
+            1,
+            repository.loadPreviousPageCancelledCount,
+        )
+        gate.complete(Unit)
+    }
+
+    @Test
+    fun `signing out cancels an in-flight refresh, not just discards its result`() = runTest {
+        val session = FakeAuthenticatedSession("s1")
+        val sessionSource = FakeSessionSource(session)
+        val repository = FakeNotesRepository()
+        val viewModel = NotesListViewModel(sessionSource, repository)
+        dispatcher.scheduler.advanceUntilIdle() // let the initial (ungated) first-page load finish
+
+        val gate = repository.gateRefresh()
+        viewModel.refresh()
+        dispatcher.scheduler.runCurrent() // reach the gated await inside refresh
+
+        sessionSource.set(null)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            "sign-out must cancel the coroutine actually running the in-flight refresh",
+            1,
+            repository.refreshCancelledCount,
+        )
+        gate.complete(Unit)
+    }
+
+    @Test
+    fun `a same-id but newer-generation session transition cancels the in-flight first-page load`() = runTest {
+        val sessionGen1 = FakeAuthenticatedSession("s1", generation = 1)
+        val sessionGen2 = FakeAuthenticatedSession("s1", generation = 2)
+        val sessionSource = FakeSessionSource(sessionGen1)
+        val repository = FakeNotesRepository()
+        val gateGen1 = repository.gateFirstPage()
+        NotesListViewModel(sessionSource, repository)
+        dispatcher.scheduler.runCurrent() // reach the gated await for generation 1
+
+        sessionSource.set(sessionGen2)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            "a bumped generation on the same session id must cancel the prior generation's in-flight first-page load",
+            1,
+            repository.loadFirstPageCancelledCount,
+        )
+        assertEquals(listOf(sessionGen1, sessionGen2), repository.loadFirstPageCalls)
+        gateGen1.complete(Unit)
+    }
+
+    @Test
+    fun `launching a second list intent while the first is still in-flight cancels the first, not just orphans it`() = runTest {
+        val session = FakeAuthenticatedSession("s1")
+        val sessionSource = FakeSessionSource(session)
+        val repository = FakeNotesRepository()
+        val viewModel = NotesListViewModel(sessionSource, repository)
+        dispatcher.scheduler.advanceUntilIdle() // let the initial (ungated) first-page load finish
+
+        val gate = repository.gateNextPage()
+        viewModel.loadNextPage()
+        dispatcher.scheduler.runCurrent() // reach the gated await inside the first loadNextPage call, still in-flight
+
+        // A second, ungated list intent overlapping the first (e.g. because
+        // the repository's own gate makes it return near-immediately) must
+        // not silently overwrite the tracked job and orphan the still-running
+        // first request -- it must cancel it first.
+        viewModel.loadPreviousPage()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            "an overlapping second list intent must cancel the still-running first request's job, not orphan it",
             1,
             repository.loadNextPageCancelledCount,
         )
