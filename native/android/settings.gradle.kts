@@ -17,4 +17,3 @@ dependencyResolutionManagement {
 rootProject.name = "muesli-android"
 
 include(":notes")
-include(":app")
