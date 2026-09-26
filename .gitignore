@@ -38,3 +38,11 @@ playwright-report/
 coverage/
 coverage.out
 .lighthouseci/
+
+# Android (native/android; issue #768)
+native/android/.gradle/
+native/android/local.properties
+native/android/**/build/
+native/android/.idea/
+native/android/*.iml
+native/android/**/*.iml

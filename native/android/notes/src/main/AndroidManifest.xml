@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Issue #768 (View Notes on Android): a library manifest only. No activity,
+  no credential/account permissions, no cleartext traffic exception, and no
+  network permission is declared here; the host application that eventually
+  integrates this module (Task 6, out of scope for this PR) owns those.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+</manifest>
