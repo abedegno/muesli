@@ -272,4 +272,71 @@ class NoteDetailViewModelTest {
         dispatcher.scheduler.advanceUntilIdle()
         assertTrue("the superseded first retry's failure must not overwrite the second retry's success", viewModel.state.value is NoteDetailState.Content)
     }
+
+    @Test
+    fun `session ending mid-request cancels the in-flight fetch, not just discards its result`() = runTest {
+        val session = FakeAuthenticatedSession("s1")
+        val sessionSource = FakeSessionSource(session)
+        val repository = FakeNotesRepository()
+        val gate = repository.gateDetail("n1")
+        repository.enqueueDetail("n1", ApiResult.Success(completeDetail()))
+        NoteDetailViewModel("n1", sessionSource, repository)
+        dispatcher.scheduler.runCurrent() // reach the gated await
+
+        sessionSource.set(null)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            "sign-out must cancel the coroutine actually running the in-flight detail fetch, " +
+                "not merely let it complete and discard the late result",
+            1,
+            repository.noteDetailCancelledCount,
+        )
+        gate.complete(Unit)
+    }
+
+    @Test
+    fun `switching accounts cancels the in-flight fetch for the former account`() = runTest {
+        val sessionA = FakeAuthenticatedSession("a")
+        val sessionB = FakeAuthenticatedSession("b")
+        val sessionSource = FakeSessionSource(sessionA)
+        val repository = FakeNotesRepository()
+        val gate = repository.gateDetail("n1")
+        repository.enqueueDetail("n1", ApiResult.Success(completeDetail(id = "n1")))
+        NoteDetailViewModel("n1", sessionSource, repository)
+        dispatcher.scheduler.runCurrent() // reach the gated await for account A
+
+        repository.enqueueDetail("n1", ApiResult.Success(completeDetail(id = "n1")))
+        sessionSource.set(sessionB)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            "an account switch must cancel the former account's in-flight detail fetch",
+            1,
+            repository.noteDetailCancelledCount,
+        )
+        gate.complete(Unit)
+    }
+
+    @Test
+    fun `a generation change (retry) cancels the previous in-flight fetch, not just discards its result`() = runTest {
+        val session = FakeAuthenticatedSession("s1")
+        val sessionSource = FakeSessionSource(session)
+        val repository = FakeNotesRepository()
+        val gate = repository.gateDetail("n1")
+        repository.enqueueDetail("n1", ApiResult.Success(completeDetail()))
+        val viewModel = NoteDetailViewModel("n1", sessionSource, repository)
+        dispatcher.scheduler.runCurrent() // reach the gated await
+
+        repository.enqueueDetail("n1", ApiResult.Success(completeDetail()))
+        viewModel.retry()
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            "retry (a generation change) must cancel the coroutine actually running the superseded fetch",
+            1,
+            repository.noteDetailCancelledCount,
+        )
+        gate.complete(Unit)
+    }
 }

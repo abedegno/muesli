@@ -2,6 +2,7 @@ package org.muesli.notes.detail
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -36,6 +37,13 @@ class NoteDetailViewModel(
     // the same id, and that must still be treated as a session transition.
     private var observedSessionKey: Pair<SessionId, Long>? = null
 
+    // The single in-flight detail fetch this view model launched (for the
+    // current `requestGeneration`), if any. Cancelled every time a new
+    // request starts (retry, or a session/account/generation transition)
+    // so a superseded request's underlying network call is actually torn
+    // down, not merely ignored once it eventually completes.
+    private var currentJob: Job? = null
+
     init {
         viewModelScope.launch {
             sessionSource.session.collect { session -> onSessionChanged(session) }
@@ -48,6 +56,8 @@ class NoteDetailViewModel(
         observedSessionKey = newKey
         if (session == null) {
             requestGeneration += 1 // discard any in-flight request tied to the former session
+            currentJob?.cancel()
+            currentJob = null
             _state.value = NoteDetailState.Loading
         } else {
             load(session)
@@ -63,8 +73,9 @@ class NoteDetailViewModel(
     private fun load(session: AuthenticatedSession) {
         requestGeneration += 1
         val generation = requestGeneration
+        currentJob?.cancel()
         _state.value = NoteDetailState.Loading
-        viewModelScope.launch {
+        currentJob = viewModelScope.launch {
             val result = repository.noteDetail(session, noteId)
             val current = sessionSource.session.value
             val sessionStillActive = current != null && current.id == session.id && current.generation == session.generation

@@ -31,6 +31,13 @@ class NotesListViewModel(
     // the same id, and that must still be treated as a session transition.
     private var observedSessionKey: Pair<SessionId, Long>? = null
 
+    // The single in-flight repository call (first page, next page, previous
+    // page, or refresh) this view model itself launched, if any. Cancelled
+    // on every session/account/generation transition so a superseded
+    // request's underlying network call is actually torn down, not merely
+    // ignored once it eventually completes.
+    private var currentJob: Job? = null
+
     init {
         viewModelScope.launch {
             sessionSource.session.collect { session -> onSessionChanged(session) }
@@ -41,10 +48,12 @@ class NotesListViewModel(
         val newKey = session?.let { it.id to it.generation }
         if (newKey == observedSessionKey) return
         observedSessionKey = newKey
+        currentJob?.cancel()
         if (session == null) {
             repository.clear()
+            currentJob = null
         } else {
-            viewModelScope.launch { repository.loadFirstPage(session) }
+            currentJob = viewModelScope.launch { repository.loadFirstPage(session) }
         }
     }
 
@@ -55,6 +64,8 @@ class NotesListViewModel(
 
     private fun launchWithSession(block: suspend (AuthenticatedSession) -> Unit): Job? {
         val session = sessionSource.session.value ?: return null
-        return viewModelScope.launch { block(session) }
+        val job = viewModelScope.launch { block(session) }
+        currentJob = job
+        return job
     }
 }

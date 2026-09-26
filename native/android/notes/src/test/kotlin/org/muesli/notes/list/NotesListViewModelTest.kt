@@ -146,4 +146,70 @@ class NotesListViewModelTest {
         repository.publish(NotesListState.Empty)
         assertEquals(NotesListState.Empty, viewModel.state.value)
     }
+
+    @Test
+    fun `signing out cancels the in-flight first-page load, not just discards its result`() = runTest {
+        val session = FakeAuthenticatedSession("s1")
+        val sessionSource = FakeSessionSource(session)
+        val repository = FakeNotesRepository()
+        val gate = repository.gateFirstPage()
+        NotesListViewModel(sessionSource, repository)
+        dispatcher.scheduler.runCurrent() // reach the gated await inside loadFirstPage
+
+        sessionSource.set(null)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            "sign-out must cancel the coroutine actually running the in-flight first-page load",
+            1,
+            repository.loadFirstPageCancelledCount,
+        )
+        assertEquals(1, repository.clearCallCount)
+        gate.complete(Unit) // avoid leaking an uncompleted deferred past the test
+    }
+
+    @Test
+    fun `switching accounts cancels the in-flight first-page load for the former account`() = runTest {
+        val sessionA = FakeAuthenticatedSession("a")
+        val sessionB = FakeAuthenticatedSession("b")
+        val sessionSource = FakeSessionSource(sessionA)
+        val repository = FakeNotesRepository()
+        val gateA = repository.gateFirstPage()
+        NotesListViewModel(sessionSource, repository)
+        dispatcher.scheduler.runCurrent() // reach the gated await for account A
+
+        sessionSource.set(sessionB)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            "an account switch must cancel the former account's in-flight first-page load",
+            1,
+            repository.loadFirstPageCancelledCount,
+        )
+        assertEquals(listOf(sessionA, sessionB), repository.loadFirstPageCalls)
+        gateA.complete(Unit)
+    }
+
+    @Test
+    fun `signing out cancels an in-flight next-page load, not just discards its result`() = runTest {
+        val session = FakeAuthenticatedSession("s1")
+        val sessionSource = FakeSessionSource(session)
+        val repository = FakeNotesRepository()
+        val viewModel = NotesListViewModel(sessionSource, repository)
+        dispatcher.scheduler.advanceUntilIdle() // let the initial (ungated) first-page load finish
+
+        val gate = repository.gateNextPage()
+        viewModel.loadNextPage()
+        dispatcher.scheduler.runCurrent() // reach the gated await inside loadNextPage
+
+        sessionSource.set(null)
+        dispatcher.scheduler.advanceUntilIdle()
+
+        assertEquals(
+            "sign-out must cancel the coroutine actually running the in-flight next-page load",
+            1,
+            repository.loadNextPageCancelledCount,
+        )
+        gate.complete(Unit)
+    }
 }
