@@ -20,16 +20,16 @@ type UtteranceCounts struct {
 // UtteranceMetrics derives rates from UtteranceCounts, plus boundary-error
 // statistics over one-to-one pairs.
 type UtteranceMetrics struct {
-	Counts             UtteranceCounts
-	MissRate           Ratio
-	SplitExtraRate     Ratio
-	MergeExtraRate     Ratio
-	SpuriousRate       Ratio
-	UtteranceErrorRate Ratio
-	StartErrorMedian   Ratio // seconds
-	StartErrorP95      Ratio // seconds
-	EndErrorMedian     Ratio // seconds
-	EndErrorP95        Ratio // seconds
+	Counts             UtteranceCounts `json:"counts"`
+	MissRate           Ratio           `json:"miss_rate"`
+	SplitExtraRate     Ratio           `json:"split_extra_rate"`
+	MergeExtraRate     Ratio           `json:"merge_extra_rate"`
+	SpuriousRate       Ratio           `json:"spurious_rate"`
+	UtteranceErrorRate Ratio           `json:"utterance_error_rate"`
+	StartErrorMedian   Ratio           `json:"start_error_median_seconds"`
+	StartErrorP95      Ratio           `json:"start_error_p95_seconds"`
+	EndErrorMedian     Ratio           `json:"end_error_median_seconds"`
+	EndErrorP95        Ratio           `json:"end_error_p95_seconds"`
 }
 
 // ScoreUtterances builds the bipartite overlap graph between predictions

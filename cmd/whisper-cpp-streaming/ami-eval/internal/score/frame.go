@@ -34,8 +34,8 @@ func overlaps(a, b Interval) bool {
 // false exactly when the ratio's denominator was zero, in which case
 // callers must render "n/a" rather than a numeric value.
 type Ratio struct {
-	Value float64
-	Valid bool
+	Value float64 `json:"value"`
+	Valid bool    `json:"valid"`
 }
 
 func ratio(numerator, denominator float64) Ratio {
@@ -73,10 +73,10 @@ func (f Frame) validSpan() (Interval, bool) {
 // FrameCounts holds raw duration-weighted (in samples) confusion-matrix
 // accumulations.
 type FrameCounts struct {
-	TP float64
-	FP float64
-	TN float64
-	FN float64
+	TP float64 `json:"tp"`
+	FP float64 `json:"fp"`
+	TN float64 `json:"tn"`
+	FN float64 `json:"fn"`
 }
 
 // referencePositive reports whether any positive-duration part of span
