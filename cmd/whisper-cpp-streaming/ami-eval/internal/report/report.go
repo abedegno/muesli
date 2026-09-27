@@ -375,17 +375,33 @@ func renderCellResults(b *bytes.Buffer, cells []compare.CellResult) {
 	fmt.Fprintln(b, "Each cell macro-averages the recordings in that meeting-class/microphone-condition")
 	fmt.Fprintln(b, "combination.")
 	fmt.Fprintln(b)
-	headers := []string{"Class", "Mic", "Detector", "Recordings", "Precision", "Recall", "F1", "FPR", "FNR", "Miss rate", "Spurious rate", "Utterance error rate"}
+	headers := []string{"Class", "Mic", "Detector", "Recordings", "Precision", "Recall", "F1", "FPR", "FNR", "Miss rate", "Split rate", "Merge rate", "Spurious rate", "Utterance error rate"}
 	var rows [][]string
 	for _, c := range sortedCells(cells) {
 		rows = append(rows, []string{
 			c.Cell.Class, c.Cell.Mic, c.DetectorID, fmt.Sprintf("%d", c.RecordingCount),
 			ratioStr(c.FrameMetrics.Precision), ratioStr(c.FrameMetrics.Recall), ratioStr(c.FrameMetrics.F1),
 			ratioStr(c.FrameMetrics.FalsePositiveRate), ratioStr(c.FrameMetrics.FalseNegativeRate),
-			ratioStr(c.UtteranceMetrics.MissRate), ratioStr(c.UtteranceMetrics.SpuriousRate), ratioStr(c.UtteranceMetrics.UtteranceErrorRate),
+			ratioStr(c.UtteranceMetrics.MissRate), ratioStr(c.UtteranceMetrics.SplitExtraRate),
+			ratioStr(c.UtteranceMetrics.MergeExtraRate), ratioStr(c.UtteranceMetrics.SpuriousRate), ratioStr(c.UtteranceMetrics.UtteranceErrorRate),
 		})
 	}
 	renderTable(b, headers, rows)
+	fmt.Fprintln(b)
+
+	fmt.Fprintln(b, "Boundary error is the absolute start/end timing error (seconds) for one-to-one")
+	fmt.Fprintln(b, "matched reference/prediction pairs only; `n/a` when a cell/detector has none.")
+	fmt.Fprintln(b)
+	boundaryHeaders := []string{"Class", "Mic", "Detector", "Start median", "Start p95", "End median", "End p95"}
+	var boundaryRows [][]string
+	for _, c := range sortedCells(cells) {
+		boundaryRows = append(boundaryRows, []string{
+			c.Cell.Class, c.Cell.Mic, c.DetectorID,
+			ratioStr(c.UtteranceMetrics.StartErrorMedian), ratioStr(c.UtteranceMetrics.StartErrorP95),
+			ratioStr(c.UtteranceMetrics.EndErrorMedian), ratioStr(c.UtteranceMetrics.EndErrorP95),
+		})
+	}
+	renderTable(b, boundaryHeaders, boundaryRows)
 	fmt.Fprintln(b)
 }
 
@@ -401,15 +417,29 @@ func renderOverallResults(b *bytes.Buffer, overall []compare.OverallResult) {
 	fmt.Fprintln(b, "Equal-weight macro average over the four required cells, so duration and speech")
 	fmt.Fprintln(b, "prevalence cannot dominate.")
 	fmt.Fprintln(b)
-	headers := []string{"Detector", "F1", "Precision", "Recall", "FPR", "FNR", "Utterance error rate"}
+	headers := []string{"Detector", "F1", "Precision", "Recall", "FPR", "FNR", "Miss rate", "Split rate", "Merge rate", "Spurious rate", "Utterance error rate"}
 	var rows [][]string
 	for _, o := range sortedOverall(overall) {
 		rows = append(rows, []string{
 			o.DetectorID, ratioStr(o.FrameMetrics.F1), ratioStr(o.FrameMetrics.Precision), ratioStr(o.FrameMetrics.Recall),
-			ratioStr(o.FrameMetrics.FalsePositiveRate), ratioStr(o.FrameMetrics.FalseNegativeRate), ratioStr(o.UtteranceMetrics.UtteranceErrorRate),
+			ratioStr(o.FrameMetrics.FalsePositiveRate), ratioStr(o.FrameMetrics.FalseNegativeRate),
+			ratioStr(o.UtteranceMetrics.MissRate), ratioStr(o.UtteranceMetrics.SplitExtraRate),
+			ratioStr(o.UtteranceMetrics.MergeExtraRate), ratioStr(o.UtteranceMetrics.SpuriousRate), ratioStr(o.UtteranceMetrics.UtteranceErrorRate),
 		})
 	}
 	renderTable(b, headers, rows)
+	fmt.Fprintln(b)
+
+	boundaryHeaders := []string{"Detector", "Start median", "Start p95", "End median", "End p95"}
+	var boundaryRows [][]string
+	for _, o := range sortedOverall(overall) {
+		boundaryRows = append(boundaryRows, []string{
+			o.DetectorID,
+			ratioStr(o.UtteranceMetrics.StartErrorMedian), ratioStr(o.UtteranceMetrics.StartErrorP95),
+			ratioStr(o.UtteranceMetrics.EndErrorMedian), ratioStr(o.UtteranceMetrics.EndErrorP95),
+		})
+	}
+	renderTable(b, boundaryHeaders, boundaryRows)
 	fmt.Fprintln(b)
 }
 

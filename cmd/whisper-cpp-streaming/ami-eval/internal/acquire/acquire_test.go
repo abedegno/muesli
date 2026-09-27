@@ -217,6 +217,18 @@ func TestEnsureObjectChecksumMismatch(t *testing.T) {
 	if _, err := EnsureObject(context.Background(), cache, obj, Options{HTTPClient: srv.Client()}); err == nil {
 		t.Fatal("expected checksum mismatch failure")
 	}
+	// The mismatched object must never be promoted to its content-addressed
+	// destination, and no sibling temp file may survive the failure.
+	if _, err := os.Stat(cache.DownloadPath(obj.SHA256)); !os.IsNotExist(err) {
+		t.Fatalf("expected checksum-mismatched object not to be promoted, stat err: %v", err)
+	}
+	entries, err := os.ReadDir(filepath.Join(cache.Root, "downloads"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		t.Fatalf("unexpected leftover file %q after checksum mismatch", e.Name())
+	}
 }
 
 func TestEnsureObjectByteCeiling(t *testing.T) {
@@ -236,29 +248,48 @@ func TestEnsureObjectByteCeiling(t *testing.T) {
 
 func TestEnsureObjectRedirectMustStayHTTPS(t *testing.T) {
 	body := []byte("redirected body")
-	target := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+
+	// A same-server redirect (https -> https, via a relative Location) must
+	// be followed successfully by the enforced client, actually exercising
+	// the CheckRedirect code path rather than fetching the target directly.
+	mux := http.NewServeMux()
+	mux.HandleFunc("/target", func(w http.ResponseWriter, r *http.Request) {
 		w.Write(body)
-	}))
-	defer target.Close()
+	})
+	mux.HandleFunc("/redirect", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/target", http.StatusFound)
+	})
+	srv := httptest.NewTLSServer(mux)
+	defer srv.Close()
 
-	insecureRedirector := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, target.URL, http.StatusFound)
-	}))
-	defer insecureRedirector.Close()
-
-	obj := Object{URL: target.URL, SizeBytes: int64(len(body)), SHA256: sha256Hex(body)}
-	client := target.Client()
+	client := srv.Client()
 	client.CheckRedirect = func(req *http.Request, via []*http.Request) error {
 		if req.URL.Scheme != "https" {
 			return fmt.Errorf("non-https redirect")
 		}
 		return nil
 	}
-	// Fetch the secure server directly first to prove the happy path works
-	// with the same enforced client.
+	obj := Object{URL: srv.URL + "/redirect", SizeBytes: int64(len(body)), SHA256: sha256Hex(body)}
 	cache := newCache(t)
 	if _, err := EnsureObject(context.Background(), cache, obj, Options{HTTPClient: client}); err != nil {
-		t.Fatalf("direct https fetch should succeed: %v", err)
+		t.Fatalf("https-to-https redirect should succeed: %v", err)
+	}
+
+	// A redirect to a non-https absolute URL must be rejected by the same
+	// CheckRedirect policy, proving the guard is real and not vacuous.
+	insecureMux := http.NewServeMux()
+	insecureMux.HandleFunc("/redirect", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://example.test/insecure", http.StatusFound)
+	})
+	insecureRedirector := httptest.NewTLSServer(insecureMux)
+	defer insecureRedirector.Close()
+
+	badClient := insecureRedirector.Client()
+	badClient.CheckRedirect = client.CheckRedirect
+	badObj := Object{URL: insecureRedirector.URL + "/redirect", SizeBytes: int64(len(body)), SHA256: sha256Hex(body)}
+	cache2 := newCache(t)
+	if _, err := EnsureObject(context.Background(), cache2, badObj, Options{HTTPClient: badClient}); err == nil {
+		t.Fatal("expected redirect to a non-https url to be rejected")
 	}
 }
 
@@ -337,17 +368,58 @@ func TestEnsureObjectCancellationRemovesTempButPreservesGoodDownloads(t *testing
 		t.Fatalf("seed good object: %v", err)
 	}
 
-	block := make(chan struct{})
+	// The slow server writes and flushes a partial body -- so bytes are
+	// actually being streamed into the sibling temp file -- then blocks
+	// until the request context is canceled, so cancellation genuinely
+	// interrupts an in-flight stream rather than a request that never
+	// started.
+	partial := []byte("partial-bytes-before-cancel")
+	streaming := make(chan struct{})
+	handlerDone := make(chan struct{})
 	srvSlow := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		<-block // block until the request context is canceled
+		w.Write(partial)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
+		close(streaming)
+		<-r.Context().Done()
+		close(handlerDone)
 	}))
-	defer func() { close(block); srvSlow.Close() }()
+	defer srvSlow.Close()
 
-	slowObj := Object{URL: srvSlow.URL, SizeBytes: 5, SHA256: strings.Repeat("1", 64)}
+	slowObj := Object{URL: srvSlow.URL, SizeBytes: int64(len(partial)) + 1000, SHA256: strings.Repeat("1", 64)}
 	ctx, cancel := context.WithCancel(context.Background())
+	result := make(chan error, 1)
+	go func() {
+		_, err := EnsureObject(ctx, cache, slowObj, Options{HTTPClient: srvSlow.Client()})
+		result <- err
+	}()
+
+	select {
+	case <-streaming:
+	case <-time.After(5 * time.Second):
+		t.Fatal("server never began streaming a response body")
+	}
 	cancel()
-	if _, err := EnsureObject(ctx, cache, slowObj, Options{HTTPClient: srvSlow.Client()}); err == nil {
-		t.Fatal("expected cancellation error")
+
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("expected cancellation error for an in-flight stream")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("EnsureObject did not return after context cancellation")
+	}
+
+	select {
+	case <-handlerDone:
+	case <-time.After(5 * time.Second):
+		t.Fatal("server handler never observed the canceled request")
+	}
+
+	// The canceled, partially-streamed object must never be promoted.
+	if _, err := os.Stat(cache.DownloadPath(slowObj.SHA256)); !os.IsNotExist(err) {
+		t.Fatalf("expected canceled download not to be promoted, stat err: %v", err)
 	}
 
 	entries, err := os.ReadDir(filepath.Join(cache.Root, "downloads"))
@@ -365,7 +437,7 @@ func TestEnsureObjectCancellationRemovesTempButPreservesGoodDownloads(t *testing
 		}
 	}
 	if sawTemp {
-		t.Fatal("expected no leftover temp file after cancellation")
+		t.Fatal("expected no leftover temp file after mid-stream cancellation")
 	}
 	if !sawGood {
 		t.Fatal("expected the previously verified good download to be preserved")
@@ -373,10 +445,18 @@ func TestEnsureObjectCancellationRemovesTempButPreservesGoodDownloads(t *testing
 }
 
 func TestEnsureObjectTimeout(t *testing.T) {
-	block := make(chan struct{})
+	// The handler may or may not have been dispatched before the very short
+	// per-object timeout fires (a genuine race, since dialing/TLS handshake
+	// takes nonzero time). started is closed only if the handler actually
+	// ran; waiting on it must therefore be bounded, or a run where the
+	// timeout wins the race hangs forever waiting for a signal that will
+	// never come.
+	started := make(chan struct{})
+	handlerDone := make(chan struct{})
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
 		<-r.Context().Done()
-		close(block)
+		close(handlerDone)
 	}))
 	defer srv.Close()
 	obj := Object{URL: srv.URL, SizeBytes: 5, SHA256: strings.Repeat("2", 64)}
@@ -385,7 +465,35 @@ func TestEnsureObjectTimeout(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
-	<-block
+
+	select {
+	case <-started:
+		// The handler did start; give it a bounded window to observe the
+		// canceled request context before checking cleanup.
+		select {
+		case <-handlerDone:
+		case <-time.After(5 * time.Second):
+			t.Fatal("handler did not observe request cancellation in time")
+		}
+	case <-time.After(2 * time.Second):
+		// The timeout fired before the handler was ever dispatched -- also
+		// a valid outcome; nothing more to wait for.
+	}
+
+	// Either way, the timed-out object must never be promoted, and no
+	// sibling temp file may survive.
+	if _, statErr := os.Stat(cache.DownloadPath(obj.SHA256)); !os.IsNotExist(statErr) {
+		t.Fatalf("expected timed-out download not to be promoted, stat err: %v", statErr)
+	}
+	entries, err := os.ReadDir(filepath.Join(cache.Root, "downloads"))
+	if err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".tmp-") {
+			t.Fatalf("unexpected leftover temp file %q after timeout", e.Name())
+		}
+	}
 }
 
 // --- annotation archive extraction -------------------------------------------

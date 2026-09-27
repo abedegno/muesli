@@ -18,7 +18,7 @@ cloud transcriber.
 
 ## AMI VAD detector evaluation (`ami-eval`)
 
-`cmd/whisper-cpp-streaming/ami-eval` is a separate, offline-by-default
+`cmd/whisper-cpp-streaming/ami-eval` is a separate, offline-capable
 evaluation command (issue #778) that reproduces a detector comparison for the
 voice-activity detectors this streaming path uses. It does not affect the
 streaming server above; it only reads it. Run it via `make evaluate-ami-vad`.

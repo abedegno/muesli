@@ -112,6 +112,57 @@ func TestRenderFourDecimalPlaces(t *testing.T) {
 	}
 }
 
+func TestRenderContainsUtteranceMetricColumns(t *testing.T) {
+	out, err := RenderToBytes(sampleReport())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	for _, want := range []string{
+		"Miss rate", "Split rate", "Merge rate", "Spurious rate", "Utterance error rate",
+		"Start median", "Start p95", "End median", "End p95",
+	} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("expected report to contain utterance-metric column %q, got:\n%s", want, s)
+		}
+	}
+}
+
+func TestRenderUtteranceMetricValuesToFourDecimalPlaces(t *testing.T) {
+	r := sampleReport()
+	r.CellResults[0].UtteranceMetrics.SplitExtraRate = f1r(0.125)
+	r.CellResults[0].UtteranceMetrics.MergeExtraRate = f1r(0.375)
+	r.CellResults[0].UtteranceMetrics.StartErrorMedian = f1r(0.02)
+	r.CellResults[0].UtteranceMetrics.StartErrorP95 = f1r(0.05)
+	r.CellResults[0].UtteranceMetrics.EndErrorMedian = f1r(0.03)
+	r.CellResults[0].UtteranceMetrics.EndErrorP95 = f1r(0.06)
+	out, err := RenderToBytes(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	for _, want := range []string{"0.1250", "0.3750", "0.0200", "0.0500", "0.0300", "0.0600"} {
+		if !strings.Contains(s, want) {
+			t.Fatalf("expected utterance metric value %q rendered to 4 decimal places, got:\n%s", want, s)
+		}
+	}
+}
+
+func TestRenderNAForUndefinedBoundaryError(t *testing.T) {
+	// sampleReport leaves boundary-error fields at their zero value (no
+	// one-to-one pairs observed), which must render as "n/a" rather than
+	// "0.0000" or being silently omitted.
+	r := sampleReport()
+	out, err := RenderToBytes(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "Start median") || !strings.Contains(s, "n/a") {
+		t.Fatalf("expected n/a rendering for undefined boundary error, got:\n%s", s)
+	}
+}
+
 func TestRenderNAForInvalidRatio(t *testing.T) {
 	r := sampleReport()
 	r.CellResults[0].FrameMetrics.F1 = score.Ratio{}
