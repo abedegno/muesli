@@ -1,6 +1,7 @@
 package report
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -259,5 +260,15 @@ func TestWriteReportSecondWriteNoOpWhenUnchanged(t *testing.T) {
 	}
 	if changed {
 		t.Fatal("expected no-op write to report changed=false")
+	}
+}
+
+func TestRenderTablePadsColumnsForPrettierCompatibility(t *testing.T) {
+	var b bytes.Buffer
+	renderTable(&b, []string{"A", "BB"}, [][]string{{"1", "22"}, {"333", "4"}})
+	got := b.String()
+	want := "| A   | BB  |\n| --- | --- |\n| 1   | 22  |\n| 333 | 4   |\n"
+	if got != want {
+		t.Fatalf("got:\n%q\nwant:\n%q", got, want)
 	}
 }

@@ -150,6 +150,50 @@ func ratioStr(r score.Ratio) string {
 
 func floatStr4(f float64) string { return fmt.Sprintf("%.4f", f) }
 
+// renderTable writes a GFM Markdown table with Prettier-compatible column
+// padding (each column padded to its widest cell, minimum width 3 to leave
+// room for the "---" separator), so the generated report never needs a
+// separate reformatting pass to satisfy the repository's Prettier check.
+func renderTable(b *bytes.Buffer, headers []string, rows [][]string) {
+	widths := make([]int, len(headers))
+	for i, h := range headers {
+		widths[i] = len(h)
+	}
+	for _, row := range rows {
+		for i, cell := range row {
+			if len(cell) > widths[i] {
+				widths[i] = len(cell)
+			}
+		}
+	}
+	for i := range widths {
+		if widths[i] < 3 {
+			widths[i] = 3
+		}
+	}
+
+	writeRow := func(cells []string) {
+		b.WriteString("|")
+		for i, w := range widths {
+			cell := ""
+			if i < len(cells) {
+				cell = cells[i]
+			}
+			fmt.Fprintf(b, " %-*s |", w, cell)
+		}
+		b.WriteString("\n")
+	}
+	writeRow(headers)
+	sep := make([]string, len(widths))
+	for i, w := range widths {
+		sep[i] = strings.Repeat("-", w)
+	}
+	writeRow(sep)
+	for _, row := range rows {
+		writeRow(row)
+	}
+}
+
 // RenderToBytes renders the deterministic Markdown report.
 func RenderToBytes(r Report) ([]byte, error) {
 	if err := Validate(r); err != nil {
@@ -205,25 +249,25 @@ func RenderToBytes(r Report) ([]byte, error) {
 	fmt.Fprintln(&b, "Read live from `internal/pluginkit.DefaultStreamingConfig` and the adaptive detector's")
 	fmt.Fprintln(&b, "defaults, so this table cannot drift from what production ships.")
 	fmt.Fprintln(&b)
-	fmt.Fprintln(&b, "| Setting | Value |")
-	fmt.Fprintln(&b, "| --- | --- |")
 	d := r.Defaults
-	fmt.Fprintf(&b, "| Sample rate | %d Hz |\n", d.SampleRate)
-	fmt.Fprintf(&b, "| Max window | %d ms |\n", d.MaxWindowMS)
-	fmt.Fprintf(&b, "| Partial interval | %d ms |\n", d.PartialIntervalMS)
-	fmt.Fprintf(&b, "| Silence duration | %d ms |\n", d.SilenceDurationMS)
-	fmt.Fprintf(&b, "| Shipped energy threshold | %s |\n", floatStr4(d.EnergyThreshold))
-	fmt.Fprintf(&b, "| Silence hysteresis | %d ms |\n", d.SilenceHysteresisMS)
-	fmt.Fprintf(&b, "| VAD frame | %d ms |\n", d.VADFrameMS)
-	fmt.Fprintf(&b, "| Adaptive speech quantile | %s |\n", floatStr4(d.AdaptiveSpeechQuantile))
-	fmt.Fprintf(&b, "| Adaptive speech factor | %s |\n", floatStr4(d.AdaptiveSpeechFactor))
-	fmt.Fprintf(&b, "| Adaptive noise quantile | %s |\n", floatStr4(d.AdaptiveNoiseQuantile))
-	fmt.Fprintf(&b, "| Adaptive noise factor | %s |\n", floatStr4(d.AdaptiveNoiseFactor))
-	fmt.Fprintf(&b, "| Adaptive min threshold | %s |\n", floatStr4(d.AdaptiveMinThreshold))
-	fmt.Fprintf(&b, "| Adaptive warmup | %d ms |\n", d.AdaptiveWarmupMS)
-	fmt.Fprintf(&b, "| Adaptive update interval | %d ms |\n", d.AdaptiveUpdateEveryMS)
-	fmt.Fprintf(&b, "| Adaptive horizon | %d ms |\n", d.AdaptiveHorizonMS)
-	fmt.Fprintf(&b, "| Adaptive max slew | %s |\n", floatStr4(d.AdaptiveMaxSlew))
+	renderTable(&b, []string{"Setting", "Value"}, [][]string{
+		{"Sample rate", fmt.Sprintf("%d Hz", d.SampleRate)},
+		{"Max window", fmt.Sprintf("%d ms", d.MaxWindowMS)},
+		{"Partial interval", fmt.Sprintf("%d ms", d.PartialIntervalMS)},
+		{"Silence duration", fmt.Sprintf("%d ms", d.SilenceDurationMS)},
+		{"Shipped energy threshold", floatStr4(d.EnergyThreshold)},
+		{"Silence hysteresis", fmt.Sprintf("%d ms", d.SilenceHysteresisMS)},
+		{"VAD frame", fmt.Sprintf("%d ms", d.VADFrameMS)},
+		{"Adaptive speech quantile", floatStr4(d.AdaptiveSpeechQuantile)},
+		{"Adaptive speech factor", floatStr4(d.AdaptiveSpeechFactor)},
+		{"Adaptive noise quantile", floatStr4(d.AdaptiveNoiseQuantile)},
+		{"Adaptive noise factor", floatStr4(d.AdaptiveNoiseFactor)},
+		{"Adaptive min threshold", floatStr4(d.AdaptiveMinThreshold)},
+		{"Adaptive warmup", fmt.Sprintf("%d ms", d.AdaptiveWarmupMS)},
+		{"Adaptive update interval", fmt.Sprintf("%d ms", d.AdaptiveUpdateEveryMS)},
+		{"Adaptive horizon", fmt.Sprintf("%d ms", d.AdaptiveHorizonMS)},
+		{"Adaptive max slew", floatStr4(d.AdaptiveMaxSlew)},
+	})
 	fmt.Fprintln(&b)
 
 	fmt.Fprintln(&b, "## Detector parameters")
@@ -331,15 +375,17 @@ func renderCellResults(b *bytes.Buffer, cells []compare.CellResult) {
 	fmt.Fprintln(b, "Each cell macro-averages the recordings in that meeting-class/microphone-condition")
 	fmt.Fprintln(b, "combination.")
 	fmt.Fprintln(b)
-	fmt.Fprintln(b, "| Class | Mic | Detector | Recordings | Precision | Recall | F1 | FPR | FNR | Miss rate | Spurious rate | Utterance error rate |")
-	fmt.Fprintln(b, "| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |")
+	headers := []string{"Class", "Mic", "Detector", "Recordings", "Precision", "Recall", "F1", "FPR", "FNR", "Miss rate", "Spurious rate", "Utterance error rate"}
+	var rows [][]string
 	for _, c := range sortedCells(cells) {
-		fmt.Fprintf(b, "| %s | %s | %s | %d | %s | %s | %s | %s | %s | %s | %s | %s |\n",
-			c.Cell.Class, c.Cell.Mic, c.DetectorID, c.RecordingCount,
+		rows = append(rows, []string{
+			c.Cell.Class, c.Cell.Mic, c.DetectorID, fmt.Sprintf("%d", c.RecordingCount),
 			ratioStr(c.FrameMetrics.Precision), ratioStr(c.FrameMetrics.Recall), ratioStr(c.FrameMetrics.F1),
 			ratioStr(c.FrameMetrics.FalsePositiveRate), ratioStr(c.FrameMetrics.FalseNegativeRate),
-			ratioStr(c.UtteranceMetrics.MissRate), ratioStr(c.UtteranceMetrics.SpuriousRate), ratioStr(c.UtteranceMetrics.UtteranceErrorRate))
+			ratioStr(c.UtteranceMetrics.MissRate), ratioStr(c.UtteranceMetrics.SpuriousRate), ratioStr(c.UtteranceMetrics.UtteranceErrorRate),
+		})
 	}
+	renderTable(b, headers, rows)
 	fmt.Fprintln(b)
 }
 
@@ -355,13 +401,15 @@ func renderOverallResults(b *bytes.Buffer, overall []compare.OverallResult) {
 	fmt.Fprintln(b, "Equal-weight macro average over the four required cells, so duration and speech")
 	fmt.Fprintln(b, "prevalence cannot dominate.")
 	fmt.Fprintln(b)
-	fmt.Fprintln(b, "| Detector | F1 | Precision | Recall | FPR | FNR | Utterance error rate |")
-	fmt.Fprintln(b, "| --- | --- | --- | --- | --- | --- | --- |")
+	headers := []string{"Detector", "F1", "Precision", "Recall", "FPR", "FNR", "Utterance error rate"}
+	var rows [][]string
 	for _, o := range sortedOverall(overall) {
-		fmt.Fprintf(b, "| %s | %s | %s | %s | %s | %s | %s |\n",
+		rows = append(rows, []string{
 			o.DetectorID, ratioStr(o.FrameMetrics.F1), ratioStr(o.FrameMetrics.Precision), ratioStr(o.FrameMetrics.Recall),
-			ratioStr(o.FrameMetrics.FalsePositiveRate), ratioStr(o.FrameMetrics.FalseNegativeRate), ratioStr(o.UtteranceMetrics.UtteranceErrorRate))
+			ratioStr(o.FrameMetrics.FalsePositiveRate), ratioStr(o.FrameMetrics.FalseNegativeRate), ratioStr(o.UtteranceMetrics.UtteranceErrorRate),
+		})
 	}
+	renderTable(b, headers, rows)
 	fmt.Fprintln(b)
 }
 
@@ -371,17 +419,17 @@ func renderThresholdCurve(b *bytes.Buffer, curve []compare.ThresholdPoint, shipp
 	fmt.Fprintln(b, "The optimum below is selected against this same evaluation slice -- it is an")
 	fmt.Fprintln(b, "in-sample optimum, not a held-out validation result.")
 	fmt.Fprintln(b)
-	fmt.Fprintln(b, "| Threshold | Overall macro F1 | Shipped |")
-	fmt.Fprintln(b, "| --- | --- | --- |")
 	sorted := append([]compare.ThresholdPoint(nil), curve...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Threshold < sorted[j].Threshold })
+	var rows [][]string
 	for _, p := range sorted {
 		marker := ""
 		if p.Threshold == shipped {
 			marker = "yes"
 		}
-		fmt.Fprintf(b, "| %s | %s | %s |\n", floatStr4(p.Threshold), ratioStr(p.F1), marker)
+		rows = append(rows, []string{floatStr4(p.Threshold), ratioStr(p.F1), marker})
 	}
+	renderTable(b, []string{"Threshold", "Overall macro F1", "Shipped"}, rows)
 	fmt.Fprintln(b)
 }
 
@@ -397,23 +445,25 @@ func renderRecommendation(b *bytes.Buffer, rec compare.Recommendation) {
 	fmt.Fprintln(b, "This recommendation is evidence for a human decision. It changes no runtime")
 	fmt.Fprintln(b, "setting, shipped default, or configuration.")
 	fmt.Fprintln(b)
-	fmt.Fprintln(b, "| Candidate | Threshold | Eligible | Overall F1 | F1 delta vs shipped | Utterance error rate |")
-	fmt.Fprintln(b, "| --- | --- | --- | --- | --- | --- |")
 	candidates := append([]compare.CandidateEvidence(nil), rec.Candidates...)
 	sort.Slice(candidates, func(i, j int) bool { return candidates[i].DetectorID < candidates[j].DetectorID })
+	var rows [][]string
 	for _, c := range candidates {
 		threshold := ""
 		if c.Threshold != nil {
 			threshold = floatStr4(*c.Threshold)
 		}
-		fmt.Fprintf(b, "| %s | %s | %v | %s | %s | %s |\n",
-			c.DetectorID, threshold, c.Eligible, ratioStr(c.OverallF1), ratioStr(c.F1DeltaVsShipped), ratioStr(c.OverallUtteranceErrorRate))
+		rows = append(rows, []string{
+			c.DetectorID, threshold, fmt.Sprintf("%v", c.Eligible), ratioStr(c.OverallF1), ratioStr(c.F1DeltaVsShipped), ratioStr(c.OverallUtteranceErrorRate),
+		})
 	}
+	renderTable(b, []string{"Candidate", "Threshold", "Eligible", "Overall F1", "F1 delta vs shipped", "Utterance error rate"}, rows)
 	fmt.Fprintln(b)
 	fmt.Fprintln(b, "Eligibility: a candidate qualifies only if no cell's frame F1 falls more than 0.05")
 	fmt.Fprintln(b, "below shipped fixed's F1 in that same cell (one-sided floor, no ceiling). Among")
 	fmt.Fprintln(b, "eligible candidates, the highest overall macro F1 wins; ties go to the lowest")
 	fmt.Fprintln(b, "overall utterance error rate, then to shipped fixed.")
+	fmt.Fprintln(b)
 }
 
 // WriteReport renders r and either compares it against the file at path
