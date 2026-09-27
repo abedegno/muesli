@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="ISO-8859-1" standalone="yes"?>
+<nite:root nite:id="ES9999a.A.words" xmlns:nite="http://nite.sourceforge.net/">
+   <w nite:id="ES9999a.A.words0" starttime="10.00" endtime="10.30">Hi</w>
+   <w nite:id="ES9999a.A.words1" starttime="10.30" endtime="10.30" punc="true">,</w>
+   <vocalsound nite:id="ES9999a.A.words2" starttime="10.40" endtime="10.60" type="laugh"/>
+   <w nite:id="ES9999a.A.words3" starttime="10.60" endtime="10.90">everyone</w>
+   <disfmarker nite:id="ES9999a.A.words4" starttime="10.90" endtime="10.90"/>
+   <w nite:id="ES9999a.A.words5" starttime="11.20" endtime="11.50" trunc="true">wel-</w>
+   <gap nite:id="ES9999a.A.words6" starttime="11.50" endtime="11.50"/>
+   <w nite:id="ES9999a.A.words7" starttime="11.60" endtime="11.90" mispronounced="true">welcome</w>
+   <pause nite:id="ES9999a.A.words8" starttime="12.00" endtime="12.10"/>
+   <w nite:id="ES9999a.A.words9">untimed</w>
+</nite:root>
