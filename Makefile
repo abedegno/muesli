@@ -1,4 +1,4 @@
-.PHONY: run test test-whisper-cgo test-db test-db-stop tidy build-admin check-admin-dist build up dev lint check smoke new-migration check-test-determinism prod-up prod-down prod-logs prod-ps prod-backup prod-upgrade
+.PHONY: run test test-whisper-cgo test-db test-db-stop tidy build-admin check-admin-dist build up dev lint check smoke new-migration check-test-determinism evaluate-ami-vad prod-up prod-down prod-logs prod-ps prod-backup prod-upgrade
 
 PROD_DIR ?= .
 PROD_COMPOSE = docker compose --env-file $(PROD_DIR)/.env -f $(PROD_DIR)/docker-compose.prod.yml
@@ -76,6 +76,13 @@ smoke:
 # Verify no banned time calls (time.Sleep, time.Now) in non-e2e Go test files.
 check-test-determinism:
 	bash scripts/check-test-determinism.sh
+
+# Reproducible AMI VAD detector evaluation (issue #778): fetch, prepare,
+# evaluate, and regenerate docs/ami-vad-evaluation.md. Requires network
+# access unless --cache already holds a complete verified corpus (see
+# docs/ami-vad-evaluation.md for --offline, --cache, and --check).
+evaluate-ami-vad:
+	go run ./cmd/whisper-cpp-streaming/ami-eval
 
 # Operator helpers for the production compose stack.
 prod-up:

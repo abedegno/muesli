@@ -16,6 +16,12 @@ import (
 	"github.com/abedegno/muesli/internal/pluginkit"
 )
 
+// EvaluationVersion identifies the evaluation semantics implemented here
+// (matrix construction, scoring interpretation). It is an explicit
+// constant, not a Git revision, and increments whenever interpretation
+// changes in a way that must invalidate previously cached raw results.
+const EvaluationVersion = "v1"
+
 // SampleRate is the canonical evaluation sample rate.
 const SampleRate = 16000
 

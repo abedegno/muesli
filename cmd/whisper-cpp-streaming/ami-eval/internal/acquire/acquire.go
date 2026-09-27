@@ -44,6 +44,11 @@ var repoTopLevelDenyList = []string{
 	"infra",
 	"internal",
 	"native",
+	// node_modules is git-ignored, not tracked source -- but CI installs it
+	// as a real top-level directory before some jobs run Go tests, and a
+	// local dev shell may have installed it too. Deny it defensively like
+	// every other real top-level directory.
+	"node_modules",
 	"plugins",
 	"scripts",
 	"src",
