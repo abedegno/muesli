@@ -46,3 +46,8 @@ native/android/**/build/
 native/android/.idea/
 native/android/*.iml
 native/android/**/*.iml
+
+# AMI VAD evaluation corpus/prepared/results cache (issue #778): never
+# committed, and never touched by CI, which runs only corpus-independent
+# tests.
+/.cache/ami-vad-eval/
