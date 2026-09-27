@@ -15,3 +15,13 @@ This is CPU-bound, single-model inference intended as the local/desktop
 default. It is **not recommended for hosted scale**. Deployments serving
 concurrent meetings should use a GPU-backed service, the Python plugin, or a
 cloud transcriber.
+
+## AMI VAD detector evaluation (`ami-eval`)
+
+`cmd/whisper-cpp-streaming/ami-eval` is a separate, offline-capable
+evaluation command (issue #778) that reproduces a detector comparison for the
+voice-activity detectors this streaming path uses. It does not affect the
+streaming server above; it only reads it. Run it via `make evaluate-ami-vad`.
+See [docs/ami-vad-evaluation.md](../../docs/ami-vad-evaluation.md) for full
+usage, and `cmd/whisper-cpp-streaming/ami-eval/manifest.json` for the pinned
+corpus objects it acquires.

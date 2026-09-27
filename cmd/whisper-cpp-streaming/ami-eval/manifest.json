@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "annotation_archive": {
+    "url": "https://groups.inf.ed.ac.uk/ami/AMICorpusAnnotations/ami_public_manual_1.6.2.zip",
+    "size_bytes": 22887865,
+    "sha256": "b56e5babb2496b8795deeeda7e71178d7fbc9963f94276cf2a3f4b56ebbc9f9d"
+  },
+  "meetings": [
+    {
+      "id": "ES2002a",
+      "class": "scenario",
+      "headset_mix": {
+        "url": "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/ES2002a/audio/ES2002a.Mix-Headset.wav",
+        "size_bytes": 40724524,
+        "sha256": "9c76866990fcc8b84006dc32d273ad99df439090b748ebe72103bb78c3216ee7",
+        "channels": 1,
+        "channel_policy": "explicit",
+        "select_channel": 0
+      },
+      "fixed_distant_mix": {
+        "url": "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/ES2002a/audio/ES2002a.Array1-01.wav",
+        "size_bytes": 40727594,
+        "sha256": "38887e3bf7b597fe348f3818e9fc9844d7a1e15382aab52e5316dc3228fb6c1d",
+        "channels": 1,
+        "channel_policy": "explicit",
+        "select_channel": 0
+      },
+      "annotations": [
+        {
+          "participant_id": "A",
+          "member": "words/ES2002a.A.words.xml",
+          "size_bytes": 25103,
+          "sha256": "03e7f37c4b3519ee78396779bbc90e2778b7b7ccd7a7388f7fa3a22cb31f7044"
+        },
+        {
+          "participant_id": "B",
+          "member": "words/ES2002a.B.words.xml",
+          "size_bytes": 130553,
+          "sha256": "a51156e0b3f1b05d9d1a631206d523c5247d2d6fd851ecfe826317ab261cc17a"
+        },
+        {
+          "participant_id": "C",
+          "member": "words/ES2002a.C.words.xml",
+          "size_bytes": 8896,
+          "sha256": "c539fca7b7183a2b56be43f2362432a91a4552512ed03df8c4ce96aee75f3330"
+        },
+        {
+          "participant_id": "D",
+          "member": "words/ES2002a.D.words.xml",
+          "size_bytes": 100864,
+          "sha256": "d4f8b66e53de583c839424323f0e05d038a1426e5628042d03dcd2ee72e68b05"
+        }
+      ]
+    },
+    {
+      "id": "EN2001a",
+      "class": "non_scenario",
+      "headset_mix": {
+        "url": "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/EN2001a/audio/EN2001a.Mix-Headset.wav",
+        "size_bytes": 168007726,
+        "sha256": "81e06be816e9d94d0bee410bef1b158b2cdfba8e2b80f44a6e62cf6b9fd780f9",
+        "channels": 1,
+        "channel_policy": "explicit",
+        "select_channel": 0
+      },
+      "fixed_distant_mix": {
+        "url": "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/EN2001a/audio/EN2001a.Array1-01.wav",
+        "size_bytes": 168008068,
+        "sha256": "20cf2243fff84361cc5c755529350d23c544580d58f00959e71945d8fdc8a8f7",
+        "channels": 1,
+        "channel_policy": "explicit",
+        "select_channel": 0
+      },
+      "annotations": [
+        {
+          "participant_id": "A",
+          "member": "words/EN2001a.A.words.xml",
+          "size_bytes": 87802,
+          "sha256": "712d09483b21e78a84f7613fe9e170c0b8ea517cc05a87d7c8ac102171df3015"
+        },
+        {
+          "participant_id": "B",
+          "member": "words/EN2001a.B.words.xml",
+          "size_bytes": 167929,
+          "sha256": "09ed2045a22d04c61097687a1998fd79ca63869e21d2c89866d7c92fbb92cd7b"
+        },
+        {
+          "participant_id": "C",
+          "member": "words/EN2001a.C.words.xml",
+          "size_bytes": 99601,
+          "sha256": "f6fae9a43e3fa1f81799adf20ff39d730df10a50584ee756325197aa18e40821"
+        },
+        {
+          "participant_id": "D",
+          "member": "words/EN2001a.D.words.xml",
+          "size_bytes": 319780,
+          "sha256": "97a337ecfd691cb53fcd43fbc30e765242c03bc8aefc8dc0156a1ae646a148c9"
+        }
+      ]
+    }
+  ]
+}
