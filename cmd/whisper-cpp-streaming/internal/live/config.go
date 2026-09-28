@@ -124,7 +124,10 @@ func parseSessionConfig(raw json.RawMessage) (sessionConfig, error) {
 			case VADFixed, VADAdaptive:
 				cfg.vad = mode
 			default:
-				return sessionConfig{}, fmt.Errorf("unknown vad mode %q: want %q or %q", mode, VADFixed, VADAdaptive)
+				// Report the mode exactly as supplied, not its trimmed form: a
+				// whitespace-only value must be identifiable as such in the
+				// error rather than looking like an empty/absent one.
+				return sessionConfig{}, fmt.Errorf("unknown vad mode %q: want %q or %q", *fields.VAD, VADFixed, VADAdaptive)
 			}
 		}
 	}

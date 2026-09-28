@@ -287,7 +287,9 @@ func TestStartStreamIsolatesConcurrentVADState(t *testing.T) {
 
 	t.Run("adaptive detectors are not shared between sessions", func(t *testing.T) {
 		a := startLiveStream(t, eng, sampleRate, VADAdaptive, fallback)
+		defer func() { _, _ = a.Close(context.Background()) }()
 		b := startLiveStream(t, eng, sampleRate, VADAdaptive, fallback)
+		defer func() { _, _ = b.Close(context.Background()) }()
 
 		// Precondition A only: enough bimodal audio for its threshold to fall
 		// below speechAmp and fire at least one segment, then drain those
@@ -360,12 +362,14 @@ func TestStartStreamIsolatesConcurrentVADState(t *testing.T) {
 			defer wg.Done()
 			barrier.Wait()
 			session := startLiveStream(t, eng, sampleRate, VADFixed, lowThreshold)
+			defer func() { _, _ = session.Close(context.Background()) }()
 			lowEvents, lowErr = session.WriteAudio(context.Background(), signal)
 		}()
 		go func() {
 			defer wg.Done()
 			barrier.Wait()
 			session := startLiveStream(t, eng, sampleRate, VADFixed, highThreshold)
+			defer func() { _, _ = session.Close(context.Background()) }()
 			highEvents, highErr = session.WriteAudio(context.Background(), signal)
 		}()
 		barrier.Done()

@@ -2,6 +2,7 @@ package live
 
 import (
 	"encoding/json"
+	"fmt"
 	"math"
 	"reflect"
 	"strings"
@@ -66,6 +67,33 @@ func TestParseSessionConfigRejectsInvalidValues(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tc.wantMessage) {
 				t.Errorf("error %q does not mention %q", err, tc.wantMessage)
+			}
+		})
+	}
+}
+
+// TestParseSessionConfigUnknownModeErrorNamesOriginalSuppliedValue pins that
+// the "unknown vad mode" error reports the mode exactly as it was supplied,
+// not its trimmed form. Reporting the trimmed form makes a whitespace-only
+// value indistinguishable from an empty one in the error message ("unknown
+// vad mode """), which looks like a report about an absent/default value
+// rather than the whitespace that was actually sent.
+func TestParseSessionConfigUnknownModeErrorNamesOriginalSuppliedValue(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw, original string
+	}{
+		{"whitespace-only mode", `{"vad":" "}`, " "},
+		{"tab-only mode", `{"vad":"\t"}`, "	"},
+		{"padded unknown mode", `{"vad":" silero "}`, " silero "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := parseSessionConfig(json.RawMessage(tc.raw))
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			wantQuoted := fmt.Sprintf("%q", tc.original)
+			if !strings.Contains(err.Error(), wantQuoted) {
+				t.Errorf("error %q does not report the original supplied mode %s", err, wantQuoted)
 			}
 		})
 	}
