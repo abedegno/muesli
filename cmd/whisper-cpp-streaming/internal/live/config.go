@@ -95,33 +95,62 @@ func parseSessionConfig(raw json.RawMessage) (sessionConfig, error) {
 		Threshold *float64 `json:"vad_threshold"`
 	}
 	if err := json.Unmarshal(raw, &fields); err != nil {
-		return sessionConfig{}, fmt.Errorf("streaming config is not a JSON object: %w", err)
+		// A *json.UnmarshalTypeError whose Field is empty means the mismatch
+		// was at the top level (raw decoded to an array, string, number, ...
+		// instead of an object) rather than inside one of our fields; that is
+		// the only case that gets the "not a JSON object" message. Everything
+		// else -- a wrong-typed field, or a syntax error such as truncated
+		// JSON -- is a config that *was* shaped like an object but failed to
+		// decode, so it is reported as an invalid streaming config instead,
+		// each keeping its own distinguishing error text via %w. (The struct
+		// is declared anonymously, so json's Struct name is always empty
+		// regardless of level; Field is what actually distinguishes them.)
+		var typeErr *json.UnmarshalTypeError
+		if errors.As(err, &typeErr) && typeErr.Field == "" {
+			return sessionConfig{}, fmt.Errorf("streaming config is not a JSON object: %w", err)
+		}
+		return sessionConfig{}, fmt.Errorf("invalid streaming config: %w", err)
 	}
 
 	if fields.VAD != nil {
-		switch mode := strings.TrimSpace(*fields.VAD); mode {
-		case "":
-			// Absent in practice: an empty string keeps the default rather than
-			// failing a config that simply never set the field.
-		case VADFixed, VADAdaptive:
-			cfg.vad = mode
-		default:
-			return sessionConfig{}, fmt.Errorf("unknown vad mode %q: want %q or %q", mode, VADFixed, VADAdaptive)
+		// The original decoded string, not its trimmed form, decides whether
+		// the field was left absent: only "" (the zero value an omitted
+		// field or an explicit "" decodes to) keeps the default. Anything
+		// else -- including a string that is only whitespace -- must resolve
+		// to a real mode or be rejected; silently defaulting it would let a
+		// typo'd or emptied setting transcribe with settings nobody chose.
+		if *fields.VAD != "" {
+			switch mode := strings.TrimSpace(*fields.VAD); mode {
+			case VADFixed, VADAdaptive:
+				cfg.vad = mode
+			default:
+				return sessionConfig{}, fmt.Errorf("unknown vad mode %q: want %q or %q", mode, VADFixed, VADAdaptive)
+			}
 		}
 	}
 
 	if fields.Threshold != nil {
-		t := *fields.Threshold
-		if math.IsNaN(t) || math.IsInf(t, 0) {
-			return sessionConfig{}, errors.New("vad_threshold must be a finite number")
+		if err := validateVADThreshold(*fields.Threshold); err != nil {
+			return sessionConfig{}, err
 		}
-		if t < 0 || t > 1 {
-			return sessionConfig{}, fmt.Errorf("vad_threshold %v out of range [0,1]", t)
-		}
-		cfg.threshold = t
+		cfg.threshold = *fields.Threshold
 	}
 
 	return cfg, nil
+}
+
+// validateVADThreshold reports whether t is usable as a VAD threshold: finite
+// and within the inclusive [0,1] RMS range the schema publishes. It performs
+// only that check -- absence and defaulting of vad_threshold are
+// parseSessionConfig's responsibility, not this helper's.
+func validateVADThreshold(t float64) error {
+	if math.IsNaN(t) || math.IsInf(t, 0) {
+		return errors.New("vad_threshold must be a finite number")
+	}
+	if t < 0 || t > 1 {
+		return fmt.Errorf("vad_threshold %v out of range [0,1]", t)
+	}
+	return nil
 }
 
 // newVAD builds the detector for one session. It returns nil for fixed mode,
