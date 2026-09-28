@@ -2,6 +2,8 @@ package live
 
 import (
 	"encoding/json"
+	"fmt"
+	"math"
 	"reflect"
 	"strings"
 	"testing"
@@ -24,9 +26,12 @@ func TestParseSessionConfigAcceptsValidValues(t *testing.T) {
 		{"explicit fixed", `{"vad":"fixed"}`, VADFixed, defaultThreshold},
 		{"adaptive", `{"vad":"adaptive"}`, VADAdaptive, defaultThreshold},
 		{"empty mode keeps default", `{"vad":""}`, VADFixed, defaultThreshold},
+		{"fixed with surrounding whitespace", `{"vad":" fixed "}`, VADFixed, defaultThreshold},
+		{"adaptive with surrounding whitespace/tabs", `{"vad":"\tadaptive\n"}`, VADAdaptive, defaultThreshold},
 		{"threshold only", `{"vad_threshold":0.03}`, VADFixed, 0.03},
 		{"both", `{"vad":"adaptive","vad_threshold":0.05}`, VADAdaptive, 0.05},
 		{"zero threshold", `{"vad_threshold":0}`, VADFixed, 0},
+		{"threshold at upper bound", `{"vad_threshold":1}`, VADFixed, 1},
 		{"unrelated properties tolerated", `{"model":"tiny.en","language":"en","multitrack":true}`, VADFixed, defaultThreshold},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -46,13 +51,14 @@ func TestParseSessionConfigRejectsInvalidValues(t *testing.T) {
 		name, raw, wantMessage string
 	}{
 		{"unknown mode", `{"vad":"silero"}`, "unknown vad mode"},
+		{"whitespace-only mode is not silently defaulted", `{"vad":" "}`, "unknown vad mode"},
+		{"tab-only mode is not silently defaulted", `{"vad":"\t"}`, "unknown vad mode"},
 		{"negative threshold", `{"vad_threshold":-0.1}`, "out of range"},
 		{"threshold above one", `{"vad_threshold":1.5}`, "out of range"},
-		{"threshold not a number", `{"vad_threshold":"loud"}`, "not a JSON object"},
-		{"mode not a string", `{"vad":7}`, "not a JSON object"},
+		{"threshold overflow token", `{"vad_threshold":1e10000}`, "invalid streaming config"},
+		{"threshold invalid numeric token", `{"vad_threshold":1.2.3}`, "invalid streaming config"},
 		{"array instead of object", `[]`, "not a JSON object"},
 		{"string instead of object", `"fixed"`, "not a JSON object"},
-		{"malformed json", `{"vad":`, "not a JSON object"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := parseSessionConfig(json.RawMessage(tc.raw))
@@ -61,6 +67,101 @@ func TestParseSessionConfigRejectsInvalidValues(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), tc.wantMessage) {
 				t.Errorf("error %q does not mention %q", err, tc.wantMessage)
+			}
+		})
+	}
+}
+
+// TestParseSessionConfigUnknownModeErrorNamesOriginalSuppliedValue pins that
+// the "unknown vad mode" error reports the mode exactly as it was supplied,
+// not its trimmed form. Reporting the trimmed form makes a whitespace-only
+// value indistinguishable from an empty one in the error message ("unknown
+// vad mode """), which looks like a report about an absent/default value
+// rather than the whitespace that was actually sent.
+func TestParseSessionConfigUnknownModeErrorNamesOriginalSuppliedValue(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw, original string
+	}{
+		{"whitespace-only mode", `{"vad":" "}`, " "},
+		{"tab-only mode", `{"vad":"\t"}`, "	"},
+		{"padded unknown mode", `{"vad":" silero "}`, " silero "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := parseSessionConfig(json.RawMessage(tc.raw))
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			wantQuoted := fmt.Sprintf("%q", tc.original)
+			if !strings.Contains(err.Error(), wantQuoted) {
+				t.Errorf("error %q does not report the original supplied mode %s", err, wantQuoted)
+			}
+		})
+	}
+}
+
+// TestParseSessionConfigWrongTypedFieldIsNotReportedAsNonObject pins the
+// distinction between a genuinely non-object top level (an array, a bare
+// string: see TestParseSessionConfigRejectsInvalidValues) and a syntactically
+// valid JSON object whose vad/vad_threshold field has the wrong type. Both
+// used to share the same "not a JSON object" wording, which is misleading for
+// the latter: the value *was* an object, just an invalid one. Malformed JSON
+// (a decode failure that isn't even a wrong-typed field) must also stay
+// distinguishable via its own wrapped syntax error rather than collapsing
+// into either message.
+func TestParseSessionConfigWrongTypedFieldIsNotReportedAsNonObject(t *testing.T) {
+	for _, tc := range []struct {
+		name, raw, wantField string
+	}{
+		{"vad wrong type", `{"vad":7}`, "vad"},
+		{"vad_threshold wrong type", `{"vad_threshold":"loud"}`, "vad_threshold"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := parseSessionConfig(json.RawMessage(tc.raw))
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !strings.Contains(err.Error(), "invalid streaming config") {
+				t.Errorf("error %q does not mention %q", err, "invalid streaming config")
+			}
+			if !strings.Contains(err.Error(), tc.wantField) {
+				t.Errorf("error %q does not name the offending field %q", err, tc.wantField)
+			}
+			if strings.Contains(err.Error(), "not a JSON object") {
+				t.Errorf("error %q wrongly reused the non-object message for a wrong-typed field", err)
+			}
+		})
+	}
+
+	// Malformed JSON is a different failure again: it must not be reported
+	// as "not a JSON object" (that message is reserved for a syntactically
+	// valid, non-object top level) and must carry its own distinguishing
+	// syntax-error text.
+	_, err := parseSessionConfig(json.RawMessage(`{"vad":`))
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if strings.Contains(err.Error(), "not a JSON object") {
+		t.Errorf("malformed JSON error %q wrongly reused the non-object message", err)
+	}
+	if !strings.Contains(err.Error(), "unexpected end of JSON input") {
+		t.Errorf("malformed JSON error %q lost its distinguishing syntax error", err)
+	}
+}
+
+func TestValidateVADThreshold(t *testing.T) {
+	defaultThreshold := pluginkit.DefaultStreamingConfig().EnergyThreshold
+	for _, accepted := range []float64{0, defaultThreshold, 0.5, 1} {
+		t.Run("accepted", func(t *testing.T) {
+			if err := validateVADThreshold(accepted); err != nil {
+				t.Errorf("validateVADThreshold(%v) = %v, want nil", accepted, err)
+			}
+		})
+	}
+
+	for _, rejected := range []float64{-0.0001, 1.0001, math.NaN(), math.Inf(1), math.Inf(-1)} {
+		t.Run("rejected", func(t *testing.T) {
+			if err := validateVADThreshold(rejected); err == nil {
+				t.Errorf("validateVADThreshold(%v) = nil, want an error", rejected)
 			}
 		})
 	}
