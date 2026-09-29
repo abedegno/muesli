@@ -20,14 +20,6 @@ import (
 	"github.com/abedegno/muesli/internal/pluginkit"
 )
 
-// Environment records the execution-environment inputs that can affect
-// floating-point and dependency behavior between otherwise-identical runs.
-type Environment struct {
-	GoVersion string
-	GOOS      string
-	GOARCH    string
-}
-
 // Defaults mirrors the production streaming and adaptive-detector defaults
 // actually used, read live from pluginkit so this can never silently drift
 // from what production ships.
@@ -73,21 +65,13 @@ func ProductionDefaults() Defaults {
 	}
 }
 
-// Report is every structured input to the rendered comparison document.
+// Report is every structured input to the rendered document.
 type Report struct {
-	ManifestDigest              string
-	EvaluationVersion           string
-	Environment                 Environment
-	PreparationSchemaVersion    int
-	AnnotationSchemaVersion     int
-	Defaults                    Defaults
-	ThresholdGrid               []float64
-	HistoricalBaselineThreshold float64
-	WhisperAvailable            bool
-	WhisperUnavailableReason    string
-	Tuning                      compare.SplitSummary
-	Selection                   compare.Selection
-	ReproductionCommand         string
+	Results                  compare.Results
+	PreparationSchemaVersion int
+	AnnotationSchemaVersion  int
+	Defaults                 Defaults
+	ReproductionCommand      string
 }
 
 // Validate checks that a report has everything required before it may
@@ -96,25 +80,25 @@ type Report struct {
 // schemas, defaults, parameters, reproduction command, and recommendation
 // evidence.
 func Validate(r Report) error {
-	if len(r.ManifestDigest) != 64 {
-		return fmt.Errorf("report: manifest digest must be 64 hex characters, got %q", r.ManifestDigest)
+	if len(r.Results.ManifestDigest) != 64 {
+		return fmt.Errorf("report: manifest digest must be 64 hex characters, got %q", r.Results.ManifestDigest)
 	}
-	if r.EvaluationVersion == "" {
+	if r.Results.EvaluationVersion == "" {
 		return fmt.Errorf("report: evaluation version is required")
 	}
-	if r.Environment.GoVersion == "" || r.Environment.GOOS == "" || r.Environment.GOARCH == "" {
+	if r.Results.Environment.GoVersion == "" || r.Results.Environment.GOOS == "" || r.Results.Environment.GOARCH == "" {
 		return fmt.Errorf("report: execution environment (Go version, OS, architecture) is required")
 	}
-	if len(r.ThresholdGrid) == 0 {
+	if len(r.Results.ThresholdGrid) == 0 {
 		return fmt.Errorf("report: threshold grid is required")
 	}
 	if r.ReproductionCommand == "" {
 		return fmt.Errorf("report: reproduction command is required")
 	}
-	if len(r.Tuning.Detectors) == 0 {
+	if len(r.Results.Tuning.Detectors) == 0 {
 		return fmt.Errorf("report: tuning evidence is required")
 	}
-	if len(r.Selection.Candidates) == 0 {
+	if len(r.Results.Selection.Candidates) == 0 {
 		return fmt.Errorf("report: selection evidence is required")
 	}
 	return nil
@@ -215,12 +199,12 @@ func RenderToBytes(r Report) ([]byte, error) {
 
 	fmt.Fprintln(&b, "## Reproducibility metadata")
 	fmt.Fprintln(&b)
-	fmt.Fprintf(&b, "- Manifest digest: `%s`\n", r.ManifestDigest)
-	fmt.Fprintf(&b, "- Evaluation revision: `%s`\n", r.EvaluationVersion)
+	fmt.Fprintf(&b, "- Manifest digest: `%s`\n", r.Results.ManifestDigest)
+	fmt.Fprintf(&b, "- Evaluation revision: `%s`\n", r.Results.EvaluationVersion)
 	fmt.Fprintf(&b, "- Preparation schema version: `%d`\n", r.PreparationSchemaVersion)
 	fmt.Fprintf(&b, "- Annotation schema version: `%d`\n", r.AnnotationSchemaVersion)
-	fmt.Fprintf(&b, "- Go version: `%s`\n", r.Environment.GoVersion)
-	fmt.Fprintf(&b, "- OS/architecture: `%s/%s`\n", r.Environment.GOOS, r.Environment.GOARCH)
+	fmt.Fprintf(&b, "- Go version: `%s`\n", r.Results.Environment.GoVersion)
+	fmt.Fprintf(&b, "- OS/architecture: `%s/%s`\n", r.Results.Environment.GOOS, r.Results.Environment.GOARCH)
 	fmt.Fprintln(&b)
 
 	fmt.Fprintln(&b, "## Production defaults")
@@ -251,23 +235,23 @@ func RenderToBytes(r Report) ([]byte, error) {
 
 	fmt.Fprintln(&b, "## Detector parameters")
 	fmt.Fprintln(&b)
-	grid := append([]float64(nil), r.ThresholdGrid...)
+	grid := append([]float64(nil), r.Results.ThresholdGrid...)
 	sort.Float64s(grid)
 	gridStrs := make([]string, len(grid))
 	for i, t := range grid {
 		gridStrs[i] = floatStr4(t)
 	}
 	fmt.Fprintf(&b, "- Fixed threshold grid: %s\n", strings.Join(gridStrs, ", "))
-	fmt.Fprintf(&b, "- Shipped threshold: %s\n", floatStr4(r.HistoricalBaselineThreshold))
-	if r.WhisperAvailable {
+	fmt.Fprintf(&b, "- Shipped threshold: %s\n", floatStr4(r.Results.HistoricalBaselineThreshold))
+	if r.Results.Tuning.WhisperAvailable {
 		fmt.Fprintln(&b, "- whisper.cpp detector: available")
 	} else {
-		fmt.Fprintf(&b, "- whisper.cpp detector: unavailable -- %s\n", r.WhisperUnavailableReason)
+		fmt.Fprintf(&b, "- whisper.cpp detector: unavailable -- %s\n", r.Results.Tuning.WhisperUnavailableReason)
 	}
 	fmt.Fprintln(&b)
 
-	renderOverallResults(&b, r.Tuning)
-	renderSelection(&b, r.Selection)
+	renderOverallResults(&b, r.Results.Tuning)
+	renderSelection(&b, r.Results.Selection)
 	renderUsage(&b)
 
 	return b.Bytes(), nil

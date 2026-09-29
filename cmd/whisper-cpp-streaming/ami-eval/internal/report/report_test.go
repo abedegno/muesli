@@ -24,20 +24,21 @@ func sampleReport() Report {
 		}, FarFieldFPR: f1r(0.2)}
 	}
 	return Report{
-		ManifestDigest:              strings.Repeat("a", 64),
-		EvaluationVersion:           "v2",
-		Environment:                 Environment{GoVersion: "go1.25.11", GOOS: "linux", GOARCH: "amd64"},
-		PreparationSchemaVersion:    1,
-		AnnotationSchemaVersion:     1,
-		Defaults:                    ProductionDefaults(),
-		ThresholdGrid:               []float64{0.005, 0.01, 0.015},
-		HistoricalBaselineThreshold: 0.01,
-		WhisperUnavailableReason:    "no compatible interface",
-		Tuning: compare.SplitSummary{Detectors: []compare.DetectorSummary{
-			det("fixed_historical_0.01", &b), det("fixed_0.005", &g), det("adaptive", nil),
-		}},
-		Selection:           compare.Selection{Candidates: []compare.Candidate{{Threshold: 0.005, Eligible: true, UtteranceError: 0.1}}},
-		ReproductionCommand: "make evaluate-ami-vad",
+		Results: compare.Results{
+			ManifestDigest:              strings.Repeat("a", 64),
+			EvaluationVersion:           "v2",
+			Environment:                 compare.Environment{GoVersion: "go1.25.11", GOOS: "linux", GOARCH: "amd64"},
+			ThresholdGrid:               []float64{0.005, 0.01, 0.015},
+			HistoricalBaselineThreshold: 0.01,
+			Tuning: compare.SplitSummary{WhisperUnavailableReason: "no compatible interface", Detectors: []compare.DetectorSummary{
+				det("fixed_historical_0.01", &b), det("fixed_0.005", &g), det("adaptive", nil),
+			}},
+			Selection: compare.Selection{Candidates: []compare.Candidate{{Threshold: 0.005, Eligible: true, UtteranceError: 0.1}}},
+		},
+		PreparationSchemaVersion: 1,
+		AnnotationSchemaVersion:  1,
+		Defaults:                 ProductionDefaults(),
+		ReproductionCommand:      "make evaluate-ami-vad",
 	}
 }
 
@@ -101,7 +102,7 @@ func TestRenderIsByteIdenticalForIdenticalInput(t *testing.T) {
 
 func TestValidateFailsOnMissingDigest(t *testing.T) {
 	r := sampleReport()
-	r.ManifestDigest = "short"
+	r.Results.ManifestDigest = "short"
 	if _, err := RenderToBytes(r); err == nil {
 		t.Fatal("expected digest validation failure")
 	}

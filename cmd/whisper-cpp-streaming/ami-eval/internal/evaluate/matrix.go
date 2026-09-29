@@ -2,10 +2,7 @@ package evaluate
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"sync"
 	"time"
@@ -316,42 +313,4 @@ func runRecording(ctx context.Context, rec RecordingInput, jobs []job) ([]Matrix
 		})
 	}
 	return entries, nil
-}
-
-// WriteMatrix atomically writes a matrix.json (via a sibling temp file and
-// rename) into dir, creating dir if needed.
-func WriteMatrix(dir string, m Matrix) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return fmt.Errorf("evaluate: create results dir: %w", err)
-	}
-	dest := filepath.Join(dir, "matrix.json")
-	tmp, err := os.CreateTemp(dir, "matrix.json.tmp-*")
-	if err != nil {
-		return fmt.Errorf("evaluate: create temp matrix file: %w", err)
-	}
-	tmpPath := tmp.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			tmp.Close()
-			os.Remove(tmpPath)
-		}
-	}()
-
-	enc := json.NewEncoder(tmp)
-	enc.SetIndent("", "  ")
-	if err := enc.Encode(m); err != nil {
-		return fmt.Errorf("evaluate: encode matrix.json: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		return fmt.Errorf("evaluate: sync matrix.json: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("evaluate: close matrix.json: %w", err)
-	}
-	if err := os.Rename(tmpPath, dest); err != nil {
-		return fmt.Errorf("evaluate: promote matrix.json: %w", err)
-	}
-	cleanup = false
-	return nil
 }

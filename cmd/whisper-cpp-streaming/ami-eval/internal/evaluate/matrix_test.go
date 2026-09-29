@@ -2,8 +2,6 @@ package evaluate
 
 import (
 	"context"
-	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -362,27 +360,6 @@ func TestRunMatrixWorkerCapAndConcurrency(t *testing.T) {
 	wantPerRecording := 1 + len(ThresholdGrid()) + 1
 	if len(m.Entries) != wantPerRecording*len(recs) {
 		t.Fatalf("expected %d entries, got %d", wantPerRecording*len(recs), len(m.Entries))
-	}
-}
-
-func TestWriteMatrixAtomic(t *testing.T) {
-	dir := t.TempDir()
-	m := Matrix{ThresholdGrid: ThresholdGrid(), HistoricalBaselineThreshold: HistoricalBaselineThreshold}
-	if err := WriteMatrix(dir, m); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(dir, "matrix.json")
-	if _, err := os.Stat(path); err != nil {
-		t.Fatal(err)
-	}
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, e := range entries {
-		if e.Name() != "matrix.json" {
-			t.Fatalf("unexpected leftover file %q", e.Name())
-		}
 	}
 }
 
