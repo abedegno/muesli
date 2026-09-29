@@ -507,3 +507,33 @@ func receiveSegment(t *testing.T, segments <-chan StreamingSegment) StreamingSeg
 		return StreamingSegment{}
 	}
 }
+
+// TestDefaultStreamingConfigEnergyThresholdIsEvaluatedValue pins the fixed
+// energy threshold selected on AMI tuning meetings and validated on held-out
+// meetings (muesli#782, docs/ami-vad-evaluation.md). Changing it requires a
+// new evaluation, not an edit here.
+func TestDefaultStreamingConfigEnergyThresholdIsEvaluatedValue(t *testing.T) {
+	if got := DefaultStreamingConfig().EnergyThreshold; got != 0.003 {
+		t.Fatalf("DefaultStreamingConfig().EnergyThreshold = %v, want 0.003", got)
+	}
+}
+
+// TestDefaultSessionUsesTheEvaluatedThreshold proves the omitted-VAD path
+// actually detects with the default: a frame between 0.003 and the old 0.01
+// is speech, a frame below 0.003 is not.
+func TestDefaultSessionUsesTheEvaluatedThreshold(t *testing.T) {
+	vad := EnergyVAD{Threshold: DefaultStreamingConfig().EnergyThreshold}
+	frame := func(amp float32) []float32 {
+		f := make([]float32, 320)
+		for i := range f {
+			f[i] = amp
+		}
+		return f
+	}
+	if !vad.IsSpeech(frame(0.005)) {
+		t.Fatal("a 0.005 RMS frame must be speech at the default threshold")
+	}
+	if vad.IsSpeech(frame(0.002)) {
+		t.Fatal("a 0.002 RMS frame must be silence at the default threshold")
+	}
+}

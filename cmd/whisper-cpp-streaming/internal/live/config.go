@@ -36,9 +36,9 @@ const streamingProperties = `{
 		"type": "number",
 		"minimum": 0,
 		"maximum": 1,
-		"default": 0.01,
+		"default": 0.003,
 		"title": "Fixed VAD threshold",
-		"description": "RMS energy above which audio counts as speech in fixed mode, and during warm-up in adaptive mode. Raise it in a noisy room: a threshold below the room's own noise floor never detects silence, so nothing is ever transcribed."
+		"description": "RMS energy above which audio counts as speech in fixed mode, and during warm-up in adaptive mode. Raise it in a noisy room: a threshold below the room's own noise floor never detects silence, so nothing is ever transcribed. Default: 0.003."
 	}
 }`
 

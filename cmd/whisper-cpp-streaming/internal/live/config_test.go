@@ -261,3 +261,61 @@ func TestNewVADIsConstructedPerSession(t *testing.T) {
 		t.Errorf("configured threshold should seed warm-up, got %v", adaptive.Threshold())
 	}
 }
+
+// evaluatedDefault is the fixed threshold selected and validated by the AMI
+// evaluation (muesli#782, docs/ami-vad-evaluation.md).
+const evaluatedDefault = 0.003
+
+func vadThresholdSchema(t *testing.T) (def float64, description string) {
+	t.Helper()
+	var schema struct {
+		Properties map[string]json.RawMessage `json:"properties"`
+	}
+	if err := json.Unmarshal(ConfigSchema(engine.ConfigSchema), &schema); err != nil {
+		t.Fatal(err)
+	}
+	var prop struct {
+		Default     *float64 `json:"default"`
+		Description string   `json:"description"`
+	}
+	if err := json.Unmarshal(schema.Properties["vad_threshold"], &prop); err != nil || prop.Default == nil {
+		t.Fatalf("vad_threshold has no numeric default: %v", err)
+	}
+	return *prop.Default, prop.Description
+}
+
+func TestVADThresholdDefaultsMatchTheEvaluatedValue(t *testing.T) {
+	if got := pluginkit.DefaultStreamingConfig().EnergyThreshold; got != evaluatedDefault {
+		t.Fatalf("runtime default = %v, want %v", got, evaluatedDefault)
+	}
+	def, description := vadThresholdSchema(t)
+	if def != evaluatedDefault {
+		t.Fatalf("schema default = %v, want %v", def, evaluatedDefault)
+	}
+	if !strings.Contains(description, fmt.Sprintf("Default: %v.", evaluatedDefault)) {
+		t.Fatalf("schema description must name the default %v: %q", evaluatedDefault, description)
+	}
+}
+
+func TestOmittedThresholdUsesTheEvaluatedDefaultAndExplicitOverridesWin(t *testing.T) {
+	for _, raw := range []string{"", "null", "{}", `{"vad":"fixed"}`, `{"vad_threshold":null}`} {
+		got, err := parseSessionConfig(json.RawMessage(raw))
+		if err != nil {
+			t.Fatalf("%q: %v", raw, err)
+		}
+		if got.threshold != evaluatedDefault || got.vad != VADFixed {
+			t.Fatalf("%q: got {%s %v}, want {fixed %v}", raw, got.vad, got.threshold, evaluatedDefault)
+		}
+	}
+	// A stored explicit 0.01 (the old default) and any other explicit value
+	// are preserved exactly, locally and in hosted sessions alike.
+	for _, want := range []float64{0.01, 0.02, 0.0005} {
+		got, err := parseSessionConfig(json.RawMessage(fmt.Sprintf(`{"vad_threshold":%v}`, want)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.threshold != want || got.vad != VADFixed {
+			t.Fatalf("explicit %v: got {%s %v}", want, got.vad, got.threshold)
+		}
+	}
+}
