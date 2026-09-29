@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "annotation_archive": {
     "url": "https://groups.inf.ed.ac.uk/ami/AMICorpusAnnotations/ami_public_manual_1.6.2.zip",
     "size_bytes": 22887865,
@@ -9,6 +9,7 @@
     {
       "id": "ES2002a",
       "class": "scenario",
+      "split": "tuning",
       "headset_mix": {
         "url": "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/ES2002a/audio/ES2002a.Mix-Headset.wav",
         "size_bytes": 40724524,
@@ -55,6 +56,7 @@
     {
       "id": "EN2001a",
       "class": "non_scenario",
+      "split": "tuning",
       "headset_mix": {
         "url": "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/EN2001a/audio/EN2001a.Mix-Headset.wav",
         "size_bytes": 168007726,
@@ -95,6 +97,100 @@
           "member": "words/EN2001a.D.words.xml",
           "size_bytes": 319780,
           "sha256": "97a337ecfd691cb53fcd43fbc30e765242c03bc8aefc8dc0156a1ae646a148c9"
+        }
+      ]
+    },
+    {
+      "id": "ES2004a",
+      "class": "scenario",
+      "split": "held_out",
+      "headset_mix": {
+        "url": "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/ES2004a/audio/ES2004a.Mix-Headset.wav",
+        "size_bytes": 33579394,
+        "sha256": "3e2560b19bee6952c7c7ce041b0f1ea8a7ea9468044c4eea79d2a2c67e24ab0f",
+        "channels": 1,
+        "channel_policy": "explicit",
+        "select_channel": 0
+      },
+      "fixed_distant_mix": {
+        "url": "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/ES2004a/audio/ES2004a.Array1-01.wav",
+        "size_bytes": 33579394,
+        "sha256": "6936edac5d0904fc5c4ab175546c5cc5366601fdc1b1e5183a6ea2c10f05d150",
+        "channels": 1,
+        "channel_policy": "explicit",
+        "select_channel": 0
+      },
+      "annotations": [
+        {
+          "participant_id": "A",
+          "member": "words/ES2004a.A.words.xml",
+          "size_bytes": 32225,
+          "sha256": "3b91765c8985e7c2652f1004832c00840e88bad4c3213296192b9fd741d675cc"
+        },
+        {
+          "participant_id": "B",
+          "member": "words/ES2004a.B.words.xml",
+          "size_bytes": 107451,
+          "sha256": "0e24646b84f2772bb3ca28e666df5f7ba48cde647589f7ae8f85e2724ff5cbc3"
+        },
+        {
+          "participant_id": "C",
+          "member": "words/ES2004a.C.words.xml",
+          "size_bytes": 45192,
+          "sha256": "07c25c4831fdc91cdff736ebf27c1380d0a7ef98e9835e33b15d44797fed7fd1"
+        },
+        {
+          "participant_id": "D",
+          "member": "words/ES2004a.D.words.xml",
+          "size_bytes": 82827,
+          "sha256": "e085188b2f4855808911934c309ba965c283e54371044c9086185f27913d44f8"
+        }
+      ]
+    },
+    {
+      "id": "EN2002a",
+      "class": "non_scenario",
+      "split": "held_out",
+      "headset_mix": {
+        "url": "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/EN2002a/audio/EN2002a.Mix-Headset.wav",
+        "size_bytes": 68566744,
+        "sha256": "a15017d0d3c871866971ee178052a0ce3a7e44d6fbf89fc23dcab326511b65f5",
+        "channels": 1,
+        "channel_policy": "explicit",
+        "select_channel": 0
+      },
+      "fixed_distant_mix": {
+        "url": "https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/EN2002a/audio/EN2002a.Array1-01.wav",
+        "size_bytes": 68566744,
+        "sha256": "6c0644431679e59adc70129f2ba6c2fb737fa731cf1ffe8a033cd7f0c441170e",
+        "channels": 1,
+        "channel_policy": "explicit",
+        "select_channel": 0
+      },
+      "annotations": [
+        {
+          "participant_id": "A",
+          "member": "words/EN2002a.A.words.xml",
+          "size_bytes": 216647,
+          "sha256": "a85a5b87b81b93e4d424fd6c6c8ab5b90df93a515f6d83aa37f7c7eb9d9a9492"
+        },
+        {
+          "participant_id": "B",
+          "member": "words/EN2002a.B.words.xml",
+          "size_bytes": 158878,
+          "sha256": "b27dfc1d2854810bd5923ca3967b1df6167ef0eccce1b6308aa3e57725f9953a"
+        },
+        {
+          "participant_id": "C",
+          "member": "words/EN2002a.C.words.xml",
+          "size_bytes": 289023,
+          "sha256": "d15c35bac773b389763ded48df784133684806b5db37f9e3343fa29ec37ec6e0"
+        },
+        {
+          "participant_id": "D",
+          "member": "words/EN2002a.D.words.xml",
+          "size_bytes": 180395,
+          "sha256": "d5f610babf78b48dad6d98357ca8cf2ca6bcb396690c079570c2ebb45eea4d5f"
         }
       ]
     }

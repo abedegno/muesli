@@ -523,12 +523,35 @@ func buildTestArchive(t *testing.T, files map[string][]byte) (string, int64, str
 	return path, int64(len(data)), sha256Hex(data)
 }
 
+// testMeetings is the schema-2 split membership used by acquisition
+// fixtures: meeting ID, class, split.
+var testMeetings = []struct {
+	id    string
+	class string
+	split manifest.Split
+}{
+	{"EN2001a", manifest.ClassNonScenario, manifest.SplitTuning},
+	{"ES2002a", manifest.ClassScenario, manifest.SplitTuning},
+	{"EN2002a", manifest.ClassNonScenario, manifest.SplitHeldOut},
+	{"ES2004a", manifest.ClassScenario, manifest.SplitHeldOut},
+}
+
+// micFile maps the fixture's short mic names to the required AMI basename
+// suffixes.
+var micFile = map[string]string{"headset": manifest.HeadsetAudioSuffix, "fixed": manifest.FixedDistantAudioSuffix}
+
+// audioPath is the URL path each fixture WAV is served at.
+func audioPath(meeting, mic string) string {
+	return "/amicorpus/" + meeting + "/audio/" + meeting + micFile[mic]
+}
+
 func testManifestWithArchive(archiveURL string, archiveSize int64, archiveSHA string, wavURL func(meeting, mic string) string, wavSize func(meeting, mic string) int64, wavSHA func(meeting, mic string) string, annSHA map[string]string, annSize map[string]int64) *manifest.Manifest {
 	sel0 := 0
-	mk := func(id, class string) manifest.Meeting {
+	mk := func(id, class string, split manifest.Split) manifest.Meeting {
 		return manifest.Meeting{
 			ID:    id,
 			Class: class,
+			Split: split,
 			HeadsetMix: manifest.AudioObject{
 				URL: wavURL(id, "headset"), SizeBytes: wavSize(id, "headset"), SHA256: wavSHA(id, "headset"),
 				Channels: 1, ChannelPolicy: manifest.ChannelPolicyExplicit, SelectChannel: &sel0,
@@ -542,80 +565,81 @@ func testManifestWithArchive(archiveURL string, archiveSize int64, archiveSHA st
 			},
 		}
 	}
-	return &manifest.Manifest{
+	man := &manifest.Manifest{
 		SchemaVersion:     manifest.SchemaVersion,
 		AnnotationArchive: manifest.ArchiveObject{URL: archiveURL, SizeBytes: archiveSize, SHA256: archiveSHA},
-		Meetings: []manifest.Meeting{
-			mk("EN2001a", manifest.ClassNonScenario),
-			mk("ES2002a", manifest.ClassScenario),
-		},
 	}
+	for _, m := range testMeetings {
+		man.Meetings = append(man.Meetings, mk(m.id, m.class, m.split))
+	}
+	return man
+}
+
+// fixtureServer serves exactly the mapped paths and fails the test on any
+// other request -- there is deliberately no catch-all response.
+func fixtureServer(t *testing.T, bodies map[string][]byte, served *int32) *httptest.Server {
+	t.Helper()
+	return httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, ok := bodies[r.URL.Path]
+		if !ok {
+			t.Errorf("unexpected request for %s", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		if served != nil {
+			atomic.AddInt32(served, 1)
+		}
+		w.Write(body)
+	}))
 }
 
 func TestAcquireExtractsAndVerifiesAnnotationMembers(t *testing.T) {
-	esXML := []byte("<nite:root/>ES2002a content")
-	enXML := []byte("<nite:root/>EN2001a content")
-	archivePath, archiveSize, archiveSHA := buildTestArchive(t, map[string][]byte{
-		"words/ES2002a.A.words.xml": esXML,
-		"words/EN2001a.A.words.xml": enXML,
-	})
+	xmls := map[string][]byte{}
+	archiveFiles := map[string][]byte{}
+	for _, m := range testMeetings {
+		xmls[m.id] = []byte("<nite:root/>" + m.id + " content")
+		archiveFiles["words/"+m.id+".A.words.xml"] = xmls[m.id]
+	}
+	archivePath, archiveSize, archiveSHA := buildTestArchive(t, archiveFiles)
 	archiveData, err := os.ReadFile(archivePath)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	var served int32
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&served, 1)
-		switch {
-		case strings.Contains(r.URL.Path, "archive"):
-			w.Write(archiveData)
-		case strings.Contains(r.URL.Path, "ES2002a") && strings.Contains(r.URL.Path, "headset"):
-			w.Write([]byte("es-headset-audio"))
-		case strings.Contains(r.URL.Path, "ES2002a") && strings.Contains(r.URL.Path, "fixed"):
-			w.Write([]byte("es-fixed-audioX"))
-		case strings.Contains(r.URL.Path, "EN2001a") && strings.Contains(r.URL.Path, "headset"):
-			w.Write([]byte("en-headset-audio"))
-		default:
-			w.Write([]byte("en-fixed-audioXX"))
+	wavBody := func(meeting, mic string) []byte { return []byte(meeting + "-" + mic + "-audio") }
+	bodies := map[string][]byte{"/archive.zip": archiveData}
+	for _, m := range testMeetings {
+		for _, mic := range []string{"headset", "fixed"} {
+			bodies[audioPath(m.id, mic)] = wavBody(m.id, mic)
 		}
-	}))
+	}
+	var served int32
+	srv := fixtureServer(t, bodies, &served)
 	defer srv.Close()
 
-	wavSHA := func(meeting, mic string) string {
-		body := map[string]string{
-			"ES2002a|headset": "es-headset-audio",
-			"ES2002a|fixed":   "es-fixed-audioX",
-			"EN2001a|headset": "en-headset-audio",
-			"EN2001a|fixed":   "en-fixed-audioXX",
-		}[meeting+"|"+mic]
-		return sha256Hex([]byte(body))
-	}
-	wavSize := func(meeting, mic string) int64 {
-		body := map[string]string{
-			"ES2002a|headset": "es-headset-audio",
-			"ES2002a|fixed":   "es-fixed-audioX",
-			"EN2001a|headset": "en-headset-audio",
-			"EN2001a|fixed":   "en-fixed-audioXX",
-		}[meeting+"|"+mic]
-		return int64(len(body))
-	}
-	wavURL := func(meeting, mic string) string { return srv.URL + "/" + meeting + "/" + mic + ".wav" }
+	wavSHA := func(meeting, mic string) string { return sha256Hex(wavBody(meeting, mic)) }
+	wavSize := func(meeting, mic string) int64 { return int64(len(wavBody(meeting, mic))) }
+	wavURL := func(meeting, mic string) string { return srv.URL + audioPath(meeting, mic) }
 
-	man := testManifestWithArchive(srv.URL+"/archive.zip", archiveSize, archiveSHA, wavURL, wavSize, wavSHA,
-		map[string]string{"ES2002a.A": sha256Hex(esXML), "EN2001a.A": sha256Hex(enXML)},
-		map[string]int64{"ES2002a.A": int64(len(esXML)), "EN2001a.A": int64(len(enXML))},
-	)
+	annSHA := map[string]string{}
+	annSize := map[string]int64{}
+	for id, x := range xmls {
+		annSHA[id+".A"] = sha256Hex(x)
+		annSize[id+".A"] = int64(len(x))
+	}
+	man := testManifestWithArchive(srv.URL+"/archive.zip", archiveSize, archiveSHA, wavURL, wavSize, wavSHA, annSHA, annSize)
 
 	cache := newCache(t)
 	recs, err := Acquire(context.Background(), cache, man, Options{HTTPClient: srv.Client()})
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
 	}
-	if len(recs) != 4 {
-		t.Fatalf("expected 4 recordings, got %d", len(recs))
+	if len(recs) != 8 {
+		t.Fatalf("expected 8 recordings, got %d", len(recs))
 	}
+	splits := map[manifest.Split]int{}
 	for _, r := range recs {
+		splits[r.Recording.Split]++
 		p, ok := r.AnnotationPaths["A"]
 		if !ok {
 			t.Fatalf("recording %s missing participant A path", r.Recording.ID)
@@ -624,20 +648,28 @@ func TestAcquireExtractsAndVerifiesAnnotationMembers(t *testing.T) {
 		if err != nil {
 			t.Fatalf("read extracted annotation: %v", err)
 		}
-		var want []byte
-		if r.Recording.MeetingID == "ES2002a" {
-			want = esXML
-		} else {
-			want = enXML
-		}
-		if !bytes.Equal(got, want) {
+		if !bytes.Equal(got, xmls[r.Recording.MeetingID]) {
 			t.Fatalf("recording %s: extracted annotation mismatch", r.Recording.ID)
 		}
+		audio, err := os.ReadFile(r.AudioPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantMic := "headset"
+		if r.Recording.Mic == manifest.MicFixedDistant {
+			wantMic = "fixed"
+		}
+		if !bytes.Equal(audio, wavBody(r.Recording.MeetingID, wantMic)) {
+			t.Fatalf("recording %s: audio bytes belong to another recording", r.Recording.ID)
+		}
 	}
-	// Archive fetched once; then reused for member extraction across all 4
+	if splits[manifest.SplitTuning] != 4 || splits[manifest.SplitHeldOut] != 4 {
+		t.Fatalf("expected 4 recordings per split, got %v", splits)
+	}
+	// Archive fetched once; then reused for member extraction across all 8
 	// recordings without additional archive network hits.
-	if served != 5 { // 1 archive + 4 audio objects
-		t.Fatalf("expected 5 network requests (1 archive + 4 audio), got %d", served)
+	if served != 9 { // 1 archive + 8 audio objects
+		t.Fatalf("expected 9 network requests (1 archive + 8 audio), got %d", served)
 	}
 }
 
@@ -646,22 +678,35 @@ func TestAcquireFailsOnUnknownArchiveMember(t *testing.T) {
 		"words/OTHER.A.words.xml": []byte("wrong file"),
 	})
 	archiveData, _ := os.ReadFile(archivePath)
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write(archiveData)
-	}))
+	bodies := map[string][]byte{"/archive.zip": archiveData}
+	wavBody := func(meeting, mic string) []byte { return []byte(meeting + mic) }
+	for _, m := range testMeetings {
+		for _, mic := range []string{"headset", "fixed"} {
+			bodies[audioPath(m.id, mic)] = wavBody(m.id, mic)
+		}
+	}
+	srv := fixtureServer(t, bodies, nil)
 	defer srv.Close()
 
-	wavBody := []byte("audio")
-	man := testManifestWithArchive(srv.URL, archiveSize, archiveSHA,
-		func(string, string) string { return srv.URL },
-		func(string, string) int64 { return int64(len(wavBody)) },
-		func(string, string) string { return sha256Hex(wavBody) },
-		map[string]string{"ES2002a.A": strings.Repeat("9", 64), "EN2001a.A": strings.Repeat("9", 64)},
-		map[string]int64{"ES2002a.A": 10, "EN2001a.A": 10},
+	annSHA := map[string]string{}
+	annSize := map[string]int64{}
+	for _, m := range testMeetings {
+		annSHA[m.id+".A"] = strings.Repeat("9", 64)
+		annSize[m.id+".A"] = 10
+	}
+	man := testManifestWithArchive(srv.URL+"/archive.zip", archiveSize, archiveSHA,
+		func(meeting, mic string) string { return srv.URL + audioPath(meeting, mic) },
+		func(meeting, mic string) int64 { return int64(len(wavBody(meeting, mic))) },
+		func(meeting, mic string) string { return sha256Hex(wavBody(meeting, mic)) },
+		annSHA, annSize,
 	)
 	cache := newCache(t)
-	if _, err := Acquire(context.Background(), cache, man, Options{HTTPClient: srv.Client()}); err == nil {
+	_, err := Acquire(context.Background(), cache, man, Options{HTTPClient: srv.Client()})
+	if err == nil {
 		t.Fatal("expected failure for missing archive member")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("expected a missing-member diagnostic, got: %v", err)
 	}
 }
 

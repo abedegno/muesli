@@ -1,6 +1,8 @@
 package manifest
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -8,8 +10,40 @@ import (
 	"testing"
 )
 
-func validManifest() Manifest {
+// hexSeed derives a distinct lowercase 64-hex pin from a label, so every
+// synthetic object in validManifest has a unique hash.
+func hexSeed(label string) string {
+	sum := sha256.Sum256([]byte(label))
+	return hex.EncodeToString(sum[:])
+}
+
+func testMeeting(id, class string, split Split, participants ...string) Meeting {
 	sel0 := 0
+	if len(participants) == 0 {
+		participants = []string{"A", "B"}
+	}
+	m := Meeting{
+		ID:    id,
+		Class: class,
+		Split: split,
+		HeadsetMix: AudioObject{
+			URL: "https://example.test/" + id + "/audio/" + id + ".Mix-Headset.wav", SizeBytes: 1000,
+			SHA256: hexSeed(id + "|headset"), Channels: 1, ChannelPolicy: ChannelPolicyExplicit, SelectChannel: &sel0,
+		},
+		FixedDistantMix: AudioObject{
+			URL: "https://example.test/" + id + "/audio/" + id + ".Array1-01.wav", SizeBytes: 1001,
+			SHA256: hexSeed(id + "|fixed"), Channels: 1, ChannelPolicy: ChannelPolicyExplicit, SelectChannel: &sel0,
+		},
+	}
+	for _, p := range participants {
+		m.Annotations = append(m.Annotations, AnnotationObject{
+			ParticipantID: p, Member: "words/" + id + "." + p + ".words.xml", SizeBytes: 100, SHA256: hexSeed(id + "|" + p),
+		})
+	}
+	return m
+}
+
+func validManifest() Manifest {
 	return Manifest{
 		SchemaVersion: SchemaVersion,
 		AnnotationArchive: ArchiveObject{
@@ -17,40 +51,49 @@ func validManifest() Manifest {
 			SizeBytes: 22887865,
 			SHA256:    strings.Repeat("a", 64),
 		},
+		// Deliberately not in sorted order.
 		Meetings: []Meeting{
-			{
-				ID:    "EN2001a",
-				Class: ClassNonScenario,
-				HeadsetMix: AudioObject{
-					URL: "https://example.test/EN2001a.Mix-Headset.wav", SizeBytes: 168007726,
-					SHA256: strings.Repeat("b", 64), Channels: 1, ChannelPolicy: ChannelPolicyExplicit, SelectChannel: &sel0,
-				},
-				FixedDistantMix: AudioObject{
-					URL: "https://example.test/EN2001a.Array1-01.wav", SizeBytes: 168008068,
-					SHA256: strings.Repeat("c", 64), Channels: 1, ChannelPolicy: ChannelPolicyExplicit, SelectChannel: &sel0,
-				},
-				Annotations: []AnnotationObject{
-					{ParticipantID: "A", Member: "words/EN2001a.A.words.xml", SizeBytes: 87802, SHA256: strings.Repeat("d", 64)},
-					{ParticipantID: "B", Member: "words/EN2001a.B.words.xml", SizeBytes: 167929, SHA256: strings.Repeat("e", 64)},
-				},
-			},
-			{
-				ID:    "ES2002a",
-				Class: ClassScenario,
-				HeadsetMix: AudioObject{
-					URL: "https://example.test/ES2002a.Mix-Headset.wav", SizeBytes: 40724524,
-					SHA256: strings.Repeat("1", 64), Channels: 1, ChannelPolicy: ChannelPolicyExplicit, SelectChannel: &sel0,
-				},
-				FixedDistantMix: AudioObject{
-					URL: "https://example.test/ES2002a.Array1-01.wav", SizeBytes: 40727594,
-					SHA256: strings.Repeat("2", 64), Channels: 1, ChannelPolicy: ChannelPolicyExplicit, SelectChannel: &sel0,
-				},
-				Annotations: []AnnotationObject{
-					{ParticipantID: "A", Member: "words/ES2002a.A.words.xml", SizeBytes: 25103, SHA256: strings.Repeat("3", 64)},
-					{ParticipantID: "B", Member: "words/ES2002a.B.words.xml", SizeBytes: 130553, SHA256: strings.Repeat("4", 64)},
-				},
-			},
+			testMeeting("EN2002a", ClassNonScenario, SplitHeldOut),
+			testMeeting("EN2001a", ClassNonScenario, SplitTuning),
+			testMeeting("ES2004a", ClassScenario, SplitHeldOut, "A", "B", "C"),
+			testMeeting("ES2002a", ClassScenario, SplitTuning),
 		},
+	}
+}
+
+// meetingIndex returns the index of id in m.Meetings, or fails the test.
+func meetingIndex(t *testing.T, m *Manifest, id string) int {
+	t.Helper()
+	for i := range m.Meetings {
+		if m.Meetings[i].ID == id {
+			return i
+		}
+	}
+	t.Fatalf("meeting %s not in manifest", id)
+	return -1
+}
+
+// replaceHeldOut swaps requested held-out meeting `replaced` for IS1009a
+// with the given reason.
+func replaceHeldOut(t *testing.T, m *Manifest, replaced, reason string) {
+	t.Helper()
+	i := meetingIndex(t, m, replaced)
+	m.Meetings[i] = testMeeting(HeldOutSubstituteMeetingID, ClassScenario, SplitHeldOut)
+	m.HeldOutReplacement = &HeldOutReplacement{
+		ReplacedMeetingID:       replaced,
+		ReplacementMeetingID:    HeldOutSubstituteMeetingID,
+		AnnotationFailureReason: reason,
+	}
+}
+
+func wantInvalid(t *testing.T, m Manifest, contains string) {
+	t.Helper()
+	err := m.Validate()
+	if err == nil {
+		t.Fatalf("expected validation failure containing %q", contains)
+	}
+	if !strings.Contains(err.Error(), contains) {
+		t.Fatalf("expected error containing %q, got: %v", contains, err)
 	}
 }
 
@@ -71,7 +114,7 @@ func TestValidManifestPasses(t *testing.T) {
 }
 
 func TestLoadRejectsUnknownFields(t *testing.T) {
-	raw := `{"schema_version":1,"bogus_field":true,"annotation_archive":{},"meetings":[]}`
+	raw := `{"schema_version":2,"bogus_field":true,"annotation_archive":{},"meetings":[]}`
 	if _, err := Load([]byte(raw)); err == nil {
 		t.Fatal("expected schema rejection for unknown field")
 	}
@@ -87,7 +130,9 @@ func TestDigestStableAcrossOrdering(t *testing.T) {
 	a := validManifest()
 	b := validManifest()
 	// Reverse meeting order and annotation order in b; digest must not change.
-	b.Meetings[0], b.Meetings[1] = b.Meetings[1], b.Meetings[0]
+	for i, j := 0, len(b.Meetings)-1; i < j; i, j = i+1, j-1 {
+		b.Meetings[i], b.Meetings[j] = b.Meetings[j], b.Meetings[i]
+	}
 	b.Meetings[0].Annotations[0], b.Meetings[0].Annotations[1] = b.Meetings[0].Annotations[1], b.Meetings[0].Annotations[0]
 
 	da, err := a.Digest()
@@ -128,10 +173,8 @@ func TestValidateDuplicateMeetingID(t *testing.T) {
 
 func TestValidateMissingRequiredMeeting(t *testing.T) {
 	m := validManifest()
-	m.Meetings = m.Meetings[:1]
-	if err := m.Validate(); err == nil {
-		t.Fatal("expected missing-meeting rejection")
-	}
+	m.Meetings = m.Meetings[:3]
+	wantInvalid(t, m, "expected exactly 4 meetings")
 }
 
 func TestValidateWrongClassForKnownMeeting(t *testing.T) {
@@ -236,7 +279,7 @@ func TestValidateCrossMeetingAnnotation(t *testing.T) {
 			_ = other
 		}
 	}
-	m.Meetings[1].Annotations[0].Member = "words/EN2001a.A.words.xml"
+	m.Meetings[meetingIndex(t, &m, "ES2002a")].Annotations[0].Member = "words/EN2001a.A.words.xml"
 	if err := m.Validate(); err == nil {
 		t.Fatal("expected cross-meeting annotation member rejection")
 	}
@@ -246,7 +289,7 @@ func TestValidateAnnotationTraversal(t *testing.T) {
 	cases := []string{"../evil.xml", "words/../../evil.xml", "/etc/passwd", "words/ES2002a.A.words.xml/../x"}
 	for _, member := range cases {
 		m := validManifest()
-		m.Meetings[1].Annotations[0].Member = member
+		m.Meetings[meetingIndex(t, &m, "ES2002a")].Annotations[0].Member = member
 		if err := m.Validate(); err == nil {
 			t.Fatalf("expected traversal rejection for member %q", member)
 		}
@@ -265,17 +308,268 @@ func TestValidateParticipantIDTraversal(t *testing.T) {
 }
 
 func TestRecordingsStableOrdering(t *testing.T) {
-	m := validManifest() // EN2001a listed before ES2002a in source order
+	m := validManifest() // meetings listed out of order in source
 	recs := m.Recordings()
-	if len(recs) != 4 {
-		t.Fatalf("expected 4 recordings, got %d", len(recs))
+	if len(recs) != 8 {
+		t.Fatalf("expected 8 recordings, got %d", len(recs))
 	}
-	wantIDs := []string{"EN2001a-fixed_distant", "EN2001a-headset", "ES2002a-fixed_distant", "ES2002a-headset"}
-	for i, id := range wantIDs {
-		if recs[i].ID != id {
-			t.Fatalf("recording[%d] = %q, want %q (order: %v)", i, recs[i].ID, id, recs)
+	want := []struct {
+		id    string
+		split Split
+	}{
+		{"EN2001a-fixed_distant", SplitTuning}, {"EN2001a-headset", SplitTuning},
+		{"ES2002a-fixed_distant", SplitTuning}, {"ES2002a-headset", SplitTuning},
+		{"EN2002a-fixed_distant", SplitHeldOut}, {"EN2002a-headset", SplitHeldOut},
+		{"ES2004a-fixed_distant", SplitHeldOut}, {"ES2004a-headset", SplitHeldOut},
+	}
+	for i, w := range want {
+		if recs[i].ID != w.id || recs[i].Split != w.split {
+			t.Fatalf("recording[%d] = %s/%s, want %s/%s", i, recs[i].ID, recs[i].Split, w.id, w.split)
 		}
 	}
+	// Reordering meetings must not change flattened order.
+	m2 := validManifest()
+	m2.Meetings[0], m2.Meetings[3] = m2.Meetings[3], m2.Meetings[0]
+	recs2 := m2.Recordings()
+	for i := range recs {
+		if recs[i].ID != recs2[i].ID {
+			t.Fatalf("flattened order depends on manifest order at %d: %s vs %s", i, recs[i].ID, recs2[i].ID)
+		}
+	}
+	if got := m.RecordingsForSplit(SplitTuning); len(got) != 4 || got[0].MeetingID != "EN2001a" {
+		t.Fatalf("tuning recordings: %+v", got)
+	}
+	if got := m.MeetingIDs(SplitHeldOut); strings.Join(got, ",") != "EN2002a,ES2004a" {
+		t.Fatalf("held-out meeting ids: %v", got)
+	}
+}
+
+func TestValidateExactSplitMembership(t *testing.T) {
+	m := validManifest()
+	if err := m.Validate(); err != nil {
+		t.Fatalf("expected exact membership to validate: %v", err)
+	}
+}
+
+func TestValidateRejectsUnknownOrEmptySplit(t *testing.T) {
+	for _, split := range []Split{"", "validation", "Tuning", "heldout"} {
+		m := validManifest()
+		m.Meetings[meetingIndex(t, &m, "ES2002a")].Split = split
+		wantInvalid(t, m, "unknown split")
+	}
+}
+
+func TestValidateRejectsSwappedSplitMembership(t *testing.T) {
+	// A tuning meeting labelled held_out and vice versa: same four meetings,
+	// but a held-out meeting in tuning would leak holdout evidence.
+	m := validManifest()
+	m.Meetings[meetingIndex(t, &m, "ES2002a")].Split = SplitHeldOut
+	m.Meetings[meetingIndex(t, &m, "ES2004a")].Split = SplitTuning
+	wantInvalid(t, m, "must be in split")
+
+	m2 := validManifest()
+	m2.Meetings[meetingIndex(t, &m2, "EN2001a")].Split = SplitHeldOut
+	wantInvalid(t, m2, `meeting "EN2001a" must be in split "tuning"`)
+}
+
+func TestValidateRejectsWrongMeetingCount(t *testing.T) {
+	m := validManifest()
+	m.Meetings = append(m.Meetings, testMeeting(HeldOutSubstituteMeetingID, ClassScenario, SplitHeldOut))
+	wantInvalid(t, m, "expected exactly 4 meetings")
+
+	m2 := validManifest()
+	m2.Meetings = m2.Meetings[:2]
+	wantInvalid(t, m2, "expected exactly 4 meetings")
+}
+
+func TestValidateRejectsDuplicatesWithinAndAcrossSplits(t *testing.T) {
+	// Same meeting twice in held_out (replacing EN2002a).
+	m := validManifest()
+	m.Meetings[meetingIndex(t, &m, "EN2002a")] = testMeeting("ES2004a", ClassScenario, SplitHeldOut)
+	wantInvalid(t, m, "duplicate meeting id")
+
+	// A tuning meeting repeated in held_out (across splits).
+	m2 := validManifest()
+	m2.Meetings[meetingIndex(t, &m2, "EN2002a")] = testMeeting("EN2001a", ClassNonScenario, SplitHeldOut)
+	wantInvalid(t, m2, "duplicate meeting id")
+}
+
+func TestValidateRejectsDuplicateRecordings(t *testing.T) {
+	m := validManifest()
+	a := meetingIndex(t, &m, "ES2004a")
+	b := meetingIndex(t, &m, "ES2002a")
+	m.Meetings[a].HeadsetMix.SHA256 = m.Meetings[b].HeadsetMix.SHA256
+	wantInvalid(t, m, "duplicate recording")
+
+	m2 := validManifest()
+	i := meetingIndex(t, &m2, "ES2004a")
+	m2.Meetings[i].FixedDistantMix.SHA256 = m2.Meetings[i].HeadsetMix.SHA256
+	wantInvalid(t, m2, "duplicate recording")
+}
+
+func TestValidateRejectsMissingOrWrongMicrophone(t *testing.T) {
+	// Missing fixed-distant object.
+	m := validManifest()
+	m.Meetings[meetingIndex(t, &m, "EN2002a")].FixedDistantMix = AudioObject{}
+	wantInvalid(t, m, "fixed_distant_mix")
+
+	// Headset slot pointing at the Array1-01 WAV.
+	m2 := validManifest()
+	i := meetingIndex(t, &m2, "EN2002a")
+	m2.Meetings[i].HeadsetMix.URL = "https://example.test/EN2002a/audio/EN2002a.Array1-01.wav"
+	wantInvalid(t, m2, "must name \"EN2002a.Mix-Headset.wav\"")
+}
+
+func TestValidateRejectsCrossMeetingAudioAndAnnotation(t *testing.T) {
+	m := validManifest()
+	m.Meetings[meetingIndex(t, &m, "ES2004a")].FixedDistantMix.URL = "https://example.test/ES2002a/audio/ES2002a.Array1-01.wav"
+	wantInvalid(t, m, "must name \"ES2004a.Array1-01.wav\"")
+
+	m2 := validManifest()
+	m2.Meetings[meetingIndex(t, &m2, "EN2002a")].Annotations[0].Member = "words/EN2001a.A.words.xml"
+	wantInvalid(t, m2, "does not belong to meeting")
+}
+
+func TestValidateRejectsDuplicateParticipantOrMember(t *testing.T) {
+	m := validManifest()
+	i := meetingIndex(t, &m, "ES2004a")
+	m.Meetings[i].Annotations[1].ParticipantID = m.Meetings[i].Annotations[0].ParticipantID
+	wantInvalid(t, m, "duplicate participant")
+
+	m2 := validManifest()
+	j := meetingIndex(t, &m2, "ES2004a")
+	m2.Meetings[j].Annotations[1].Member = m2.Meetings[j].Annotations[0].Member
+	wantInvalid(t, m2, "duplicate annotation member")
+}
+
+func TestValidateRejectsIncompatibleClass(t *testing.T) {
+	m := validManifest()
+	m.Meetings[meetingIndex(t, &m, "EN2002a")].Class = ClassScenario
+	wantInvalid(t, m, "actual class")
+}
+
+func TestValidateAcceptsPermittedHeldOutReplacements(t *testing.T) {
+	for _, replaced := range []string{"ES2004a", "EN2002a"} {
+		m := validManifest()
+		replaceHeldOut(t, &m, replaced, "participant B word XML has a reversed timed word")
+		if err := m.Validate(); err != nil {
+			t.Fatalf("replacing %s with IS1009a should validate: %v", replaced, err)
+		}
+		held := m.MeetingIDs(SplitHeldOut)
+		if len(held) != 2 || !contains(held, HeldOutSubstituteMeetingID) || contains(held, replaced) {
+			t.Fatalf("replacing %s: held-out = %v", replaced, held)
+		}
+		// The substitute keeps its actual (scenario) class even when it
+		// replaces the non-scenario meeting.
+		for _, r := range m.RecordingsForSplit(SplitHeldOut) {
+			if r.MeetingID == HeldOutSubstituteMeetingID && r.Class != ClassScenario {
+				t.Fatalf("IS1009a relabelled to %s", r.Class)
+			}
+		}
+	}
+}
+
+func TestValidateRejectsInvalidReplacementMetadata(t *testing.T) {
+	// Absent / blank reason.
+	for _, reason := range []string{"", "   \t"} {
+		m := validManifest()
+		replaceHeldOut(t, &m, "ES2004a", reason)
+		wantInvalid(t, m, "annotation_failure_reason")
+	}
+	// Replacing a tuning meeting.
+	m := validManifest()
+	replaceHeldOut(t, &m, "ES2004a", "reason")
+	m.HeldOutReplacement.ReplacedMeetingID = "ES2002a"
+	wantInvalid(t, m, "not a requested held-out meeting")
+
+	// Metadata without IS1009a in the meetings (replaced ID retained).
+	m2 := validManifest()
+	m2.HeldOutReplacement = &HeldOutReplacement{ReplacedMeetingID: "ES2004a", ReplacementMeetingID: HeldOutSubstituteMeetingID, AnnotationFailureReason: "reason"}
+	wantInvalid(t, m2, "ES2004a")
+
+	// IS1009a without metadata.
+	m3 := validManifest()
+	replaceHeldOut(t, &m3, "ES2004a", "reason")
+	m3.HeldOutReplacement = nil
+	wantInvalid(t, m3, "IS1009a")
+
+	// Retaining the replaced ID alongside IS1009a (five meetings).
+	m4 := validManifest()
+	replaceHeldOut(t, &m4, "ES2004a", "reason")
+	m4.Meetings = append(m4.Meetings, testMeeting("ES2004a", ClassScenario, SplitHeldOut))
+	wantInvalid(t, m4, "expected exactly 4 meetings")
+
+	// Retaining the replaced ID in place of the other held-out meeting.
+	m5 := validManifest()
+	replaceHeldOut(t, &m5, "ES2004a", "reason")
+	m5.Meetings[meetingIndex(t, &m5, "EN2002a")] = testMeeting("ES2004a", ClassScenario, SplitHeldOut)
+	wantInvalid(t, m5, "ES2004a")
+
+	// A replacement other than IS1009a.
+	m6 := validManifest()
+	replaceHeldOut(t, &m6, "ES2004a", "reason")
+	m6.HeldOutReplacement.ReplacementMeetingID = "ES2005a"
+	wantInvalid(t, m6, "replacement meeting must be")
+
+	// Replacing both held-out meetings: the single permitted substitute
+	// cannot supply two distinct held-out meetings.
+	m7 := validManifest()
+	replaceHeldOut(t, &m7, "ES2004a", "reason")
+	m7.Meetings[meetingIndex(t, &m7, "EN2002a")] = testMeeting(HeldOutSubstituteMeetingID, ClassScenario, SplitHeldOut)
+	wantInvalid(t, m7, "duplicate meeting id")
+}
+
+func TestDigestIncludesSplitAndReplacement(t *testing.T) {
+	base := validManifest()
+	d0, _ := base.Digest()
+
+	// The split is part of the canonical bytes: mutate it in the canonical
+	// encoding directly (Validate would reject a swapped manifest).
+	swapped := validManifest()
+	swapped.Meetings[meetingIndex(t, &swapped, "ES2002a")].Split = SplitHeldOut
+	d1, _ := swapped.Digest()
+	if d0 == d1 {
+		t.Fatal("digest must change when a meeting's split changes")
+	}
+
+	canon, err := base.CanonicalBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(canon), `"split":"held_out"`) || !strings.Contains(string(canon), `"split":"tuning"`) {
+		t.Fatalf("canonical bytes omit split: %s", canon)
+	}
+
+	r1 := validManifest()
+	replaceHeldOut(t, &r1, "ES2004a", "reason one")
+	r2 := validManifest()
+	replaceHeldOut(t, &r2, "ES2004a", "reason two")
+	d2, _ := r1.Digest()
+	d3, _ := r2.Digest()
+	if d2 == d3 {
+		t.Fatal("digest must change when the replacement reason changes")
+	}
+	if !strings.Contains(mustCanon(t, r1), "reason one") {
+		t.Fatal("canonical bytes omit replacement metadata")
+	}
+}
+
+func mustCanon(t *testing.T, m Manifest) string {
+	t.Helper()
+	b, err := m.CanonicalBytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func contains(xs []string, x string) bool {
+	for _, v := range xs {
+		if v == x {
+			return true
+		}
+	}
+	return false
 }
 
 func TestCellsCoverAllFour(t *testing.T) {
@@ -308,8 +602,14 @@ func TestLoadPinnedManifestFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load committed manifest.json: %v", err)
 	}
-	if len(m.Recordings()) != 4 {
-		t.Fatalf("expected 4 recordings in committed manifest")
+	if len(m.Recordings()) != 8 {
+		t.Fatalf("expected 8 recordings in committed manifest")
+	}
+	if got := strings.Join(m.MeetingIDs(SplitTuning), ","); got != "EN2001a,ES2002a" {
+		t.Fatalf("committed tuning meetings = %s", got)
+	}
+	if got := len(m.MeetingIDs(SplitHeldOut)); got != 2 {
+		t.Fatalf("committed held-out meetings = %d", got)
 	}
 	digest, err := m.Digest()
 	if err != nil || len(digest) != 64 {
