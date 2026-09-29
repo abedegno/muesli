@@ -22,6 +22,7 @@ import (
 	"github.com/abedegno/muesli/cmd/whisper-cpp-streaming/ami-eval/internal/evaluate"
 	"github.com/abedegno/muesli/cmd/whisper-cpp-streaming/ami-eval/internal/manifest"
 	"github.com/abedegno/muesli/cmd/whisper-cpp-streaming/ami-eval/internal/score"
+	"github.com/abedegno/muesli/internal/pluginkit"
 )
 
 // Synthetic scene geometry, aligned to 20ms VAD frames so every frame is
@@ -584,5 +585,40 @@ func assertSentinel(t *testing.T, path string) {
 		if strings.Contains(e.Name(), ".tmp-") {
 			t.Fatalf("leftover temp file %s", e.Name())
 		}
+	}
+}
+
+// sceneAtLiveDefault builds a scene whose tuning winner is exactly the live
+// runtime default L: B sits just above L (below the next grid point) and the
+// noise floor sits at L/2, so every grid point in (L/2, L] ties and the tie
+// resolves to L. The decision therefore equals L whether it ships L or
+// keeps 0.01 == L.
+func sceneAtLiveDefault() scene {
+	l := float32(pluginkit.DefaultStreamingConfig().EnergyThreshold)
+	return scene{medium: l * 1.05, noise: l * 0.5, farNoise: l * 0.5}
+}
+
+func TestCommandCheckPassesOnIdenticalBytesAndFailsOnTamper(t *testing.T) {
+	sc := sceneAtLiveDefault()
+	c := buildOfflineCorpus(t, map[manifest.Split]scene{manifest.SplitTuning: sc, manifest.SplitHeldOut: sc})
+	if out, err := c.run(t, productionStages); err != nil {
+		t.Fatalf("generate: %v\n%s", err, out)
+	}
+	out, err := c.run(t, productionStages, "--check")
+	if err != nil || !strings.Contains(out, "report is up to date") {
+		t.Fatalf("check on freshly generated report: %v\n%s", err, out)
+	}
+	orig, _ := os.ReadFile(c.reportPath)
+	tampered := append([]byte(nil), orig...)
+	tampered[len(tampered)-10] ^= 0x01
+	if err := os.WriteFile(c.reportPath, tampered, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.run(t, productionStages, "--check"); err == nil || !strings.Contains(err.Error(), "out of date") {
+		t.Fatalf("expected --check to fail on a one-byte change, got %v", err)
+	}
+	after, _ := os.ReadFile(c.reportPath)
+	if !bytes.Equal(after, tampered) {
+		t.Fatal("--check replaced the report")
 	}
 }

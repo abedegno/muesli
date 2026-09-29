@@ -55,7 +55,7 @@ func parseFlags(args []string) (options, error) {
 	cachePath := fs.String("cache", "", "cache directory (default: <module root>/.cache/ami-vad-eval); rejected if it aliases a repository source/output directory")
 	offline := fs.Bool("offline", false, "forbid all network use; every required object must already be verified in the cache")
 	workers := fs.Int("workers", 1, "concurrent recording workers, capped at 4")
-	check := fs.Bool("check", false, "compare the generated report against the committed file without replacing it")
+	check := fs.Bool("check", false, "compare the generated report against the committed file without replacing it, and require the decision's final threshold to equal the runtime and live schema defaults")
 	reportPath := fs.String("report", "", "output report path (default: <module root>/docs/ami-vad-evaluation.md)")
 	fs.Usage = func() {
 		fmt.Fprintln(fs.Output(), "ami-eval selects a fixed VAD energy threshold on AMI tuning meetings and validates it on held-out meetings (muesli#782).")
@@ -254,8 +254,13 @@ func runWith(args []string, stdout *os.File, newStages func(acquire.Cache, strin
 		return fmt.Errorf("write results: %w", err)
 	}
 
+	schemaDefault, err := report.LiveSchemaDefault()
+	if err != nil {
+		return err
+	}
 	rpt := report.Report{
 		Results:                  results,
+		LiveSchemaDefault:        schemaDefault,
 		PreparationSchemaVersion: prepare.SchemaVersion,
 		AnnotationSchemaVersion:  annotation.SchemaVersion,
 		Defaults:                 report.ProductionDefaults(),
