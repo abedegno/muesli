@@ -780,13 +780,40 @@ func TestAcquireRejectsUnpinnedParticipantMember(t *testing.T) {
 		"words/EN2001a.E.words.xml": []byte("<nite:root/>unpinned speaker"),
 	})
 	defer srv.Close()
-	_, err := Acquire(context.Background(), newCache(t), man, Options{HTTPClient: srv.Client()})
+	cache := newCache(t)
+	_, err := Acquire(context.Background(), cache, man, Options{HTTPClient: srv.Client()})
 	if err == nil {
 		t.Fatal("expected an incomplete-participant failure")
 	}
 	for _, want := range []string{"EN2001a", "words/EN2001a.E.words.xml", "not pinned"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("error lacks %q: %v", want, err)
+		}
+	}
+	// The completeness check must release the annotation archive handle
+	// even on the failure path.
+	assertNoOpenFD(t, cache.DownloadPath(man.AnnotationArchive.SHA256))
+}
+
+// assertNoOpenFD fails if any open descriptor of this process refers to
+// path. It inspects /proc/self/fd and skips where that is unavailable.
+func assertNoOpenFD(t *testing.T, path string) {
+	t.Helper()
+	want, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		t.Fatalf("resolve %s: %v", path, err)
+	}
+	entries, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		t.Skipf("/proc/self/fd unavailable: %v", err)
+	}
+	for _, e := range entries {
+		target, err := os.Readlink(filepath.Join("/proc/self/fd", e.Name()))
+		if err != nil {
+			continue // descriptor closed while listing (e.g. the ReadDir handle)
+		}
+		if target == want {
+			t.Fatalf("descriptor %s still open on %s", e.Name(), want)
 		}
 	}
 }
