@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"github.com/abedegno/muesli/cmd/whisper-cpp-streaming/ami-eval/internal/compare"
+	"github.com/abedegno/muesli/cmd/whisper-cpp-streaming/ami-eval/internal/evaluate"
 	"github.com/abedegno/muesli/cmd/whisper-cpp-streaming/ami-eval/internal/score"
 	"github.com/abedegno/muesli/internal/pluginkit"
 )
@@ -84,10 +85,8 @@ type Report struct {
 	HistoricalBaselineThreshold float64
 	WhisperAvailable            bool
 	WhisperUnavailableReason    string
-	CellResults                 []compare.CellResult
-	OverallResults              []compare.OverallResult
-	ThresholdCurve              []compare.ThresholdPoint
-	Recommendation              compare.Recommendation
+	Tuning                      compare.SplitSummary
+	Selection                   compare.Selection
 	ReproductionCommand         string
 }
 
@@ -112,31 +111,11 @@ func Validate(r Report) error {
 	if r.ReproductionCommand == "" {
 		return fmt.Errorf("report: reproduction command is required")
 	}
-	if r.Recommendation.RecommendedDetectorID == "" {
-		return fmt.Errorf("report: recommendation is required")
+	if len(r.Tuning.Detectors) == 0 {
+		return fmt.Errorf("report: tuning evidence is required")
 	}
-	if len(r.Recommendation.Candidates) == 0 {
-		return fmt.Errorf("report: recommendation evidence is required")
-	}
-	required := compare.AllCells()
-	haveCell := map[compare.CellKey]map[string]bool{}
-	for _, c := range r.CellResults {
-		if haveCell[c.Cell] == nil {
-			haveCell[c.Cell] = map[string]bool{}
-		}
-		haveCell[c.Cell][c.DetectorID] = true
-	}
-	for _, cell := range required {
-		if len(haveCell[cell]) == 0 {
-			return fmt.Errorf("report: missing all results for cell %+v", cell)
-		}
-	}
-	for _, o := range r.OverallResults {
-		for _, cell := range required {
-			if !haveCell[cell][o.DetectorID] {
-				return fmt.Errorf("report: detector %q is missing cell %+v", o.DetectorID, cell)
-			}
-		}
+	if len(r.Selection.Candidates) == 0 {
+		return fmt.Errorf("report: selection evidence is required")
 	}
 	return nil
 }
@@ -287,10 +266,8 @@ func RenderToBytes(r Report) ([]byte, error) {
 	}
 	fmt.Fprintln(&b)
 
-	renderCellResults(&b, r.CellResults)
-	renderOverallResults(&b, r.OverallResults)
-	renderThresholdCurve(&b, r.ThresholdCurve, r.HistoricalBaselineThreshold)
-	renderRecommendation(&b, r.Recommendation)
+	renderOverallResults(&b, r.Tuning)
+	renderSelection(&b, r.Selection)
 	renderUsage(&b)
 
 	return b.Bytes(), nil
@@ -355,144 +332,26 @@ func renderUsage(b *bytes.Buffer) {
 	fmt.Fprintln(b, "part of the normal Go test suite.")
 }
 
-func sortedCells(cells []compare.CellResult) []compare.CellResult {
-	out := append([]compare.CellResult(nil), cells...)
-	sort.Slice(out, func(i, j int) bool {
-		if out[i].Cell.Class != out[j].Cell.Class {
-			return out[i].Cell.Class < out[j].Cell.Class
-		}
-		if out[i].Cell.Mic != out[j].Cell.Mic {
-			return out[i].Cell.Mic < out[j].Cell.Mic
-		}
-		return out[i].DetectorID < out[j].DetectorID
-	})
-	return out
-}
-
-func renderCellResults(b *bytes.Buffer, cells []compare.CellResult) {
-	fmt.Fprintln(b, "## Per-cell results")
+func renderOverallResults(b *bytes.Buffer, tuning compare.SplitSummary) {
+	fmt.Fprintln(b, "## Tuning overall comparison")
 	fmt.Fprintln(b)
-	fmt.Fprintln(b, "Each cell macro-averages the recordings in that meeting-class/microphone-condition")
-	fmt.Fprintln(b, "combination.")
-	fmt.Fprintln(b)
-	headers := []string{"Class", "Mic", "Detector", "Recordings", "Precision", "Recall", "F1", "FPR", "FNR", "Miss rate", "Split rate", "Merge rate", "Spurious rate", "Utterance error rate"}
+	headers := []string{"Detector", "F1", "FPR", "Far-field FPR", "Utterance error rate"}
 	var rows [][]string
-	for _, c := range sortedCells(cells) {
-		rows = append(rows, []string{
-			c.Cell.Class, c.Cell.Mic, c.DetectorID, fmt.Sprintf("%d", c.RecordingCount),
-			ratioStr(c.FrameMetrics.Precision), ratioStr(c.FrameMetrics.Recall), ratioStr(c.FrameMetrics.F1),
-			ratioStr(c.FrameMetrics.FalsePositiveRate), ratioStr(c.FrameMetrics.FalseNegativeRate),
-			ratioStr(c.UtteranceMetrics.MissRate), ratioStr(c.UtteranceMetrics.SplitExtraRate),
-			ratioStr(c.UtteranceMetrics.MergeExtraRate), ratioStr(c.UtteranceMetrics.SpuriousRate), ratioStr(c.UtteranceMetrics.UtteranceErrorRate),
-		})
+	for _, d := range tuning.Detectors {
+		rows = append(rows, []string{d.DetectorID, ratioStr(d.Overall.Frame.F1), ratioStr(d.Overall.Frame.FalsePositiveRate), ratioStr(d.FarFieldFPR), ratioStr(d.Overall.Utterance.UtteranceErrorRate)})
 	}
 	renderTable(b, headers, rows)
 	fmt.Fprintln(b)
-
-	fmt.Fprintln(b, "Boundary error is the absolute start/end timing error (seconds) for one-to-one")
-	fmt.Fprintln(b, "matched reference/prediction pairs only; `n/a` when a cell/detector has none.")
-	fmt.Fprintln(b)
-	boundaryHeaders := []string{"Class", "Mic", "Detector", "Start median", "Start p95", "End median", "End p95"}
-	var boundaryRows [][]string
-	for _, c := range sortedCells(cells) {
-		boundaryRows = append(boundaryRows, []string{
-			c.Cell.Class, c.Cell.Mic, c.DetectorID,
-			ratioStr(c.UtteranceMetrics.StartErrorMedian), ratioStr(c.UtteranceMetrics.StartErrorP95),
-			ratioStr(c.UtteranceMetrics.EndErrorMedian), ratioStr(c.UtteranceMetrics.EndErrorP95),
-		})
-	}
-	renderTable(b, boundaryHeaders, boundaryRows)
-	fmt.Fprintln(b)
 }
 
-func sortedOverall(overall []compare.OverallResult) []compare.OverallResult {
-	out := append([]compare.OverallResult(nil), overall...)
-	sort.Slice(out, func(i, j int) bool { return out[i].DetectorID < out[j].DetectorID })
-	return out
-}
-
-func renderOverallResults(b *bytes.Buffer, overall []compare.OverallResult) {
-	fmt.Fprintln(b, "## Overall comparison")
+func renderSelection(b *bytes.Buffer, sel compare.Selection) {
+	fmt.Fprintln(b, "## Tuning selection")
 	fmt.Fprintln(b)
-	fmt.Fprintln(b, "Equal-weight macro average over the four required cells, so duration and speech")
-	fmt.Fprintln(b, "prevalence cannot dominate.")
-	fmt.Fprintln(b)
-	headers := []string{"Detector", "F1", "Precision", "Recall", "FPR", "FNR", "Miss rate", "Split rate", "Merge rate", "Spurious rate", "Utterance error rate"}
 	var rows [][]string
-	for _, o := range sortedOverall(overall) {
-		rows = append(rows, []string{
-			o.DetectorID, ratioStr(o.FrameMetrics.F1), ratioStr(o.FrameMetrics.Precision), ratioStr(o.FrameMetrics.Recall),
-			ratioStr(o.FrameMetrics.FalsePositiveRate), ratioStr(o.FrameMetrics.FalseNegativeRate),
-			ratioStr(o.UtteranceMetrics.MissRate), ratioStr(o.UtteranceMetrics.SplitExtraRate),
-			ratioStr(o.UtteranceMetrics.MergeExtraRate), ratioStr(o.UtteranceMetrics.SpuriousRate), ratioStr(o.UtteranceMetrics.UtteranceErrorRate),
-		})
+	for _, c := range sel.Candidates {
+		rows = append(rows, []string{evaluate.ThresholdLabel(c.Threshold), fmt.Sprintf("%v", c.Eligible), floatStr4(c.UtteranceError), strings.Join(c.RejectedBecause, "; ")})
 	}
-	renderTable(b, headers, rows)
-	fmt.Fprintln(b)
-
-	boundaryHeaders := []string{"Detector", "Start median", "Start p95", "End median", "End p95"}
-	var boundaryRows [][]string
-	for _, o := range sortedOverall(overall) {
-		boundaryRows = append(boundaryRows, []string{
-			o.DetectorID,
-			ratioStr(o.UtteranceMetrics.StartErrorMedian), ratioStr(o.UtteranceMetrics.StartErrorP95),
-			ratioStr(o.UtteranceMetrics.EndErrorMedian), ratioStr(o.UtteranceMetrics.EndErrorP95),
-		})
-	}
-	renderTable(b, boundaryHeaders, boundaryRows)
-	fmt.Fprintln(b)
-}
-
-func renderThresholdCurve(b *bytes.Buffer, curve []compare.ThresholdPoint, shipped float64) {
-	fmt.Fprintln(b, "## Fixed-threshold curve (in-sample)")
-	fmt.Fprintln(b)
-	fmt.Fprintln(b, "The optimum below is selected against this same evaluation slice -- it is an")
-	fmt.Fprintln(b, "in-sample optimum, not a held-out validation result.")
-	fmt.Fprintln(b)
-	sorted := append([]compare.ThresholdPoint(nil), curve...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].Threshold < sorted[j].Threshold })
-	var rows [][]string
-	for _, p := range sorted {
-		marker := ""
-		if p.Threshold == shipped {
-			marker = "yes"
-		}
-		rows = append(rows, []string{floatStr4(p.Threshold), ratioStr(p.F1), marker})
-	}
-	renderTable(b, []string{"Threshold", "Overall macro F1", "Historical baseline"}, rows)
-	fmt.Fprintln(b)
-}
-
-func renderRecommendation(b *bytes.Buffer, rec compare.Recommendation) {
-	fmt.Fprintln(b, "## Recommendation")
-	fmt.Fprintln(b)
-	fmt.Fprintf(b, "**Recommended default: `%s`**", rec.RecommendedDetectorID)
-	if rec.SelectedThreshold != nil {
-		fmt.Fprintf(b, " (threshold %s)", floatStr4(*rec.SelectedThreshold))
-	}
-	fmt.Fprintln(b)
-	fmt.Fprintln(b)
-	fmt.Fprintln(b, "This recommendation is evidence for a human decision. It changes no runtime")
-	fmt.Fprintln(b, "setting, shipped default, or configuration.")
-	fmt.Fprintln(b)
-	candidates := append([]compare.CandidateEvidence(nil), rec.Candidates...)
-	sort.Slice(candidates, func(i, j int) bool { return candidates[i].DetectorID < candidates[j].DetectorID })
-	var rows [][]string
-	for _, c := range candidates {
-		threshold := ""
-		if c.Threshold != nil {
-			threshold = floatStr4(*c.Threshold)
-		}
-		rows = append(rows, []string{
-			c.DetectorID, threshold, fmt.Sprintf("%v", c.Eligible), ratioStr(c.OverallF1), ratioStr(c.F1DeltaVsHistorical), ratioStr(c.OverallUtteranceErrorRate),
-		})
-	}
-	renderTable(b, []string{"Candidate", "Threshold", "Eligible", "Overall F1", "F1 delta vs historical", "Utterance error rate"}, rows)
-	fmt.Fprintln(b)
-	fmt.Fprintln(b, "Eligibility: a candidate qualifies only if no cell's frame F1 falls more than 0.05")
-	fmt.Fprintln(b, "below historical fixed 0.01's F1 in that same cell (one-sided floor, no ceiling). Among")
-	fmt.Fprintln(b, "eligible candidates, the highest overall macro F1 wins; ties go to the lowest")
-	fmt.Fprintln(b, "overall utterance error rate, then to historical fixed 0.01.")
+	renderTable(b, []string{"Threshold", "Eligible", "Utterance error rate", "Rejected because"}, rows)
 	fmt.Fprintln(b)
 }
 

@@ -148,19 +148,17 @@ func run(args []string, stdout *os.File) error {
 		return fmt.Errorf("write matrix results: %w", err)
 	}
 
-	cells := compare.AggregateCells(matrix.Entries)
-	overall, err := compare.AggregateOverall(cells)
+	tuning, err := compare.BuildTuningEvidence(man, matrix)
 	if err != nil {
-		return fmt.Errorf("aggregate results: %w", err)
+		return fmt.Errorf("validate tuning evidence: %w", err)
 	}
-	curve := compare.ThresholdCurve(overall, matrix.ThresholdGrid)
-	best, err := compare.SelectThreshold(curve, matrix.HistoricalBaselineThreshold)
+	sel, err := compare.SelectThreshold(tuning)
 	if err != nil {
 		return fmt.Errorf("select threshold: %w", err)
 	}
-	rec, err := compare.Recommend(overall, best, matrix.HistoricalBaselineThreshold, matrix.WhisperAvailable)
+	tuningSummary, err := tuning.Summary()
 	if err != nil {
-		return fmt.Errorf("build recommendation: %w", err)
+		return err
 	}
 
 	rpt := report.Report{
@@ -174,10 +172,8 @@ func run(args []string, stdout *os.File) error {
 		HistoricalBaselineThreshold: matrix.HistoricalBaselineThreshold,
 		WhisperAvailable:            matrix.WhisperAvailable,
 		WhisperUnavailableReason:    matrix.WhisperUnavailableReason,
-		CellResults:                 cells,
-		OverallResults:              overall,
-		ThresholdCurve:              curve,
-		Recommendation:              rec,
+		Tuning:                      tuningSummary,
+		Selection:                   sel,
 		ReproductionCommand:         "make evaluate-ami-vad",
 	}
 
@@ -197,6 +193,8 @@ func run(args []string, stdout *os.File) error {
 	} else {
 		fmt.Fprintln(stdout, "report unchanged")
 	}
-	fmt.Fprintf(stdout, "recommended default: %s\n", rec.RecommendedDetectorID)
+	if sel.Selected != nil {
+		fmt.Fprintf(stdout, "selected threshold: %s\n", evaluate.ThresholdLabel(*sel.Selected))
+	}
 	return nil
 }
