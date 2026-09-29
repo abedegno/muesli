@@ -17,7 +17,7 @@ import (
 )
 
 // EligibilityMargin is the one-sided floor: a candidate is eligible only if
-// no cell's F1 is more than this many points below shipped fixed's F1 in
+// no cell's F1 is more than this many points below historical fixed 0.01's F1 in
 // that cell. There is no ceiling.
 const EligibilityMargin = 0.05
 
@@ -252,7 +252,7 @@ func ThresholdCurve(overall []OverallResult, grid []float64) []ThresholdPoint {
 // SelectThreshold picks the maximum-F1 point on the curve. Exact ties (at
 // full float64 precision) prefer the shipped threshold, then the lower
 // threshold value.
-func SelectThreshold(curve []ThresholdPoint, shippedThreshold float64) (ThresholdPoint, error) {
+func SelectThreshold(curve []ThresholdPoint, historicalThreshold float64) (ThresholdPoint, error) {
 	if len(curve) == 0 {
 		return ThresholdPoint{}, fmt.Errorf("compare: empty threshold curve")
 	}
@@ -264,7 +264,7 @@ func SelectThreshold(curve []ThresholdPoint, shippedThreshold float64) (Threshol
 		case p.F1.Valid && best.F1.Valid && p.F1.Value > best.F1.Value:
 			best = p
 		case p.F1.Valid && best.F1.Valid && p.F1.Value == best.F1.Value:
-			best = breakThresholdTie(best, p, shippedThreshold)
+			best = breakThresholdTie(best, p, historicalThreshold)
 		}
 	}
 	return best, nil

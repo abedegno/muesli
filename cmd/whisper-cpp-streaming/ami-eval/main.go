@@ -122,6 +122,9 @@ func run(args []string, stdout *os.File) error {
 
 	recordings := make([]evaluate.RecordingInput, 0, len(acquired))
 	for _, a := range acquired {
+		if a.Recording.Split != manifest.SplitTuning {
+			continue
+		}
 		p, err := prepare.Prepare(cache, digest, a)
 		if err != nil {
 			return fmt.Errorf("prepare recording %s: %w", a.Recording.ID, err)
@@ -131,12 +134,12 @@ func run(args []string, stdout *os.File) error {
 			refs[i] = score.Interval{Start: iv.Start, End: iv.End}
 		}
 		recordings = append(recordings, evaluate.RecordingInput{
-			ID: a.Recording.ID, MeetingID: a.Recording.MeetingID, Class: a.Recording.Class, Mic: a.Recording.Mic,
+			ID: a.Recording.ID, MeetingID: a.Recording.MeetingID, Class: a.Recording.Class, Split: string(a.Recording.Split), Mic: a.Recording.Mic,
 			Audio: p.Audio, Reference: refs,
 		})
 	}
 
-	matrix, err := evaluate.RunMatrix(ctx, recordings, evaluate.MatrixConfig{Workers: opts.workers})
+	matrix, err := evaluate.RunMatrix(ctx, recordings, evaluate.MatrixConfig{Workers: opts.workers, Split: string(manifest.SplitTuning)})
 	if err != nil {
 		return fmt.Errorf("run detector matrix: %w", err)
 	}
@@ -151,31 +154,31 @@ func run(args []string, stdout *os.File) error {
 		return fmt.Errorf("aggregate results: %w", err)
 	}
 	curve := compare.ThresholdCurve(overall, matrix.ThresholdGrid)
-	best, err := compare.SelectThreshold(curve, matrix.ShippedThreshold)
+	best, err := compare.SelectThreshold(curve, matrix.HistoricalBaselineThreshold)
 	if err != nil {
 		return fmt.Errorf("select threshold: %w", err)
 	}
-	rec, err := compare.Recommend(overall, best, matrix.ShippedThreshold, matrix.WhisperAvailable)
+	rec, err := compare.Recommend(overall, best, matrix.HistoricalBaselineThreshold, matrix.WhisperAvailable)
 	if err != nil {
 		return fmt.Errorf("build recommendation: %w", err)
 	}
 
 	rpt := report.Report{
-		ManifestDigest:           digest,
-		EvaluationVersion:        evaluate.EvaluationVersion,
-		Environment:              report.Environment{GoVersion: runtime.Version(), GOOS: runtime.GOOS, GOARCH: runtime.GOARCH},
-		PreparationSchemaVersion: prepare.SchemaVersion,
-		AnnotationSchemaVersion:  annotation.SchemaVersion,
-		Defaults:                 report.ProductionDefaults(),
-		ThresholdGrid:            matrix.ThresholdGrid,
-		ShippedThreshold:         matrix.ShippedThreshold,
-		WhisperAvailable:         matrix.WhisperAvailable,
-		WhisperUnavailableReason: matrix.WhisperUnavailableReason,
-		CellResults:              cells,
-		OverallResults:           overall,
-		ThresholdCurve:           curve,
-		Recommendation:           rec,
-		ReproductionCommand:      "make evaluate-ami-vad",
+		ManifestDigest:              digest,
+		EvaluationVersion:           evaluate.EvaluationVersion,
+		Environment:                 report.Environment{GoVersion: runtime.Version(), GOOS: runtime.GOOS, GOARCH: runtime.GOARCH},
+		PreparationSchemaVersion:    prepare.SchemaVersion,
+		AnnotationSchemaVersion:     annotation.SchemaVersion,
+		Defaults:                    report.ProductionDefaults(),
+		ThresholdGrid:               matrix.ThresholdGrid,
+		HistoricalBaselineThreshold: matrix.HistoricalBaselineThreshold,
+		WhisperAvailable:            matrix.WhisperAvailable,
+		WhisperUnavailableReason:    matrix.WhisperUnavailableReason,
+		CellResults:                 cells,
+		OverallResults:              overall,
+		ThresholdCurve:              curve,
+		Recommendation:              rec,
+		ReproductionCommand:         "make evaluate-ami-vad",
 	}
 
 	changed, err := report.WriteReport(opts.report, rpt, opts.check)

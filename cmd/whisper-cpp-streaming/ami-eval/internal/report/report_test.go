@@ -17,7 +17,7 @@ func f1r(v float64) score.Ratio { return score.Ratio{Value: v, Valid: true} }
 func sampleReport() Report {
 	cells := []compare.CellResult{}
 	overall := []compare.OverallResult{}
-	detectors := []string{"fixed_shipped", "adaptive"}
+	detectors := []string{"fixed_historical_0.01", "adaptive"}
 	for _, det := range detectors {
 		cellF1 := map[compare.CellKey]score.Ratio{}
 		for _, cell := range compare.AllCells() {
@@ -35,29 +35,29 @@ func sampleReport() Report {
 	}
 	threshold := 0.01
 	return Report{
-		ManifestDigest:           strings.Repeat("a", 64),
-		EvaluationVersion:        "v1",
-		Environment:              Environment{GoVersion: "go1.25.11", GOOS: "linux", GOARCH: "amd64"},
-		PreparationSchemaVersion: 1,
-		AnnotationSchemaVersion:  1,
-		Defaults:                 ProductionDefaults(),
-		ThresholdGrid:            []float64{0.005, 0.01, 0.015},
-		ShippedThreshold:         0.01,
-		WhisperAvailable:         false,
-		WhisperUnavailableReason: "no compatible interface",
-		CellResults:              cells,
-		OverallResults:           overall,
+		ManifestDigest:              strings.Repeat("a", 64),
+		EvaluationVersion:           "v1",
+		Environment:                 Environment{GoVersion: "go1.25.11", GOOS: "linux", GOARCH: "amd64"},
+		PreparationSchemaVersion:    1,
+		AnnotationSchemaVersion:     1,
+		Defaults:                    ProductionDefaults(),
+		ThresholdGrid:               []float64{0.005, 0.01, 0.015},
+		HistoricalBaselineThreshold: 0.01,
+		WhisperAvailable:            false,
+		WhisperUnavailableReason:    "no compatible interface",
+		CellResults:                 cells,
+		OverallResults:              overall,
 		ThresholdCurve: []compare.ThresholdPoint{
 			{Threshold: 0.005, F1: f1r(0.7)},
 			{Threshold: 0.01, F1: f1r(0.85)},
 			{Threshold: 0.015, F1: f1r(0.6)},
 		},
 		Recommendation: compare.Recommendation{
-			RecommendedDetectorID: "fixed_shipped",
+			RecommendedDetectorID: "fixed_historical_0.01",
 			SelectedThreshold:     &threshold,
 			Candidates: []compare.CandidateEvidence{
-				{DetectorID: "fixed_shipped", Threshold: &threshold, Eligible: true, OverallF1: f1r(0.85), OverallUtteranceErrorRate: f1r(0.1), F1DeltaVsShipped: score.Ratio{}},
-				{DetectorID: "adaptive", Eligible: true, OverallF1: f1r(0.85), OverallUtteranceErrorRate: f1r(0.1), F1DeltaVsShipped: f1r(0.0)},
+				{DetectorID: "fixed_historical_0.01", Threshold: &threshold, Eligible: true, OverallF1: f1r(0.85), OverallUtteranceErrorRate: f1r(0.1), F1DeltaVsHistorical: score.Ratio{}},
+				{DetectorID: "adaptive", Eligible: true, OverallF1: f1r(0.85), OverallUtteranceErrorRate: f1r(0.1), F1DeltaVsHistorical: f1r(0.0)},
 			},
 		},
 		ReproductionCommand: "make evaluate-ami-vad",

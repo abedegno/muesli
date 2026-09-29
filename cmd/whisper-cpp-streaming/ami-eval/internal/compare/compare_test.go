@@ -35,8 +35,8 @@ func fourCellEntries(detector string, f1s [4]float64) []evaluate.MatrixEntry {
 
 func TestAggregateCellsMacroAveragesRecordings(t *testing.T) {
 	entries := []evaluate.MatrixEntry{
-		entry("r1", "M1", "scenario", "headset", "fixed_shipped", 0.8),
-		entry("r2", "M2", "scenario", "headset", "fixed_shipped", 0.6),
+		entry("r1", "M1", "scenario", "headset", "fixed_historical_0.01", 0.8),
+		entry("r2", "M2", "scenario", "headset", "fixed_historical_0.01", 0.6),
 	}
 	cells := AggregateCells(entries)
 	if len(cells) != 1 {
@@ -145,7 +145,7 @@ func TestSelectThresholdTieBreaksToLowerWhenNoShipped(t *testing.T) {
 
 func TestRecommendBaselineFallbackWhenNoneEligible(t *testing.T) {
 	var entries []evaluate.MatrixEntry
-	entries = append(entries, fourCellEntries("fixed_shipped", [4]float64{0.9, 0.9, 0.9, 0.9})...)
+	entries = append(entries, fourCellEntries("fixed_historical_0.01", [4]float64{0.9, 0.9, 0.9, 0.9})...)
 	entries = append(entries, fourCellEntries("adaptive", [4]float64{0.1, 0.1, 0.1, 0.1})...) // far below floor
 	for _, tt := range evaluate.ThresholdGrid() {
 		f1v := 0.9
@@ -168,14 +168,14 @@ func TestRecommendBaselineFallbackWhenNoneEligible(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if rec.RecommendedDetectorID != "fixed_shipped" {
+	if rec.RecommendedDetectorID != "fixed_historical_0.01" {
 		t.Fatalf("expected baseline fallback, got %q", rec.RecommendedDetectorID)
 	}
 }
 
 func TestRecommendEligibleCandidateBeatingShippedWins(t *testing.T) {
 	var entries []evaluate.MatrixEntry
-	entries = append(entries, fourCellEntries("fixed_shipped", [4]float64{0.7, 0.7, 0.7, 0.7})...)
+	entries = append(entries, fourCellEntries("fixed_historical_0.01", [4]float64{0.7, 0.7, 0.7, 0.7})...)
 	entries = append(entries, fourCellEntries("adaptive", [4]float64{0.9, 0.9, 0.9, 0.9})...) // beats shipped everywhere
 	for _, tt := range evaluate.ThresholdGrid() {
 		f1v := 0.7
@@ -207,7 +207,7 @@ func TestRecommendOneSidedEligibilityMargin(t *testing.T) {
 	atFloor := [4]float64{0.75, 0.80, 0.80, 0.80} // exactly shipped-0.05 in cell 0
 
 	var entries []evaluate.MatrixEntry
-	entries = append(entries, fourCellEntries("fixed_shipped", shipped)...)
+	entries = append(entries, fourCellEntries("fixed_historical_0.01", shipped)...)
 	entries = append(entries, fourCellEntries("adaptive", atFloor)...)
 	for _, tt := range evaluate.ThresholdGrid() {
 		entries = append(entries, fourCellEntries(evaluate.FixedDetectorID(tt), shipped)...)
@@ -222,17 +222,17 @@ func TestRecommendOneSidedEligibilityMargin(t *testing.T) {
 		if o.DetectorID == "adaptive" {
 			adaptiveOverall = o
 		}
-		if o.DetectorID == "fixed_shipped" {
+		if o.DetectorID == "fixed_historical_0.01" {
 			shippedOverall = o
 		}
 	}
-	if !eligibleAgainstShipped(adaptiveOverall, shippedOverall) {
+	if !eligibleAgainstHistorical(adaptiveOverall, shippedOverall) {
 		t.Fatal("expected candidate exactly at the 5-point floor to remain eligible")
 	}
 
 	belowFloor := [4]float64{0.74, 0.80, 0.80, 0.80} // 6 points below in cell 0
 	var entries2 []evaluate.MatrixEntry
-	entries2 = append(entries2, fourCellEntries("fixed_shipped", shipped)...)
+	entries2 = append(entries2, fourCellEntries("fixed_historical_0.01", shipped)...)
 	entries2 = append(entries2, fourCellEntries("adaptive", belowFloor)...)
 	cells2 := AggregateCells(entries2)
 	var adaptive2, shipped2 CellResult
@@ -251,7 +251,7 @@ func TestRecommendOneSidedEligibilityMargin(t *testing.T) {
 		o.CellFrameF1[c.Cell] = c.FrameMetrics.F1
 		overall2[c.DetectorID] = o
 	}
-	if eligibleAgainstShipped(overall2["adaptive"], overall2["fixed_shipped"]) {
+	if eligibleAgainstHistorical(overall2["adaptive"], overall2["fixed_historical_0.01"]) {
 		t.Fatal("expected candidate 6 points below the floor in one cell to be disqualified")
 	}
 }
@@ -262,7 +262,7 @@ func TestRecommendTieBreaksToLowerUtteranceErrorThenShipped(t *testing.T) {
 	shipped := [4]float64{0.80, 0.80, 0.80, 0.80}
 	tie := [4]float64{0.80, 0.80, 0.80, 0.80}
 
-	entries := fourCellEntries("fixed_shipped", shipped)
+	entries := fourCellEntries("fixed_historical_0.01", shipped)
 	adaptiveEntries := fourCellEntries("adaptive", tie)
 	for i := range adaptiveEntries {
 		adaptiveEntries[i].UtteranceMetrics.UtteranceErrorRate = score.Ratio{Value: 0.1, Valid: true}
@@ -293,7 +293,7 @@ func TestRecommendTieBreaksToLowerUtteranceErrorThenShipped(t *testing.T) {
 func TestRecommendShippedMeasurementReuseYieldsSameEvidence(t *testing.T) {
 	shipped := [4]float64{0.5, 0.5, 0.5, 0.5}
 	var entries []evaluate.MatrixEntry
-	entries = append(entries, fourCellEntries("fixed_shipped", shipped)...)
+	entries = append(entries, fourCellEntries("fixed_historical_0.01", shipped)...)
 	for _, tt := range evaluate.ThresholdGrid() {
 		entries = append(entries, fourCellEntries(evaluate.FixedDetectorID(tt), shipped)...)
 	}
@@ -304,10 +304,10 @@ func TestRecommendShippedMeasurementReuseYieldsSameEvidence(t *testing.T) {
 	}
 	var shippedO, gridO OverallResult
 	for _, o := range overall {
-		if o.DetectorID == "fixed_shipped" {
+		if o.DetectorID == "fixed_historical_0.01" {
 			shippedO = o
 		}
-		if o.DetectorID == "fixed_0.010" {
+		if o.DetectorID == evaluate.FixedDetectorID(0.01) {
 			gridO = o
 		}
 	}

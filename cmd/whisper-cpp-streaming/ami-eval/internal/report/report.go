@@ -74,21 +74,21 @@ func ProductionDefaults() Defaults {
 
 // Report is every structured input to the rendered comparison document.
 type Report struct {
-	ManifestDigest           string
-	EvaluationVersion        string
-	Environment              Environment
-	PreparationSchemaVersion int
-	AnnotationSchemaVersion  int
-	Defaults                 Defaults
-	ThresholdGrid            []float64
-	ShippedThreshold         float64
-	WhisperAvailable         bool
-	WhisperUnavailableReason string
-	CellResults              []compare.CellResult
-	OverallResults           []compare.OverallResult
-	ThresholdCurve           []compare.ThresholdPoint
-	Recommendation           compare.Recommendation
-	ReproductionCommand      string
+	ManifestDigest              string
+	EvaluationVersion           string
+	Environment                 Environment
+	PreparationSchemaVersion    int
+	AnnotationSchemaVersion     int
+	Defaults                    Defaults
+	ThresholdGrid               []float64
+	HistoricalBaselineThreshold float64
+	WhisperAvailable            bool
+	WhisperUnavailableReason    string
+	CellResults                 []compare.CellResult
+	OverallResults              []compare.OverallResult
+	ThresholdCurve              []compare.ThresholdPoint
+	Recommendation              compare.Recommendation
+	ReproductionCommand         string
 }
 
 // Validate checks that a report has everything required before it may
@@ -255,7 +255,7 @@ func RenderToBytes(r Report) ([]byte, error) {
 		{"Max window", fmt.Sprintf("%d ms", d.MaxWindowMS)},
 		{"Partial interval", fmt.Sprintf("%d ms", d.PartialIntervalMS)},
 		{"Silence duration", fmt.Sprintf("%d ms", d.SilenceDurationMS)},
-		{"Shipped energy threshold", floatStr4(d.EnergyThreshold)},
+		{"Runtime default energy threshold", floatStr4(d.EnergyThreshold)},
 		{"Silence hysteresis", fmt.Sprintf("%d ms", d.SilenceHysteresisMS)},
 		{"VAD frame", fmt.Sprintf("%d ms", d.VADFrameMS)},
 		{"Adaptive speech quantile", floatStr4(d.AdaptiveSpeechQuantile)},
@@ -279,7 +279,7 @@ func RenderToBytes(r Report) ([]byte, error) {
 		gridStrs[i] = floatStr4(t)
 	}
 	fmt.Fprintf(&b, "- Fixed threshold grid: %s\n", strings.Join(gridStrs, ", "))
-	fmt.Fprintf(&b, "- Shipped threshold: %s\n", floatStr4(r.ShippedThreshold))
+	fmt.Fprintf(&b, "- Shipped threshold: %s\n", floatStr4(r.HistoricalBaselineThreshold))
 	if r.WhisperAvailable {
 		fmt.Fprintln(&b, "- whisper.cpp detector: available")
 	} else {
@@ -289,7 +289,7 @@ func RenderToBytes(r Report) ([]byte, error) {
 
 	renderCellResults(&b, r.CellResults)
 	renderOverallResults(&b, r.OverallResults)
-	renderThresholdCurve(&b, r.ThresholdCurve, r.ShippedThreshold)
+	renderThresholdCurve(&b, r.ThresholdCurve, r.HistoricalBaselineThreshold)
 	renderRecommendation(&b, r.Recommendation)
 	renderUsage(&b)
 
@@ -459,7 +459,7 @@ func renderThresholdCurve(b *bytes.Buffer, curve []compare.ThresholdPoint, shipp
 		}
 		rows = append(rows, []string{floatStr4(p.Threshold), ratioStr(p.F1), marker})
 	}
-	renderTable(b, []string{"Threshold", "Overall macro F1", "Shipped"}, rows)
+	renderTable(b, []string{"Threshold", "Overall macro F1", "Historical baseline"}, rows)
 	fmt.Fprintln(b)
 }
 
@@ -484,15 +484,15 @@ func renderRecommendation(b *bytes.Buffer, rec compare.Recommendation) {
 			threshold = floatStr4(*c.Threshold)
 		}
 		rows = append(rows, []string{
-			c.DetectorID, threshold, fmt.Sprintf("%v", c.Eligible), ratioStr(c.OverallF1), ratioStr(c.F1DeltaVsShipped), ratioStr(c.OverallUtteranceErrorRate),
+			c.DetectorID, threshold, fmt.Sprintf("%v", c.Eligible), ratioStr(c.OverallF1), ratioStr(c.F1DeltaVsHistorical), ratioStr(c.OverallUtteranceErrorRate),
 		})
 	}
-	renderTable(b, []string{"Candidate", "Threshold", "Eligible", "Overall F1", "F1 delta vs shipped", "Utterance error rate"}, rows)
+	renderTable(b, []string{"Candidate", "Threshold", "Eligible", "Overall F1", "F1 delta vs historical", "Utterance error rate"}, rows)
 	fmt.Fprintln(b)
 	fmt.Fprintln(b, "Eligibility: a candidate qualifies only if no cell's frame F1 falls more than 0.05")
-	fmt.Fprintln(b, "below shipped fixed's F1 in that same cell (one-sided floor, no ceiling). Among")
+	fmt.Fprintln(b, "below historical fixed 0.01's F1 in that same cell (one-sided floor, no ceiling). Among")
 	fmt.Fprintln(b, "eligible candidates, the highest overall macro F1 wins; ties go to the lowest")
-	fmt.Fprintln(b, "overall utterance error rate, then to shipped fixed.")
+	fmt.Fprintln(b, "overall utterance error rate, then to historical fixed 0.01.")
 	fmt.Fprintln(b)
 }
 

@@ -6,14 +6,14 @@ import (
 )
 
 // CandidateEvidence is one recommendation candidate's overall evidence and
-// its delta against shipped fixed, for transparent, structured reporting.
+// its delta against historical fixed 0.01, for transparent, structured reporting.
 type CandidateEvidence struct {
 	DetectorID                string
 	Threshold                 *float64
 	Eligible                  bool
 	OverallF1                 score.Ratio
 	OverallUtteranceErrorRate score.Ratio
-	F1DeltaVsShipped          score.Ratio // candidate F1 - shipped F1 per cell would be more detailed; this is overall-level
+	F1DeltaVsHistorical       score.Ratio // candidate F1 - shipped F1 per cell would be more detailed; this is overall-level
 }
 
 // Recommendation is the evidence-based default recommendation. It changes
@@ -33,26 +33,26 @@ type candidateSpec struct {
 
 // Recommend selects the default recommendation from overall results.
 // Eligibility is the one-sided floor: a candidate qualifies only if no
-// cell's frame F1 falls more than EligibilityMargin below shipped fixed's
+// cell's frame F1 falls more than EligibilityMargin below historical fixed 0.01's
 // F1 in that same cell; there is no ceiling, so a candidate that beats
 // shipped by any amount remains eligible. Among eligible candidates, the
 // highest overall macro F1 wins; ties (at full float64 precision) go to
-// the lowest overall utterance error rate, then to shipped fixed. If no
-// non-baseline candidate is eligible, shipped fixed is recommended.
-func Recommend(overall []OverallResult, selectedThreshold ThresholdPoint, shippedThreshold float64, whisperAvailable bool) (Recommendation, error) {
+// the lowest overall utterance error rate, then to historical fixed 0.01. If no
+// non-baseline candidate is eligible, historical fixed 0.01 is recommended.
+func Recommend(overall []OverallResult, selectedThreshold ThresholdPoint, historicalThreshold float64, whisperAvailable bool) (Recommendation, error) {
 	byID := make(map[string]OverallResult, len(overall))
 	for _, o := range overall {
 		byID[o.DetectorID] = o
 	}
-	shipped, ok := byID["fixed_shipped"]
+	shipped, ok := byID["fixed_historical_0.01"]
 	if !ok {
-		return Recommendation{}, errMissingDetector("fixed_shipped")
+		return Recommendation{}, errMissingDetector("fixed_historical_0.01")
 	}
 
 	var specs []candidateSpec
-	specs = append(specs, candidateSpec{detectorID: "fixed_shipped", threshold: &shippedThreshold})
+	specs = append(specs, candidateSpec{detectorID: "fixed_historical_0.01", threshold: &historicalThreshold})
 	selectedID := evaluate.FixedDetectorID(selectedThreshold.Threshold)
-	if selectedThreshold.Threshold != shippedThreshold {
+	if selectedThreshold.Threshold != historicalThreshold {
 		t := selectedThreshold.Threshold
 		specs = append(specs, candidateSpec{detectorID: selectedID, threshold: &t})
 	}
@@ -71,14 +71,14 @@ func Recommend(overall []OverallResult, selectedThreshold ThresholdPoint, shippe
 		if !ok {
 			continue
 		}
-		eligible := spec.detectorID == "fixed_shipped" || eligibleAgainstShipped(o, shipped)
+		eligible := spec.detectorID == "fixed_historical_0.01" || eligibleAgainstHistorical(o, shipped)
 		candidates = append(candidates, CandidateEvidence{
 			DetectorID:                spec.detectorID,
 			Threshold:                 spec.threshold,
 			Eligible:                  eligible,
 			OverallF1:                 o.FrameMetrics.F1,
 			OverallUtteranceErrorRate: o.UtteranceMetrics.UtteranceErrorRate,
-			F1DeltaVsShipped:          deltaRatio(o.FrameMetrics.F1, shipped.FrameMetrics.F1),
+			F1DeltaVsHistorical:       deltaRatio(o.FrameMetrics.F1, shipped.FrameMetrics.F1),
 		})
 	}
 
@@ -99,7 +99,7 @@ func Recommend(overall []OverallResult, selectedThreshold ThresholdPoint, shippe
 			case -1:
 				best = c
 			case 0:
-				if best.DetectorID != "fixed_shipped" && c.DetectorID == "fixed_shipped" {
+				if best.DetectorID != "fixed_historical_0.01" && c.DetectorID == "fixed_historical_0.01" {
 					best = c
 				}
 			}
@@ -154,7 +154,7 @@ func compareUtteranceErrorAsc(a, b score.Ratio) int {
 	}
 }
 
-func eligibleAgainstShipped(candidate, shipped OverallResult) bool {
+func eligibleAgainstHistorical(candidate, shipped OverallResult) bool {
 	for _, cell := range AllCells() {
 		c, cok := candidate.CellFrameF1[cell]
 		s, sok := shipped.CellFrameF1[cell]

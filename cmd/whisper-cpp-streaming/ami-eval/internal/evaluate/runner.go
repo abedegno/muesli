@@ -20,7 +20,11 @@ import (
 // (matrix construction, scoring interpretation). It is an explicit
 // constant, not a Git revision, and increments whenever interpretation
 // changes in a way that must invalidate previously cached raw results.
-const EvaluationVersion = "v1"
+//
+// v2 (muesli#782): split-labelled matrices, the widened logarithmic grid
+// with round-trip threshold IDs, the frozen historical 0.01 baseline, and
+// tuning-only utterance-error selection gated on held-out evidence.
+const EvaluationVersion = "v2"
 
 // SampleRate is the canonical evaluation sample rate.
 const SampleRate = 16000

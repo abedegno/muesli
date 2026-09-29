@@ -14,31 +14,18 @@ import (
 	"github.com/abedegno/muesli/internal/pluginkit"
 )
 
-// Stable detector identifiers.
+// Stable detector identifiers. DetectorHistoricalFixed is the frozen 0.01
+// comparator (HistoricalBaselineThreshold), not whatever production
+// currently ships.
 const (
-	DetectorShippedFixed = "fixed_shipped"
-	DetectorAdaptive     = "adaptive"
-	DetectorWhisperCPP   = "whisper_cpp"
+	DetectorHistoricalFixed = "fixed_historical_0.01"
+	DetectorAdaptive        = "adaptive"
+	DetectorWhisperCPP      = "whisper_cpp"
 )
 
 // MaxWorkers bounds concurrent recording execution; each worker owns at
 // most one recording (and thus one detector, one session) at a time.
 const MaxWorkers = 4
-
-// FixedDetectorID names one fixed-threshold grid candidate, e.g. "fixed_0.010".
-func FixedDetectorID(threshold float64) string {
-	return fmt.Sprintf("fixed_%.3f", threshold)
-}
-
-// ThresholdGrid returns the fixed-threshold candidates 0.001 through 0.030
-// inclusive, in 0.001 steps, as integer-thousandths to avoid float drift.
-func ThresholdGrid() []float64 {
-	grid := make([]float64, 30)
-	for i := range grid {
-		grid[i] = float64(i+1) / 1000.0
-	}
-	return grid
-}
 
 // OptionalDetectorFactory reports whether a compatible optional detector
 // (currently, whisper.cpp) is available through the existing detector
@@ -60,6 +47,7 @@ type RecordingInput struct {
 	ID        string
 	MeetingID string
 	Class     string
+	Split     string
 	Mic       string
 	Audio     []float32
 	Reference []score.Interval
@@ -70,6 +58,7 @@ type MatrixEntry struct {
 	RecordingID      string                 `json:"recording_id"`
 	MeetingID        string                 `json:"meeting_id"`
 	Class            string                 `json:"class"`
+	Split            string                 `json:"split"`
 	Mic              string                 `json:"mic"`
 	DetectorID       string                 `json:"detector_id"`
 	Threshold        *float64               `json:"threshold,omitempty"`
@@ -78,13 +67,20 @@ type MatrixEntry struct {
 	UtteranceMetrics score.UtteranceMetrics `json:"utterance_metrics"`
 }
 
-// Matrix is the full raw evaluation result.
+// Matrix is one split's full raw evaluation result. The historical
+// baseline and grid are the evaluation's own constants; the runtime
+// default is recorded separately as metadata only and never selects what
+// is measured.
 type Matrix struct {
-	ThresholdGrid            []float64     `json:"threshold_grid"`
-	ShippedThreshold         float64       `json:"shipped_threshold"`
-	WhisperAvailable         bool          `json:"whisper_available"`
-	WhisperUnavailableReason string        `json:"whisper_unavailable_reason,omitempty"`
-	Entries                  []MatrixEntry `json:"entries"`
+	EvaluationVersion           string          `json:"evaluation_version"`
+	Split                       string          `json:"split"`
+	ThresholdGrid               []float64       `json:"threshold_grid"`
+	GridExpansions              []GridExpansion `json:"grid_expansions"`
+	HistoricalBaselineThreshold float64         `json:"historical_baseline_threshold"`
+	RuntimeDefaultThreshold     float64         `json:"runtime_default_threshold"`
+	WhisperAvailable            bool            `json:"whisper_available"`
+	WhisperUnavailableReason    string          `json:"whisper_unavailable_reason,omitempty"`
+	Entries                     []MatrixEntry   `json:"entries"`
 }
 
 // MatrixConfig controls matrix execution.
@@ -95,6 +91,13 @@ type MatrixConfig struct {
 	// WhisperFactory selects the optional whisper.cpp detector source.
 	// Nil selects ProductionWhisperCPPFactory.
 	WhisperFactory OptionalDetectorFactory
+	// Split labels every entry and the matrix itself. All recordings must
+	// carry this split.
+	Split string
+	// RuntimeDefaultThreshold, when non-nil, overrides the recorded
+	// runtime-default metadata (a test seam). It never changes what is
+	// measured: the baseline is always HistoricalBaselineThreshold.
+	RuntimeDefaultThreshold *float64
 }
 
 type job struct {
@@ -117,20 +120,21 @@ func adaptiveFactory() (pluginkit.VAD, error) {
 }
 
 // buildJobs returns the detector job list shared by every recording, given
-// the shipped threshold and optional whisper.cpp availability resolved
-// once up front.
-func buildJobs(shippedThreshold float64, whisperFactory VADFactory, whisperAvailable bool) []job {
+// the validated grid, the historical baseline, and optional whisper.cpp
+// availability resolved once up front. The baseline is measured exactly
+// once per recording; a grid point equal to it reuses that measurement.
+func buildJobs(grid []float64, baseline float64, whisperFactory VADFactory, whisperAvailable bool) []job {
 	var jobs []job
-	shipped := shippedThreshold
+	b := baseline
 	jobs = append(jobs, job{
-		detectorID: DetectorShippedFixed, threshold: &shipped, measurementID: DetectorShippedFixed,
-		vadFactory: fixedFactory(shipped),
+		detectorID: DetectorHistoricalFixed, threshold: &b, measurementID: DetectorHistoricalFixed,
+		vadFactory: fixedFactory(b),
 	})
-	for _, t := range ThresholdGrid() {
+	for _, t := range grid {
 		t := t
 		id := FixedDetectorID(t)
-		if t == shippedThreshold {
-			jobs = append(jobs, job{detectorID: id, threshold: &t, measurementID: DetectorShippedFixed, reuseFrom: DetectorShippedFixed})
+		if t == baseline {
+			jobs = append(jobs, job{detectorID: id, threshold: &t, measurementID: DetectorHistoricalFixed, reuseFrom: DetectorHistoricalFixed})
 			continue
 		}
 		jobs = append(jobs, job{detectorID: id, threshold: &t, measurementID: id, vadFactory: fixedFactory(t)})
@@ -147,7 +151,19 @@ func buildJobs(shippedThreshold float64, whisperFactory VADFactory, whisperAvail
 // own job list (so a reused grid point always follows the canonical run it
 // copies), fresh detector and session state for every job.
 func RunMatrix(ctx context.Context, recordings []RecordingInput, cfg MatrixConfig) (Matrix, error) {
-	shippedThreshold := pluginkit.DefaultStreamingConfig().EnergyThreshold
+	grid := ThresholdGrid()
+	if err := ValidateGrid(grid); err != nil {
+		return Matrix{}, fmt.Errorf("evaluate: %w", err)
+	}
+	for _, r := range recordings {
+		if r.Split != cfg.Split {
+			return Matrix{}, fmt.Errorf("evaluate: recording %s has split %q, matrix split is %q", r.ID, r.Split, cfg.Split)
+		}
+	}
+	runtimeDefault := pluginkit.DefaultStreamingConfig().EnergyThreshold
+	if cfg.RuntimeDefaultThreshold != nil {
+		runtimeDefault = *cfg.RuntimeDefaultThreshold
+	}
 
 	whisperFactoryFn := cfg.WhisperFactory
 	if whisperFactoryFn == nil {
@@ -158,7 +174,7 @@ func RunMatrix(ctx context.Context, recordings []RecordingInput, cfg MatrixConfi
 		return Matrix{}, fmt.Errorf("evaluate: optional detector factory claimed availability but supplied no VADFactory")
 	}
 
-	jobs := buildJobs(shippedThreshold, whisperVADFactory, whisperAvailable)
+	jobs := buildJobs(grid, HistoricalBaselineThreshold, whisperVADFactory, whisperAvailable)
 
 	workers := cfg.Workers
 	if workers < 1 {
@@ -198,10 +214,14 @@ func RunMatrix(ctx context.Context, recordings []RecordingInput, cfg MatrixConfi
 	wg.Wait()
 
 	m := Matrix{
-		ThresholdGrid:            ThresholdGrid(),
-		ShippedThreshold:         shippedThreshold,
-		WhisperAvailable:         whisperAvailable,
-		WhisperUnavailableReason: whisperReason,
+		EvaluationVersion:           EvaluationVersion,
+		Split:                       cfg.Split,
+		ThresholdGrid:               grid,
+		GridExpansions:              GridExpansions(),
+		HistoricalBaselineThreshold: HistoricalBaselineThreshold,
+		RuntimeDefaultThreshold:     runtimeDefault,
+		WhisperAvailable:            whisperAvailable,
+		WhisperUnavailableReason:    whisperReason,
 	}
 	for i, o := range results {
 		if o.err != nil {
@@ -217,9 +237,36 @@ func RunMatrix(ctx context.Context, recordings []RecordingInput, cfg MatrixConfi
 		if a.Mic != b.Mic {
 			return a.Mic < b.Mic
 		}
-		return a.DetectorID < b.DetectorID
+		return detectorLess(a, b)
 	})
 	return m, nil
+}
+
+// detectorRank orders detectors within one recording: the historical
+// baseline, then fixed grid candidates in numeric threshold order, then
+// adaptive, then whisper.cpp.
+func detectorRank(e MatrixEntry) int {
+	switch {
+	case e.DetectorID == DetectorHistoricalFixed:
+		return 0
+	case e.Threshold != nil:
+		return 1
+	case e.DetectorID == DetectorAdaptive:
+		return 2
+	default:
+		return 3
+	}
+}
+
+func detectorLess(a, b MatrixEntry) bool {
+	ra, rb := detectorRank(a), detectorRank(b)
+	if ra != rb {
+		return ra < rb
+	}
+	if ra == 1 && *a.Threshold != *b.Threshold {
+		return *a.Threshold < *b.Threshold
+	}
+	return a.DetectorID < b.DetectorID
 }
 
 func runRecording(ctx context.Context, rec RecordingInput, jobs []job) ([]MatrixEntry, error) {
@@ -259,6 +306,7 @@ func runRecording(ctx context.Context, rec RecordingInput, jobs []job) ([]Matrix
 			RecordingID:      rec.ID,
 			MeetingID:        rec.MeetingID,
 			Class:            rec.Class,
+			Split:            rec.Split,
 			Mic:              rec.Mic,
 			DetectorID:       j.detectorID,
 			Threshold:        j.threshold,

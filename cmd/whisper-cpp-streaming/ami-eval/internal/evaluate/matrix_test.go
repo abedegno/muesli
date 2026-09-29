@@ -11,66 +11,56 @@ import (
 	"github.com/abedegno/muesli/internal/pluginkit"
 )
 
-func TestThresholdGridRange(t *testing.T) {
+func TestBuildJobsReusesBaselineGridPoint(t *testing.T) {
 	grid := ThresholdGrid()
-	if len(grid) != 30 {
-		t.Fatalf("expected 30 thresholds, got %d", len(grid))
-	}
-	if grid[0] != 0.001 {
-		t.Fatalf("expected first threshold 0.001, got %v", grid[0])
-	}
-	if grid[len(grid)-1] != 0.030 {
-		t.Fatalf("expected last threshold 0.030, got %v", grid[len(grid)-1])
-	}
-}
+	jobs := buildJobs(grid, HistoricalBaselineThreshold, nil, false)
 
-func TestBuildJobsReusesShippedGridPoint(t *testing.T) {
-	shipped := pluginkit.DefaultStreamingConfig().EnergyThreshold
-	jobs := buildJobs(shipped, nil, false)
-
-	var shippedJob, gridJob *job
+	var baselineJob, gridJob *job
 	for i := range jobs {
-		if jobs[i].detectorID == DetectorShippedFixed {
-			shippedJob = &jobs[i]
+		if jobs[i].detectorID == DetectorHistoricalFixed {
+			baselineJob = &jobs[i]
 		}
-		if jobs[i].detectorID == FixedDetectorID(shipped) && jobs[i].detectorID != DetectorShippedFixed {
+		if jobs[i].detectorID == FixedDetectorID(HistoricalBaselineThreshold) {
 			gridJob = &jobs[i]
 		}
 	}
-	if shippedJob == nil {
-		t.Fatal("expected a fixed_shipped job")
+	if baselineJob == nil || baselineJob.vadFactory == nil {
+		t.Fatal("expected the historical baseline to actually run")
 	}
-	if shippedJob.vadFactory == nil {
-		t.Fatal("expected fixed_shipped to actually run")
+	if *baselineJob.threshold != 0.01 {
+		t.Fatalf("historical baseline threshold = %v", *baselineJob.threshold)
 	}
 	if gridJob == nil {
-		t.Fatalf("expected a grid job for the shipped threshold %v", shipped)
+		t.Fatal("expected a grid job at 0.01")
 	}
-	if gridJob.reuseFrom != DetectorShippedFixed {
-		t.Fatalf("expected grid job at shipped threshold to reuse fixed_shipped, got reuseFrom=%q", gridJob.reuseFrom)
+	if gridJob.reuseFrom != DetectorHistoricalFixed || gridJob.vadFactory != nil {
+		t.Fatalf("expected grid 0.01 to reuse the baseline measurement, got reuseFrom=%q", gridJob.reuseFrom)
 	}
-	if gridJob.vadFactory != nil {
-		t.Fatal("expected the reused grid job to never construct its own detector")
-	}
-	if gridJob.measurementID != shippedJob.measurementID {
-		t.Fatalf("expected shared measurement id, got %q vs %q", gridJob.measurementID, shippedJob.measurementID)
+	if gridJob.measurementID != baselineJob.measurementID {
+		t.Fatalf("expected shared measurement id, got %q vs %q", gridJob.measurementID, baselineJob.measurementID)
 	}
 
-	// Exactly one fixed job per grid point plus the shipped one, no
-	// duplicate independent run at the shipped threshold.
-	fixedCount := 0
+	// Exactly one job per grid point plus the baseline, and exactly one
+	// independently measured run at 0.01.
+	fixedCount, runsAt001 := 0, 0
 	for _, j := range jobs {
-		if j.detectorID == DetectorShippedFixed || j.detectorID[:6] == "fixed_" {
+		if j.threshold != nil {
 			fixedCount++
+			if *j.threshold == 0.01 && j.vadFactory != nil {
+				runsAt001++
+			}
 		}
 	}
-	if fixedCount != 1+len(ThresholdGrid()) {
-		t.Fatalf("expected %d fixed jobs, got %d", 1+len(ThresholdGrid()), fixedCount)
+	if fixedCount != 1+len(grid) {
+		t.Fatalf("expected %d fixed jobs, got %d", 1+len(grid), fixedCount)
+	}
+	if runsAt001 != 1 {
+		t.Fatalf("expected exactly one measured run at 0.01, got %d", runsAt001)
 	}
 }
 
 func TestBuildJobsIncludesAdaptiveAndOptionalWhisper(t *testing.T) {
-	jobs := buildJobs(0.01, nil, false)
+	jobs := buildJobs(ThresholdGrid(), HistoricalBaselineThreshold, nil, false)
 	found := map[string]bool{}
 	for _, j := range jobs {
 		found[j.detectorID] = true
@@ -83,7 +73,7 @@ func TestBuildJobsIncludesAdaptiveAndOptionalWhisper(t *testing.T) {
 	}
 
 	factory := func() (pluginkit.VAD, error) { return pluginkit.EnergyVAD{Threshold: 0.02}, nil }
-	jobsWithWhisper := buildJobs(0.01, factory, true)
+	jobsWithWhisper := buildJobs(ThresholdGrid(), HistoricalBaselineThreshold, factory, true)
 	found2 := map[string]bool{}
 	for _, j := range jobsWithWhisper {
 		found2[j.detectorID] = true
@@ -94,7 +84,32 @@ func TestBuildJobsIncludesAdaptiveAndOptionalWhisper(t *testing.T) {
 }
 
 func testRecording(id, meeting, class, mic string, audio []float32, reference []score.Interval) RecordingInput {
-	return RecordingInput{ID: id, MeetingID: meeting, Class: class, Mic: mic, Audio: audio, Reference: reference}
+	return RecordingInput{ID: id, MeetingID: meeting, Class: class, Split: "tuning", Mic: mic, Audio: audio, Reference: reference}
+}
+
+// tuningCfg is the MatrixConfig every single-split test uses.
+func tuningCfg() MatrixConfig { return MatrixConfig{Split: "tuning"} }
+
+// quietSpeechAudio alternates 1s of constant-amplitude "speech" with 1s of
+// digital silence, seconds in total, returning audio and reference. Bursts
+// cycle through amps, so amplitudes between two thresholds make them
+// measure differently.
+func quietSpeechAudio(seconds int, amps ...float32) ([]float32, []score.Interval) {
+	audio := make([]float32, seconds*SampleRate)
+	var ref []score.Interval
+	for s := 0; s < seconds; s += 2 {
+		amp := amps[(s/2)%len(amps)]
+		start := s * SampleRate
+		end := start + SampleRate
+		if end > len(audio) {
+			end = len(audio)
+		}
+		for i := start; i < end; i++ {
+			audio[i] = amp
+		}
+		ref = append(ref, score.Interval{Start: int64(start), End: int64(end)})
+	}
+	return audio, ref
 }
 
 func loudAudio(n int) []float32 {
@@ -107,7 +122,7 @@ func loudAudio(n int) []float32 {
 
 func TestRunMatrixProducesEntriesForEveryRecordingAndDetector(t *testing.T) {
 	rec := testRecording("ES2002a-headset", "ES2002a", "scenario", "headset", loudAudio(FeedSamples*2), []score.Interval{{Start: 0, End: FeedSamples * 2}})
-	m, err := RunMatrix(context.Background(), []RecordingInput{rec}, MatrixConfig{})
+	m, err := RunMatrix(context.Background(), []RecordingInput{rec}, tuningCfg())
 	if err != nil {
 		t.Fatalf("run matrix: %v", err)
 	}
@@ -117,7 +132,7 @@ func TestRunMatrixProducesEntriesForEveryRecordingAndDetector(t *testing.T) {
 	if m.WhisperUnavailableReason == "" {
 		t.Fatal("expected an unavailable reason")
 	}
-	wantDetectors := 1 /* shipped */ + len(ThresholdGrid()) + 1 /* adaptive */
+	wantDetectors := 1 /* historical baseline */ + len(ThresholdGrid()) + 1 /* adaptive */
 	if len(m.Entries) != wantDetectors {
 		t.Fatalf("expected %d entries, got %d", wantDetectors, len(m.Entries))
 	}
@@ -128,41 +143,131 @@ func TestRunMatrixProducesEntriesForEveryRecordingAndDetector(t *testing.T) {
 		}
 		seen[e.DetectorID] = true
 	}
-	if !seen[DetectorShippedFixed] || !seen[DetectorAdaptive] {
+	if !seen[DetectorHistoricalFixed] || !seen[DetectorAdaptive] {
 		t.Fatalf("missing expected detectors: %+v", seen)
 	}
 }
 
-func TestRunMatrixShippedAndGridReuseIdenticalMetrics(t *testing.T) {
-	rec := testRecording("ES2002a-headset", "ES2002a", "scenario", "headset", loudAudio(FeedSamples*2), []score.Interval{{Start: 0, End: FeedSamples * 2}})
-	m, err := RunMatrix(context.Background(), []RecordingInput{rec}, MatrixConfig{})
+func findEntry(t *testing.T, m Matrix, recordingID, detectorID string) MatrixEntry {
+	t.Helper()
+	for _, e := range m.Entries {
+		if e.RecordingID == recordingID && e.DetectorID == detectorID {
+			return e
+		}
+	}
+	t.Fatalf("no entry for %s/%s", recordingID, detectorID)
+	return MatrixEntry{}
+}
+
+func TestRunMatrixBaselineAndGridReuseIdenticalMetrics(t *testing.T) {
+	audio, ref := quietSpeechAudio(6, 0.015)
+	rec := testRecording("ES2002a-headset", "ES2002a", "scenario", "headset", audio, ref)
+	m, err := RunMatrix(context.Background(), []RecordingInput{rec}, tuningCfg())
 	if err != nil {
 		t.Fatal(err)
 	}
-	shipped := pluginkit.DefaultStreamingConfig().EnergyThreshold
-	var shippedEntry, gridEntry *MatrixEntry
-	for i := range m.Entries {
-		if m.Entries[i].DetectorID == DetectorShippedFixed {
-			shippedEntry = &m.Entries[i]
+	baseline := findEntry(t, m, rec.ID, DetectorHistoricalFixed)
+	grid := findEntry(t, m, rec.ID, FixedDetectorID(0.01))
+	if baseline.MeasurementID != DetectorHistoricalFixed || grid.MeasurementID != baseline.MeasurementID {
+		t.Fatalf("expected grid 0.01 to reuse the baseline measurement: %q vs %q", grid.MeasurementID, baseline.MeasurementID)
+	}
+	if baseline.FrameMetrics.Counts != grid.FrameMetrics.Counts || baseline.UtteranceMetrics.Counts != grid.UtteranceMetrics.Counts {
+		t.Fatalf("reused measurement differs: %+v vs %+v", baseline.FrameMetrics.Counts, grid.FrameMetrics.Counts)
+	}
+	// Every other grid point is its own measurement.
+	for _, e := range m.Entries {
+		if e.Threshold != nil && *e.Threshold != 0.01 && e.MeasurementID != e.DetectorID {
+			t.Fatalf("grid point %s unexpectedly shares measurement %s", e.DetectorID, e.MeasurementID)
 		}
-		if m.Entries[i].DetectorID == FixedDetectorID(shipped) {
-			gridEntry = &m.Entries[i]
+	}
+	// Sanity: this audio distinguishes 0.01 from 0.02, so a baseline
+	// measured at another threshold would be visible.
+	other := findEntry(t, m, rec.ID, FixedDetectorID(0.02))
+	if other.FrameMetrics.Counts == baseline.FrameMetrics.Counts {
+		t.Fatal("fixture does not distinguish 0.01 from 0.02")
+	}
+}
+
+func TestRunMatrixBaselineIndependentOfRuntimeDefault(t *testing.T) {
+	// Bursts at 0.015 and 0.007: 0.005 detects both, 0.01 only the louder,
+	// 0.02 neither -- so each candidate default measures differently.
+	audio, ref := quietSpeechAudio(8, 0.015, 0.007)
+	rec := testRecording("ES2002a-headset", "ES2002a", "scenario", "headset", audio, ref)
+	var results []Matrix
+	for _, runtimeDefault := range []float64{0.02, 0.005} {
+		rd := runtimeDefault
+		cfg := tuningCfg()
+		cfg.RuntimeDefaultThreshold = &rd
+		m, err := RunMatrix(context.Background(), []RecordingInput{rec}, cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if m.RuntimeDefaultThreshold != rd {
+			t.Fatalf("runtime default metadata = %v, want %v", m.RuntimeDefaultThreshold, rd)
+		}
+		if m.HistoricalBaselineThreshold != 0.01 {
+			t.Fatalf("historical baseline moved to %v", m.HistoricalBaselineThreshold)
+		}
+		b := findEntry(t, m, rec.ID, DetectorHistoricalFixed)
+		if b.Threshold == nil || *b.Threshold != 0.01 {
+			t.Fatalf("baseline entry threshold = %v", b.Threshold)
+		}
+		// The baseline measures exactly what an independent 0.01 run
+		// measures, never the runtime default.
+		want := findEntry(t, m, rec.ID, FixedDetectorID(0.01))
+		atDefault := findEntry(t, m, rec.ID, FixedDetectorID(rd))
+		if b.FrameMetrics.Counts != want.FrameMetrics.Counts {
+			t.Fatal("baseline counts differ from the 0.01 measurement")
+		}
+		if b.FrameMetrics.Counts == atDefault.FrameMetrics.Counts {
+			t.Fatalf("baseline counts equal the runtime default %v measurement: comparator followed the default", rd)
+		}
+		results = append(results, m)
+	}
+	b0 := findEntry(t, results[0], rec.ID, DetectorHistoricalFixed)
+	b1 := findEntry(t, results[1], rec.ID, DetectorHistoricalFixed)
+	if b0.FrameMetrics.Counts != b1.FrameMetrics.Counts || b0.UtteranceMetrics.Counts != b1.UtteranceMetrics.Counts {
+		t.Fatal("changing runtime-default metadata changed the baseline measurement")
+	}
+}
+
+func TestRunMatrixRecordsGridMetadataAndSplit(t *testing.T) {
+	audio, ref := quietSpeechAudio(2, 0.2)
+	rec := testRecording("ES2004a-headset", "ES2004a", "scenario", "headset", audio, ref)
+	rec.Split = "held_out"
+	m, err := RunMatrix(context.Background(), []RecordingInput{rec}, MatrixConfig{Split: "held_out"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.EvaluationVersion != EvaluationVersion || m.Split != "held_out" || len(m.ThresholdGrid) != len(ThresholdGrid()) || m.GridExpansions == nil {
+		t.Fatalf("matrix metadata: version=%q split=%q grid=%d expansions=%v", m.EvaluationVersion, m.Split, len(m.ThresholdGrid), m.GridExpansions)
+	}
+	for _, e := range m.Entries {
+		if e.Split != "held_out" {
+			t.Fatalf("entry %s split = %q", e.DetectorID, e.Split)
 		}
 	}
-	if shippedEntry == nil || gridEntry == nil {
-		t.Fatal("expected both shipped and grid-0.010 entries")
+	// Entries are ordered baseline, grid ascending, adaptive.
+	if m.Entries[0].DetectorID != DetectorHistoricalFixed || m.Entries[len(m.Entries)-1].DetectorID != DetectorAdaptive {
+		t.Fatalf("unexpected detector order: first=%s last=%s", m.Entries[0].DetectorID, m.Entries[len(m.Entries)-1].DetectorID)
 	}
-	if shippedEntry.MeasurementID != gridEntry.MeasurementID {
-		t.Fatalf("expected shared measurement id: %q vs %q", shippedEntry.MeasurementID, gridEntry.MeasurementID)
+	for i := 2; i < len(m.Entries)-1; i++ {
+		if !(*m.Entries[i].Threshold > *m.Entries[i-1].Threshold) {
+			t.Fatalf("grid entries not in numeric order at %d", i)
+		}
 	}
-	if shippedEntry.FrameMetrics.Counts != gridEntry.FrameMetrics.Counts {
-		t.Fatalf("expected identical frame counts for the reused measurement: %+v vs %+v", shippedEntry.FrameMetrics.Counts, gridEntry.FrameMetrics.Counts)
+
+	// A recording whose split disagrees with the matrix is rejected.
+	rec.Split = "tuning"
+	if _, err := RunMatrix(context.Background(), []RecordingInput{rec}, MatrixConfig{Split: "held_out"}); err == nil {
+		t.Fatal("expected a split mismatch to be rejected")
 	}
 }
 
 func TestRunMatrixWhisperUnavailableFromInjectedFactory(t *testing.T) {
 	rec := testRecording("ES2002a-headset", "ES2002a", "scenario", "headset", loudAudio(FeedSamples), []score.Interval{{Start: 0, End: FeedSamples}})
 	m, err := RunMatrix(context.Background(), []RecordingInput{rec}, MatrixConfig{
+		Split:          "tuning",
 		WhisperFactory: func() (VADFactory, bool, string) { return nil, false, "test reason" },
 	})
 	if err != nil {
@@ -184,6 +289,7 @@ func TestRunMatrixWhisperUnavailableFromInjectedFactory(t *testing.T) {
 func TestRunMatrixAdmitsInjectedCompatibleWhisperAdapter(t *testing.T) {
 	rec := testRecording("ES2002a-headset", "ES2002a", "scenario", "headset", loudAudio(FeedSamples), []score.Interval{{Start: 0, End: FeedSamples}})
 	m, err := RunMatrix(context.Background(), []RecordingInput{rec}, MatrixConfig{
+		Split: "tuning",
 		WhisperFactory: func() (VADFactory, bool, string) {
 			return func() (pluginkit.VAD, error) { return pluginkit.EnergyVAD{Threshold: 0.01}, nil }, true, ""
 		},
@@ -208,6 +314,7 @@ func TestRunMatrixAdmitsInjectedCompatibleWhisperAdapter(t *testing.T) {
 func TestRunMatrixClaimedCompatibilityFailureIsFatal(t *testing.T) {
 	rec := testRecording("ES2002a-headset", "ES2002a", "scenario", "headset", loudAudio(FeedSamples), []score.Interval{{Start: 0, End: FeedSamples}})
 	_, err := RunMatrix(context.Background(), []RecordingInput{rec}, MatrixConfig{
+		Split:          "tuning",
 		WhisperFactory: func() (VADFactory, bool, string) { return nil, true, "" }, // claims available, gives no factory
 	})
 	if err == nil {
@@ -219,7 +326,7 @@ func TestRunMatrixEntriesStableSortOrder(t *testing.T) {
 	recA := testRecording("EN2001a-headset", "EN2001a", "non_scenario", "headset", loudAudio(FeedSamples), []score.Interval{{Start: 0, End: FeedSamples}})
 	recB := testRecording("ES2002a-headset", "ES2002a", "scenario", "headset", loudAudio(FeedSamples), []score.Interval{{Start: 0, End: FeedSamples}})
 	// Deliberately reversed input order.
-	m, err := RunMatrix(context.Background(), []RecordingInput{recB, recA}, MatrixConfig{})
+	m, err := RunMatrix(context.Background(), []RecordingInput{recB, recA}, tuningCfg())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,6 +338,7 @@ func TestRunMatrixEntriesStableSortOrder(t *testing.T) {
 func TestRunMatrixIncompleteCellFails(t *testing.T) {
 	rec := testRecording("bad", "ES2002a", "scenario", "headset", loudAudio(1), nil) // far too short for a valid run under a tiny deadline isn't the point here
 	_, err := RunMatrix(context.Background(), []RecordingInput{rec}, MatrixConfig{
+		Split:          "tuning",
 		WhisperFactory: func() (VADFactory, bool, string) { return nil, false, "n/a" },
 	})
 	// Even pathologically short audio should still succeed (it is still a
@@ -247,7 +355,7 @@ func TestRunMatrixWorkerCapAndConcurrency(t *testing.T) {
 			[]string{"EN2001a-headset", "EN2001a-fixed_distant", "ES2002a-headset", "ES2002a-fixed_distant", "EN2001a-headset2", "ES2002a-headset2"}[i],
 			"M", "scenario", "headset", loudAudio(FeedSamples), []score.Interval{{Start: 0, End: FeedSamples}})
 	}
-	m, err := RunMatrix(context.Background(), recs, MatrixConfig{Workers: 100}) // must clamp to MaxWorkers
+	m, err := RunMatrix(context.Background(), recs, MatrixConfig{Workers: 100, Split: "tuning"}) // must clamp to MaxWorkers
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,7 +367,7 @@ func TestRunMatrixWorkerCapAndConcurrency(t *testing.T) {
 
 func TestWriteMatrixAtomic(t *testing.T) {
 	dir := t.TempDir()
-	m := Matrix{ThresholdGrid: ThresholdGrid(), ShippedThreshold: 0.01}
+	m := Matrix{ThresholdGrid: ThresholdGrid(), HistoricalBaselineThreshold: HistoricalBaselineThreshold}
 	if err := WriteMatrix(dir, m); err != nil {
 		t.Fatal(err)
 	}
