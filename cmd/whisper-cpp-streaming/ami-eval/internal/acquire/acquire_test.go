@@ -736,3 +736,71 @@ func TestFindModuleRootMissing(t *testing.T) {
 		t.Fatal("expected error when go.mod is not found")
 	}
 }
+
+// completenessFixture serves a synthetic archive holding a pinned A member
+// for every meeting plus the given extra members, and returns a manifest
+// pinning only the A members.
+func completenessFixture(t *testing.T, extra map[string][]byte) (*manifest.Manifest, *httptest.Server) {
+	t.Helper()
+	files := map[string][]byte{}
+	annSHA := map[string]string{}
+	annSize := map[string]int64{}
+	for _, m := range testMeetings {
+		x := []byte("<nite:root/>" + m.id)
+		files["words/"+m.id+".A.words.xml"] = x
+		annSHA[m.id+".A"] = sha256Hex(x)
+		annSize[m.id+".A"] = int64(len(x))
+	}
+	for name, data := range extra {
+		files[name] = data
+	}
+	archivePath, archiveSize, archiveSHA := buildTestArchive(t, files)
+	archiveData, _ := os.ReadFile(archivePath)
+	bodies := map[string][]byte{"/archive.zip": archiveData}
+	wavBody := func(meeting, mic string) []byte { return []byte(meeting + mic + "-wav") }
+	for _, m := range testMeetings {
+		for _, mic := range []string{"headset", "fixed"} {
+			bodies[audioPath(m.id, mic)] = wavBody(m.id, mic)
+		}
+	}
+	srv := fixtureServer(t, bodies, nil)
+	man := testManifestWithArchive(srv.URL+"/archive.zip", archiveSize, archiveSHA,
+		func(meeting, mic string) string { return srv.URL + audioPath(meeting, mic) },
+		func(meeting, mic string) int64 { return int64(len(wavBody(meeting, mic))) },
+		func(meeting, mic string) string { return sha256Hex(wavBody(meeting, mic)) },
+		annSHA, annSize)
+	return man, srv
+}
+
+func TestAcquireRejectsUnpinnedParticipantMember(t *testing.T) {
+	// The archive holds a fifth-speaker-style member for EN2001a that the
+	// manifest does not pin: that participant's speech would be scored as
+	// silence, so acquisition must fail with meeting/member context.
+	man, srv := completenessFixture(t, map[string][]byte{
+		"words/EN2001a.E.words.xml": []byte("<nite:root/>unpinned speaker"),
+	})
+	defer srv.Close()
+	_, err := Acquire(context.Background(), newCache(t), man, Options{HTTPClient: srv.Client()})
+	if err == nil {
+		t.Fatal("expected an incomplete-participant failure")
+	}
+	for _, want := range []string{"EN2001a", "words/EN2001a.E.words.xml", "not pinned"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("error lacks %q: %v", want, err)
+		}
+	}
+}
+
+func TestAcquireCompletenessIgnoresOtherMeetingsAndLayers(t *testing.T) {
+	// Members of meetings outside the manifest, and non-word annotation
+	// layers of manifest meetings, are not participants to pin.
+	man, srv := completenessFixture(t, map[string][]byte{
+		"words/ES2003a.A.words.xml":       []byte("other meeting"),
+		"segments/EN2001a.E.segments.xml": []byte("other layer"),
+		"words/EN2001a.E.notes.txt":       []byte("not a words member"),
+	})
+	defer srv.Close()
+	if _, err := Acquire(context.Background(), newCache(t), man, Options{HTTPClient: srv.Client()}); err != nil {
+		t.Fatalf("complete manifest rejected: %v", err)
+	}
+}

@@ -97,6 +97,12 @@
           "member": "words/EN2001a.D.words.xml",
           "size_bytes": 319780,
           "sha256": "97a337ecfd691cb53fcd43fbc30e765242c03bc8aefc8dc0156a1ae646a148c9"
+        },
+        {
+          "participant_id": "E",
+          "member": "words/EN2001a.E.words.xml",
+          "size_bytes": 899893,
+          "sha256": "6fc2c5cf0896778e3e2b69be82a1b359b3edf3b2fbd99c3018a032bbd162ffb5"
         }
       ]
     },

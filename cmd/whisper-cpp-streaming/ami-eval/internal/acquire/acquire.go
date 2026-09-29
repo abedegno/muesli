@@ -383,6 +383,9 @@ func Acquire(ctx context.Context, cache Cache, man *manifest.Manifest, opts Opti
 	if err != nil {
 		return nil, fmt.Errorf("acquire: annotation archive: %w", err)
 	}
+	if err := checkParticipantCompleteness(archivePath, man); err != nil {
+		return nil, err
+	}
 
 	recordings := man.Recordings()
 	out := make([]AcquiredRecording, 0, len(recordings))
@@ -420,6 +423,37 @@ func Acquire(ctx context.Context, cache Cache, man *manifest.Manifest, opts Opti
 		out = append(out, AcquiredRecording{Recording: rec, AudioPath: audioPath, AnnotationPaths: annPaths})
 	}
 	return out, nil
+}
+
+// checkParticipantCompleteness requires every words/<meeting>.*.words.xml
+// member the verified archive holds for a manifest meeting to be pinned by
+// that meeting. An unpinned participant's speech would otherwise be scored
+// as silence in the reference, silently biasing every detector metric.
+func checkParticipantCompleteness(archivePath string, man *manifest.Manifest) error {
+	zr, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return fmt.Errorf("acquire: open annotation archive: %w", err)
+	}
+	defer zr.Close()
+	pinned := map[string]bool{}
+	for _, m := range man.Meetings {
+		for _, a := range m.Annotations {
+			pinned[a.Member] = true
+		}
+	}
+	var missing []string
+	for _, f := range zr.File {
+		for _, m := range man.Meetings {
+			if strings.HasPrefix(f.Name, "words/"+m.ID+".") && strings.HasSuffix(f.Name, ".words.xml") && !pinned[f.Name] {
+				missing = append(missing, fmt.Sprintf("meeting %s: archive member %q is not pinned", m.ID, f.Name))
+			}
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return fmt.Errorf("acquire: manifest participant annotations are incomplete (every participant's word annotation must be pinned): %s", strings.Join(missing, "; "))
+	}
+	return nil
 }
 
 // ensureArchiveMember extracts one pinned member from the verified
