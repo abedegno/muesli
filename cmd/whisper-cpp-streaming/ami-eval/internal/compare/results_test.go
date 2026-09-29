@@ -102,3 +102,92 @@ func TestNewResultsRejectsInconsistentInputs(t *testing.T) {
 		t.Fatal("bad digest must be rejected")
 	}
 }
+
+// openHandlesUnder reports open file descriptors of this process whose target
+// lies under dir (Linux /proc only; ok=false elsewhere). A leaked temp handle
+// shows up here even after unlink, as "<path> (deleted)".
+func openHandlesUnder(t *testing.T, dir string) (handles []string, ok bool) {
+	t.Helper()
+	fds, err := os.ReadDir("/proc/self/fd")
+	if err != nil {
+		return nil, false
+	}
+	for _, fd := range fds {
+		target, err := os.Readlink(filepath.Join("/proc/self/fd", fd.Name()))
+		if err != nil {
+			continue
+		}
+		if strings.HasPrefix(target, dir+string(filepath.Separator)) {
+			handles = append(handles, target)
+		}
+	}
+	return handles, true
+}
+
+// assertCleanedUp checks the failure-after-acquisition contract: the temp
+// handle is closed and no temp file is left beside results.json.
+func assertCleanedUp(t *testing.T, dir string) {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if e.Name() != ResultsFileName {
+			t.Fatalf("temp file left behind: %s", e.Name())
+		}
+	}
+	if handles, ok := openHandlesUnder(t, dir); ok && len(handles) != 0 {
+		t.Fatalf("temp results handle not closed: %v", handles)
+	}
+}
+
+func TestWriteResultsEncodeFailureCleansUpAndPreservesExisting(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, ResultsFileName)
+	prior := []byte("{\"prior\":true}\n")
+	if err := os.WriteFile(dest, prior, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r := fixtureResults(t)
+	r.HistoricalBaselineThreshold = math.NaN() // json cannot encode NaN
+	err := WriteResults(dir, r)
+	if err == nil || !strings.Contains(err.Error(), "encode") {
+		t.Fatalf("want encode error, got %v", err)
+	}
+	assertCleanedUp(t, dir)
+	got, err := os.ReadFile(dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != string(prior) {
+		t.Fatalf("pre-existing %s modified: %q", ResultsFileName, got)
+	}
+}
+
+func TestWriteResultsRenameFailureCleansUpAndPreservesExisting(t *testing.T) {
+	dir := t.TempDir()
+	// A non-empty directory at the destination makes the final rename fail
+	// after the temp file has been written, synced and closed.
+	dest := filepath.Join(dir, ResultsFileName)
+	if err := os.Mkdir(dest, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sentinel := filepath.Join(dest, "keep")
+	if err := os.WriteFile(sentinel, []byte("keep"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err := WriteResults(dir, fixtureResults(t))
+	if err == nil || !strings.Contains(err.Error(), "promote") {
+		t.Fatalf("want promote error, got %v", err)
+	}
+	assertCleanedUp(t, dir)
+	info, err := os.Stat(dest)
+	if err != nil || !info.IsDir() {
+		t.Fatalf("pre-existing %s replaced: %v", ResultsFileName, err)
+	}
+	got, err := os.ReadFile(sentinel)
+	if err != nil || string(got) != "keep" {
+		t.Fatalf("pre-existing %s contents changed: %q %v", ResultsFileName, got, err)
+	}
+}
