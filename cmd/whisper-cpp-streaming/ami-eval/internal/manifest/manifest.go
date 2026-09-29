@@ -1,9 +1,14 @@
 // Package manifest defines and validates the pinned AMI corpus manifest that
-// drives the reproducible AMI VAD evaluation (muesli#778). The manifest names
-// every source object the evaluator needs -- headset-mix and fixed
-// single-distant-microphone WAVs plus the shared participant word-annotation
-// archive -- by URL, expected byte size, and lowercase SHA-256, so acquisition
-// can verify every byte before it is used.
+// drives the reproducible AMI VAD evaluation (muesli#778, muesli#782). The
+// manifest names every source object the evaluator needs -- headset-mix and
+// fixed single-distant-microphone WAVs plus the shared participant
+// word-annotation archive -- by URL, expected byte size, and lowercase
+// SHA-256, so acquisition can verify every byte before it is used.
+//
+// Schema 2 assigns every meeting to exactly one evaluation split: the tuning
+// meetings select a fixed energy threshold, and the separate held-out
+// meetings validate that frozen selection. The split is part of the
+// canonical bytes and therefore of the manifest digest.
 package manifest
 
 import (
@@ -19,10 +24,10 @@ import (
 
 // SchemaVersion is the manifest schema this package understands. Bumping it
 // is a breaking change to the manifest shape.
-const SchemaVersion = 1
+const SchemaVersion = 2
 
-// Meeting classes. The initial manifest pins exactly one meeting of each
-// class: ES2002a (scenario) and EN2001a (non-scenario).
+// Meeting classes. Each split pins one meeting of each class unless a
+// recorded held-out replacement preserves the substitute's actual class.
 const (
 	ClassScenario    = "scenario"
 	ClassNonScenario = "non_scenario"
@@ -41,12 +46,61 @@ const (
 	ChannelPolicyAverage  = "average"
 )
 
-// requiredMeetings is the hard-coded initial slice: exactly these two
-// meeting IDs, each with its required class. This is deliberately not
-// data-driven -- the spec pins ES2002a/EN2001a explicitly for this slice.
-var requiredMeetings = map[string]string{
+// Split is a meeting-level evaluation partition.
+type Split string
+
+// The two evaluation splits. Tuning meetings are the only evidence the
+// threshold selector may see; held-out meetings only validate the frozen
+// selection.
+const (
+	SplitTuning  Split = "tuning"
+	SplitHeldOut Split = "held_out"
+)
+
+// Splits returns both splits in their fixed processing order.
+func Splits() []Split { return []Split{SplitTuning, SplitHeldOut} }
+
+// Valid reports whether s is one of the two known splits.
+func (s Split) Valid() bool { return s == SplitTuning || s == SplitHeldOut }
+
+// knownMeetingClasses is every meeting ID this manifest may name, with its
+// actual AMI meeting class. It is deliberately not data-driven: the spec
+// pins these identities explicitly (muesli#782).
+var knownMeetingClasses = map[string]string{
 	"ES2002a": ClassScenario,
 	"EN2001a": ClassNonScenario,
+	"ES2004a": ClassScenario,
+	"EN2002a": ClassNonScenario,
+	"IS1009a": ClassScenario,
+}
+
+// tuningMeetings is the exact tuning split membership.
+var tuningMeetings = []string{"EN2001a", "ES2002a"}
+
+// requestedHeldOutMeetings is the held-out membership absent a recorded
+// replacement.
+var requestedHeldOutMeetings = []string{"EN2002a", "ES2004a"}
+
+// HeldOutSubstituteMeetingID is the single meeting permitted to replace one
+// requested held-out meeting, and only when that meeting's annotations are
+// unusable under the existing preparation rules.
+const HeldOutSubstituteMeetingID = "IS1009a"
+
+// Required microphone audio basename suffixes. A meeting's audio URLs must
+// name that meeting's own headset-mix and Array1-01 WAVs.
+const (
+	HeadsetAudioSuffix      = ".Mix-Headset.wav"
+	FixedDistantAudioSuffix = ".Array1-01.wav"
+)
+
+// HeldOutReplacement records the single permitted held-out substitution:
+// which requested held-out meeting was replaced by IS1009a and the concrete
+// annotation failure that justified it. It is decided before any detector
+// metric is inspected.
+type HeldOutReplacement struct {
+	ReplacedMeetingID       string `json:"replaced_meeting_id"`
+	ReplacementMeetingID    string `json:"replacement_meeting_id"`
+	AnnotationFailureReason string `json:"annotation_failure_reason"`
 }
 
 // MaxObjectSizeBytes bounds any single pinned object's declared size. It is
@@ -88,6 +142,7 @@ type AnnotationObject struct {
 type Meeting struct {
 	ID              string             `json:"id"`
 	Class           string             `json:"class"`
+	Split           Split              `json:"split"`
 	HeadsetMix      AudioObject        `json:"headset_mix"`
 	FixedDistantMix AudioObject        `json:"fixed_distant_mix"`
 	Annotations     []AnnotationObject `json:"annotations"`
@@ -95,9 +150,10 @@ type Meeting struct {
 
 // Manifest is the top-level pinned corpus manifest.
 type Manifest struct {
-	SchemaVersion     int           `json:"schema_version"`
-	AnnotationArchive ArchiveObject `json:"annotation_archive"`
-	Meetings          []Meeting     `json:"meetings"`
+	SchemaVersion      int                 `json:"schema_version"`
+	AnnotationArchive  ArchiveObject       `json:"annotation_archive"`
+	HeldOutReplacement *HeldOutReplacement `json:"held_out_replacement,omitempty"`
+	Meetings           []Meeting           `json:"meetings"`
 }
 
 // Recording is one flattened meeting/microphone-condition pair: the unit the
@@ -106,6 +162,7 @@ type Recording struct {
 	ID          string
 	MeetingID   string
 	Class       string
+	Split       Split
 	Mic         string
 	Audio       AudioObject
 	Annotations []AnnotationObject
@@ -132,10 +189,12 @@ func Load(data []byte) (*Manifest, error) {
 }
 
 // Validate checks every structural and content invariant the rest of the
-// evaluator relies on: schema version, exactly the required meetings and
-// classes, HTTPS URLs, positive bounded sizes, lowercase 64-character
-// SHA-256 values, sane channel declarations, same-meeting annotation
-// pairing, and path-safe identifiers.
+// evaluator relies on: schema version, exact split membership (the fixed
+// tuning pair plus the requested or one recorded-replacement held-out
+// pair), each meeting's actual class, HTTPS URLs naming the meeting's own
+// microphone WAVs, positive bounded sizes, lowercase 64-character SHA-256
+// values, sane channel declarations, same-meeting annotation pairing, no
+// duplicate recordings or members, and path-safe identifiers.
 func (m *Manifest) Validate() error {
 	if m.SchemaVersion != SchemaVersion {
 		return fmt.Errorf("manifest: unsupported schema_version %d (want %d)", m.SchemaVersion, SchemaVersion)
@@ -144,32 +203,83 @@ func (m *Manifest) Validate() error {
 		return fmt.Errorf("manifest: annotation_archive: %w", err)
 	}
 
-	if len(m.Meetings) != len(requiredMeetings) {
-		return fmt.Errorf("manifest: expected exactly %d meetings, got %d", len(requiredMeetings), len(m.Meetings))
+	wantHeldOut, err := m.expectedHeldOut()
+	if err != nil {
+		return err
+	}
+	want := map[string]Split{}
+	for _, id := range tuningMeetings {
+		want[id] = SplitTuning
+	}
+	for _, id := range wantHeldOut {
+		want[id] = SplitHeldOut
+	}
+
+	if len(m.Meetings) != len(want) {
+		return fmt.Errorf("manifest: expected exactly %d meetings (2 tuning, 2 held_out), got %d", len(want), len(m.Meetings))
+	}
+	// Duplicate meeting IDs are reported first, whether within one split or
+	// across both, so the diagnostic names the real defect.
+	ids := make(map[string]Split, len(m.Meetings))
+	for _, meeting := range m.Meetings {
+		if prev, dup := ids[meeting.ID]; dup {
+			return fmt.Errorf("manifest: duplicate meeting id %q (splits %q and %q)", meeting.ID, prev, meeting.Split)
+		}
+		ids[meeting.ID] = meeting.Split
 	}
 	seen := make(map[string]bool, len(m.Meetings))
+	audioURLs := map[string]string{}
+	audioHashes := map[string]string{}
+	members := map[string]string{}
 	for _, meeting := range m.Meetings {
+		if err := validateSafeID(meeting.ID); err != nil {
+			return fmt.Errorf("manifest: meeting %q: %w", meeting.ID, err)
+		}
 		if seen[meeting.ID] {
 			return fmt.Errorf("manifest: duplicate meeting id %q", meeting.ID)
 		}
 		seen[meeting.ID] = true
 
-		wantClass, ok := requiredMeetings[meeting.ID]
+		if !meeting.Split.Valid() {
+			return fmt.Errorf("manifest: meeting %q has unknown split %q (want %q or %q)", meeting.ID, meeting.Split, SplitTuning, SplitHeldOut)
+		}
+		wantSplit, ok := want[meeting.ID]
 		if !ok {
+			if _, known := knownMeetingClasses[meeting.ID]; known {
+				return fmt.Errorf("manifest: meeting %q is not a member of any split under this manifest's replacement metadata", meeting.ID)
+			}
 			return fmt.Errorf("manifest: unknown meeting id %q", meeting.ID)
 		}
-		if meeting.Class != wantClass {
-			return fmt.Errorf("manifest: meeting %q must have class %q, got %q", meeting.ID, wantClass, meeting.Class)
+		if meeting.Split != wantSplit {
+			return fmt.Errorf("manifest: meeting %q must be in split %q, got %q", meeting.ID, wantSplit, meeting.Split)
 		}
-		if err := validateSafeID(meeting.ID); err != nil {
-			return fmt.Errorf("manifest: meeting %q: %w", meeting.ID, err)
+		if wantClass := knownMeetingClasses[meeting.ID]; meeting.Class != wantClass {
+			return fmt.Errorf("manifest: meeting %q must have its actual class %q, got %q", meeting.ID, wantClass, meeting.Class)
 		}
 
-		if err := validateAudioObject(meeting.HeadsetMix); err != nil {
-			return fmt.Errorf("manifest: meeting %q headset_mix: %w", meeting.ID, err)
-		}
-		if err := validateAudioObject(meeting.FixedDistantMix); err != nil {
-			return fmt.Errorf("manifest: meeting %q fixed_distant_mix: %w", meeting.ID, err)
+		for _, mic := range []struct {
+			name   string
+			obj    AudioObject
+			suffix string
+		}{
+			{"headset_mix", meeting.HeadsetMix, HeadsetAudioSuffix},
+			{"fixed_distant_mix", meeting.FixedDistantMix, FixedDistantAudioSuffix},
+		} {
+			if err := validateAudioObject(mic.obj); err != nil {
+				return fmt.Errorf("manifest: meeting %q %s: %w", meeting.ID, mic.name, err)
+			}
+			if err := validateAudioIdentity(mic.obj.URL, meeting.ID, mic.suffix); err != nil {
+				return fmt.Errorf("manifest: meeting %q %s: %w", meeting.ID, mic.name, err)
+			}
+			where := meeting.ID + " " + mic.name
+			if prev, dup := audioURLs[mic.obj.URL]; dup {
+				return fmt.Errorf("manifest: duplicate recording: %s audio url is also %s", where, prev)
+			}
+			audioURLs[mic.obj.URL] = where
+			if prev, dup := audioHashes[mic.obj.SHA256]; dup {
+				return fmt.Errorf("manifest: duplicate recording: %s audio sha256 is also %s", where, prev)
+			}
+			audioHashes[mic.obj.SHA256] = where
 		}
 
 		if len(meeting.Annotations) == 0 {
@@ -188,15 +298,60 @@ func (m *Manifest) Validate() error {
 			if err := validateAnnotationObject(ann, meeting.ID); err != nil {
 				return fmt.Errorf("manifest: meeting %q annotation %q: %w", meeting.ID, ann.ParticipantID, err)
 			}
+			where := meeting.ID + " participant " + ann.ParticipantID
+			if prev, dup := members[ann.Member]; dup {
+				return fmt.Errorf("manifest: duplicate annotation member %q (%s and %s)", ann.Member, prev, where)
+			}
+			members[ann.Member] = where
 		}
 	}
-	if len(m.Meetings) != len(seen) {
-		return fmt.Errorf("manifest: meeting id bookkeeping mismatch")
-	}
-	for id := range requiredMeetings {
+	for id, split := range want {
 		if !seen[id] {
-			return fmt.Errorf("manifest: missing required meeting %q", id)
+			return fmt.Errorf("manifest: missing required %s meeting %q", split, id)
 		}
+	}
+	return nil
+}
+
+// expectedHeldOut returns the held-out membership implied by the optional
+// replacement metadata, validating that metadata.
+func (m *Manifest) expectedHeldOut() ([]string, error) {
+	r := m.HeldOutReplacement
+	if r == nil {
+		return append([]string(nil), requestedHeldOutMeetings...), nil
+	}
+	if r.ReplacementMeetingID != HeldOutSubstituteMeetingID {
+		return nil, fmt.Errorf("manifest: held_out_replacement: replacement meeting must be %q, got %q", HeldOutSubstituteMeetingID, r.ReplacementMeetingID)
+	}
+	if strings.TrimSpace(r.AnnotationFailureReason) == "" {
+		return nil, fmt.Errorf("manifest: held_out_replacement: a concrete annotation_failure_reason is required")
+	}
+	var out []string
+	replaced := false
+	for _, id := range requestedHeldOutMeetings {
+		if id == r.ReplacedMeetingID {
+			replaced = true
+			out = append(out, HeldOutSubstituteMeetingID)
+			continue
+		}
+		out = append(out, id)
+	}
+	if !replaced {
+		return nil, fmt.Errorf("manifest: held_out_replacement: replaced meeting %q is not a requested held-out meeting (want one of %v)", r.ReplacedMeetingID, requestedHeldOutMeetings)
+	}
+	return out, nil
+}
+
+// validateAudioIdentity requires the audio URL's basename to be exactly
+// <meetingID><suffix>, so one meeting can never borrow another meeting's
+// (or the other microphone's) WAV.
+func validateAudioIdentity(raw, meetingID, suffix string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("invalid url %q: %w", raw, err)
+	}
+	if base := path.Base(u.Path); base != meetingID+suffix {
+		return fmt.Errorf("audio url %q must name %q", raw, meetingID+suffix)
 	}
 	return nil
 }
@@ -341,9 +496,9 @@ func (m *Manifest) sortedMeetings() []Meeting {
 	return out
 }
 
-// Recordings flattens the manifest into its four (meeting, microphone
-// condition) recordings, stably ordered by meeting ID then microphone
-// condition.
+// Recordings flattens the manifest into its eight (meeting, microphone
+// condition) recordings, stably ordered by split (tuning first), then
+// meeting ID, then microphone condition.
 func (m *Manifest) Recordings() []Recording {
 	var out []Recording
 	for _, meeting := range m.sortedMeetings() {
@@ -352,6 +507,7 @@ func (m *Manifest) Recordings() []Recording {
 				ID:          meeting.ID + "-" + MicHeadset,
 				MeetingID:   meeting.ID,
 				Class:       meeting.Class,
+				Split:       meeting.Split,
 				Mic:         MicHeadset,
 				Audio:       meeting.HeadsetMix,
 				Annotations: meeting.Annotations,
@@ -360,6 +516,7 @@ func (m *Manifest) Recordings() []Recording {
 				ID:          meeting.ID + "-" + MicFixedDistant,
 				MeetingID:   meeting.ID,
 				Class:       meeting.Class,
+				Split:       meeting.Split,
 				Mic:         MicFixedDistant,
 				Audio:       meeting.FixedDistantMix,
 				Annotations: meeting.Annotations,
@@ -367,11 +524,44 @@ func (m *Manifest) Recordings() []Recording {
 		)
 	}
 	sort.Slice(out, func(i, j int) bool {
+		if out[i].Split != out[j].Split {
+			return splitRank(out[i].Split) < splitRank(out[j].Split)
+		}
 		if out[i].MeetingID != out[j].MeetingID {
 			return out[i].MeetingID < out[j].MeetingID
 		}
 		return out[i].Mic < out[j].Mic
 	})
+	return out
+}
+
+func splitRank(s Split) int {
+	if s == SplitTuning {
+		return 0
+	}
+	return 1
+}
+
+// RecordingsForSplit returns the flattened recordings of one split, in
+// Recordings order.
+func (m *Manifest) RecordingsForSplit(s Split) []Recording {
+	var out []Recording
+	for _, r := range m.Recordings() {
+		if r.Split == s {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// MeetingIDs returns one split's meeting IDs, sorted.
+func (m *Manifest) MeetingIDs(s Split) []string {
+	var out []string
+	for _, meeting := range m.sortedMeetings() {
+		if meeting.Split == s {
+			out = append(out, meeting.ID)
+		}
+	}
 	return out
 }
 
@@ -397,6 +587,10 @@ func (m *Manifest) CanonicalBytes() ([]byte, error) {
 		SchemaVersion:     m.SchemaVersion,
 		AnnotationArchive: m.AnnotationArchive,
 		Meetings:          m.sortedMeetings(),
+	}
+	if m.HeldOutReplacement != nil {
+		r := *m.HeldOutReplacement
+		canon.HeldOutReplacement = &r
 	}
 	return json.Marshal(canon)
 }

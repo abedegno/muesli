@@ -62,13 +62,18 @@ type StreamingConfig struct {
 }
 
 // DefaultStreamingConfig returns the recommended live-transcription defaults.
+//
+// EnergyThreshold 0.002 was selected on AMI tuning meetings and validated
+// against the historical 0.01 on separate held-out meetings (muesli#782;
+// see docs/ami-vad-evaluation.md). It applies only when a session does not
+// set its own threshold.
 func DefaultStreamingConfig() StreamingConfig {
 	return StreamingConfig{
 		SampleRate:        16_000,
 		MaxWindow:         30 * time.Second,
 		PartialInterval:   1500 * time.Millisecond,
 		SilenceDuration:   700 * time.Millisecond,
-		EnergyThreshold:   0.01,
+		EnergyThreshold:   0.002,
 		SilenceHysteresis: 300 * time.Millisecond,
 		VADFrame:          20 * time.Millisecond,
 	}

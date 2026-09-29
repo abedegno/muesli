@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/abedegno/muesli/cmd/whisper-cpp-streaming/ami-eval/internal/report"
+	"github.com/abedegno/muesli/internal/pluginkit"
 )
 
 func TestParseFlagsDefaults(t *testing.T) {
@@ -142,5 +145,46 @@ func TestRunRejectsDeniedCachePath(t *testing.T) {
 	err = run([]string{"--cache", filepath.Join(dir, "internal", "evil-cache")}, f)
 	if err == nil {
 		t.Fatal("expected cache path rejection before any manifest read is attempted")
+	}
+}
+
+// TestCommittedReportDecisionMatchesProductionDefaults reads the committed
+// report's machine-readable decision (no corpus needed) and requires its
+// final threshold to equal both the runtime default and the live schema
+// default, with the comparator still the historical 0.01.
+func TestCommittedReportDecisionMatchesProductionDefaults(t *testing.T) {
+	doc, err := os.ReadFile(filepath.Join("..", "..", "..", "docs", "ami-vad-evaluation.md"))
+	if err != nil {
+		t.Fatalf("read committed report: %v", err)
+	}
+	blk, err := report.ParseDecisionBlock(doc)
+	if err != nil {
+		t.Fatalf("committed report has no valid decision block: %v", err)
+	}
+	if blk.HistoricalBaselineThreshold != 0.01 {
+		t.Fatalf("historical baseline = %v, want 0.01", blk.HistoricalBaselineThreshold)
+	}
+	runtimeDefault := pluginkit.DefaultStreamingConfig().EnergyThreshold
+	schemaDefault, err := report.LiveSchemaDefault()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := report.CheckProductionConsistency(blk.FinalThreshold, runtimeDefault, schemaDefault); err != nil {
+		t.Fatal(err)
+	}
+	if blk.RuntimeDefaultThreshold != runtimeDefault || blk.LiveSchemaDefault != schemaDefault {
+		t.Fatalf("committed report recorded defaults %v/%v, live %v/%v: regenerate it", blk.RuntimeDefaultThreshold, blk.LiveSchemaDefault, runtimeDefault, schemaDefault)
+	}
+	switch blk.Outcome {
+	case "ship":
+		if blk.SelectedThreshold == nil || *blk.SelectedThreshold != blk.FinalThreshold {
+			t.Fatalf("ship decision must ship the selected threshold: %+v", blk)
+		}
+	case "keep":
+		if blk.FinalThreshold != 0.01 {
+			t.Fatalf("keep decision must retain 0.01: %+v", blk)
+		}
+	default:
+		t.Fatalf("unknown outcome %q", blk.Outcome)
 	}
 }
