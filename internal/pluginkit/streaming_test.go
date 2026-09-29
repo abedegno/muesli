@@ -513,27 +513,62 @@ func receiveSegment(t *testing.T, segments <-chan StreamingSegment) StreamingSeg
 // meetings (muesli#782, docs/ami-vad-evaluation.md). Changing it requires a
 // new evaluation, not an edit here.
 func TestDefaultStreamingConfigEnergyThresholdIsEvaluatedValue(t *testing.T) {
-	if got := DefaultStreamingConfig().EnergyThreshold; got != 0.003 {
-		t.Fatalf("DefaultStreamingConfig().EnergyThreshold = %v, want 0.003", got)
+	if got := DefaultStreamingConfig().EnergyThreshold; got != 0.002 {
+		t.Fatalf("DefaultStreamingConfig().EnergyThreshold = %v, want 0.002", got)
 	}
 }
 
-// TestDefaultSessionUsesTheEvaluatedThreshold proves the omitted-VAD path
-// actually detects with the default: a frame between 0.003 and the old 0.01
-// is speech, a frame below 0.003 is not.
-func TestDefaultSessionUsesTheEvaluatedThreshold(t *testing.T) {
-	vad := EnergyVAD{Threshold: DefaultStreamingConfig().EnergyThreshold}
-	frame := func(amp float32) []float32 {
-		f := make([]float32, 320)
-		for i := range f {
-			f[i] = amp
+// finalsFromDefaultSession runs a real session built exactly as production
+// builds one when no VAD is supplied -- NewStreamingSession(DefaultStreamingConfig(),
+// nil, ...) -- over 3s of constant-amplitude audio followed by 2s of digital
+// silence, and returns the final segments it emitted.
+func finalsFromDefaultSession(t *testing.T, amp float32) []StreamingSegment {
+	t.Helper()
+	cfg := DefaultStreamingConfig()
+	var mu sync.Mutex
+	var finals []StreamingSegment
+	session, err := NewStreamingSession(cfg, nil, func([]float32) (string, error) { return "speech", nil },
+		func(seg StreamingSegment, err error) {
+			if err != nil {
+				t.Errorf("unexpected streaming error: %v", err)
+				return
+			}
+			if seg.Final {
+				mu.Lock()
+				finals = append(finals, seg)
+				mu.Unlock()
+			}
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunk := cfg.SampleRate / 5 // 200ms feeds, as the live plugin receives
+	feed := func(value float32, seconds int) {
+		for n := 0; n < seconds*5; n++ {
+			frame := make([]float32, chunk)
+			for i := range frame {
+				frame[i] = value
+			}
+			session.Feed(frame)
+			session.Wait()
 		}
-		return f
 	}
-	if !vad.IsSpeech(frame(0.005)) {
-		t.Fatal("a 0.005 RMS frame must be speech at the default threshold")
+	feed(amp, 3)
+	feed(0, 2)
+	mu.Lock()
+	defer mu.Unlock()
+	return append([]StreamingSegment(nil), finals...)
+}
+
+// TestDefaultSessionUsesTheEvaluatedThreshold proves the omitted-VAD session
+// path detects with the evaluated default: audio at RMS 0.0025 (above 0.002,
+// below both 0.003 and the old 0.01) is transcribed as one utterance, and
+// audio at RMS 0.0015 (below 0.002) is not.
+func TestDefaultSessionUsesTheEvaluatedThreshold(t *testing.T) {
+	if got := finalsFromDefaultSession(t, 0.0025); len(got) != 1 {
+		t.Fatalf("RMS 0.0025 audio produced %d final segments, want 1 at the default threshold", len(got))
 	}
-	if vad.IsSpeech(frame(0.002)) {
-		t.Fatal("a 0.002 RMS frame must be silence at the default threshold")
+	if got := finalsFromDefaultSession(t, 0.0015); len(got) != 0 {
+		t.Fatalf("RMS 0.0015 audio produced %d final segments, want 0 at the default threshold", len(got))
 	}
 }

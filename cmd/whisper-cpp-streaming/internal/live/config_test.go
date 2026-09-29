@@ -264,7 +264,7 @@ func TestNewVADIsConstructedPerSession(t *testing.T) {
 
 // evaluatedDefault is the fixed threshold selected and validated by the AMI
 // evaluation (muesli#782, docs/ami-vad-evaluation.md).
-const evaluatedDefault = 0.003
+const evaluatedDefault = 0.002
 
 func vadThresholdSchema(t *testing.T) (def float64, description string) {
 	t.Helper()
