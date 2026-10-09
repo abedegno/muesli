@@ -320,7 +320,7 @@ jobs:
       # `warn`, not `ignore`, so a wrong path says so instead of looking healthy.
       - name: Upload Playwright traces
         if: failure()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: playwright-traces
           path: test-results/
