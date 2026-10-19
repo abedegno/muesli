@@ -1,11 +1,6 @@
 import type { MuesliClient } from './muesliClient'
 
-type UploadPhase =
-  | 'requesting-url'
-  | 'uploading-audio'
-  | 'confirming-upload'
-  | 'done'
-  | 'error'
+type UploadPhase = 'requesting-url' | 'uploading-audio' | 'confirming-upload' | 'done' | 'error'
 
 export interface UploadProgress {
   phase: UploadPhase
@@ -31,12 +26,14 @@ export async function uploadAudioToNote(
   client: MuesliClient,
   input: UploadAudioInput,
   onProgress: ProgressFn = () => {},
+  onGrant?: (key: string) => Promise<void>
 ): Promise<UploadResult> {
   const { noteId } = input
   try {
     if (input.audio && input.audio.length > 0) {
       onProgress({ phase: 'requesting-url', noteId })
       const grant = await client.getAudioUploadUrl(noteId)
+      await onGrant?.(grant.key)
       onProgress({ phase: 'uploading-audio', noteId })
       await client.putAudio(grant, input.audio, input.audioMimeType)
       onProgress({ phase: 'confirming-upload', noteId })

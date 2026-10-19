@@ -1,9 +1,11 @@
+import { randomUUID } from 'node:crypto'
 import { spawn as nodeSpawn } from 'node:child_process'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 
 export interface SystemAudioFormat {
   sampleRate: number
   channels: number
+  captureId?: string
 }
 
 export interface SystemAudioHelperDeps {
@@ -19,6 +21,7 @@ export function makeSystemAudioHelper(deps: SystemAudioHelperDeps = {}) {
   const spawn = deps.spawnImpl ?? nodeSpawn
   const startTimeoutMs = deps.startTimeoutMs ?? 5000
   let child: ChildProcessWithoutNullStreams | null = null
+  let activeCaptureId: string | null = null
 
   const available = () => platform === 'darwin' && binPath.length > 0
 
@@ -34,9 +37,14 @@ export function makeSystemAudioHelper(deps: SystemAudioHelperDeps = {}) {
         }
       }
       child = null
+      activeCaptureId = null
 
-      const proc = spawn(binPath, ['--start'], { stdio: ['ignore', 'pipe', 'pipe'] }) as unknown as ChildProcessWithoutNullStreams
+      const proc = spawn(binPath, ['--start'], {
+        stdio: ['ignore', 'pipe', 'pipe'],
+      }) as unknown as ChildProcessWithoutNullStreams
       child = proc
+      const captureId = randomUUID()
+      activeCaptureId = captureId
 
       return await new Promise<SystemAudioFormat | null>((resolve) => {
         let header = ''
@@ -48,7 +56,10 @@ export function makeSystemAudioHelper(deps: SystemAudioHelperDeps = {}) {
           if (settled) return
           settled = true
           if (startTimeout) clearTimeout(startTimeout)
-          if (clearActiveChild && child === proc) child = null
+          if (clearActiveChild && child === proc) {
+            child = null
+            activeCaptureId = null
+          }
           resolve(value)
         }
 
@@ -63,6 +74,7 @@ export function makeSystemAudioHelper(deps: SystemAudioHelperDeps = {}) {
         }, startTimeoutMs)
 
         const onData = (d: Buffer) => {
+          if (child !== proc) return
           if (headerDone) {
             onPcm(new Uint8Array(d))
             return
@@ -71,6 +83,10 @@ export function makeSystemAudioHelper(deps: SystemAudioHelperDeps = {}) {
           const nl = d.indexOf(0x0a)
           if (nl === -1) {
             header += d.toString('utf8')
+            if (header.length > 4096) {
+              proc.kill('SIGTERM')
+              settle(null, true)
+            }
             return
           }
 
@@ -79,12 +95,21 @@ export function makeSystemAudioHelper(deps: SystemAudioHelperDeps = {}) {
           const sr = /sr=(\d+)/.exec(header)
           const ch = /ch=(\d+)/.exec(header)
           const rest = d.subarray(nl + 1)
-          if (rest.length > 0) onPcm(new Uint8Array(rest))
-          if (!sr || !ch) {
+          if (
+            header.length > 4096 ||
+            !sr ||
+            !ch ||
+            Number(sr[1]) < 8000 ||
+            Number(sr[1]) > 192000 ||
+            Number(ch[1]) < 1 ||
+            Number(ch[1]) > 8
+          ) {
+            proc.kill('SIGTERM')
             settle(null, true)
             return
           }
-          settle({ sampleRate: Number(sr[1]), channels: Number(ch[1]) })
+          if (rest.length > 0) onPcm(new Uint8Array(rest))
+          settle({ sampleRate: Number(sr[1]), channels: Number(ch[1]), captureId })
         }
         const onError = () => {
           try {
@@ -98,19 +123,25 @@ export function makeSystemAudioHelper(deps: SystemAudioHelperDeps = {}) {
         proc.stderr.on('data', () => {})
         proc.once('error', onError)
         proc.once('exit', () => {
-          if (child === proc) child = null
+          if (child === proc) {
+            child = null
+            activeCaptureId = null
+          }
           if (!headerDone) settle(null, true)
         })
       })
     } catch {
       child = null
+      activeCaptureId = null
       return null
     }
   }
 
-  async function stop(): Promise<void> {
+  async function stop(captureId?: string): Promise<void> {
+    if (captureId && captureId !== activeCaptureId) return
     if (child && !child.killed) child.kill('SIGTERM')
     child = null
+    activeCaptureId = null
   }
 
   return { available, start, stop }

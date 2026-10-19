@@ -32,8 +32,14 @@ describe('ensureLocalSession', () => {
     expect(client.setup).toHaveBeenCalledWith('desktop@localhost', 'pw-1')
     expect(client.login).toHaveBeenCalledWith('desktop@localhost', 'pw-1')
     expect(client.createToken).toHaveBeenCalledWith('muesli-desktop', 'session-1')
-    expect(secretStore.saveCreds).toHaveBeenCalledWith({ email: 'desktop@localhost', password: 'pw-1' })
-    expect(tokenStore.save).toHaveBeenCalledWith({ serverUrl: 'http://localhost:8080', token: 'app-1' })
+    expect(secretStore.saveCreds).toHaveBeenCalledWith({
+      email: 'desktop@localhost',
+      password: 'pw-1',
+    })
+    expect(tokenStore.save).toHaveBeenCalledWith({
+      serverUrl: 'http://localhost:8080',
+      token: 'app-1',
+    })
   })
 
   it('skips when a token already exists', async () => {
@@ -100,7 +106,10 @@ describe('ensureLocalSession', () => {
     expect(client.login).toHaveBeenCalledWith('desktop@localhost', 'saved-pw')
     expect(client.createToken).toHaveBeenCalledWith('muesli-desktop', 'session-2')
     expect(secretStore.saveCreds).not.toHaveBeenCalled()
-    expect(tokenStore.save).toHaveBeenCalledWith({ serverUrl: 'http://localhost:8080', token: 'app-2' })
+    expect(tokenStore.save).toHaveBeenCalledWith({
+      serverUrl: 'http://localhost:8080',
+      token: 'app-2',
+    })
   })
 
   it('returns needs-setup when setup is complete but no creds are stored', async () => {
@@ -232,8 +241,24 @@ describe('ensureLocalSession', () => {
         secretStore,
         makeClient: () => client,
         generatePassword: () => 'pw-6',
-      }),
+      })
     ).rejects.toThrow('bad login')
     expect(tokenStore.save).not.toHaveBeenCalled()
   })
+})
+
+it('rebinds an existing embedded credential to the current loopback listener', async () => {
+  const config = { serverUrl: 'http://127.0.0.1:4000', token: 'existing-app-token' }
+  const save = vi.fn()
+  await ensureLocalSession({
+    embedded: true,
+    baseUrl: 'http://127.0.0.1:5000',
+    tokenStore: { load: () => config, save },
+    secretStore: { getManualServer: () => false, loadCreds: () => null, saveCreds: () => {} },
+    makeClient: () => {
+      throw new Error('An existing local token must not require re-provisioning')
+    },
+    generatePassword: () => '',
+  })
+  expect(save).toHaveBeenCalledWith({ ...config, serverUrl: 'http://127.0.0.1:5000' })
 })

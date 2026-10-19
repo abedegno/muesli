@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { useEffect, useState, type ReactNode } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { Building2, Users } from 'lucide-react'
@@ -84,10 +85,20 @@ function sortCompanies(items: CompanyWithCount[], sortMode: SortMode): CompanyWi
 function PeopleRow({ person, onOpen }: { person: PersonWithCompany; onOpen: () => void }) {
   return (
     <li className="flex items-center justify-between gap-4 rounded-[var(--radius)] border border-border px-3 py-2">
-      <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-        <MonogramAvatar id={person.id} label={person.display_name || person.primary_email} className="h-8 w-8 text-sm" />
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex min-w-0 flex-1 items-center gap-3 text-left"
+      >
+        <MonogramAvatar
+          id={person.id}
+          label={person.display_name || person.primary_email}
+          className="h-8 w-8 text-sm"
+        />
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium">{person.display_name || 'Untitled person'}</p>
+          <p className="truncate text-sm font-medium">
+            {person.display_name || uiText('Untitled person')}
+          </p>
           <p className="truncate text-xs text-muted-foreground">{person.primary_email}</p>
         </div>
       </button>
@@ -99,7 +110,7 @@ function PeopleRow({ person, onOpen }: { person: PersonWithCompany; onOpen: () =
           {person.company.name || person.company.domain}
         </Link>
       ) : (
-        <p className="shrink-0 truncate text-sm text-muted-foreground">—</p>
+        <p className="shrink-0 truncate text-sm text-muted-foreground">{uiText('—')}</p>
       )}
     </li>
   )
@@ -108,10 +119,20 @@ function PeopleRow({ person, onOpen }: { person: PersonWithCompany; onOpen: () =
 function CompanyRow({ company, onOpen }: { company: CompanyWithCount; onOpen: () => void }) {
   return (
     <li className="flex items-center justify-between gap-4 rounded-[var(--radius)] border border-border px-3 py-2">
-      <button type="button" onClick={onOpen} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-        <MonogramAvatar id={company.id} label={company.name || company.domain} className="h-8 w-8 text-sm" />
+      <button
+        type="button"
+        onClick={onOpen}
+        className="flex min-w-0 flex-1 items-center gap-3 text-left"
+      >
+        <MonogramAvatar
+          id={company.id}
+          label={company.name || company.domain}
+          className="h-8 w-8 text-sm"
+        />
         <div className="min-w-0">
-          <p className="truncate text-sm font-medium">{company.name || 'Untitled company'}</p>
+          <p className="truncate text-sm font-medium">
+            {company.name || uiText('Untitled company')}
+          </p>
           <p className="truncate text-xs text-muted-foreground">{company.domain}</p>
         </div>
       </button>
@@ -134,7 +155,8 @@ export function PeopleScreen() {
   useEffect(() => {
     let cancelled = false
 
-    void muesli.listPeople()
+    void muesli
+      .listPeople()
       .then((items) => {
         if (cancelled) return
         setPeople(items)
@@ -146,7 +168,8 @@ export function PeopleScreen() {
         setPeopleError(errorMessage(err))
       })
 
-    void muesli.listCompanies()
+    void muesli
+      .listCompanies()
       .then((items) => {
         if (cancelled) return
         setCompanies(items)
@@ -171,93 +194,142 @@ export function PeopleScreen() {
   const sortedPeople = people ? sortPeople(people, sortMode) : null
   const sortedCompanies = companies ? sortCompanies(companies, sortMode) : null
   const filteredPeople = normalizedQuery
-    ? sortedPeople?.filter((person) => {
+    ? (sortedPeople?.filter((person) => {
         const displayName = person.display_name.toLowerCase()
         const primaryEmail = person.primary_email.toLowerCase()
         return displayName.includes(normalizedQuery) || primaryEmail.includes(normalizedQuery)
-      }) ?? null
+      }) ?? null)
     : sortedPeople
   const filteredCompanies = normalizedQuery
-    ? sortedCompanies?.filter((company) => {
+    ? (sortedCompanies?.filter((company) => {
         const name = company.name.toLowerCase()
         const domain = company.domain.toLowerCase()
         return name.includes(normalizedQuery) || domain.includes(normalizedQuery)
-      }) ?? null
+      }) ?? null)
     : sortedCompanies
   const activeFilteredItems = activeTab === 'people' ? filteredPeople : filteredCompanies
   const activeItems = activeTab === 'people' ? people : companies
   const isEmpty = activeItems !== null && activeItems.length === 0 && activeError === null
-  const hasNoMatches = normalizedQuery.length > 0 && activeFilteredItems !== null && activeFilteredItems.length === 0 && activeError === null
-  const countsLabel = people !== null && companies !== null ? `${people.length} people · ${companies.length} companies` : null
+  const hasNoMatches =
+    normalizedQuery.length > 0 &&
+    activeFilteredItems !== null &&
+    activeFilteredItems.length === 0 &&
+    activeError === null
+  const countsLabel =
+    people !== null && companies !== null
+      ? `${people.length} people · ${companies.length} companies`
+      : null
 
   return (
     <div className="mx-auto max-w-3xl p-6">
-      {agentConfigured === false ? <div className="mb-4"><AgentUnavailableNotice compact /></div> : null}
+      {agentConfigured === false ? (
+        <div className="mb-4">
+          <AgentUnavailableNotice compact />
+        </div>
+      ) : null}
       <div className="mb-4 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <div>
-          <h1 className="font-serif text-xl font-semibold">People</h1>
-          <p className="text-sm text-muted-foreground">Browse people and companies from your workspace.</p>
+          <h1 className="font-serif text-xl font-semibold">{uiText('People')}</h1>
+          <p className="text-sm text-muted-foreground">
+            {uiText('Browse people and companies from your workspace.')}
+          </p>
           {countsLabel ? <p className="text-sm text-muted-foreground">{countsLabel}</p> : null}
         </div>
         <label className="flex items-center gap-2 text-sm text-muted-foreground">
-          <span className="whitespace-nowrap text-xs font-medium uppercase tracking-wide">Sort</span>
+          <span className="whitespace-nowrap text-xs font-medium uppercase tracking-wide">
+            {uiText('Sort')}
+          </span>
           <select
-            aria-label="Sort people and companies"
+            aria-label={uiText('Sort people and companies')}
             value={sortMode}
             onChange={(e) => setSortMode(e.target.value as SortMode)}
             className="h-9 rounded-[var(--radius)] border border-input bg-background px-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <option value="name">Name</option>
-            <option value="recent">Most recent</option>
+            <option value="name">{uiText('Name')}</option>
+            <option value="recent">{uiText('Most recent')}</option>
           </select>
         </label>
       </div>
 
       <label htmlFor="people-search" className="mb-4 block">
-        <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-muted-foreground">Search</span>
+        <span className="mb-1 block text-xs font-medium uppercase tracking-wide text-muted-foreground">
+          {uiText('Search')}
+        </span>
         <Input
           id="people-search"
-          aria-label="Search people and companies"
-          placeholder="Search people or companies"
+          aria-label={uiText('Search people and companies')}
+          placeholder={uiText('Search people or companies')}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
       </label>
 
       <div className="mb-4 flex items-center gap-2">
-        <TabButton active={activeTab === 'people'} onClick={() => setActiveTab('people')} icon={<Users size={14} />} label="People" />
-        <TabButton active={activeTab === 'companies'} onClick={() => setActiveTab('companies')} icon={<Building2 size={14} />} label="Companies" />
+        <TabButton
+          active={activeTab === 'people'}
+          onClick={() => setActiveTab('people')}
+          icon={<Users size={14} />}
+          label={uiText('People')}
+        />
+        <TabButton
+          active={activeTab === 'companies'}
+          onClick={() => setActiveTab('companies')}
+          icon={<Building2 size={14} />}
+          label={uiText('Companies')}
+        />
       </div>
 
       {activeLoading ? (
         <div className="flex flex-col gap-2">
-          <div className="mb-2 h-7 w-40"><Skeleton className="h-full w-full" /></div>
-          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
+          <div className="mb-2 h-7 w-40">
+            <Skeleton className="h-full w-full" />
+          </div>
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-12 w-full" />
+          ))}
         </div>
       ) : activeError ? (
         <div className="rounded-[var(--radius)] border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-          <p className="font-medium">Could not load {activeTab}</p>
+          <p className="font-medium">
+            {uiText('Could not load')} {activeTab}
+          </p>
           <p className="mt-1 break-words">{activeError}</p>
         </div>
       ) : hasNoMatches ? (
         <EmptyState
-          title="No matches"
-          hint={activeTab === 'people'
-            ? 'Try a different search for people or email addresses.'
-            : 'Try a different search for company names or domains.'}
+          title={uiText('No matches')}
+          hint={
+            activeTab === 'people'
+              ? uiText('Try a different search for people or email addresses.')
+              : uiText('Try a different search for company names or domains.')
+          }
         />
       ) : isEmpty ? (
         <EmptyState
-          title={activeTab === 'people' ? 'No people yet' : 'No companies yet'}
-          hint={activeTab === 'people'
-            ? 'People synced from your server will appear here.'
-            : 'Companies synced from your server will appear here.'}
+          title={activeTab === 'people' ? uiText('No people yet') : uiText('No companies yet')}
+          hint={
+            activeTab === 'people'
+              ? uiText('People synced from your server will appear here.')
+              : uiText('Companies synced from your server will appear here.')
+          }
         />
       ) : (
         <ul className="flex flex-col gap-2">
           {activeTab === 'people'
-            ? filteredPeople?.map((person) => <PeopleRow key={person.id} person={person} onOpen={() => navigate(`/people/${person.id}`)} />)
-            : filteredCompanies?.map((company) => <CompanyRow key={company.id} company={company} onOpen={() => navigate(`/companies/${company.id}`)} />)}
+            ? filteredPeople?.map((person) => (
+                <PeopleRow
+                  key={person.id}
+                  person={person}
+                  onOpen={() => navigate(`/people/${person.id}`)}
+                />
+              ))
+            : filteredCompanies?.map((company) => (
+                <CompanyRow
+                  key={company.id}
+                  company={company}
+                  onOpen={() => navigate(`/companies/${company.id}`)}
+                />
+              ))}
         </ul>
       )}
     </div>

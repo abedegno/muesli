@@ -50,15 +50,16 @@ required; copy `.env.example` to `.env` to override anything.
 colima start                # or Docker Desktop
 make test-db                # throwaway Postgres on :5433 (prints TEST_DATABASE_URL)
 export TEST_DATABASE_URL=postgres://postgres:postgres@localhost:5433/muesli_test?sslmode=disable
-make test                   # full Go suite — serialized with -p 1 (see note below)
+make test                   # full Go suite — up to 4 packages, 2 parallel tests per package
 make build                  # build admin SPA, embed it, compile the binary
 make run                    # run the server directly
 make test-db-stop           # tear down the test DB
 ```
 
-> **Why `-p 1`?** DB-backed tests share one test database and truncate between
-> tests, so package test binaries must run serially to avoid cross-package
-> `TRUNCATE` races. Don't remove it.
+> **Database test isolation:** `internal/testutil.NewPool` creates and migrates
+> a unique schema for each call, then drops it during test cleanup. This lets
+> packages run concurrently. `make test` uses `-p 4 -parallel 2` to limit
+> concurrency; each test pool is capped at three connections.
 
 ### Work on the admin UI
 

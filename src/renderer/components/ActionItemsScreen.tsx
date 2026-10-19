@@ -1,3 +1,5 @@
+import { formatDate } from '@/i18n'
+import { uiText } from '@/i18n'
 import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { muesli } from '@/api'
@@ -25,7 +27,7 @@ function compareByText(a: string, b: string): number {
 function formatDateLabel(iso: string): string {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return iso
-  return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  return formatDate(date, { month: 'short', day: 'numeric', year: 'numeric' })
 }
 
 function noteTitle(note: Note | undefined): string {
@@ -44,13 +46,7 @@ function noteGroupLabel(note: Note | undefined): string {
   return noteTitle(note)
 }
 
-function ActionItemRow({
-  item,
-  owner,
-}: {
-  item: ActionItem
-  owner?: PersonWithCompany
-}) {
+function ActionItemRow({ item, owner }: { item: ActionItem; owner?: PersonWithCompany }) {
   const done = item.status === 'done'
   const ownerName = personLabel(owner)
 
@@ -65,23 +61,29 @@ function ActionItemRow({
       >
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <p className={[
-              'truncate text-sm font-medium',
-              done ? 'text-muted-foreground line-through' : 'text-foreground',
-            ].join(' ')}>
-              {item.text || 'Untitled action item'}
+            <p
+              className={[
+                'truncate text-sm font-medium',
+                done ? 'text-muted-foreground line-through' : 'text-foreground',
+              ].join(' ')}
+            >
+              {item.text || uiText('Untitled action item')}
             </p>
             <span
               className={[
                 'shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide',
-                done ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'bg-primary/10 text-primary',
+                done
+                  ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                  : 'bg-primary/10 text-primary',
               ].join(' ')}
             >
-              {done ? 'Done' : 'Open'}
+              {done ? uiText('Done') : uiText('Open')}
             </span>
           </div>
           {item.due_hint ? (
-            <p className="mt-1 text-xs text-muted-foreground">Due: {item.due_hint}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {uiText('Due:')} {item.due_hint}
+            </p>
           ) : null}
           {owner ? (
             <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
@@ -90,7 +92,7 @@ function ActionItemRow({
             </div>
           ) : null}
         </div>
-        <span className="shrink-0 text-xs text-muted-foreground">Open note</span>
+        <span className="shrink-0 text-xs text-muted-foreground">{uiText('Open note')}</span>
       </Link>
     </li>
   )
@@ -114,18 +116,30 @@ function NoteGroup({
     <section className="rounded-[var(--radius)] border border-border bg-background/70 p-4">
       <div className="mb-3 flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <Link to={`/notes/${noteId}`} className="block truncate text-sm font-semibold hover:text-foreground">
+          <Link
+            to={`/notes/${noteId}`}
+            className="block truncate text-sm font-semibold hover:text-foreground"
+          >
             {title}
           </Link>
           <p className="truncate text-xs text-muted-foreground">{noteId}</p>
         </div>
         <div className="shrink-0 text-right text-xs text-muted-foreground">
-          <p>{items.length} item{items.length === 1 ? '' : 's'}</p>
+          <p>
+            {items.length} {uiText('item')}
+            {items.length === 1 ? '' : uiText('s')}
+          </p>
           {dateLabel ? <p>{dateLabel}</p> : null}
         </div>
       </div>
       <ul className="flex flex-col gap-2">
-        {items.map((item) => <ActionItemRow key={item.id} item={item} owner={item.owner_person_id ? peopleById.get(item.owner_person_id) : undefined} />)}
+        {items.map((item) => (
+          <ActionItemRow
+            key={item.id}
+            item={item}
+            owner={item.owner_person_id ? peopleById.get(item.owner_person_id) : undefined}
+          />
+        ))}
       </ul>
     </section>
   )
@@ -239,7 +253,7 @@ export function ActionItemsScreen() {
         else acc.open += 1
         return acc
       },
-      { open: 0, done: 0 },
+      { open: 0, done: 0 }
     )
   }, [itemsByOwnerAndMeeting])
 
@@ -268,7 +282,8 @@ export function ActionItemsScreen() {
 
   const loading = actionItems === null || notesById === null || people === null
   const hasItems = (actionItems?.length ?? 0) > 0
-  const noActionItems = actionItems !== null && actionItems.length === 0 && actionItemsError === null
+  const noActionItems =
+    actionItems !== null && actionItems.length === 0 && actionItemsError === null
   const noMatches = hasItems && itemsByOwnerAndMeeting.length === 0
   const emptyForStatus = hasItems && itemsByOwnerAndMeeting.length > 0 && visibleItems.length === 0
   const showEmpty = noActionItems || noMatches || emptyForStatus
@@ -292,8 +307,12 @@ export function ActionItemsScreen() {
       <div className="mx-auto max-w-4xl p-6">
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <div className="mb-2 h-7 w-44"><Skeleton className="h-full w-full" /></div>
-            <div className="h-4 w-72"><Skeleton className="h-full w-full" /></div>
+            <div className="mb-2 h-7 w-44">
+              <Skeleton className="h-full w-full" />
+            </div>
+            <div className="h-4 w-72">
+              <Skeleton className="h-full w-full" />
+            </div>
           </div>
           <div className="flex flex-col gap-2 sm:items-end">
             <div className="flex gap-2">
@@ -308,7 +327,9 @@ export function ActionItemsScreen() {
           </div>
         </div>
         <div className="flex flex-col gap-3">
-          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-28 w-full" />)}
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-28 w-full" />
+          ))}
         </div>
       </div>
     )
@@ -317,8 +338,11 @@ export function ActionItemsScreen() {
   if (actionItemsError) {
     return (
       <div className="mx-auto max-w-4xl p-6">
-        <div role="alert" className="rounded-[var(--radius)] border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-          <p className="font-medium">Could not load action items.</p>
+        <div
+          role="alert"
+          className="rounded-[var(--radius)] border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive"
+        >
+          <p className="font-medium">{uiText('Could not load action items.')}</p>
           <p className="mt-1 break-words">{actionItemsError}</p>
         </div>
       </div>
@@ -329,27 +353,31 @@ export function ActionItemsScreen() {
     <div className="mx-auto max-w-4xl p-6">
       <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
         <div>
-          <h1 className="font-serif text-xl font-semibold">Action items</h1>
-          <p className="text-sm text-muted-foreground">Across all meetings and notes.</p>
+          <h1 className="font-serif text-xl font-semibold">{uiText('Action items')}</h1>
+          <p className="text-sm text-muted-foreground">
+            {uiText('Across all meetings and notes.')}
+          </p>
           {agentConfigured === false && statusCounts.open === 0 && statusCounts.done === 0 ? (
-            <div className="mt-2"><AgentUnavailableNotice compact /></div>
+            <div className="mt-2">
+              <AgentUnavailableNotice compact />
+            </div>
           ) : (
             <p className="text-sm text-muted-foreground">
-              {statusCounts.open} open - {statusCounts.done} done
+              {statusCounts.open} {uiText('open -')} {statusCounts.done} {uiText('done')}
             </p>
           )}
         </div>
 
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end sm:justify-end">
           <label className="flex flex-col gap-1 text-sm text-muted-foreground">
-            <span className="text-xs font-medium uppercase tracking-wide">Meeting</span>
+            <span className="text-xs font-medium uppercase tracking-wide">{uiText('Meeting')}</span>
             <select
-              aria-label="Filter action items by meeting"
+              aria-label={uiText('Filter action items by meeting')}
               value={meetingFilter}
               onChange={(e) => setMeetingFilter(e.target.value)}
               className="h-9 rounded-[var(--radius)] border border-input bg-background px-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <option value={ALL_FILTER_VALUE}>All meetings</option>
+              <option value={ALL_FILTER_VALUE}>{uiText('All meetings')}</option>
               {meetingOptions.map(({ id, note }) => (
                 <option key={id} value={id}>
                   {noteGroupLabel(note)}
@@ -359,15 +387,15 @@ export function ActionItemsScreen() {
           </label>
 
           <label className="flex flex-col gap-1 text-sm text-muted-foreground">
-            <span className="text-xs font-medium uppercase tracking-wide">Owner</span>
+            <span className="text-xs font-medium uppercase tracking-wide">{uiText('Owner')}</span>
             <select
-              aria-label="Filter action items by owner"
+              aria-label={uiText('Filter action items by owner')}
               value={ownerFilter}
               onChange={(e) => setOwnerFilter(e.target.value)}
               className="h-9 rounded-[var(--radius)] border border-input bg-background px-2 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             >
-              <option value={ALL_FILTER_VALUE}>All owners</option>
-              <option value={UNASSIGNED}>Unassigned</option>
+              <option value={ALL_FILTER_VALUE}>{uiText('All owners')}</option>
+              <option value={UNASSIGNED}>{uiText('Unassigned')}</option>
               {ownerOptions.map((person) => (
                 <option key={person.id} value={person.id}>
                   {personLabel(person)}
@@ -376,7 +404,11 @@ export function ActionItemsScreen() {
             </select>
           </label>
 
-          <div className="flex items-center gap-2" role="group" aria-label="Action item status filter">
+          <div
+            className="flex items-center gap-2"
+            role="group"
+            aria-label={uiText('Action item status filter')}
+          >
             <button
               type="button"
               aria-pressed={statusFilter === 'open'}
@@ -388,7 +420,7 @@ export function ActionItemsScreen() {
                   : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground',
               ].join(' ')}
             >
-              Open
+              {uiText('Open')}
             </button>
             <button
               type="button"
@@ -401,7 +433,7 @@ export function ActionItemsScreen() {
                   : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground',
               ].join(' ')}
             >
-              Done
+              {uiText('Done')}
             </button>
             <button
               type="button"
@@ -414,21 +446,24 @@ export function ActionItemsScreen() {
                   : 'border-border text-muted-foreground hover:bg-muted hover:text-foreground',
               ].join(' ')}
             >
-              All
+              {uiText('All')}
             </button>
           </div>
         </div>
       </div>
 
       {showEmpty ? (
-        <EmptyState
-          title={emptyTitle}
-          hint={emptyHint}
-        />
+        <EmptyState title={emptyTitle} hint={emptyHint} />
       ) : (
         <div className="flex flex-col gap-3">
           {groups.map((group) => (
-            <NoteGroup key={group.noteId} noteId={group.noteId} note={group.note} items={group.items} peopleById={peopleById} />
+            <NoteGroup
+              key={group.noteId}
+              noteId={group.noteId}
+              note={group.note}
+              items={group.items}
+              peopleById={peopleById}
+            />
           ))}
         </div>
       )}

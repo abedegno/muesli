@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/abedegno/muesli/internal/model"
 	"github.com/abedegno/muesli/internal/plugin"
@@ -199,7 +201,9 @@ func (s *Server) handleCheckPluginHealth(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	client := plugin.New(p.EndpointURL, p.Token)
-	if err := client.Health(r.Context()); err != nil {
+	healthCtx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	if err := client.Health(healthCtx); err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"healthy": false, "error": pluginHealthErrorMessage(err)})
 		return
 	}

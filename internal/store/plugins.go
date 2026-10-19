@@ -334,6 +334,56 @@ func (s *Store) EnsureDefaultPlugin(ctx context.Context, cr *crypto.Crypto, kind
 	return s.SetDefaultPlugin(ctx, id)
 }
 
+// EnsureBootstrapPlugin refreshes a startup-managed plugin without replacing a
+// user's selection or re-enabling a disabled plugin. Only a kind with no saved
+// default gets a default on first registration (including disabled defaults).
+func (s *Store) EnsureBootstrapPlugin(ctx context.Context, cr *crypto.Crypto, kind, name, endpointURL, token, configJSON string) error {
+	if configJSON == "" {
+		configJSON = "{}"
+	}
+	if !json.Valid([]byte(configJSON)) {
+		return errors.New("EnsureBootstrapPlugin: invalid config JSON")
+	}
+	stored, err := sealConfig(cr, json.RawMessage(configJSON))
+	if err != nil {
+		return err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	// Bootstrap is infrequent. Serialize its small registration transaction
+	// against all plugin writes, including admin changes, without blocking reads.
+	// There is no (kind,name) unique constraint to arbitrate competing inserts.
+	if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout = '5s'`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `LOCK TABLE plugins IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		return err
+	}
+	var hasDefault bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM plugins WHERE kind=$1 AND is_default=true)`, kind).Scan(&hasDefault); err != nil {
+		return err
+	}
+	var id string
+	err = tx.QueryRow(ctx, `SELECT id FROM plugins WHERE kind=$1 AND name=$2 ORDER BY is_default DESC, id LIMIT 1`, kind, name).Scan(&id)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		_, err = tx.Exec(ctx, `INSERT INTO plugins (id,kind,name,endpoint_url,token,config,enabled,is_default)
+			VALUES ($1,$2,$3,$4,$5,$6::jsonb,true,$7)`, uuid.NewString(), kind, name, endpointURL, token, stored, !hasDefault)
+	case err != nil:
+		return err
+	default:
+		_, err = tx.Exec(ctx, `UPDATE plugins SET endpoint_url=$2, token=$3, config=$4::jsonb,
+			is_default=CASE WHEN $5 THEN is_default ELSE true END WHERE id=$1`, id, endpointURL, token, stored, hasDefault)
+	}
+	if err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
+}
+
 // DefaultPlugin returns the enabled default plugin for a kind, fully decrypted.
 func (s *Store) DefaultPlugin(ctx context.Context, cr *crypto.Crypto, kind string) (model.Plugin, error) {
 	var id string

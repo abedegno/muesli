@@ -23,7 +23,10 @@ const {
     upsertSpeakerAlias: vi.fn().mockResolvedValue({}),
     listConversations: vi.fn().mockResolvedValue([]),
     listMessages: vi.fn().mockResolvedValue([]),
-    getNoteAudioUrl: vi.fn().mockResolvedValue({ url: 'http://example.test/audio', expires_at: new Date().toISOString() }),
+    getNoteAudioUrl: vi.fn().mockResolvedValue({
+      url: 'http://example.test/audio',
+      expires_at: new Date().toISOString(),
+    }),
   }
   return {
     muesliMock,
@@ -48,7 +51,9 @@ beforeEach(() => {
   upsertSpeakerAliasMock.mockReset().mockResolvedValue({})
   listConversationsMock.mockReset().mockResolvedValue([])
   listMessagesMock.mockReset().mockResolvedValue([])
-  getNoteAudioUrlMock.mockReset().mockResolvedValue({ url: 'http://example.test/audio', expires_at: new Date().toISOString() })
+  getNoteAudioUrlMock
+    .mockReset()
+    .mockResolvedValue({ url: 'http://example.test/audio', expires_at: new Date().toISOString() })
   muesliMock.getNoteAudioUrl = getNoteAudioUrlMock
   writeClipboardTextMock.mockReset().mockResolvedValue(undefined)
 })
@@ -57,37 +62,77 @@ afterEach(cleanup)
 
 // Two-summary fixture — picker should appear
 const full: FullNote = {
-  note: { id: '1', title: 'Standup', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
+  note: {
+    id: '1',
+    title: 'Standup',
+    status: 'ready',
+    created_at: '',
+    updated_at: '',
+    partial_transcript: false,
+  },
   body_markdown: 'my raw notes',
   transcript: { segments: [{ start_ms: 0, end_ms: 1000, text: 'hello world', source: 'mixed' }] },
   summaries: [
-    { template_name: 'Action items', status: 'ready', sections: [{ heading: 'Action items', content_markdown: 'do X' }] },
-    { template_name: 'General meeting', status: 'ready', sections: [
-      { heading: 'Overview', content_markdown: 'Ship v2' },
-      { heading: 'Decisions', content_markdown: 'postpone' },
-    ] },
+    {
+      template_name: 'Action items',
+      status: 'ready',
+      sections: [{ heading: 'Action items', content_markdown: 'do X' }],
+    },
+    {
+      template_name: 'General meeting',
+      status: 'ready',
+      sections: [
+        { heading: 'Overview', content_markdown: 'Ship v2' },
+        { heading: 'Decisions', content_markdown: 'postpone' },
+      ],
+    },
   ],
 }
 
 // Single-summary fixture — no picker
 const fullSingle: FullNote = {
-  note: { id: '2', title: 'Solo', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
+  note: {
+    id: '2',
+    title: 'Solo',
+    status: 'ready',
+    created_at: '',
+    updated_at: '',
+    partial_transcript: false,
+  },
   body_markdown: 'raw notes',
   transcript: { segments: [{ start_ms: 0, end_ms: 500, text: 'hi there', source: 'mixed' }] },
   summaries: [
-    { template_name: 'Default', status: 'ready', sections: [{ heading: 'Summary', content_markdown: 'Only content' }] },
+    {
+      template_name: 'Default',
+      status: 'ready',
+      sections: [{ heading: 'Summary', content_markdown: 'Only content' }],
+    },
   ],
 }
 
 const fullNoSummaries: FullNote = {
-  note: { id: '3', title: 'Empty', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
+  note: {
+    id: '3',
+    title: 'Empty',
+    status: 'ready',
+    created_at: '',
+    updated_at: '',
+    partial_transcript: false,
+  },
   body_markdown: 'raw notes',
   transcript: { segments: [{ start_ms: 0, end_ms: 500, text: 'hi there', source: 'mixed' }] },
   summaries: [],
 }
 
 const fullSearchRegression: FullNote = {
-  note: { id: 'search-regression', title: 'Search', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
+  note: {
+    id: 'search-regression',
+    title: 'Search',
+    status: 'ready',
+    created_at: '',
+    updated_at: '',
+    partial_transcript: false,
+  },
   body_markdown: '',
   transcript: {
     segments: [
@@ -99,9 +144,7 @@ const fullSearchRegression: FullNote = {
     {
       template_name: 'Default',
       status: 'ready',
-      sections: [
-        { heading: 'Alpha heading', content_markdown: 'beta alpha summary' },
-      ],
+      sections: [{ heading: 'Alpha heading', content_markdown: 'beta alpha summary' }],
     },
   ],
 }
@@ -147,7 +190,7 @@ describe('NoteView — template switcher', () => {
 
   it('defaults to Enhanced with three tabs', () => {
     render(<NoteView full={full} onSaveBody={async () => {}} />)
-    expect(screen.getByRole('radio', { name: 'Enhanced' })).toBeInTheDocument()
+    expect(screen.getByRole('radio', { name: 'Summary' })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: 'Transcript' })).toBeInTheDocument()
     expect(screen.getByRole('radio', { name: 'My notes' })).toBeInTheDocument()
     expect(screen.queryByText('hello world')).not.toBeInTheDocument()
@@ -323,19 +366,32 @@ describe('NoteView — template picker a11y (USE06)', () => {
 
 // Fixture whose active (richest) panel has a section citing transcript segment index 3
 const fullCited: FullNote = {
-  note: { id: '3', title: 'Cited', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
+  note: {
+    id: '3',
+    title: 'Cited',
+    status: 'ready',
+    created_at: '',
+    updated_at: '',
+    partial_transcript: false,
+  },
   body_markdown: 'raw',
-  transcript: { segments: [
-    { start_ms: 0,     end_ms: 1000,  text: 'seg zero',  source: 'mixed' },
-    { start_ms: 1000,  end_ms: 2000,  text: 'seg one',   source: 'mixed' },
-    { start_ms: 2000,  end_ms: 3000,  text: 'seg two',   source: 'mixed' },
-    { start_ms: 3000,  end_ms: 4000,  text: 'seg three', source: 'mixed' },
-  ] },
+  transcript: {
+    segments: [
+      { start_ms: 0, end_ms: 1000, text: 'seg zero', source: 'mixed' },
+      { start_ms: 1000, end_ms: 2000, text: 'seg one', source: 'mixed' },
+      { start_ms: 2000, end_ms: 3000, text: 'seg two', source: 'mixed' },
+      { start_ms: 3000, end_ms: 4000, text: 'seg three', source: 'mixed' },
+    ],
+  },
   summaries: [
-    { template_name: 'Default', status: 'ready', sections: [
-      { heading: 'Overview', content_markdown: 'with sources', refs: [3] },
-      { heading: 'Plain', content_markdown: 'no sources' },
-    ] },
+    {
+      template_name: 'Default',
+      status: 'ready',
+      sections: [
+        { heading: 'Overview', content_markdown: 'with sources', refs: [3] },
+        { heading: 'Plain', content_markdown: 'no sources' },
+      ],
+    },
   ],
 }
 
@@ -441,20 +497,34 @@ describe('NoteView — Copy as Markdown', () => {
 
 // DZ03b — Speaker legend / rename UI
 const fullNoSpeakers: FullNote = {
-  note: { id: 'no-speakers', title: 'Plain', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
+  note: {
+    id: 'no-speakers',
+    title: 'Plain',
+    status: 'ready',
+    created_at: '',
+    updated_at: '',
+    partial_transcript: false,
+  },
   body_markdown: '',
   transcript: { segments: [{ start_ms: 0, end_ms: 1000, text: 'hello world', source: 'mixed' }] },
   summaries: [],
 }
 
 const fullWithSpeakers: FullNote = {
-  note: { id: 'note-speakers', title: 'Standup', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
+  note: {
+    id: 'note-speakers',
+    title: 'Standup',
+    status: 'ready',
+    created_at: '',
+    updated_at: '',
+    partial_transcript: false,
+  },
   body_markdown: '',
   transcript: {
     segments: [
-      { start_ms: 0,    end_ms: 1000, text: 'hi from one', source: 'mixed', speaker: 'SPEAKER_00' },
+      { start_ms: 0, end_ms: 1000, text: 'hi from one', source: 'mixed', speaker: 'SPEAKER_00' },
       { start_ms: 1000, end_ms: 2000, text: 'hi from two', source: 'mixed', speaker: 'SPEAKER_01' },
-      { start_ms: 2000, end_ms: 3000, text: 'one again',   source: 'mixed', speaker: 'SPEAKER_00' },
+      { start_ms: 2000, end_ms: 3000, text: 'one again', source: 'mixed', speaker: 'SPEAKER_00' },
     ],
   },
   summaries: [],
@@ -464,12 +534,19 @@ const fullWithSpeakers: FullNote = {
 // `speaker` field now shows 'Alice' rather than the raw label. The aliases
 // list is the only place the raw label ('SPEAKER_00') is still recoverable.
 const fullAlreadyAliased: FullNote = {
-  note: { id: 'note-aliased', title: 'Standup', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
+  note: {
+    id: 'note-aliased',
+    title: 'Standup',
+    status: 'ready',
+    created_at: '',
+    updated_at: '',
+    partial_transcript: false,
+  },
   body_markdown: '',
   transcript: {
     segments: [
-      { start_ms: 0,    end_ms: 1000, text: 'hi from alice', source: 'mixed', speaker: 'Alice' },
-      { start_ms: 1000, end_ms: 2000, text: 'hi from two',   source: 'mixed', speaker: 'SPEAKER_01' },
+      { start_ms: 0, end_ms: 1000, text: 'hi from alice', source: 'mixed', speaker: 'Alice' },
+      { start_ms: 1000, end_ms: 2000, text: 'hi from two', source: 'mixed', speaker: 'SPEAKER_01' },
     ],
   },
   summaries: [],
@@ -490,7 +567,9 @@ describe('NoteView — speaker legend (DZ03b)', () => {
   it('renders one row per distinct speaker in first-appearance order', async () => {
     render(<NoteView full={fullWithSpeakers} onSaveBody={async () => {}} />)
     expect(await screen.findByText('Speakers')).toBeInTheDocument()
-    const inputs = screen.getAllByRole('textbox').filter((el) => el.getAttribute('aria-label')?.startsWith('Rename'))
+    const inputs = screen
+      .getAllByRole('textbox')
+      .filter((el) => el.getAttribute('aria-label')?.startsWith('Rename'))
     expect(inputs).toHaveLength(2)
     expect(inputs[0]).toHaveValue('SPEAKER_00')
     expect(inputs[1]).toHaveValue('SPEAKER_01')
@@ -501,7 +580,9 @@ describe('NoteView — speaker legend (DZ03b)', () => {
     const input = await screen.findByLabelText('Rename SPEAKER_00')
     await userEvent.clear(input)
     await userEvent.type(input, 'Alice{Enter}')
-    await waitFor(() => expect(upsertSpeakerAliasMock).toHaveBeenCalledWith('note-speakers', 'SPEAKER_00', 'Alice'))
+    await waitFor(() =>
+      expect(upsertSpeakerAliasMock).toHaveBeenCalledWith('note-speakers', 'SPEAKER_00', 'Alice')
+    )
   })
 
   it('re-renaming an already-aliased speaker uses the RAW label (not the displayed alias) as the PUT key', async () => {
@@ -514,7 +595,9 @@ describe('NoteView — speaker legend (DZ03b)', () => {
     await userEvent.clear(input)
     await userEvent.type(input, 'Bob')
     fireEvent.blur(input)
-    await waitFor(() => expect(upsertSpeakerAliasMock).toHaveBeenCalledWith('note-aliased', 'SPEAKER_00', 'Bob'))
+    await waitFor(() =>
+      expect(upsertSpeakerAliasMock).toHaveBeenCalledWith('note-aliased', 'SPEAKER_00', 'Bob')
+    )
   })
 
   it('after a successful rename, the transcript view shows the new name immediately without a refetch', async () => {
@@ -539,8 +622,14 @@ describe('NoteView — speaker legend (DZ03b)', () => {
   })
 
   it('disables the rename inputs until the alias fetch resolves, then enables them', async () => {
-    let resolveAliases: (v: Array<{ note_id: string; speaker_label: string; alias_name: string }>) => void = () => {}
-    listSpeakerAliasesMock.mockReturnValue(new Promise((res) => { resolveAliases = res }))
+    let resolveAliases: (
+      v: Array<{ note_id: string; speaker_label: string; alias_name: string }>
+    ) => void = () => {}
+    listSpeakerAliasesMock.mockReturnValue(
+      new Promise((res) => {
+        resolveAliases = res
+      })
+    )
 
     render(<NoteView full={fullWithSpeakers} onSaveBody={async () => {}} />)
 
@@ -574,7 +663,12 @@ describe('NoteView — truncation badge', () => {
     const truncatedFull: FullNote = {
       ...fullSingle,
       summaries: [
-        { template_name: 'Default', status: 'ready', truncated: true, sections: [{ heading: 'Summary', content_markdown: 'Only content' }] },
+        {
+          template_name: 'Default',
+          status: 'ready',
+          truncated: true,
+          sections: [{ heading: 'Summary', content_markdown: 'Only content' }],
+        },
       ],
     }
     render(<NoteView full={truncatedFull} onSaveBody={async () => {}} />)
@@ -589,26 +683,72 @@ describe('NoteView — truncation badge', () => {
 
 // TPL01 — full template list (all owner-visible templates, not just ones with
 // an existing summary) + per-template Regenerate.
-const tplA: Template = { id: 'tpl-a', name: 'Action items', phase: 'after', sections: [], built_in: true, auto_run: true }
-const tplB: Template = { id: 'tpl-b', name: 'General meeting', phase: 'after', sections: [], built_in: true, auto_run: true }
-const tplC: Template = { id: 'tpl-c', name: 'Retro', phase: 'cross', sections: [], built_in: false, auto_run: true }
+const tplA: Template = {
+  id: 'tpl-a',
+  name: 'Action items',
+  phase: 'after',
+  sections: [],
+  built_in: true,
+  auto_run: true,
+}
+const tplB: Template = {
+  id: 'tpl-b',
+  name: 'General meeting',
+  phase: 'after',
+  sections: [],
+  built_in: true,
+  auto_run: true,
+}
+const tplC: Template = {
+  id: 'tpl-c',
+  name: 'Retro',
+  phase: 'cross',
+  sections: [],
+  built_in: false,
+  auto_run: true,
+}
 
 const fullWithTemplateIds: FullNote = {
-  note: { id: '4', title: 'Planning', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
+  note: {
+    id: '4',
+    title: 'Planning',
+    status: 'ready',
+    created_at: '',
+    updated_at: '',
+    partial_transcript: false,
+  },
   body_markdown: 'raw',
   transcript: { segments: [{ start_ms: 0, end_ms: 1000, text: 'hello', source: 'mixed' }] },
   summaries: [
-    { id: 's-a', template_id: 'tpl-a', template_name: 'Action items', status: 'ready', sections: [{ heading: 'Actions', content_markdown: 'do X' }] },
-    { id: 's-b', template_id: 'tpl-b', template_name: 'General meeting', status: 'ready', sections: [
-      { heading: 'Overview', content_markdown: 'Ship v2' },
-      { heading: 'Decisions', content_markdown: 'postpone' },
-    ] },
+    {
+      id: 's-a',
+      template_id: 'tpl-a',
+      template_name: 'Action items',
+      status: 'ready',
+      sections: [{ heading: 'Actions', content_markdown: 'do X' }],
+    },
+    {
+      id: 's-b',
+      template_id: 'tpl-b',
+      template_name: 'General meeting',
+      status: 'ready',
+      sections: [
+        { heading: 'Overview', content_markdown: 'Ship v2' },
+        { heading: 'Decisions', content_markdown: 'postpone' },
+      ],
+    },
   ],
 }
 
 describe('NoteView — full template list + regenerate (TPL01)', () => {
   it('lists a template with no existing summary as "Not generated" in the picker', async () => {
-    render(<NoteView full={fullWithTemplateIds} templates={[tplA, tplB, tplC]} onSaveBody={async () => {}} />)
+    render(
+      <NoteView
+        full={fullWithTemplateIds}
+        templates={[tplA, tplB, tplC]}
+        onSaveBody={async () => {}}
+      />
+    )
     await userEvent.click(screen.getByRole('button', { name: /switch template/i }))
     const retroOption = screen.getByRole('option', { name: /Retro/ })
     expect(retroOption).toHaveTextContent('Not generated')
@@ -616,7 +756,14 @@ describe('NoteView — full template list + regenerate (TPL01)', () => {
 
   it('selecting a not-yet-generated template changes the toolbar button to Generate and keeps it wired to the selected template', async () => {
     const onRegenerate = vi.fn()
-    render(<NoteView full={fullWithTemplateIds} templates={[tplA, tplB, tplC]} onRegenerateTemplate={onRegenerate} onSaveBody={async () => {}} />)
+    render(
+      <NoteView
+        full={fullWithTemplateIds}
+        templates={[tplA, tplB, tplC]}
+        onRegenerateTemplate={onRegenerate}
+        onSaveBody={async () => {}}
+      />
+    )
 
     await userEvent.click(screen.getByRole('button', { name: /switch template/i }))
     await userEvent.click(screen.getByRole('option', { name: /Retro/ }))
@@ -628,13 +775,27 @@ describe('NoteView — full template list + regenerate (TPL01)', () => {
   })
 
   it('keeps the toolbar button as Regenerate for a template that already has a summary', () => {
-    render(<NoteView full={fullWithTemplateIds} templates={[tplA, tplB, tplC]} onRegenerateTemplate={vi.fn()} onSaveBody={async () => {}} />)
+    render(
+      <NoteView
+        full={fullWithTemplateIds}
+        templates={[tplA, tplB, tplC]}
+        onRegenerateTemplate={vi.fn()}
+        onSaveBody={async () => {}}
+      />
+    )
     expect(screen.getByRole('button', { name: /regenerate summary/i })).toBeInTheDocument()
   })
 
   it('renders an actionable inline Generate CTA for the selected template when only a sibling has a summary', async () => {
     const onRegenerate = vi.fn()
-    render(<NoteView full={fullWithTemplateIds} templates={[tplA, tplB, tplC]} onRegenerateTemplate={onRegenerate} onSaveBody={async () => {}} />)
+    render(
+      <NoteView
+        full={fullWithTemplateIds}
+        templates={[tplA, tplB, tplC]}
+        onRegenerateTemplate={onRegenerate}
+        onSaveBody={async () => {}}
+      />
+    )
 
     await userEvent.click(screen.getByRole('button', { name: /switch template/i }))
     await userEvent.click(screen.getByRole('option', { name: /Retro/ }))
@@ -653,7 +814,7 @@ describe('NoteView — full template list + regenerate (TPL01)', () => {
         onRegenerateTemplate={vi.fn()}
         regeneratingTemplateId="tpl-c"
         onSaveBody={async () => {}}
-      />,
+      />
     )
 
     await userEvent.click(screen.getByRole('button', { name: /switch template/i }))
@@ -668,9 +829,12 @@ describe('NoteView — full template list + regenerate (TPL01)', () => {
   it('shows the no-agent empty state and opens transcript when no template has ever summarized', async () => {
     render(<NoteView full={fullNoSummaries} onSaveBody={async () => {}} />)
 
-    await userEvent.click(screen.getByRole('radio', { name: 'Enhanced' }))
+    await userEvent.click(screen.getByRole('radio', { name: 'Summary' }))
     expect(screen.getByText('No AI summary yet')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'Install Ollama' })).toHaveAttribute('href', 'https://ollama.com/download')
+    expect(screen.getByRole('link', { name: 'Install Ollama' })).toHaveAttribute(
+      'href',
+      'https://ollama.com/download'
+    )
     expect(screen.queryByText('No summary yet.')).not.toBeInTheDocument()
 
     await userEvent.click(screen.getByRole('button', { name: 'View transcript' }))
@@ -685,19 +849,33 @@ describe('NoteView — full template list + regenerate (TPL01)', () => {
 
     render(<NoteView full={inProgress} onSaveBody={async () => {}} />)
 
-    fireEvent.click(screen.getByRole('radio', { name: 'Enhanced' }))
+    fireEvent.click(screen.getByRole('radio', { name: 'Summary' }))
     expect(screen.getByText('No summary yet.')).toBeInTheDocument()
     expect(screen.queryByText(/No AI summary yet/)).not.toBeInTheDocument()
   })
 
   it('renders a Regenerate control for the currently-selected template', () => {
-    render(<NoteView full={fullWithTemplateIds} templates={[tplA, tplB, tplC]} onRegenerateTemplate={vi.fn()} onSaveBody={async () => {}} />)
+    render(
+      <NoteView
+        full={fullWithTemplateIds}
+        templates={[tplA, tplB, tplC]}
+        onRegenerateTemplate={vi.fn()}
+        onSaveBody={async () => {}}
+      />
+    )
     expect(screen.getByRole('button', { name: /regenerate summary/i })).toBeInTheDocument()
   })
 
   it('clicking Regenerate invokes onRegenerateTemplate with the selected templateId', async () => {
     const onRegenerate = vi.fn()
-    render(<NoteView full={fullWithTemplateIds} templates={[tplA, tplB, tplC]} onRegenerateTemplate={onRegenerate} onSaveBody={async () => {}} />)
+    render(
+      <NoteView
+        full={fullWithTemplateIds}
+        templates={[tplA, tplB, tplC]}
+        onRegenerateTemplate={onRegenerate}
+        onSaveBody={async () => {}}
+      />
+    )
     // Default selection is the richest panel (General meeting / tpl-b).
     await userEvent.click(screen.getByRole('button', { name: /regenerate summary/i }))
     expect(onRegenerate).toHaveBeenCalledWith('tpl-b')
@@ -705,14 +883,26 @@ describe('NoteView — full template list + regenerate (TPL01)', () => {
 
   it('disables the Regenerate control while its template is in flight, and re-enables once cleared', () => {
     const { rerender } = render(
-      <NoteView full={fullWithTemplateIds} templates={[tplA, tplB, tplC]} onRegenerateTemplate={vi.fn()} regeneratingTemplateId="tpl-b" onSaveBody={async () => {}} />,
+      <NoteView
+        full={fullWithTemplateIds}
+        templates={[tplA, tplB, tplC]}
+        onRegenerateTemplate={vi.fn()}
+        regeneratingTemplateId="tpl-b"
+        onSaveBody={async () => {}}
+      />
     )
     const btn = screen.getByRole('button', { name: /regenerate summary/i })
     expect(btn).toBeDisabled()
     expect(btn).toHaveAttribute('aria-busy', 'true')
 
     rerender(
-      <NoteView full={fullWithTemplateIds} templates={[tplA, tplB, tplC]} onRegenerateTemplate={vi.fn()} regeneratingTemplateId={null} onSaveBody={async () => {}} />,
+      <NoteView
+        full={fullWithTemplateIds}
+        templates={[tplA, tplB, tplC]}
+        onRegenerateTemplate={vi.fn()}
+        regeneratingTemplateId={null}
+        onSaveBody={async () => {}}
+      />
     )
     expect(screen.getByRole('button', { name: /regenerate summary/i })).not.toBeDisabled()
   })
@@ -746,16 +936,49 @@ describe('NoteView — selection survives the async-template-list reorder race (
   // (built-ins always win the DESC tiebreak) and then "general update" sorts
   // before "zebra notes" alphabetically. So the two orderings disagree, and
   // the entry the user had selected (by position) moves.
-  const tplUser: Template = { id: 'tpl-user', name: 'Zebra notes', phase: 'during', sections: [], built_in: false, auto_run: true }
-  const tplBuiltin: Template = { id: 'tpl-builtin', name: 'general update', phase: 'after', sections: [], built_in: true, auto_run: true }
+  const tplUser: Template = {
+    id: 'tpl-user',
+    name: 'Zebra notes',
+    phase: 'during',
+    sections: [],
+    built_in: false,
+    auto_run: true,
+  }
+  const tplBuiltin: Template = {
+    id: 'tpl-builtin',
+    name: 'general update',
+    phase: 'after',
+    sections: [],
+    built_in: true,
+    auto_run: true,
+  }
 
   const fullRace: FullNote = {
-    note: { id: '5', title: 'Race', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
+    note: {
+      id: '5',
+      title: 'Race',
+      status: 'ready',
+      created_at: '',
+      updated_at: '',
+      partial_transcript: false,
+    },
     body_markdown: 'raw',
     transcript: { segments: [{ start_ms: 0, end_ms: 1000, text: 'hello', source: 'mixed' }] },
     summaries: [
-      { id: 's-user', template_id: 'tpl-user', template_name: 'Zebra notes', status: 'ready', sections: [{ heading: 'A', content_markdown: 'user summary' }] },
-      { id: 's-builtin', template_id: 'tpl-builtin', template_name: 'general update', status: 'ready', sections: [{ heading: 'B', content_markdown: 'builtin summary' }] },
+      {
+        id: 's-user',
+        template_id: 'tpl-user',
+        template_name: 'Zebra notes',
+        status: 'ready',
+        sections: [{ heading: 'A', content_markdown: 'user summary' }],
+      },
+      {
+        id: 's-builtin',
+        template_id: 'tpl-builtin',
+        template_name: 'general update',
+        status: 'ready',
+        sections: [{ heading: 'B', content_markdown: 'builtin summary' }],
+      },
     ],
   }
 
@@ -776,7 +999,9 @@ describe('NoteView — selection survives the async-template-list reorder race (
     // Now the async listTemplates() resolves, supplying `templates` in
     // ListTemplates order: built-in first, then alphabetical — i.e. REVERSED
     // relative to the summary-fallback order above.
-    rerender(<NoteView full={fullRace} templates={[tplBuiltin, tplUser]} onSaveBody={async () => {}} />)
+    rerender(
+      <NoteView full={fullRace} templates={[tplBuiltin, tplUser]} onSaveBody={async () => {}} />
+    )
 
     // The BUG: `selected` was a raw index (1), which pointed at "general
     // update" before but now points at "Zebra notes" post-reorder. The FIX:
@@ -790,11 +1015,20 @@ describe('NoteView — selection survives the async-template-list reorder race (
 
   it('Regenerate still targets the user-selected template after the reorder', async () => {
     const onRegenerate = vi.fn()
-    const { rerender } = render(<NoteView full={fullRace} onRegenerateTemplate={onRegenerate} onSaveBody={async () => {}} />)
+    const { rerender } = render(
+      <NoteView full={fullRace} onRegenerateTemplate={onRegenerate} onSaveBody={async () => {}} />
+    )
     await userEvent.click(screen.getByRole('button', { name: /switch template/i }))
     await userEvent.click(screen.getByRole('option', { name: /general update/ }))
 
-    rerender(<NoteView full={fullRace} templates={[tplBuiltin, tplUser]} onRegenerateTemplate={onRegenerate} onSaveBody={async () => {}} />)
+    rerender(
+      <NoteView
+        full={fullRace}
+        templates={[tplBuiltin, tplUser]}
+        onRegenerateTemplate={onRegenerate}
+        onSaveBody={async () => {}}
+      />
+    )
 
     await userEvent.click(screen.getByRole('button', { name: /regenerate/i }))
     expect(onRegenerate).toHaveBeenCalledWith('tpl-builtin')
@@ -817,7 +1051,14 @@ describe('NoteView — selection survives the async-template-list reorder race (
 // SRC01b — jump-to-timestamp from a transcript search hit.
 describe('NoteView — initialSegmentId (search hit jump-to-timestamp)', () => {
   const fullForJump: FullNote = {
-    note: { id: 'note-jump', title: 'Standup', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
+    note: {
+      id: 'note-jump',
+      title: 'Standup',
+      status: 'ready',
+      created_at: '',
+      updated_at: '',
+      partial_transcript: false,
+    },
     body_markdown: '',
     transcript: {
       segments: [
@@ -844,7 +1085,13 @@ describe('NoteView — initialSegmentId (search hit jump-to-timestamp)', () => {
   })
 
   it('does nothing when initialSegmentId does not match any segment', () => {
-    render(<NoteView full={fullForJump} initialSegmentId="seg-does-not-exist" onSaveBody={async () => {}} />)
+    render(
+      <NoteView
+        full={fullForJump}
+        initialSegmentId="seg-does-not-exist"
+        onSaveBody={async () => {}}
+      />
+    )
     expect(screen.getByRole('radio', { name: 'Transcript' })).toHaveAttribute('data-state', 'on')
   })
 
@@ -854,10 +1101,12 @@ describe('NoteView — initialSegmentId (search hit jump-to-timestamp)', () => {
   })
 
   it('only jumps once — closing the transcript panel afterwards does not reopen it on re-render', async () => {
-    const { rerender } = render(<NoteView full={fullForJump} initialSegmentId="seg-a" onSaveBody={async () => {}} />)
+    const { rerender } = render(
+      <NoteView full={fullForJump} initialSegmentId="seg-a" onSaveBody={async () => {}} />
+    )
     expect(screen.getByRole('radio', { name: 'Transcript' })).toHaveAttribute('data-state', 'on')
 
-    await userEvent.click(screen.getByRole('radio', { name: 'Enhanced' }))
+    await userEvent.click(screen.getByRole('radio', { name: 'Summary' }))
     expect(screen.getByText('No AI summary yet')).toBeInTheDocument()
 
     // Re-rendering with the same props (e.g. a parent re-render) must not
@@ -873,23 +1122,49 @@ describe('NoteView — initialSegmentId (search hit jump-to-timestamp)', () => {
 // mirrors TranscriptRef.SegmentIndex directly).
 describe('NoteView — initialSegmentIndex (chat citation jump-to-segment)', () => {
   const fullA: FullNote = {
-    note: { id: 'note-a', title: 'Note A', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
+    note: {
+      id: 'note-a',
+      title: 'Note A',
+      status: 'ready',
+      created_at: '',
+      updated_at: '',
+      partial_transcript: false,
+    },
     body_markdown: '',
     transcript: {
       segments: [
         { id: 'a-seg-0', start_ms: 0, end_ms: 1000, text: 'note A segment zero', source: 'mixed' },
-        { id: 'a-seg-1', start_ms: 1000, end_ms: 2000, text: 'note A segment one', source: 'mixed' },
+        {
+          id: 'a-seg-1',
+          start_ms: 1000,
+          end_ms: 2000,
+          text: 'note A segment one',
+          source: 'mixed',
+        },
       ],
     },
     summaries: [],
   }
   const fullB: FullNote = {
-    note: { id: 'note-b', title: 'Note B', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
+    note: {
+      id: 'note-b',
+      title: 'Note B',
+      status: 'ready',
+      created_at: '',
+      updated_at: '',
+      partial_transcript: false,
+    },
     body_markdown: '',
     transcript: {
       segments: [
         { id: 'b-seg-0', start_ms: 0, end_ms: 1000, text: 'note B segment zero', source: 'mixed' },
-        { id: 'b-seg-1', start_ms: 1000, end_ms: 2000, text: 'note B segment one', source: 'mixed' },
+        {
+          id: 'b-seg-1',
+          start_ms: 1000,
+          end_ms: 2000,
+          text: 'note B segment one',
+          source: 'mixed',
+        },
       ],
     },
     summaries: [],
@@ -912,10 +1187,12 @@ describe('NoteView — initialSegmentIndex (chat citation jump-to-segment)', () 
   })
 
   it('only jumps once -- re-rendering with the same note + index afterwards does not reopen a closed panel', async () => {
-    const { rerender } = render(<NoteView full={fullA} initialSegmentIndex={0} onSaveBody={async () => {}} />)
+    const { rerender } = render(
+      <NoteView full={fullA} initialSegmentIndex={0} onSaveBody={async () => {}} />
+    )
     expect(screen.getByRole('radio', { name: 'Transcript' })).toHaveAttribute('data-state', 'on')
 
-    await userEvent.click(screen.getByRole('radio', { name: 'Enhanced' }))
+    await userEvent.click(screen.getByRole('radio', { name: 'Summary' }))
     expect(screen.getByText('No AI summary yet')).toBeInTheDocument()
 
     rerender(<NoteView full={fullA} initialSegmentIndex={0} onSaveBody={async () => {}} />)
@@ -931,12 +1208,14 @@ describe('NoteView — initialSegmentIndex (chat citation jump-to-segment)', () 
   // silently suppress the second jump -- this asserts the jump still fires
   // for note B.
   it('still jumps in a different note that reuses the same segment_index after a jump was already consumed in a prior note', async () => {
-    const { rerender } = render(<NoteView full={fullA} initialSegmentIndex={0} onSaveBody={async () => {}} />)
+    const { rerender } = render(
+      <NoteView full={fullA} initialSegmentIndex={0} onSaveBody={async () => {}} />
+    )
     expect(screen.getByRole('radio', { name: 'Transcript' })).toHaveAttribute('data-state', 'on')
     let cited = document.querySelector('[data-cited="true"]')
     expect(cited!.textContent).toContain('note A segment zero')
 
-    await userEvent.click(screen.getByRole('radio', { name: 'Enhanced' }))
+    await userEvent.click(screen.getByRole('radio', { name: 'Summary' }))
     expect(screen.getByText('No AI summary yet')).toBeInTheDocument()
 
     // Simulate navigating to a DIFFERENT note (via ChatScreen's onCiteClick)
@@ -961,4 +1240,13 @@ describe('NoteView — chat entry point (CHT05)', () => {
     await userEvent.click(screen.getByRole('button', { name: /close chat/i }))
     expect(screen.queryByText('Ask about this note')).not.toBeInTheDocument()
   })
+})
+
+it('keeps the personal-notes canvas selected when a summary finishes', () => {
+  const view = render(
+    <NoteView full={{ ...full, summaries: [] }} initialTab="notes" onSaveBody={async () => {}} />
+  )
+  expect(screen.getByRole('radio', { name: 'My notes' })).toHaveAttribute('data-state', 'on')
+  view.rerender(<NoteView full={full} initialTab="notes" onSaveBody={async () => {}} />)
+  expect(screen.getByRole('radio', { name: 'My notes' })).toHaveAttribute('data-state', 'on')
 })

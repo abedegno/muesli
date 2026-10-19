@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { useEffect, useRef, useState } from 'react'
 import { X, FolderPlus } from 'lucide-react'
 import { cn } from '@/lib/cn'
@@ -45,9 +46,17 @@ export function FolderBar({
   return (
     <div className="flex flex-wrap items-center gap-2 border-b border-border px-6 py-2">
       {members.map((f) => (
-        <span key={f.id} className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium">
+        <span
+          key={f.id}
+          className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium"
+        >
           {f.name}
-          <button type="button" aria-label={`Remove ${f.name}`} onClick={() => void onRemove(f.id)} className="rounded-full hover:bg-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          <button
+            type="button"
+            aria-label={uiText('Remove {value1}', { value1: f.name })}
+            onClick={() => void onRemove(f.id)}
+            className="rounded-full hover:bg-foreground/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
             <X size={12} />
           </button>
         </span>
@@ -60,31 +69,39 @@ export function FolderBar({
           onClick={() => setOpen((o) => !o)}
           className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs text-muted-foreground hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <FolderPlus size={12} /> Add to folder
+          <FolderPlus size={12} /> {uiText('Add to folder')}
         </button>
         {open && (
-          <div className={cn('absolute z-10 mt-1 w-48 rounded-[var(--radius)] border border-border bg-popover p-1 shadow-md')}>
+          <div
+            className={cn(
+              'absolute z-10 mt-1 w-48 rounded-[var(--radius)] border border-border bg-popover p-1 shadow-md'
+            )}
+          >
             {available.map((f) => (
               <button
                 key={f.id}
-                onClick={async () => { setOpen(false); await onAdd(f.id) }}
+                onClick={async () => {
+                  setOpen(false)
+                  await onAdd(f.id)
+                }}
                 className="block w-full truncate rounded px-2 py-1 text-left text-sm hover:bg-muted"
               >
                 {f.name}
               </button>
             ))}
             <input
-              aria-label="New folder name"
+              aria-label={uiText('New folder name')}
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               onKeyDown={async (e) => {
                 if (e.key === 'Enter' && draft.trim()) {
                   const name = draft.trim()
-                  setDraft(''); setOpen(false)
+                  setDraft('')
+                  setOpen(false)
                   await onCreate(name)
                 }
               }}
-              placeholder="New folder…"
+              placeholder={uiText('New folder…')}
               className="mt-1 w-full rounded border border-input bg-background px-2 py-1 text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
           </div>

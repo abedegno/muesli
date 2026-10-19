@@ -13,11 +13,7 @@ import type { NoteStatus } from '../../shared/types'
 // the main-process bundle. The string values must stay in sync with
 // src/main/uploadMachine.ts.
 export type UploadPhase =
-  | 'requesting-url'
-  | 'uploading-audio'
-  | 'confirming-upload'
-  | 'done'
-  | 'error'
+  'requesting-url' | 'uploading-audio' | 'confirming-upload' | 'done' | 'error'
 
 export type ActivityItem =
   | {
@@ -58,7 +54,7 @@ export function activityReducer(state: State, action: Action): State {
         ...state,
         {
           kind: 'upload',
-          id: action.noteId,
+          id: `upload:${action.noteId}`,
           noteId: action.noteId,
           noteTitle: action.noteTitle,
           phase: 'requesting-url',
@@ -70,7 +66,7 @@ export function activityReducer(state: State, action: Action): State {
       return state.map((item) =>
         item.kind === 'upload' && item.noteId === action.noteId
           ? { ...item, phase: action.phase, done: action.done }
-          : item,
+          : item
       )
     }
     case 'ADD_PROCESSING': {
@@ -82,7 +78,7 @@ export function activityReducer(state: State, action: Action): State {
         ...state,
         {
           kind: 'processing',
-          id: action.noteId,
+          id: `processing:${action.noteId}`,
           noteId: action.noteId,
           noteTitle: action.noteTitle,
           status: action.status,
@@ -94,7 +90,7 @@ export function activityReducer(state: State, action: Action): State {
       return state.map((item) =>
         item.kind === 'processing' && item.noteId === action.noteId
           ? { ...item, status: action.status, done: action.done }
-          : item,
+          : item
       )
     }
     case 'DISMISS': {
@@ -162,7 +158,8 @@ export function ActivityProvider({ children }: { children: ReactNode }) {
 
   // On unmount, clear any pending timers.
   useEffect(() => {
-    return () => autoRemoveTimers.current.forEach(clearTimeout)
+    const timers = autoRemoveTimers.current
+    return () => timers.forEach(clearTimeout)
   }, [])
 
   const addUpload = useCallback((noteId: string, noteTitle: string) => {

@@ -1,3 +1,5 @@
+import { formatDate } from '@/i18n'
+import { uiText } from '@/i18n'
 import { useCallback, useEffect, useState } from 'react'
 import { useOutletContext } from 'react-router-dom'
 import { muesli } from '@/api'
@@ -8,7 +10,9 @@ import { Skeleton } from '@/components/ui/Skeleton'
 import { useToast } from '@/components/ui/Toast'
 import type { Folder, Note, SmartList } from '../../shared/types'
 
-interface Ctx { refresh: () => void }
+interface Ctx {
+  refresh: () => void
+}
 
 /** Returns a human-readable label for how long ago a date was, e.g. "3 days ago". */
 function formatDeletedAgo(iso: string): string {
@@ -19,7 +23,11 @@ function formatDeletedAgo(iso: string): string {
   if (diffDays === 0) return 'today'
   if (diffDays === 1) return '1 day ago'
   if (diffDays < 14) return `${diffDays} days ago`
-  return new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+  return formatDate(new Date(iso), {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  })
 }
 
 /** Days remaining before auto-purge (30-day window). Clamped to [0, 30]. */
@@ -36,7 +44,8 @@ function TrashMeta({ deletedAt }: { deletedAt?: string | null }) {
   const left = daysRemaining(deletedAt)
   return (
     <span className="block text-xs text-muted-foreground">
-      Deleted {ago} &middot; {left} {left === 1 ? 'day' : 'days'} left
+      {uiText('Deleted')} {ago} {uiText('·')} {left} {left === 1 ? uiText('day') : uiText('days')}{' '}
+      {uiText('left')}
     </span>
   )
 }
@@ -53,48 +62,102 @@ export function TrashScreen() {
   const [purgeListId, setPurgeListId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
-    try { setNotes(await muesli.listTrash()) }
-    catch (err) { notify(err instanceof Error ? err.message : 'Could not load trash', 'error'); setNotes([]) }
-    try { setFolders(await muesli.listTrashedFolders()) }
-    catch (err) { notify(err instanceof Error ? err.message : 'Could not load trash', 'error'); setFolders([]) }
-    try { setLists(await muesli.listTrashedSmartLists()) }
-    catch (err) { notify(err instanceof Error ? err.message : 'Could not load trash', 'error'); setLists([]) }
+    try {
+      setNotes(await muesli.listTrash())
+    } catch (err) {
+      notify(err instanceof Error ? err.message : uiText('Could not load trash'), 'error')
+      setNotes([])
+    }
+    try {
+      setFolders(await muesli.listTrashedFolders())
+    } catch (err) {
+      notify(err instanceof Error ? err.message : uiText('Could not load trash'), 'error')
+      setFolders([])
+    }
+    try {
+      setLists(await muesli.listTrashedSmartLists())
+    } catch (err) {
+      notify(err instanceof Error ? err.message : uiText('Could not load trash'), 'error')
+      setLists([])
+    }
   }, [notify])
 
-  useEffect(() => { void load() }, [load])
+  useEffect(() => {
+    void load()
+  }, [load])
 
   const onRestore = async (id: string) => {
-    try { await muesli.restoreNote(id); await load(); refresh() }
-    catch (err) { notify(err instanceof Error ? err.message : 'Could not restore note', 'error') }
+    try {
+      await muesli.restoreNote(id)
+      await load()
+      refresh()
+    } catch (err) {
+      notify(err instanceof Error ? err.message : uiText('Could not restore note'), 'error')
+    }
   }
   const onPurge = async (id: string) => {
-    try { await muesli.permanentDeleteNote(id); setPurgeId(null); await load(); refresh() }
-    catch (err) { notify(err instanceof Error ? err.message : 'Could not delete note', 'error'); setPurgeId(null) }
+    try {
+      await muesli.permanentDeleteNote(id)
+      setPurgeId(null)
+      await load()
+      refresh()
+    } catch (err) {
+      notify(err instanceof Error ? err.message : uiText('Could not delete note'), 'error')
+      setPurgeId(null)
+    }
   }
   const onRestoreFolder = async (id: string) => {
-    try { await muesli.restoreFolder(id); await load(); refresh() }
-    catch (err) { notify(err instanceof Error ? err.message : 'Could not restore folder', 'error') }
+    try {
+      await muesli.restoreFolder(id)
+      await load()
+      refresh()
+    } catch (err) {
+      notify(err instanceof Error ? err.message : uiText('Could not restore folder'), 'error')
+    }
   }
   const onPurgeFolder = async (id: string) => {
-    try { await muesli.permanentDeleteFolder(id); setPurgeFolderId(null); await load(); refresh() }
-    catch (err) { notify(err instanceof Error ? err.message : 'Could not delete folder', 'error'); setPurgeFolderId(null) }
+    try {
+      await muesli.permanentDeleteFolder(id)
+      setPurgeFolderId(null)
+      await load()
+      refresh()
+    } catch (err) {
+      notify(err instanceof Error ? err.message : uiText('Could not delete folder'), 'error')
+      setPurgeFolderId(null)
+    }
   }
   const onRestoreList = async (id: string) => {
-    try { await muesli.restoreSmartList(id); await load(); refresh() }
-    catch (err) { notify(err instanceof Error ? err.message : 'Could not restore smart list', 'error') }
+    try {
+      await muesli.restoreSmartList(id)
+      await load()
+      refresh()
+    } catch (err) {
+      notify(err instanceof Error ? err.message : uiText('Could not restore smart list'), 'error')
+    }
   }
   const onPurgeList = async (id: string) => {
-    try { await muesli.permanentDeleteSmartList(id); setPurgeListId(null); await load(); refresh() }
-    catch (err) { notify(err instanceof Error ? err.message : 'Could not delete smart list', 'error'); setPurgeListId(null) }
+    try {
+      await muesli.permanentDeleteSmartList(id)
+      setPurgeListId(null)
+      await load()
+      refresh()
+    } catch (err) {
+      notify(err instanceof Error ? err.message : uiText('Could not delete smart list'), 'error')
+      setPurgeListId(null)
+    }
   }
 
   // Treat null (not-yet-loaded) lists as loading.
   if (notes === null || folders === null || lists === null) {
     return (
       <div className="mx-auto max-w-3xl p-6">
-        <div className="mb-4 h-7 w-40"><Skeleton className="h-full w-full" /></div>
+        <div className="mb-4 h-7 w-40">
+          <Skeleton className="h-full w-full" />
+        </div>
         <div className="flex flex-col gap-2">
-          {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
+          {Array.from({ length: 3 }).map((_, i) => (
+            <Skeleton key={i} className="h-12 w-full" />
+          ))}
         </div>
       </div>
     )
@@ -104,25 +167,39 @@ export function TrashScreen() {
 
   return (
     <div className="mx-auto max-w-3xl p-6">
-      <h1 className="mb-1 font-serif text-xl font-semibold">Trash</h1>
-      <p className="mb-4 text-sm text-muted-foreground">Items are deleted forever after 30 days.</p>
+      <h1 className="mb-1 font-serif text-xl font-semibold">{uiText('Trash')}</h1>
+      <p className="mb-4 text-sm text-muted-foreground">
+        {uiText('Items are deleted forever after 30 days.')}
+      </p>
       {isEmpty ? (
-        <EmptyState title="Trash is empty" hint="Notes and folders you delete will appear here for 30 days." />
+        <EmptyState
+          title={uiText('Trash is empty')}
+          hint={uiText('Notes and folders you delete will appear here for 30 days.')}
+        />
       ) : (
         <div className="flex flex-col gap-6">
           {lists.length > 0 && (
             <section>
-              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Smart lists</h2>
+              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {uiText('Smart lists')}
+              </h2>
               <ul className="flex flex-col gap-2">
                 {lists.map((l) => (
-                  <li key={l.id} className="flex items-center justify-between rounded-[var(--radius)] border border-border px-3 py-2">
+                  <li
+                    key={l.id}
+                    className="flex items-center justify-between rounded-[var(--radius)] border border-border px-3 py-2"
+                  >
                     <span className="min-w-0 flex-1 truncate">
-                      {l.name || 'Untitled list'}
+                      {l.name || uiText('Untitled list')}
                       <TrashMeta deletedAt={l.deleted_at} />
                     </span>
                     <span className="ml-2 flex shrink-0 gap-2">
-                      <Button variant="secondary" size="sm" onClick={() => onRestoreList(l.id)}>Restore</Button>
-                      <Button variant="destructive" size="sm" onClick={() => setPurgeListId(l.id)}>Delete forever</Button>
+                      <Button variant="secondary" size="sm" onClick={() => onRestoreList(l.id)}>
+                        {uiText('Restore')}
+                      </Button>
+                      <Button variant="destructive" size="sm" onClick={() => setPurgeListId(l.id)}>
+                        {uiText('Delete forever')}
+                      </Button>
                     </span>
                   </li>
                 ))}
@@ -131,17 +208,30 @@ export function TrashScreen() {
           )}
           {folders.length > 0 && (
             <section>
-              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Folders</h2>
+              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {uiText('Folders')}
+              </h2>
               <ul className="flex flex-col gap-2">
                 {folders.map((f) => (
-                  <li key={f.id} className="flex items-center justify-between rounded-[var(--radius)] border border-border px-3 py-2">
+                  <li
+                    key={f.id}
+                    className="flex items-center justify-between rounded-[var(--radius)] border border-border px-3 py-2"
+                  >
                     <span className="min-w-0 flex-1 truncate">
-                      {f.name || 'Untitled folder'}
+                      {f.name || uiText('Untitled folder')}
                       <TrashMeta deletedAt={f.deleted_at} />
                     </span>
                     <span className="ml-2 flex shrink-0 gap-2">
-                      <Button variant="secondary" size="sm" onClick={() => onRestoreFolder(f.id)}>Restore</Button>
-                      <Button variant="destructive" size="sm" onClick={() => setPurgeFolderId(f.id)}>Delete forever</Button>
+                      <Button variant="secondary" size="sm" onClick={() => onRestoreFolder(f.id)}>
+                        {uiText('Restore')}
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => setPurgeFolderId(f.id)}
+                      >
+                        {uiText('Delete forever')}
+                      </Button>
                     </span>
                   </li>
                 ))}
@@ -150,17 +240,26 @@ export function TrashScreen() {
           )}
           {notes.length > 0 && (
             <section>
-              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Notes</h2>
+              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {uiText('Notes')}
+              </h2>
               <ul className="flex flex-col gap-2">
                 {notes.map((n) => (
-                  <li key={n.id} className="flex items-center justify-between rounded-[var(--radius)] border border-border px-3 py-2">
+                  <li
+                    key={n.id}
+                    className="flex items-center justify-between rounded-[var(--radius)] border border-border px-3 py-2"
+                  >
                     <span className="min-w-0 flex-1 truncate">
-                      {n.title || 'Untitled note'}
+                      {n.title || uiText('Untitled note')}
                       <TrashMeta deletedAt={n.deleted_at} />
                     </span>
                     <span className="ml-2 flex shrink-0 gap-2">
-                      <Button variant="secondary" size="sm" onClick={() => onRestore(n.id)}>Restore</Button>
-                      <Button variant="destructive" size="sm" onClick={() => setPurgeId(n.id)}>Delete forever</Button>
+                      <Button variant="secondary" size="sm" onClick={() => onRestore(n.id)}>
+                        {uiText('Restore')}
+                      </Button>
+                      <Button variant="destructive" size="sm" onClick={() => setPurgeId(n.id)}>
+                        {uiText('Delete forever')}
+                      </Button>
                     </span>
                   </li>
                 ))}
@@ -170,29 +269,59 @@ export function TrashScreen() {
         </div>
       )}
       {purgeId && (
-        <Dialog open onOpenChange={(o) => !o && setPurgeId(null)} title="Delete forever?">
-          <p className="text-sm text-muted-foreground">This permanently deletes the note, its transcript, summaries, and stored recording. Any files you&apos;ve previously exported to disk are not affected — only the recording stored on the server is removed. This cannot be undone.</p>
+        <Dialog open onOpenChange={(o) => !o && setPurgeId(null)} title={uiText('Delete forever?')}>
+          <p className="text-sm text-muted-foreground">
+            {uiText(
+              "This permanently deletes the note, its transcript, summaries, and stored recording. Any files you've previously exported to disk are not affected — only the recording stored on the server is removed. This cannot be undone."
+            )}
+          </p>
           <div className="mt-4 flex justify-end gap-2">
-            <Button variant="secondary" size="sm" onClick={() => setPurgeId(null)}>Cancel</Button>
-            <Button variant="destructive" size="sm" onClick={() => onPurge(purgeId)}>Delete forever</Button>
+            <Button variant="secondary" size="sm" onClick={() => setPurgeId(null)}>
+              {uiText('Cancel')}
+            </Button>
+            <Button variant="destructive" size="sm" onClick={() => onPurge(purgeId)}>
+              {uiText('Delete forever')}
+            </Button>
           </div>
         </Dialog>
       )}
       {purgeFolderId && (
-        <Dialog open onOpenChange={(o) => !o && setPurgeFolderId(null)} title="Delete forever?">
-          <p className="text-sm text-muted-foreground">This permanently deletes the folder and everything inside it. This cannot be undone.</p>
+        <Dialog
+          open
+          onOpenChange={(o) => !o && setPurgeFolderId(null)}
+          title={uiText('Delete forever?')}
+        >
+          <p className="text-sm text-muted-foreground">
+            {uiText(
+              'This permanently deletes the folder and everything inside it. This cannot be undone.'
+            )}
+          </p>
           <div className="mt-4 flex justify-end gap-2">
-            <Button variant="secondary" size="sm" onClick={() => setPurgeFolderId(null)}>Cancel</Button>
-            <Button variant="destructive" size="sm" onClick={() => onPurgeFolder(purgeFolderId)}>Delete forever</Button>
+            <Button variant="secondary" size="sm" onClick={() => setPurgeFolderId(null)}>
+              {uiText('Cancel')}
+            </Button>
+            <Button variant="destructive" size="sm" onClick={() => onPurgeFolder(purgeFolderId)}>
+              {uiText('Delete forever')}
+            </Button>
           </div>
         </Dialog>
       )}
       {purgeListId && (
-        <Dialog open onOpenChange={(o) => !o && setPurgeListId(null)} title="Delete forever?">
-          <p className="text-sm text-muted-foreground">This permanently deletes the smart list. This cannot be undone.</p>
+        <Dialog
+          open
+          onOpenChange={(o) => !o && setPurgeListId(null)}
+          title={uiText('Delete forever?')}
+        >
+          <p className="text-sm text-muted-foreground">
+            {uiText('This permanently deletes the smart list. This cannot be undone.')}
+          </p>
           <div className="mt-4 flex justify-end gap-2">
-            <Button variant="secondary" size="sm" onClick={() => setPurgeListId(null)}>Cancel</Button>
-            <Button variant="destructive" size="sm" onClick={() => onPurgeList(purgeListId)}>Delete forever</Button>
+            <Button variant="secondary" size="sm" onClick={() => setPurgeListId(null)}>
+              {uiText('Cancel')}
+            </Button>
+            <Button variant="destructive" size="sm" onClick={() => onPurgeList(purgeListId)}>
+              {uiText('Delete forever')}
+            </Button>
           </div>
         </Dialog>
       )}

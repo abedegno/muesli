@@ -1,32 +1,38 @@
 # Desktop Release
 
-This runbook covers the signed and notarized macOS arm64 `.dmg` release path.
+This runbook covers desktop builds and releases for macOS arm64 and Linux x64.
 Packaging lives in [../electron-builder.yml](../electron-builder.yml), and CI
 lives in [../.github/workflows/desktop-release.yml](../.github/workflows/desktop-release.yml).
 
 ## What It Builds
 
 - Signed macOS arm64 `.dmg`
+- Unsigned Linux x64 `.AppImage`
 - Resources staged into `build/resources` by
   [../scripts/assemble-desktop-resources.sh](../scripts/assemble-desktop-resources.sh)
 - Electron packaging controlled by [../electron-builder.yml](../electron-builder.yml)
 
 ## Triggers
 
-The workflow comment block matches the actual trigger behavior:
-
-- `pull_request` on packaging files
-  - Paths: `electron-builder.yml`, `build/entitlements.mac.*`,
-    `scripts/assemble-desktop-resources.sh`,
-    `.github/workflows/desktop-release.yml`
-  - Runs build + sign only
+- `pull_request` on desktop packaging, application source, bundled Go services,
+  native helpers, admin UI, dependency manifests/lockfiles, or build configuration
+  - Builds both platforms; signs the macOS app
   - Skips notarization for fast validation
 - `push` tag `desktop-v*`
   - Runs the full release path
   - Builds, signs, notarizes, staples, and attaches the `.dmg` to a GitHub
-    Release
+    Release; the Linux job attaches its `.AppImage` too
 - `workflow_dispatch`
-  - Runs the same full release path as a tag push
+  - Builds both platforms and signs the macOS app
+  - By default, notarizes/staples both macOS artifacts and runs installed-app tests
+  - Set `validate_release=false` for build/sign only
+  - Uploads workflow artifacts without publishing a release
+- Nightly schedule on the default branch
+  - Builds both platforms and signs the macOS app
+  - Runs installed-app end-to-end tests on macOS and Linux
+  - Uploads artifacts without notarizing or publishing a release
+
+Both build jobs use Node 22, matching the main CI workflow.
 
 ## Required Secrets
 
@@ -50,16 +56,18 @@ The macOS release job expects these repository secrets:
 
 ## Release Cut
 
-1. Bump `version` in [../package.json](../package.json).
+1. Bump `version` in [../package.json](../package.json) and the matching
+   [../package-lock.json](../package-lock.json).
    Also move the current `## [Unreleased]` content in
    [../CHANGELOG.md](../CHANGELOG.md) into a new dated section for that
    version so the accumulated release notes do not get stranded.
 2. Create and push the release tag:
    `git tag desktop-vX.Y.Z && git push origin desktop-vX.Y.Z`
-3. CI runs the macOS release job on `macos-14`.
-4. The job builds, signs, notarizes, staples, and uploads the `.dmg`.
+3. CI runs the macOS release job on `macos-14` and Linux on `ubuntu-latest`.
+4. The macOS job builds, signs, notarizes, staples, and runs packaged-app
+   end-to-end tests before uploading the `.dmg`. Linux builds an unsigned `.AppImage`.
 5. [softprops/action-gh-release](https://github.com/softprops/action-gh-release)
-   attaches `dist-desktop/*.dmg` to the GitHub Release.
+   attaches each platform's artifact to the GitHub Release from its build job.
 
 ## Local Build
 
@@ -100,10 +108,9 @@ so `stapler validate` is the release gate.
 
 ## Scope
 
-This pipeline is macOS arm64 `.dmg` only today.
-[../scripts/assemble-desktop-resources.sh](../scripts/assemble-desktop-resources.sh)
-has a separate `linux-x64` branch, but the signed desktop release path uses the
-`darwin-arm64` build.
+Signed and notarized releases target macOS arm64. Linux x64 AppImages are
+unsigned; their contents are extracted and tested under Xvfb during release,
+nightly and manual validation runs. Windows packaging is not configured.
 
 ## Bump Process
 
@@ -114,3 +121,13 @@ release workflow.
 
 For the matching pinned-artifact pattern, see
 [EMBEDDED-POSTGRES-BUNDLE.md](EMBEDDED-POSTGRES-BUNDLE.md).
+
+## Validate a branch without publishing
+
+Run `gh workflow run desktop-release.yml --ref YOUR_BRANCH -f validate_release=true`.
+The macOS job signs and notarizes the application and disk image, mounts the DMG,
+copies the app into a temporary installation directory and runs the packaged test
+suite against that installed copy. The Linux job extracts the AppImage and runs
+the same tests under Xvfb. Neither job publishes a GitHub Release on this trigger.
+Both jobs upload their installable artifacts. This path needs the signing and
+Apple credentials above; a locally ad-hoc-signed build cannot prove notarization.

@@ -237,7 +237,7 @@ func run(ctx context.Context, cfg config.Config) (err error) {
 	// without manual admin steps. Each kind is registered only when both its
 	// URL and token are set; re-running is idempotent.
 	if cfg.DefaultTranscriberURL != "" && cfg.DefaultTranscriberToken != "" {
-		if err := st.EnsureDefaultPlugin(ctx, cr, model.PluginTranscriber, "Default transcriber",
+		if err := st.EnsureBootstrapPlugin(ctx, cr, model.PluginTranscriber, "Default transcriber",
 			cfg.DefaultTranscriberURL, cfg.DefaultTranscriberToken, cfg.DefaultTranscriberConfig); err != nil {
 			slog.Error("register default transcriber", "error", err)
 			return fmt.Errorf("register default transcriber: %w", err)
@@ -245,7 +245,7 @@ func run(ctx context.Context, cfg config.Config) (err error) {
 		slog.Info("registered default transcriber plugin", "url", cfg.DefaultTranscriberURL)
 	}
 	if cfg.DefaultStreamingTranscriberURL != "" && cfg.DefaultStreamingTranscriberToken != "" {
-		if err := st.EnsureDefaultPlugin(ctx, cr, model.PluginStreamingTranscriber, "Default streaming transcriber",
+		if err := st.EnsureBootstrapPlugin(ctx, cr, model.PluginStreamingTranscriber, "Default streaming transcriber",
 			cfg.DefaultStreamingTranscriberURL, cfg.DefaultStreamingTranscriberToken, cfg.DefaultStreamingTranscriberConfig); err != nil {
 			slog.Error("register default streaming transcriber", "error", err)
 			return fmt.Errorf("register default streaming transcriber: %w", err)
@@ -340,30 +340,28 @@ func run(ctx context.Context, cfg config.Config) (err error) {
 			slog.Error("start embedded whisper transcriber", "error", err)
 			return fmt.Errorf("start embedded whisper transcriber: %w", err)
 		}
-		// The bundled whisper.cpp binary is the desktop default transcriber in
-		// --embedded mode, mirroring how the embedded Ollama agent above is the
-		// desktop default local agent: it takes precedence over any hosted
-		// default configured via MUESLI_DEFAULT_TRANSCRIBER_URL/_TOKEN. Swap in
-		// a different transcriber (e.g. the Python plugins/whisper-transcriber
-		// reference) via the admin UI/API after boot.
-		if err := st.EnsureDefaultPlugin(ctx, cr, model.PluginTranscriber, embedded.DefaultWhisperName,
+		// Refresh the bundled service's transient port/token on each boot while
+		// retaining any alternative selected through the wizard or settings.
+		if err := st.EnsureBootstrapPlugin(ctx, cr, model.PluginTranscriber, embedded.DefaultWhisperName,
 			embeddedWhisper.EndpointURL, embeddedWhisper.Token, embeddedWhisper.ConfigJSON); err != nil {
 			slog.Error("register embedded whisper transcriber", "error", err)
 			return fmt.Errorf("register embedded whisper transcriber: %w", err)
 		}
 		slog.Info("registered embedded whisper transcriber plugin", "url", embeddedWhisper.EndpointURL)
-		applyEmbeddedTranscriberDefault(&cfg, embeddedWhisper.EndpointURL)
+		selected, err := st.DefaultPlugin(ctx, cr, model.PluginTranscriber)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return fmt.Errorf("load default transcriber: %w", err)
+		}
+		cfg.DefaultTranscriberURL = selected.EndpointURL
 
 		embeddedWhisperStreaming, err = embedded.StartWhisperCppStreaming(ctx)
 		if err != nil {
 			slog.Error("start embedded whisper streaming transcriber", "error", err)
 			return fmt.Errorf("start embedded whisper streaming transcriber: %w", err)
 		}
-		// The bundled whisper.cpp streaming binary is the desktop default in
-		// --embedded mode and takes precedence over any hosted default configured
-		// via MUESLI_DEFAULT_STREAMING_TRANSCRIBER_URL/_TOKEN. Swap in a different
-		// streaming transcriber via Settings or the admin UI/API after boot.
-		if err := st.EnsureDefaultPlugin(ctx, cr, model.PluginStreamingTranscriber, embedded.DefaultWhisperStreamingName,
+		// A disabled streaming default records an explicit "live transcript off"
+		// choice; bootstrap must preserve it as well as alternative services.
+		if err := st.EnsureBootstrapPlugin(ctx, cr, model.PluginStreamingTranscriber, embedded.DefaultWhisperStreamingName,
 			embeddedWhisperStreaming.EndpointURL, embeddedWhisperStreaming.Token, embeddedWhisperStreaming.ConfigJSON); err != nil {
 			slog.Error("register embedded whisper streaming transcriber", "error", err)
 			return fmt.Errorf("register embedded whisper streaming transcriber: %w", err)
@@ -371,7 +369,11 @@ func run(ctx context.Context, cfg config.Config) (err error) {
 		slog.Info("registered embedded whisper streaming transcriber plugin", "url", embeddedWhisperStreaming.EndpointURL)
 	}
 
-	srv := api.NewServer(api.Deps{Store: st, Storage: prov, Crypto: cr, Worker: wpool, Config: cfg, Embedder: emb, BackupRunner: backup.PgDumpRunner{}, EmbeddedProgress: startupReporter})
+	var retryAIModels func() error
+	if embeddedMode && cfg.EmbeddedOllamaDetected {
+		retryAIModels = embedded.NewModelRetry(ctx, startupReporter, ollamaURL, cfg.EmbeddingsModel, embedded.PullModel)
+	}
+	srv := api.NewServer(api.Deps{Store: st, Storage: prov, Crypto: cr, Worker: wpool, Config: cfg, Embedder: emb, BackupRunner: backup.PgDumpRunner{}, EmbeddedProgress: startupReporter, RetryAIModels: retryAIModels})
 	slog.Info("muesli listening", "addr", cfg.Addr)
 	fmt.Print(readyBanner(cfg.PublicURL))
 	if completeEmbeddedStartup != nil {

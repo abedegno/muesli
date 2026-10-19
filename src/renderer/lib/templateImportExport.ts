@@ -13,7 +13,7 @@ const VALID_PHASES: TemplatePhase[] = ['after', 'pre', 'during', 'cross']
 // -- not id/built_in/agent-override fields -- so the output round-trips
 // cleanly through muesli.createTemplate().
 export function exportTemplateJSON(
-  t: Pick<Template, 'name' | 'phase' | 'sections' | 'auto_run'>,
+  t: Pick<Template, 'name' | 'phase' | 'sections' | 'auto_run'>
 ): string {
   const data: TemplateImportData = {
     name: t.name,
@@ -63,7 +63,11 @@ export function parseTemplateImport(json: string): TemplateImportData {
 }
 
 export function templateExportFilename(name: string): string {
-  const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  const slug = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
   return `${slug || 'template'}.json`
 }
 
@@ -73,7 +77,7 @@ export function templateExportFilename(name: string): string {
 export function triggerDownload(
   filename: string,
   content: string,
-  mimeType = 'application/json',
+  mimeType = 'application/json'
 ): void {
   const blob = new Blob([content], { type: mimeType })
   const url = URL.createObjectURL(blob)

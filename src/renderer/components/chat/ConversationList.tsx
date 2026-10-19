@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { Plus } from 'lucide-react'
 import { cn } from '@/lib/cn'
 import type { Conversation } from '../../../shared/types'
@@ -19,10 +20,10 @@ export function ConversationList({
   return (
     <div className="flex w-64 shrink-0 flex-col border-r border-border pr-3">
       <div className="mb-2 flex items-center justify-between">
-        <h2 className="text-sm font-semibold">Conversations</h2>
+        <h2 className="text-sm font-semibold">{uiText('Conversations')}</h2>
         <button
           type="button"
-          aria-label="New conversation"
+          aria-label={uiText('New conversation')}
           onClick={onNew}
           className="rounded-[var(--radius)] p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
         >
@@ -30,7 +31,7 @@ export function ConversationList({
         </button>
       </div>
       {conversations.length === 0 ? (
-        <p className="px-1 text-xs text-muted-foreground">No conversations yet.</p>
+        <p className="px-1 text-xs text-muted-foreground">{uiText('No conversations yet.')}</p>
       ) : (
         <ul className="flex flex-col gap-0.5 overflow-y-auto">
           {conversations.map((c) => (
@@ -41,10 +42,12 @@ export function ConversationList({
                 onClick={() => onSelect(c.id)}
                 className={cn(
                   'block w-full truncate rounded-[var(--radius)] px-2 py-1.5 text-left text-sm',
-                  c.id === selectedId ? 'bg-primary/10 font-medium text-primary' : 'text-foreground hover:bg-muted',
+                  c.id === selectedId
+                    ? 'bg-primary/10 font-medium text-primary'
+                    : 'text-foreground hover:bg-muted'
                 )}
               >
-                {c.title || 'Untitled conversation'}
+                {c.title || uiText('Untitled conversation')}
               </button>
             </li>
           ))}

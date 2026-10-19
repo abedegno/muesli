@@ -73,3 +73,65 @@ test('recovers notes after an abnormal exit', async ({
     }
   }
 })
+
+test('offers captured PCM after a process is killed before Stop, then uploads it on request', async ({
+  fakeTranscript,
+  serverAddr,
+  userDataDir,
+}) => {
+  const options = buildElectronLaunchOptions({
+    fakeTranscript,
+    serverAddr,
+    userDataDir,
+    ollamaUrl: 'http://127.0.0.1:1',
+  })
+  options.args = [
+    ...(options.args ?? []),
+    '--use-fake-ui-for-media-stream',
+    '--use-fake-device-for-media-stream',
+  ]
+  let first: ElectronApplication | undefined,
+    reopened: ElectronApplication | undefined,
+    killed = false
+  try {
+    first = await _electron.launch(options)
+    const page = await first.firstWindow()
+    await expect(page.getByRole('link', { name: 'All notes', exact: true })).toBeVisible({
+      timeout: 60_000,
+    })
+    await first.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler('muesli:micRequest')
+      ipcMain.handle('muesli:micRequest', () => 'granted')
+      ipcMain.removeHandler('muesli:systemAudioStart')
+      ipcMain.handle('muesli:systemAudioStart', () => null)
+    })
+    await page
+      .getByRole('complementary')
+      .getByRole('button', { name: 'New meeting', exact: true })
+      .click()
+    await page.getByRole('button', { name: 'Record', exact: true }).click()
+    await expect(page.getByRole('button', { name: 'Stop', exact: true })).toBeVisible()
+    await expect(page.getByText('0:03', { exact: true })).toBeVisible()
+    const process = first.process()
+    process.kill('SIGKILL')
+    killed = true
+    await new Promise<void>((resolve) => {
+      if (process.exitCode !== null || process.signalCode !== null) resolve()
+      else process.once('exit', () => resolve())
+    })
+    reopened = await _electron.launch(options)
+    const recovered = await reopened.firstWindow()
+    await expect(recovered.getByRole('button', { name: 'Review recordings' })).toBeVisible({
+      timeout: 60_000,
+    })
+    await recovered.getByRole('button', { name: 'Review recordings' }).click()
+    await expect(recovered.getByRole('button', { name: 'Save audio copy' })).toBeVisible()
+    await recovered.getByRole('button', { name: 'Retry upload', exact: true }).click()
+    await expect(recovered.getByRole('button', { name: 'Review recordings' })).toBeHidden({
+      timeout: 45_000,
+    })
+  } finally {
+    if (reopened) await reopened.close()
+    if (first && !killed) await first.close()
+  }
+})

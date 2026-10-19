@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { muesli } from '@/api'
@@ -24,7 +25,9 @@ export function ChatScreen() {
     muesli
       .listConversations()
       .then((list) => setConversations(list))
-      .catch((err) => setListError(err instanceof Error ? err.message : 'Could not load conversations.'))
+      .catch((err) =>
+        setListError(err instanceof Error ? err.message : 'Could not load conversations.')
+      )
       .finally(() => setListLoading(false))
   }, [])
 
@@ -49,7 +52,7 @@ export function ChatScreen() {
     (source: ChatSource) => {
       navigate(`/notes/${source.note_id}?segment_index=${source.segment_index}`)
     },
-    [navigate],
+    [navigate]
   )
 
   return (
@@ -61,14 +64,22 @@ export function ChatScreen() {
         onNew={() => setSelectedId(null)}
       />
       <div className="flex min-w-0 flex-1 flex-col">
-        <h1 className="mb-2 font-serif text-xl font-semibold">Chat</h1>
-        {listLoading && <p className="text-sm text-muted-foreground">Loading conversations…</p>}
-        {listError && <p role="alert" className="text-sm text-destructive">{listError}</p>}
+        <h1 className="mb-2 font-serif text-xl font-semibold">{uiText('Chat')}</h1>
+        {listLoading && (
+          <p className="text-sm text-muted-foreground">{uiText('Loading conversations…')}</p>
+        )}
+        {listError && (
+          <p role="alert" className="text-sm text-destructive">
+            {listError}
+          </p>
+        )}
         <ChatThread
           messages={thread.messages}
           sourcesByMessageId={thread.sourcesByMessageId}
           loading={thread.loading}
-          emptyLabel={selectedId ? undefined : 'Start a new conversation by asking a question below.'}
+          emptyLabel={
+            selectedId ? undefined : 'Start a new conversation by asking a question below.'
+          }
           onCiteClick={onCiteClick}
         />
         {thread.error && (
@@ -76,7 +87,9 @@ export function ChatScreen() {
             role="alert"
             className={cn(
               'mb-1 text-xs',
-              thread.error.kind === 'inflight' || thread.error.kind === 'no-agent' ? 'text-muted-foreground' : 'text-destructive',
+              thread.error.kind === 'inflight' || thread.error.kind === 'no-agent'
+                ? 'text-muted-foreground'
+                : 'text-destructive'
             )}
           >
             {thread.error.message}

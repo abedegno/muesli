@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { useCallback, useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ApiClient } from '../api/client'
@@ -47,9 +48,9 @@ export function HealthView({ client }: Props) {
   if (error && !health) {
     return (
       <section>
-        <h1>Health</h1>
+        <h1>{uiText('Health')}</h1>
         <p className="error">{error}</p>
-        <button onClick={() => void refresh()}>Refresh</button>
+        <button onClick={() => void refresh()}>{uiText('Refresh')}</button>
       </section>
     )
   }
@@ -57,8 +58,8 @@ export function HealthView({ client }: Props) {
   if (!health) {
     return (
       <section>
-        <h1>Health</h1>
-        <p>Loading…</p>
+        <h1>{uiText('Health')}</h1>
+        <p>{uiText('Loading…')}</p>
       </section>
     )
   }
@@ -76,48 +77,51 @@ export function HealthView({ client }: Props) {
   return (
     <section>
       <div className="row">
-        <h1>Health</h1>
+        <h1>{uiText('Health')}</h1>
         <button onClick={() => void refresh()} disabled={refreshing}>
-          {refreshing ? 'Refreshing…' : 'Refresh'}
+          {refreshing ? uiText('Refreshing…') : uiText('Refresh')}
         </button>
       </div>
       {error && <p className="error">{error}</p>}
 
       <h2>
-        Server <Badge status={health.server.status}>{health.server.status}</Badge>
+        {uiText('Server')} <Badge status={health.server.status}>{health.server.status}</Badge>
       </h2>
       <table>
         <tbody>
           <tr>
-            <th>Version</th>
+            <th>{uiText('Version')}</th>
             <td>{health.server.version}</td>
           </tr>
           <tr>
-            <th>Commit</th>
+            <th>{uiText('Commit')}</th>
             <td>
               <code>{health.server.commit}</code>
             </td>
           </tr>
           <tr>
-            <th>Go version</th>
+            <th>{uiText('Go version')}</th>
             <td>{health.server.goVersion}</td>
           </tr>
         </tbody>
       </table>
 
       <h2>
-        Plugins <Badge status={pluginsOk ? 'ok' : 'error'}>{pluginsOk ? 'OK' : 'Error'}</Badge>
+        {uiText('Plugins')}{' '}
+        <Badge status={pluginsOk ? 'ok' : 'error'}>
+          {pluginsOk ? uiText('OK') : uiText('Error')}
+        </Badge>
       </h2>
       {health.plugins.length === 0 ? (
-        <p>No plugins registered.</p>
+        <p>{uiText('No plugins registered.')}</p>
       ) : (
         <table>
           <thead>
             <tr>
-              <th>Name</th>
-              <th>Kind</th>
-              <th>Status</th>
-              <th>Error</th>
+              <th>{uiText('Name')}</th>
+              <th>{uiText('Kind')}</th>
+              <th>{uiText('Status')}</th>
+              <th>{uiText('Error')}</th>
             </tr>
           </thead>
           <tbody>
@@ -136,7 +140,7 @@ export function HealthView({ client }: Props) {
       )}
 
       <h2>
-        Job queue <Badge status={jobsStatus}>{jobsStatus}</Badge>
+        {uiText('Job queue')} <Badge status={jobsStatus}>{jobsStatus}</Badge>
       </h2>
       {health.jobs.error ? (
         <p className="error">{health.jobs.error}</p>
@@ -154,33 +158,40 @@ export function HealthView({ client }: Props) {
       )}
 
       <h2>
-        Embeddings{' '}
+        {uiText('Embeddings')}{' '}
         <Badge status={!embeddingOk ? 'error' : health.embedding.enabled ? 'ok' : 'disabled'}>
-          {!embeddingOk ? 'Error' : health.embedding.enabled ? 'Enabled' : 'Disabled'}
+          {!embeddingOk
+            ? uiText('Error')
+            : health.embedding.enabled
+              ? uiText('Enabled')
+              : uiText('Disabled')}
         </Badge>
       </h2>
       {health.embedding.error && <p className="error">{health.embedding.error}</p>}
       <table>
         <tbody>
           <tr>
-            <th>Model</th>
-            <td>{health.embedding.model || '(not set)'}</td>
+            <th>{uiText('Model')}</th>
+            <td>{health.embedding.model || uiText('(not set)')}</td>
           </tr>
           <tr>
-            <th>Dimension</th>
+            <th>{uiText('Dimension')}</th>
             <td>{health.embedding.dim}</td>
           </tr>
           <tr>
-            <th>Coverage</th>
+            <th>{uiText('Coverage')}</th>
             <td>
-              {health.embedding.done} / {health.embedding.total}
+              {health.embedding.done} {uiText('/')} {health.embedding.total}
             </td>
           </tr>
         </tbody>
       </table>
 
       <h2>
-        Storage <Badge status={storageOk ? 'ok' : 'error'}>{storageOk ? 'OK' : 'Error'}</Badge>
+        {uiText('Storage')}{' '}
+        <Badge status={storageOk ? 'ok' : 'error'}>
+          {storageOk ? uiText('OK') : uiText('Error')}
+        </Badge>
       </h2>
       {health.storage.error ? (
         <p className="error">{health.storage.error}</p>
@@ -188,15 +199,16 @@ export function HealthView({ client }: Props) {
         <table>
           <tbody>
             <tr>
-              <th>Path</th>
+              <th>{uiText('Path')}</th>
               <td>
                 <code>{health.storage.path}</code>
               </td>
             </tr>
             <tr>
-              <th>Free / Total</th>
+              <th>{uiText('Free / Total')}</th>
               <td>
-                {formatBytes(health.storage.freeBytes)} / {formatBytes(health.storage.totalBytes)}
+                {formatBytes(health.storage.freeBytes)} {uiText('/')}{' '}
+                {formatBytes(health.storage.totalBytes)}
               </td>
             </tr>
           </tbody>

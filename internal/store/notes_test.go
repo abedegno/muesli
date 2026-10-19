@@ -1006,3 +1006,39 @@ func TestMarkNoteReadyConcurrent(t *testing.T) {
 		t.Fatalf("won count = %d, want exactly 1 of %d racing calls", wonCount, races)
 	}
 }
+
+func TestStopNoteCaptureIsGuarded(t *testing.T) {
+	t.Parallel()
+	st := store.New(testutil.NewPool(t))
+	ctx := context.Background()
+	owner, _ := st.CreateUser(ctx, "stop-capture@example.com", "h")
+	other, _ := st.CreateUser(ctx, "stop-other@example.com", "h")
+	n, err := st.CreateNote(ctx, owner.ID, "Capture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.StartNoteCapture(ctx, owner.ID, n.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = st.StopNoteCapture(ctx, other.ID, n.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("cross-owner stop: %v", err)
+	}
+	stopped, err := st.StopNoteCapture(ctx, owner.ID, n.ID)
+	if err != nil || stopped.Status != model.NoteDraft || stopped.EndedAt == nil {
+		t.Fatalf("stopped note: %+v %v", stopped, err)
+	}
+	if stopped.StartedAt == nil || stopped.EndedAt.Before(*stopped.StartedAt) {
+		t.Fatalf("capture timestamps do not describe the recording: %+v", stopped)
+	}
+	restarted, err := st.StartNoteCapture(ctx, owner.ID, n.ID)
+	if err != nil || restarted.EndedAt != nil || restarted.StartedAt == nil || restarted.StartedAt.Before(*stopped.EndedAt) {
+		t.Fatalf("new capture retained old timestamps: %+v %v", restarted, err)
+	}
+	if err = st.SetNoteStatus(ctx, n.ID, model.NoteTranscribing); err != nil {
+		t.Fatal(err)
+	}
+	unchanged, err := st.StopNoteCapture(ctx, owner.ID, n.ID)
+	if err != nil || unchanged.Status != model.NoteTranscribing {
+		t.Fatalf("late stop regressed processing: %+v %v", unchanged, err)
+	}
+}

@@ -1,6 +1,10 @@
 import WebSocket, { type RawData } from 'ws'
 import type { NoteStreamEvent } from '../shared/ipc'
 import type { ServerConfig } from '../shared/types'
+import { PCM_FRAME_BYTES } from '../shared/pcm'
+
+const MAX_QUEUED_FRAMES = 50
+const MAX_BUFFERED_BYTES = MAX_QUEUED_FRAMES * PCM_FRAME_BYTES
 
 interface NoteStreamRelayDeps {
   getConfig: () => ServerConfig | null
@@ -18,7 +22,7 @@ class ActiveStream {
   constructor(
     readonly noteId: string,
     private readonly cfg: ServerConfig,
-    private readonly emit: (event: NoteStreamEvent) => void,
+    private readonly emit: (event: NoteStreamEvent) => void
   ) {}
 
   start(): void {
@@ -27,6 +31,8 @@ class ActiveStream {
 
     const url = new URL(`/api/notes/${this.noteId}/stream`, this.cfg.serverUrl)
     this.ws = new WebSocket(url.toString(), {
+      handshakeTimeout: 10_000,
+      maxPayload: 1024 * 1024,
       headers: {
         Authorization: `Bearer ${this.cfg.token}`,
       },
@@ -41,7 +47,7 @@ class ActiveStream {
       this.emit({ noteId: this.noteId, type: 'live' })
       while (this.pendingFrames.length > 0 && this.ws?.readyState === WebSocket.OPEN) {
         const frame = this.pendingFrames.shift()
-        if (frame) this.ws.send(Buffer.from(new Uint8Array(frame)))
+        if (frame) this.sendFrame(frame)
       }
     })
 
@@ -54,7 +60,15 @@ class ActiveStream {
         return
       }
       if (!payload || typeof payload !== 'object') return
-      const message = payload as { type?: string; text?: string; start_ms?: number; end_ms?: number; speaker?: string | null; provisional?: boolean; final?: boolean }
+      const message = payload as {
+        type?: string
+        text?: string
+        start_ms?: number
+        end_ms?: number
+        speaker?: string | null
+        provisional?: boolean
+        final?: boolean
+      }
       if (message.type === 'unavailable') {
         this.status = 'unavailable'
         this.pendingFrames.length = 0
@@ -103,11 +117,30 @@ class ActiveStream {
     })
   }
 
+  private drop(): void {
+    this.status = 'dropped'
+    this.emit({ noteId: this.noteId, type: 'dropped' })
+    this.stop()
+  }
+
   sendFrame(audio: ArrayBuffer): void {
-    if (this.status === 'unavailable' || this.status === 'dropped') return
+    if (this.closedByClient || this.status === 'unavailable' || this.status === 'dropped') return
+    if (!audio.byteLength) return
+    if (audio.byteLength > PCM_FRAME_BYTES) {
+      this.drop()
+      return
+    }
     const copy = audio.slice(0)
     if (this.ws?.readyState === WebSocket.OPEN) {
+      if (this.ws.bufferedAmount + copy.byteLength > MAX_BUFFERED_BYTES) {
+        this.drop()
+        return
+      }
       this.ws.send(Buffer.from(new Uint8Array(copy)))
+      return
+    }
+    if (this.pendingFrames.length >= MAX_QUEUED_FRAMES) {
+      this.drop()
       return
     }
     this.pendingFrames.push(copy)

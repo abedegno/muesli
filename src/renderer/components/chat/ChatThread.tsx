@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { Fragment } from 'react'
 import { cn } from '@/lib/cn'
 import { Markdown } from '../Markdown'
@@ -18,7 +19,7 @@ const CITATION_MARKER_EXACT_RE = /^\[(\d+)\]$/
 function renderTextWithCitations(
   text: string,
   sourcesByN: Map<number, ChatSource>,
-  onCite: (source: ChatSource) => void,
+  onCite: (source: ChatSource) => void
 ): React.ReactNode {
   if (!text.includes('[')) return text
   const parts = text.split(CITATION_MARKER_RE)
@@ -32,7 +33,10 @@ function renderTextWithCitations(
       <button
         key={i}
         type="button"
-        aria-label={`Citation ${source.n}: ${source.snippet}`}
+        aria-label={uiText('Citation {value1}: {value2}', {
+          value1: source.n,
+          value2: source.snippet,
+        })}
         title={source.snippet}
         onClick={() => onCite(source)}
         className="mx-0.5 inline-flex min-w-[1.25rem] items-center justify-center rounded-[var(--radius)] border border-border px-1 font-mono text-xs tabular-nums text-muted-foreground hover:bg-primary/10 hover:text-primary"
@@ -65,8 +69,13 @@ export function ChatThread({
   onCiteClick?: (source: ChatSource) => void
 }) {
   return (
-    <div role="log" aria-label="Conversation" aria-busy={!!loading} className="flex-1 overflow-y-auto">
-      {loading && <p className="text-sm text-muted-foreground">Loading messages…</p>}
+    <div
+      role="log"
+      aria-label={uiText('Conversation')}
+      aria-busy={!!loading}
+      className="flex-1 overflow-y-auto"
+    >
+      {loading && <p className="text-sm text-muted-foreground">{uiText('Loading messages…')}</p>}
       {!loading && messages.length === 0 && emptyLabel && (
         <p className="text-sm text-muted-foreground">{emptyLabel}</p>
       )}
@@ -80,18 +89,20 @@ export function ChatThread({
             data-role={m.role}
             className={cn(
               'mb-3 max-w-[85%] rounded-[var(--radius)] px-3 py-2 text-sm',
-              isUser ? 'ml-auto bg-primary/10' : 'mr-auto bg-muted',
+              isUser ? 'ml-auto bg-primary/10' : 'mr-auto bg-muted'
             )}
           >
             <div className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              {isUser ? 'You' : 'Assistant'}
+              {isUser ? uiText('You') : uiText('Assistant')}
             </div>
             {isUser ? (
               <p className="whitespace-pre-wrap">{m.content}</p>
             ) : (
               <Markdown
                 source={m.content}
-                renderText={(text) => renderTextWithCitations(text, sourcesByN, (s) => onCiteClick?.(s))}
+                renderText={(text) =>
+                  renderTextWithCitations(text, sourcesByN, (s) => onCiteClick?.(s))
+                }
               />
             )}
           </div>

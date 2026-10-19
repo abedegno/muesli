@@ -1,14 +1,52 @@
+import { uiText } from '@/i18n'
 import { useEffect, useRef, useState } from 'react'
 import { NavLink, useNavigate } from 'react-router-dom'
-import { Plus, Search, FileText, MessageSquare, Settings, Tag as TagIcon, Filter, Sparkles, Folder as FolderIcon, ChevronRight, ChevronDown, Trash2, PanelLeft, PanelLeftClose, MoreHorizontal, Home, Users, CheckSquare2, BarChart3 } from 'lucide-react'
+import {
+  Plus,
+  Search,
+  FileText,
+  MessageSquare,
+  Settings,
+  Tag as TagIcon,
+  Filter,
+  Sparkles,
+  Folder as FolderIcon,
+  ChevronRight,
+  ChevronDown,
+  Trash2,
+  PanelLeft,
+  PanelLeftClose,
+  MoreHorizontal,
+  Home,
+  Users,
+  CheckSquare2,
+  BarChart3,
+} from 'lucide-react'
 import { muesli } from '@/api'
 import { cn } from '@/lib/cn'
 import { descendantIds } from '@/lib/folders'
-import { readStoredFolderCollapsed, writeStoredFolderCollapsed, SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH } from '@/lib/sidebarPrefs'
+import {
+  readStoredFolderCollapsed,
+  writeStoredFolderCollapsed,
+  SIDEBAR_MIN_WIDTH,
+  SIDEBAR_MAX_WIDTH,
+} from '@/lib/sidebarPrefs'
 import { describeRule } from '@/lib/smartList'
 import { Button } from '@/components/ui/Button'
-import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem, ContextMenuSeparator } from '@/components/ui/ContextMenu'
-import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/DropdownMenu'
+import {
+  ContextMenu,
+  ContextMenuTrigger,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+} from '@/components/ui/ContextMenu'
+import {
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+} from '@/components/ui/DropdownMenu'
 import { useToast } from '@/components/ui/Toast'
 import { ExportOptionsDialog } from '../ExportOptionsDialog'
 import type { SmartList, Folder } from '../../../shared/types'
@@ -17,13 +55,38 @@ import type { RecurringSuggestion } from '@/lib/recurring'
 import type { ActiveView } from './AppLayout'
 
 export function Sidebar({
-  query, onQuery, dateFrom = '', dateTo = '', onDateFrom = () => {}, onDateTo = () => {}, tags, lists, listCount, suggestions,
-  folders, folderCount, onNewFolder, onEditFolder, onDropNote, onReparentFolder = () => {}, onReorderFolder = () => {},
-  activeView, onSelectView, onNewList, onEditList, onSaveSuggestion,
-  onDeleteList = () => {}, onDeleteFolder = () => {}, onNewSubfolder = () => {}, onSaveTagAsList = () => {},
+  query,
+  onQuery,
+  dateFrom = '',
+  dateTo = '',
+  onDateFrom = () => {},
+  onDateTo = () => {},
+  tags,
+  lists,
+  listCount,
+  suggestions,
+  folders,
+  folderCount,
+  onNewFolder,
+  onEditFolder,
+  onDropNote,
+  onReparentFolder = () => {},
+  onReorderFolder = () => {},
+  activeView,
+  onSelectView,
+  onNewList,
+  onEditList,
+  onSaveSuggestion,
+  onDeleteList = () => {},
+  onDeleteFolder = () => {},
+  onNewSubfolder = () => {},
+  onSaveTagAsList = () => {},
   onRenameTag = () => {},
   onSaveSearchAsList = () => {},
-  collapsed = false, width = 256, onToggleCollapsed = () => {}, onResize = () => {},
+  collapsed = false,
+  width = 256,
+  onToggleCollapsed = () => {},
+  onResize = () => {},
 }: {
   query: string
   onQuery: (q: string) => void
@@ -67,9 +130,11 @@ export function Sidebar({
   // Seeded from localStorage (filtered to existing folders so stale ids drop off)
   // and persisted on change, so collapse state survives remount/navigation/reload.
   const [folderCollapsed, setFolderCollapsed] = useState<Set<string>>(() =>
-    readStoredFolderCollapsed(folders.map((f) => f.id)),
+    readStoredFolderCollapsed(folders.map((f) => f.id))
   )
-  useEffect(() => { writeStoredFolderCollapsed(folderCollapsed) }, [folderCollapsed])
+  useEffect(() => {
+    writeStoredFolderCollapsed(folderCollapsed)
+  }, [folderCollapsed])
   // Drop-target highlight while a folder is dragged (re-parent). null = none, '' = the
   // top-level "Folders" header target.
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null)
@@ -89,15 +154,21 @@ export function Sidebar({
   const { notify } = useToast()
 
   // Show the ⋯ button for a list/folder row when it is hovered, focused, OR its dropdown is open.
-  const showListMore = (id: string) => hoveredListId === id || openListDropdownId === id || focusedListId === id
-  const showFolderMore = (id: string) => hoveredFolderId === id || openFolderDropdownId === id || focusedFolderId === id
+  const showListMore = (id: string) =>
+    hoveredListId === id || openListDropdownId === id || focusedListId === id
+  const showFolderMore = (id: string) =>
+    hoveredFolderId === id || openFolderDropdownId === id || focusedFolderId === id
 
   const isFolderDrag = (e: React.DragEvent) => e.dataTransfer.types.includes('text/folder-id')
   const childrenOf = (pid: string | null) => folders.filter((f) => (f.parent_id ?? null) === pid)
   // Selecting a view always returns to the main list pane (so it shows even when a
   // note detail is open), then applies the filter.
-  const selectView = (v: ActiveView) => { navigate('/notes'); onSelectView(v) }
-  const rowBase = 'flex w-full items-center justify-between rounded-[var(--radius)] px-2 py-1.5 text-sm'
+  const selectView = (v: ActiveView) => {
+    navigate('/notes')
+    onSelectView(v)
+  }
+  const rowBase =
+    'flex w-full items-center justify-between rounded-[var(--radius)] px-2 py-1.5 text-sm'
   const active = 'bg-primary/10 font-medium text-primary'
   const idle = 'text-foreground hover:bg-muted'
   const section = 'px-1 pb-1 pt-3 text-xs font-medium uppercase tracking-wide text-muted-foreground'
@@ -114,7 +185,12 @@ export function Sidebar({
           aria-label={label}
           className={cn('h-1.5 w-full', dragOverGap === key && 'bg-primary')}
           style={{ paddingLeft: depth * 12 + 8 }}
-          onDragOver={(e) => { if (isFolderDrag(e)) { e.preventDefault(); setDragOverGap(key) } }}
+          onDragOver={(e) => {
+            if (isFolderDrag(e)) {
+              e.preventDefault()
+              setDragOverGap(key)
+            }
+          }}
           onDragLeave={() => setDragOverGap((cur) => (cur === key ? null : cur))}
           onDrop={(e) => {
             setDragOverGap((cur) => (cur === key ? null : cur))
@@ -125,95 +201,160 @@ export function Sidebar({
             if ((dragged.parent_id ?? null) === parent) {
               // Same-parent: reorder to sit immediately after `afterId`.
               if (draggedId !== afterId) onReorderFolder(draggedId, afterId)
-            } else if (draggedId !== parent && !(parent != null && descendantIds(folders, draggedId).has(parent))) {
+            } else if (
+              draggedId !== parent &&
+              !(parent != null && descendantIds(folders, draggedId).has(parent))
+            ) {
               // Cross-parent: re-parent into this group (lands at the end), cycle-guarded.
               onReparentFolder(draggedId, parent)
             }
-          }} />
+          }}
+        />
       )
     }
     const rows = childrenOf(parent).map((f) => {
       const kids = childrenOf(f.id)
       const isCollapsed = folderCollapsed.has(f.id)
       return (
-        <li key={f.id}
+        <li
+          key={f.id}
           onMouseEnter={() => setHoveredFolderId(f.id)}
           onMouseLeave={() => setHoveredFolderId((cur) => (cur === f.id ? null : cur))}
           onFocus={() => setFocusedFolderId(f.id)}
-          onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setFocusedFolderId(null) }}>
+          onBlur={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) setFocusedFolderId(null)
+          }}
+        >
           <ContextMenu>
-          <ContextMenuTrigger asChild>
-          <div
-            draggable
-            onDragStart={(e) => { e.dataTransfer.setData('text/folder-id', f.id); e.dataTransfer.effectAllowed = 'move' }}
-            onDragEnd={() => { setDragOverFolder(null); setDragOverGap(null) }}
-            className={cn(rowBase,
-              activeView.type === 'folder' && activeView.id === f.id ? active : idle,
-              dragOverFolder === f.id && 'ring-1 ring-primary')}
-            style={{ paddingLeft: depth * 12 + 8 }}
-            onDragOver={(e) => { e.preventDefault(); setDragOverFolder(f.id) }}
-            onDragLeave={() => setDragOverFolder((cur) => (cur === f.id ? null : cur))}
-            onDrop={(e) => {
-              setDragOverFolder(null)
-              const folderId = e.dataTransfer.getData('text/folder-id')
-              if (folderId) {
-                if (folderId !== f.id && !descendantIds(folders, folderId).has(f.id)) onReparentFolder(folderId, f.id)
-                return
-              }
-              const noteId = e.dataTransfer.getData('text/note-id')
-              if (noteId) onDropNote(f.id, noteId)
-            }}>
-            {kids.length > 0 ? (
-              <button
-                aria-label={isCollapsed ? `Expand ${f.name}` : `Collapse ${f.name}`}
-                onClick={(e) => { e.stopPropagation(); setFolderCollapsed((c) => { const n = new Set(c); if (n.has(f.id)) n.delete(f.id); else n.add(f.id); return n }) }}
-                onKeyDown={(e) => {
-                  if (e.key !== 'Enter' && e.key !== ' ') return
-                  e.preventDefault()
-                  e.stopPropagation()
-                  setFolderCollapsed((c) => { const n = new Set(c); if (n.has(f.id)) n.delete(f.id); else n.add(f.id); return n })
+            <ContextMenuTrigger asChild>
+              <div
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.setData('text/folder-id', f.id)
+                  e.dataTransfer.effectAllowed = 'move'
                 }}
-                className="mr-1 shrink-0 text-muted-foreground hover:text-foreground">
-                {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
-              </button>
-            ) : <span className="mr-1 inline-block w-3 shrink-0" />}
-            <button
-              onClick={() => selectView({ type: 'folder', id: f.id })}
-              onDoubleClick={() => onEditFolder(f)}
-              className="flex min-w-0 flex-1 items-center justify-between text-left">
-              <span className="truncate">{f.name}</span>
-              <span className="ml-2 shrink-0 text-xs text-muted-foreground">{folderCount(f)}</span>
-            </button>
-            {showFolderMore(f.id) && (
-              <DropdownMenu onOpenChange={(open) => setOpenFolderDropdownId(open ? f.id : null)}>
-                <DropdownMenuTrigger asChild>
+                onDragEnd={() => {
+                  setDragOverFolder(null)
+                  setDragOverGap(null)
+                }}
+                className={cn(
+                  rowBase,
+                  activeView.type === 'folder' && activeView.id === f.id ? active : idle,
+                  dragOverFolder === f.id && 'ring-1 ring-primary'
+                )}
+                style={{ paddingLeft: depth * 12 + 8 }}
+                onDragOver={(e) => {
+                  e.preventDefault()
+                  setDragOverFolder(f.id)
+                }}
+                onDragLeave={() => setDragOverFolder((cur) => (cur === f.id ? null : cur))}
+                onDrop={(e) => {
+                  setDragOverFolder(null)
+                  const folderId = e.dataTransfer.getData('text/folder-id')
+                  if (folderId) {
+                    if (folderId !== f.id && !descendantIds(folders, folderId).has(f.id))
+                      onReparentFolder(folderId, f.id)
+                    return
+                  }
+                  const noteId = e.dataTransfer.getData('text/note-id')
+                  if (noteId) onDropNote(f.id, noteId)
+                }}
+              >
+                {kids.length > 0 ? (
                   <button
-                    aria-label={`More actions for ${f.name}`}
-                    onClick={(e) => e.stopPropagation()}
-                    className="ml-1 shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground">
-                    <MoreHorizontal size={14} />
+                    aria-label={
+                      isCollapsed
+                        ? uiText('Expand {value1}', { value1: f.name })
+                        : uiText('Collapse {value1}', { value1: f.name })
+                    }
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setFolderCollapsed((c) => {
+                        const n = new Set(c)
+                        if (n.has(f.id)) n.delete(f.id)
+                        else n.add(f.id)
+                        return n
+                      })
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter' && e.key !== ' ') return
+                      e.preventDefault()
+                      e.stopPropagation()
+                      setFolderCollapsed((c) => {
+                        const n = new Set(c)
+                        if (n.has(f.id)) n.delete(f.id)
+                        else n.add(f.id)
+                        return n
+                      })
+                    }}
+                    className="mr-1 shrink-0 text-muted-foreground hover:text-foreground"
+                  >
+                    {isCollapsed ? <ChevronRight size={12} /> : <ChevronDown size={12} />}
                   </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem onSelect={() => onNewSubfolder(f.id)}>New subfolder…</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => onEditFolder(f)}>Rename…</DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => setExportFolderTarget(f)}>Export folder…</DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem destructive onSelect={() => onDeleteFolder(f.id)}>Move to Trash</DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
-          </div>
-          </ContextMenuTrigger>
-          <ContextMenuContent>
-            <ContextMenuItem onSelect={() => onNewSubfolder(f.id)}>New subfolder…</ContextMenuItem>
-            <ContextMenuItem onSelect={() => onEditFolder(f)}>Rename…</ContextMenuItem>
-            <ContextMenuItem onSelect={() => setExportFolderTarget(f)}>Export folder…</ContextMenuItem>
-            <ContextMenuSeparator />
-            <ContextMenuItem destructive onSelect={() => onDeleteFolder(f.id)}>Move to Trash</ContextMenuItem>
-          </ContextMenuContent>
+                ) : (
+                  <span className="mr-1 inline-block w-3 shrink-0" />
+                )}
+                <button
+                  onClick={() => selectView({ type: 'folder', id: f.id })}
+                  onDoubleClick={() => onEditFolder(f)}
+                  className="flex min-w-0 flex-1 items-center justify-between text-left"
+                >
+                  <span className="truncate">{f.name}</span>
+                  <span className="ml-2 shrink-0 text-xs text-muted-foreground">
+                    {folderCount(f)}
+                  </span>
+                </button>
+                {showFolderMore(f.id) && (
+                  <DropdownMenu
+                    onOpenChange={(open) => setOpenFolderDropdownId(open ? f.id : null)}
+                  >
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        aria-label={uiText('More actions for {value1}', { value1: f.name })}
+                        onClick={(e) => e.stopPropagation()}
+                        className="ml-1 shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                      >
+                        <MoreHorizontal size={14} />
+                      </button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end">
+                      <DropdownMenuItem onSelect={() => onNewSubfolder(f.id)}>
+                        {uiText('New subfolder…')}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => onEditFolder(f)}>
+                        {uiText('Rename…')}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => setExportFolderTarget(f)}>
+                        {uiText('Export folder…')}
+                      </DropdownMenuItem>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem destructive onSelect={() => onDeleteFolder(f.id)}>
+                        {uiText('Move to Trash')}
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                )}
+              </div>
+            </ContextMenuTrigger>
+            <ContextMenuContent>
+              <ContextMenuItem onSelect={() => onNewSubfolder(f.id)}>
+                {uiText('New subfolder…')}
+              </ContextMenuItem>
+              <ContextMenuItem onSelect={() => onEditFolder(f)}>
+                {uiText('Rename…')}
+              </ContextMenuItem>
+              <ContextMenuItem onSelect={() => setExportFolderTarget(f)}>
+                {uiText('Export folder…')}
+              </ContextMenuItem>
+              <ContextMenuSeparator />
+              <ContextMenuItem destructive onSelect={() => onDeleteFolder(f.id)}>
+                {uiText('Move to Trash')}
+              </ContextMenuItem>
+            </ContextMenuContent>
           </ContextMenu>
-          {!isCollapsed && kids.length > 0 && <ul className="flex flex-col">{renderFolders(f.id, depth + 1)}</ul>}
+          {!isCollapsed && kids.length > 0 && (
+            <ul className="flex flex-col">{renderFolders(f.id, depth + 1)}</ul>
+          )}
         </li>
       )
     })
@@ -244,20 +385,36 @@ export function Sidebar({
   if (collapsed) {
     return (
       <aside className="flex h-full w-12 shrink-0 flex-col items-center gap-2 overflow-hidden border-r border-border bg-app-chrome py-3">
-        <button aria-label="Expand sidebar" title="Expand sidebar (⌘\)" onClick={onToggleCollapsed}
-          className="rounded-[var(--radius)] p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground">
+        <button
+          aria-label={uiText('Expand sidebar')}
+          title={uiText('Expand sidebar (⌘\\)')}
+          onClick={onToggleCollapsed}
+          className="rounded-[var(--radius)] p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
           <PanelLeft size={18} />
         </button>
-        <button aria-label="New meeting" title="New meeting" onClick={() => navigate('/new')}
-          className="rounded-[var(--radius)] p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground">
+        <button
+          aria-label={uiText('New meeting')}
+          title={uiText('New meeting')}
+          onClick={() => navigate('/new')}
+          className="rounded-[var(--radius)] p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
           <Plus size={18} />
         </button>
-        <button aria-label="Chat" title="Chat" onClick={() => navigate('/chat')}
-          className="rounded-[var(--radius)] p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground">
+        <button
+          aria-label={uiText('Chat')}
+          title={uiText('Chat')}
+          onClick={() => navigate('/chat')}
+          className="rounded-[var(--radius)] p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
           <MessageSquare size={18} />
         </button>
-        <button aria-label="Search" title="Search" onClick={() => navigate('/search')}
-          className="rounded-[var(--radius)] p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground">
+        <button
+          aria-label={uiText('Search')}
+          title={uiText('Search')}
+          onClick={() => navigate('/search')}
+          className="rounded-[var(--radius)] p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+        >
           <Search size={18} />
         </button>
       </aside>
@@ -265,38 +422,56 @@ export function Sidebar({
   }
 
   return (
-    <aside ref={asideRef} style={{ width }} className="relative flex h-full min-h-0 shrink-0 flex-col gap-3 overflow-hidden border-r border-border bg-app-chrome p-3">
+    <aside
+      ref={asideRef}
+      style={{ width }}
+      className="relative flex h-full min-h-0 shrink-0 flex-col gap-3 overflow-hidden border-r border-border bg-app-chrome p-3"
+    >
       <div className="flex items-center justify-between px-1 py-1">
-        <span className="flex items-center gap-2 text-sm font-semibold">🥣 Muesli</span>
-        <button aria-label="Collapse sidebar" title="Collapse sidebar (⌘\)" onClick={onToggleCollapsed}
-          className="text-muted-foreground hover:text-foreground">
+        <span className="flex items-center gap-2 text-sm font-semibold">{uiText('🥣 Muesli')}</span>
+        <button
+          aria-label={uiText('Collapse sidebar')}
+          title={uiText('Collapse sidebar (⌘\\)')}
+          onClick={onToggleCollapsed}
+          className="text-muted-foreground hover:text-foreground"
+        >
           <PanelLeftClose size={16} />
         </button>
       </div>
-      <Button onClick={() => navigate('/new')} className="w-full"><Plus size={18} /> New meeting</Button>
+      <Button onClick={() => navigate('/new')} className="w-full">
+        <Plus size={18} /> {uiText('New meeting')}
+      </Button>
       <label className="relative block">
-        <Search size={16} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
-        <input aria-label="Search notes" value={query} onChange={(e) => onQuery(e.target.value)} placeholder="Search…"
-          className="h-9 w-full rounded-[var(--radius)] border border-input bg-background pl-8 pr-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
+        <Search
+          size={16}
+          className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+        />
+        <input
+          aria-label={uiText('Search notes')}
+          value={query}
+          onChange={(e) => onQuery(e.target.value)}
+          placeholder={uiText('Search…')}
+          className="h-9 w-full rounded-[var(--radius)] border border-input bg-background pl-8 pr-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        />
       </label>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {query.trim() && (
           <div className="flex items-center gap-1.5 px-1 text-xs text-muted-foreground">
             <label className="flex items-center gap-1">
-              From
+              {uiText('From')}
               <input
                 type="date"
-                aria-label="Search from date"
+                aria-label={uiText('Search from date')}
                 value={dateFrom}
                 onChange={(e) => onDateFrom(e.target.value)}
                 className="h-7 rounded-[var(--radius)] border border-input bg-background px-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               />
             </label>
             <label className="flex items-center gap-1">
-              To
+              {uiText('To')}
               <input
                 type="date"
-                aria-label="Search to date"
+                aria-label={uiText('Search to date')}
                 value={dateTo}
                 onChange={(e) => onDateTo(e.target.value)}
                 className="h-7 rounded-[var(--radius)] border border-input bg-background px-1.5 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -305,95 +480,169 @@ export function Sidebar({
           </div>
         )}
         {query.trim() && (
-          <button onClick={() => onSaveSearchAsList(query.trim())}
-            className="flex items-center gap-1 px-1 text-xs text-primary hover:underline">
-            <Filter size={12} /> Save as smart list
+          <button
+            onClick={() => onSaveSearchAsList(query.trim())}
+            className="flex items-center gap-1 px-1 text-xs text-primary hover:underline"
+          >
+            <Filter size={12} /> {uiText('Save as smart list')}
           </button>
         )}
 
         <nav className="flex-1 overflow-y-auto">
-          <NavLink to="/" end onClick={() => onSelectView({ type: 'all' })}
-            className={({ isActive }) => cn(rowBase, isActive ? active : idle)}>
-            <span className="flex items-center gap-2"><Home size={14} /> Home</span>
+          <NavLink
+            to="/"
+            end
+            onClick={() => onSelectView({ type: 'all' })}
+            className={({ isActive }) => cn(rowBase, isActive ? active : idle)}
+          >
+            <span className="flex items-center gap-2">
+              <Home size={14} /> {uiText('Home')}
+            </span>
           </NavLink>
 
-          <NavLink to="/notes" end onClick={() => onSelectView({ type: 'all' })}
-            className={({ isActive }) => cn(rowBase, isActive ? active : idle)}>
-            <span className="flex items-center gap-2"><FileText size={14} /> All notes</span>
+          <NavLink
+            to="/notes"
+            end
+            onClick={() => onSelectView({ type: 'all' })}
+            className={({ isActive }) => cn(rowBase, isActive ? active : idle)}
+          >
+            <span className="flex items-center gap-2">
+              <FileText size={14} /> {uiText('All notes')}
+            </span>
           </NavLink>
 
           {folders.length > 0 ? (
             <>
               <div
-                className={cn(section, 'flex items-center justify-between rounded-[var(--radius)]', dragOverFolder === '' && 'ring-1 ring-primary')}
-                onDragOver={(e) => { if (isFolderDrag(e)) { e.preventDefault(); setDragOverFolder('') } }}
+                className={cn(
+                  section,
+                  'flex items-center justify-between rounded-[var(--radius)]',
+                  dragOverFolder === '' && 'ring-1 ring-primary'
+                )}
+                onDragOver={(e) => {
+                  if (isFolderDrag(e)) {
+                    e.preventDefault()
+                    setDragOverFolder('')
+                  }
+                }}
                 onDragLeave={() => setDragOverFolder((cur) => (cur === '' ? null : cur))}
                 onDrop={(e) => {
                   setDragOverFolder(null)
                   const folderId = e.dataTransfer.getData('text/folder-id')
                   if (folderId) onReparentFolder(folderId, null)
-                }}>
-                <span><FolderIcon size={12} className="mr-1 inline" /> Folders</span>
-                <button aria-label="New folder" onClick={onNewFolder} className="hover:text-primary"><Plus size={12} /></button>
+                }}
+              >
+                <span>
+                  <FolderIcon size={12} className="mr-1 inline" /> {uiText('Folders')}
+                </span>
+                <button
+                  aria-label={uiText('New folder')}
+                  onClick={onNewFolder}
+                  className="hover:text-primary"
+                >
+                  <Plus size={12} />
+                </button>
               </div>
               <ul className="flex flex-col">{renderFolders(null, 0)}</ul>
             </>
           ) : (
-            <button onClick={onNewFolder} className={cn(section, 'flex w-full items-center gap-1 hover:text-primary')}>
-              <Plus size={12} /> New folder
+            <button
+              onClick={onNewFolder}
+              className={cn(section, 'flex w-full items-center gap-1 hover:text-primary')}
+            >
+              <Plus size={12} /> {uiText('New folder')}
             </button>
           )}
 
           {lists.length > 0 ? (
             <>
               <div className={cn(section, 'flex items-center justify-between')}>
-                <span><Filter size={12} className="mr-1 inline" /> Smart lists</span>
-                <button aria-label="New smart list" onClick={onNewList} className="hover:text-primary"><Plus size={12} /></button>
+                <span>
+                  <Filter size={12} className="mr-1 inline" /> {uiText('Smart lists')}
+                </span>
+                <button
+                  aria-label={uiText('New smart list')}
+                  onClick={onNewList}
+                  className="hover:text-primary"
+                >
+                  <Plus size={12} />
+                </button>
               </div>
               <ul className="flex flex-col">
                 {lists.map((l) => {
                   const desc = describeRule(l.rule)
                   return (
-                    <li key={l.id}
+                    <li
+                      key={l.id}
                       onMouseEnter={() => setHoveredListId(l.id)}
                       onMouseLeave={() => setHoveredListId((cur) => (cur === l.id ? null : cur))}
                       onFocus={() => setFocusedListId(l.id)}
-                      onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setFocusedListId(null) }}>
+                      onBlur={(e) => {
+                        if (!e.currentTarget.contains(e.relatedTarget as Node))
+                          setFocusedListId(null)
+                      }}
+                    >
                       <ContextMenu>
-                      <ContextMenuTrigger asChild>
-                      <div className={cn(rowBase, 'items-start', activeView.type === 'list' && activeView.id === l.id ? active : idle)}>
-                        <button
-                          onClick={() => selectView({ type: 'list', id: l.id })}
-                          onDoubleClick={() => onEditList(l)}
-                          className="flex min-w-0 flex-1 items-start text-left">
-                          <span className="min-w-0 flex-1">
-                            <span className="block truncate">{l.name}</span>
-                            {desc && <span className="block truncate text-xs text-muted-foreground">{desc}</span>}
-                          </span>
-                          <span className="ml-2 shrink-0 text-xs text-muted-foreground">{listCount(l)}</span>
-                        </button>
-                        {showListMore(l.id) && (
-                          <DropdownMenu onOpenChange={(open) => setOpenListDropdownId(open ? l.id : null)}>
-                            <DropdownMenuTrigger asChild>
-                              <button
-                                aria-label={`More actions for ${l.name}`}
-                                onClick={(e) => e.stopPropagation()}
-                                className="ml-1 shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground">
-                                <MoreHorizontal size={14} />
-                              </button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end">
-                              <DropdownMenuItem onSelect={() => onEditList(l)}>Edit rule…</DropdownMenuItem>
-                              <DropdownMenuItem destructive onSelect={() => onDeleteList(l.id)}>Move to Trash</DropdownMenuItem>
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        )}
-                      </div>
-                      </ContextMenuTrigger>
-                      <ContextMenuContent>
-                        <ContextMenuItem onSelect={() => onEditList(l)}>Edit rule…</ContextMenuItem>
-                        <ContextMenuItem destructive onSelect={() => onDeleteList(l.id)}>Move to Trash</ContextMenuItem>
-                      </ContextMenuContent>
+                        <ContextMenuTrigger asChild>
+                          <div
+                            className={cn(
+                              rowBase,
+                              'items-start',
+                              activeView.type === 'list' && activeView.id === l.id ? active : idle
+                            )}
+                          >
+                            <button
+                              onClick={() => selectView({ type: 'list', id: l.id })}
+                              onDoubleClick={() => onEditList(l)}
+                              className="flex min-w-0 flex-1 items-start text-left"
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate">{l.name}</span>
+                                {desc && (
+                                  <span className="block truncate text-xs text-muted-foreground">
+                                    {desc}
+                                  </span>
+                                )}
+                              </span>
+                              <span className="ml-2 shrink-0 text-xs text-muted-foreground">
+                                {listCount(l)}
+                              </span>
+                            </button>
+                            {showListMore(l.id) && (
+                              <DropdownMenu
+                                onOpenChange={(open) => setOpenListDropdownId(open ? l.id : null)}
+                              >
+                                <DropdownMenuTrigger asChild>
+                                  <button
+                                    aria-label={uiText('More actions for {value1}', {
+                                      value1: l.name,
+                                    })}
+                                    onClick={(e) => e.stopPropagation()}
+                                    className="ml-1 shrink-0 rounded p-0.5 text-muted-foreground hover:text-foreground"
+                                  >
+                                    <MoreHorizontal size={14} />
+                                  </button>
+                                </DropdownMenuTrigger>
+                                <DropdownMenuContent align="end">
+                                  <DropdownMenuItem onSelect={() => onEditList(l)}>
+                                    {uiText('Edit rule…')}
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem destructive onSelect={() => onDeleteList(l.id)}>
+                                    {uiText('Move to Trash')}
+                                  </DropdownMenuItem>
+                                </DropdownMenuContent>
+                              </DropdownMenu>
+                            )}
+                          </div>
+                        </ContextMenuTrigger>
+                        <ContextMenuContent>
+                          <ContextMenuItem onSelect={() => onEditList(l)}>
+                            {uiText('Edit rule…')}
+                          </ContextMenuItem>
+                          <ContextMenuItem destructive onSelect={() => onDeleteList(l.id)}>
+                            {uiText('Move to Trash')}
+                          </ContextMenuItem>
+                        </ContextMenuContent>
                       </ContextMenu>
                     </li>
                   )
@@ -401,29 +650,54 @@ export function Sidebar({
               </ul>
             </>
           ) : (
-            <button onClick={onNewList} className={cn(section, 'flex w-full items-center gap-1 hover:text-primary')}>
-              <Plus size={12} /> New smart list
+            <button
+              onClick={onNewList}
+              className={cn(section, 'flex w-full items-center gap-1 hover:text-primary')}
+            >
+              <Plus size={12} /> {uiText('New smart list')}
             </button>
           )}
 
           {tags.length > 0 && (
             <>
-              <div className={section}><TagIcon size={12} className="mr-1 inline" /> Tags</div>
+              <div className={section}>
+                <TagIcon size={12} className="mr-1 inline" /> {uiText('Tags')}
+              </div>
               <ul className="flex flex-col">
                 {tags.map((t) => (
                   <li key={t.name}>
                     <ContextMenu>
-                    <ContextMenuTrigger asChild>
-                    <button onClick={() => selectView(activeView.type === 'tag' && activeView.tag === t.name ? { type: 'all' } : { type: 'tag', tag: t.name })}
-                      className={cn(rowBase, activeView.type === 'tag' && activeView.tag === t.name ? active : idle)}>
-                      <span className="truncate">#{t.name}</span>
-                      <span className="ml-2 shrink-0 text-xs text-muted-foreground">{t.count}</span>
-                    </button>
-                    </ContextMenuTrigger>
-                    <ContextMenuContent>
-                      <ContextMenuItem onSelect={() => onRenameTag({ id: t.id, name: t.name })}>Rename…</ContextMenuItem>
-                      <ContextMenuItem onSelect={() => onSaveTagAsList(t.name)}>Save as smart list</ContextMenuItem>
-                    </ContextMenuContent>
+                      <ContextMenuTrigger asChild>
+                        <button
+                          onClick={() =>
+                            selectView(
+                              activeView.type === 'tag' && activeView.tag === t.name
+                                ? { type: 'all' }
+                                : { type: 'tag', tag: t.name }
+                            )
+                          }
+                          className={cn(
+                            rowBase,
+                            activeView.type === 'tag' && activeView.tag === t.name ? active : idle
+                          )}
+                        >
+                          <span className="truncate">
+                            {uiText('#')}
+                            {t.name}
+                          </span>
+                          <span className="ml-2 shrink-0 text-xs text-muted-foreground">
+                            {t.count}
+                          </span>
+                        </button>
+                      </ContextMenuTrigger>
+                      <ContextMenuContent>
+                        <ContextMenuItem onSelect={() => onRenameTag({ id: t.id, name: t.name })}>
+                          {uiText('Rename…')}
+                        </ContextMenuItem>
+                        <ContextMenuItem onSelect={() => onSaveTagAsList(t.name)}>
+                          {uiText('Save as smart list')}
+                        </ContextMenuItem>
+                      </ContextMenuContent>
                     </ContextMenu>
                   </li>
                 ))}
@@ -433,12 +707,27 @@ export function Sidebar({
 
           {suggestions.length > 0 && (
             <>
-              <div className={section}><Sparkles size={12} className="mr-1 inline" /> Suggested</div>
+              <div className={section}>
+                <Sparkles size={12} className="mr-1 inline" /> {uiText('Suggested')}
+              </div>
               <ul className="flex flex-col">
                 {suggestions.map((s) => (
                   <li key={s.stem} className={cn(rowBase, 'text-muted-foreground')}>
-                    <span className="truncate">{s.stem} <span className="text-xs">({s.count})</span></span>
-                    <button aria-label={`Save ${s.stem} as a list`} onClick={() => onSaveSuggestion(s.stem)} className="ml-2 shrink-0 text-xs text-primary hover:underline">save</button>
+                    <span className="truncate">
+                      {s.stem}{' '}
+                      <span className="text-xs">
+                        {uiText('(')}
+                        {s.count}
+                        {uiText(')')}
+                      </span>
+                    </span>
+                    <button
+                      aria-label={uiText('Save {value1} as a list', { value1: s.stem })}
+                      onClick={() => onSaveSuggestion(s.stem)}
+                      className="ml-2 shrink-0 text-xs text-primary hover:underline"
+                    >
+                      {uiText('save')}
+                    </button>
                   </li>
                 ))}
               </ul>
@@ -446,33 +735,57 @@ export function Sidebar({
           )}
         </nav>
 
-        <NavLink to="/chat" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
-          <MessageSquare size={16} /> Chat
+        <NavLink
+          to="/chat"
+          className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted"
+        >
+          <MessageSquare size={16} /> {uiText('Chat')}
         </NavLink>
-        <NavLink to="/action-items" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
-          <CheckSquare2 size={16} /> Action items
+        <NavLink
+          to="/action-items"
+          className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted"
+        >
+          <CheckSquare2 size={16} /> {uiText('Action items')}
         </NavLink>
-        <NavLink to="/people" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
-          <Users size={16} /> People
+        <NavLink
+          to="/people"
+          className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted"
+        >
+          <Users size={16} /> {uiText('People')}
         </NavLink>
-        <NavLink to="/insights" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
-          <BarChart3 size={16} /> Insights
+        <NavLink
+          to="/insights"
+          className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted"
+        >
+          <BarChart3 size={16} /> {uiText('Insights')}
         </NavLink>
-        <NavLink to="/trash" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
-          <Trash2 size={16} /> Trash
+        <NavLink
+          to="/trash"
+          className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted"
+        >
+          <Trash2 size={16} /> {uiText('Trash')}
         </NavLink>
-        <NavLink to="/settings" className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted">
-          <Settings size={16} /> Settings
+        <NavLink
+          to="/settings"
+          className="flex items-center gap-2 rounded-[var(--radius)] px-2 py-1.5 text-sm text-muted-foreground hover:bg-muted"
+        >
+          <Settings size={16} /> {uiText('Settings')}
         </NavLink>
       </div>
       <ExportOptionsDialog
         open={exportFolderTarget !== null}
-        title={exportFolderTarget ? `Export folder: ${exportFolderTarget.name}` : 'Export folder'}
-        description="Choose a format and whether to include the transcript and speaker names."
+        title={
+          exportFolderTarget
+            ? uiText('Export folder: {value1}', { value1: exportFolderTarget.name })
+            : uiText('Export folder')
+        }
+        description={uiText(
+          'Choose a format and whether to include the transcript and speaker names.'
+        )}
         formats={[
-          { value: 'md', label: 'Markdown' },
-          { value: 'docx', label: 'Word' },
-          { value: 'pdf', label: 'PDF' },
+          { value: 'md', label: uiText('Markdown') },
+          { value: 'docx', label: uiText('Word') },
+          { value: 'pdf', label: uiText('PDF') },
         ]}
         confirmLabel="Export folder"
         onCancel={() => setExportFolderTarget(null)}
@@ -495,16 +808,29 @@ export function Sidebar({
         }}
       />
 
-      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions, jsx-a11y/no-noninteractive-tabindex -- focusable separator widget (ARIA 1.2 §6.24) */}
-      <div role="separator" tabIndex={0} aria-label="Resize sidebar" aria-orientation="vertical"
-        aria-valuenow={width} aria-valuemin={SIDEBAR_MIN_WIDTH} aria-valuemax={SIDEBAR_MAX_WIDTH}
+      {/* eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- Keyboard-operable separator widget. */}
+      <div
+        role="separator"
+        // eslint-disable-next-line jsx-a11y/no-noninteractive-tabindex -- Keyboard access to this scroll region or separator.
+        tabIndex={0}
+        aria-label={uiText('Resize sidebar')}
+        aria-orientation="vertical"
+        aria-valuenow={width}
+        aria-valuemin={SIDEBAR_MIN_WIDTH}
+        aria-valuemax={SIDEBAR_MAX_WIDTH}
         aria-valuetext={`${width} pixels`}
         onMouseDown={startResize}
         onKeyDown={(e) => {
-          if (e.key === 'ArrowRight') { e.preventDefault(); onResize(Math.min(SIDEBAR_MAX_WIDTH, width + 16)) }
-          else if (e.key === 'ArrowLeft') { e.preventDefault(); onResize(Math.max(SIDEBAR_MIN_WIDTH, width - 16)) }
+          if (e.key === 'ArrowRight') {
+            e.preventDefault()
+            onResize(Math.min(SIDEBAR_MAX_WIDTH, width + 16))
+          } else if (e.key === 'ArrowLeft') {
+            e.preventDefault()
+            onResize(Math.max(SIDEBAR_MIN_WIDTH, width - 16))
+          }
         }}
-        className="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-primary/30 focus:outline-none focus:bg-primary/30" />
+        className="absolute right-0 top-0 h-full w-1 cursor-col-resize hover:bg-primary/30 focus:outline-none focus:bg-primary/30"
+      />
     </aside>
   )
 }

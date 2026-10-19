@@ -1,6 +1,8 @@
+import { uiText } from '@/i18n'
 import { useEffect, useRef, useState } from 'react'
 import { AlertTriangle, Mic, Square } from 'lucide-react'
 import { muesli } from '@/api'
+import { t } from '@/i18n'
 import { Button } from '@/components/ui/Button'
 import { useAnnouncer } from '@/hooks/useAnnouncer'
 import { loadAudioPrefs, saveAudioPrefs } from '@/lib/audioPrefs'
@@ -8,7 +10,7 @@ import type { SysAudioStatus } from '../../main/systemAudioPermission'
 import { startMicrophonePreview, type MicrophonePreview } from '../audio/microphonePreview'
 import { AudioLevelMeter } from './AudioLevelMeter'
 
-export type RecordState = 'idle' | 'recording' | 'processing'
+export type RecordState = 'idle' | 'preparing' | 'recording' | 'processing'
 
 function fmt(ms: number): string {
   const total = Math.floor(ms / 1000)
@@ -20,10 +22,7 @@ function fmt(ms: number): string {
 /** Detect macOS from the user agent / platform. */
 function isMacOS(): boolean {
   try {
-    return (
-      navigator.platform?.includes('Mac') ||
-      /Mac|iPhone|iPad|iPod/.test(navigator.userAgent)
-    )
+    return navigator.platform?.includes('Mac') || /Mac|iPhone|iPad|iPod/.test(navigator.userAgent)
   } catch {
     return false
   }
@@ -66,6 +65,8 @@ export function RecordControl({
   const [previewGainPct, setPreviewGainPct] = useState(gainPct)
   const [systemAudioStatus, setSystemAudioStatus] = useState<SysAudioStatus | null>(null)
   const [previewLevel, setPreviewLevel] = useState(0)
+  const [previewEnabled, setPreviewEnabled] = useState(false)
+  const [previewError, setPreviewError] = useState<string | null>(null)
   const previewRef = useRef<MicrophonePreview | null>(null)
   const previewGenerationRef = useRef(0)
 
@@ -108,7 +109,7 @@ export function RecordControl({
       previewRef.current = null
       await preview?.stop()
     }
-    if (state !== 'idle' || disabledReason || isPermDenied || isDeviceInvalid) {
+    if (!previewEnabled || state !== 'idle' || disabledReason || isPermDenied || isDeviceInvalid) {
       setPreviewLevel(0)
       void stopPreview()
       return
@@ -116,6 +117,7 @@ export function RecordControl({
     void (async () => {
       await stopPreview()
       try {
+        setPreviewError(null)
         const preview = await startMicrophonePreview({
           deviceId: selectedDeviceId,
           gainLinear: previewGainPct / 100,
@@ -126,14 +128,25 @@ export function RecordControl({
         if (previewGenerationRef.current !== generation) await preview.stop()
         else previewRef.current = preview
       } catch {
-        // The regular permission/device error UI handles unavailable previews.
+        if (previewGenerationRef.current === generation) {
+          setPreviewEnabled(false)
+          setPreviewError(t('audio.testFailed'))
+        }
       }
     })()
     return () => {
       previewGenerationRef.current = generation + 1
       void stopPreview()
     }
-  }, [disabledReason, isDeviceInvalid, isPermDenied, previewGainPct, selectedDeviceId, state])
+  }, [
+    disabledReason,
+    isDeviceInvalid,
+    isPermDenied,
+    previewEnabled,
+    previewGainPct,
+    selectedDeviceId,
+    state,
+  ])
 
   async function enumerateDevices() {
     try {
@@ -200,21 +213,23 @@ export function RecordControl({
         className="rounded-[var(--radius)] border border-destructive/40 bg-destructive/10 p-3 text-sm"
       >
         <p className="font-medium text-destructive">
-          The selected microphone is unavailable or was unplugged.
+          {uiText('The selected microphone is unavailable or was unplugged.')}
         </p>
-        <p className="mt-1 text-muted-foreground">Choose another microphone from the list below.</p>
+        <p className="mt-1 text-muted-foreground">
+          {uiText('Choose another microphone from the list below.')}
+        </p>
         <label className="mt-2 flex flex-col gap-1 text-sm">
-          <span className="text-muted-foreground">Microphone</span>
+          <span className="text-muted-foreground">{uiText('Microphone')}</span>
           <select
-            aria-label="Microphone"
+            aria-label={uiText('Microphone')}
             value={selectedDeviceId ?? ''}
             onChange={handleDeviceChange}
             className="rounded-[var(--radius)] border border-border bg-background px-2 py-1 text-sm"
           >
-            <option value="">Default</option>
+            <option value="">{uiText('Default')}</option>
             {devices.map((d) => (
               <option key={d.deviceId} value={d.deviceId}>
-                {d.label || `Microphone ${d.deviceId.slice(0, 6)}`}
+                {d.label || uiText('Microphone {value1}', { value1: d.deviceId.slice(0, 6) })}
               </option>
             ))}
           </select>
@@ -228,7 +243,7 @@ export function RecordControl({
             onRetry?.()
           }}
         >
-          Retry
+          {uiText('Retry')}
         </Button>
       </div>
     )
@@ -244,7 +259,7 @@ export function RecordControl({
         role="alert"
         className="rounded-[var(--radius)] border border-destructive/40 bg-destructive/10 p-3 text-sm"
       >
-        <p className="font-medium text-destructive">Microphone access was denied.</p>
+        <p className="font-medium text-destructive">{uiText('Microphone access was denied.')}</p>
         <p className="mt-1 text-muted-foreground">{hint}</p>
         <Button
           variant="secondary"
@@ -255,7 +270,7 @@ export function RecordControl({
             onRetry?.()
           }}
         >
-          Retry
+          {uiText('Retry')}
         </Button>
         <Button
           variant="secondary"
@@ -265,7 +280,7 @@ export function RecordControl({
             void muesli.micOpenSettings?.()
           }}
         >
-          Open System Settings
+          {uiText('Open System Settings')}
         </Button>
       </div>
     )
@@ -282,9 +297,13 @@ export function RecordControl({
         role="alert"
         className="rounded-[var(--radius)] border border-amber-500/40 bg-amber-500/10 p-3 text-sm"
       >
-        <p className="font-medium text-amber-600">System audio capture is not enabled.</p>
+        <p className="font-medium text-amber-600">
+          {uiText('System audio capture is not enabled.')}
+        </p>
         <p className="mt-1 text-muted-foreground">
-          You can still record microphone-only. Open System Settings to grant access if you want both sides of the call.
+          {uiText(
+            'You can still record microphone-only. Open System Settings to grant access if you want both sides of the call.'
+          )}
         </p>
         <Button
           variant="secondary"
@@ -294,7 +313,7 @@ export function RecordControl({
             void muesli.systemAudioOpenSettings?.()
           }}
         >
-          Open System Settings
+          {uiText('Open System Settings')}
         </Button>
       </div>
     )
@@ -304,32 +323,52 @@ export function RecordControl({
     <div className="flex flex-col gap-2">
       {/* Device picker */}
       <label className="flex flex-col gap-1 text-sm">
-        <span className="text-muted-foreground">Microphone</span>
+        <span className="text-muted-foreground">{uiText('Microphone')}</span>
         <select
-          aria-label="Microphone"
+          aria-label={uiText('Microphone')}
           value={selectedDeviceId ?? ''}
           onChange={handleDeviceChange}
           disabled={disabled}
           className="rounded-[var(--radius)] border border-border bg-background px-2 py-1 text-sm disabled:opacity-50"
         >
-          <option value="">Default</option>
+          <option value="">{uiText('Default')}</option>
           {devices.map((d) => (
             <option key={d.deviceId} value={d.deviceId}>
-              {d.label || `Microphone ${d.deviceId.slice(0, 6)}`}
+              {d.label || uiText('Microphone {value1}', { value1: d.deviceId.slice(0, 6) })}
             </option>
           ))}
         </select>
       </label>
 
       <AudioLevelMeter level={state === 'recording' ? recordingLevel : previewLevel} />
+      {state === 'idle' && !disabledReason && (
+        <div className="space-y-2">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() => setPreviewEnabled((value) => !value)}
+          >
+            {t(previewEnabled ? 'audio.stopMicTest' : 'audio.testMic')}
+          </Button>
+          {!previewEnabled && !previewError && (
+            <p className="text-xs text-muted-foreground">{t('audio.micIdle')}</p>
+          )}
+          {previewError && (
+            <p role="status" className="text-xs text-destructive">
+              {previewError}
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Gain slider */}
       <label className="flex flex-col gap-1 text-sm">
-        <span className="text-muted-foreground">Gain</span>
+        <span className="text-muted-foreground">{uiText('Gain')}</span>
         <div className="flex items-center gap-2">
           <input
             type="range"
-            aria-label="Gain"
+            aria-label={uiText('Gain')}
             min={0}
             max={200}
             step={1}
@@ -338,7 +377,10 @@ export function RecordControl({
             disabled={disabled}
             className="flex-1 disabled:opacity-50"
           />
-          <span className="w-12 text-right tabular-nums">{gainPct}%</span>
+          <span className="w-12 text-right tabular-nums">
+            {gainPct}
+            {uiText('%')}
+          </span>
         </div>
       </label>
     </div>
@@ -349,7 +391,11 @@ export function RecordControl({
       return (
         <div className="flex flex-col gap-3">
           {controls}
-          <div className="flex items-center gap-1.5 text-sm text-amber-500" role="status" aria-live="polite">
+          <div
+            className="flex items-center gap-1.5 text-sm text-amber-500"
+            role="status"
+            aria-live="polite"
+          >
             <AlertTriangle size={16} aria-hidden />
             <span>{disabledReason}</span>
           </div>
@@ -363,6 +409,7 @@ export function RecordControl({
         <Button
           variant="primary"
           onClick={() => {
+            setPreviewEnabled(false)
             previewGenerationRef.current++
             const preview = previewRef.current
             previewRef.current = null
@@ -370,7 +417,7 @@ export function RecordControl({
             onStart()
           }}
         >
-          <Mic size={18} /> Record
+          <Mic size={18} /> {uiText('Record')}
         </Button>
       </div>
     )
@@ -383,18 +430,33 @@ export function RecordControl({
         <div className="flex items-center gap-3" role="status" aria-live="polite">
           <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-destructive" aria-hidden />
           <span className="font-mono text-sm tabular-nums">{fmt(elapsedMs)}</span>
-          <span className="sr-only">Recording</span>
+          <span className="sr-only">{uiText('Recording')}</span>
           <Button variant="secondary" size="sm" onClick={onStop}>
-            <Square size={14} /> Stop
+            <Square size={14} /> {uiText('Stop')}
           </Button>
         </div>
+        <p className="text-xs text-muted-foreground">
+          {uiText('Leaving this note stops and saves the recording.')}
+        </p>
       </div>
     )
   }
   return (
-    <div className="flex items-center gap-2 text-sm text-muted-foreground" role="status" aria-live="polite">
-      <span className="h-3 w-3 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" aria-hidden />
-      Processing…
+    <div
+      className="flex items-center gap-2 text-sm text-muted-foreground"
+      role="status"
+      aria-live="polite"
+    >
+      <span
+        className="h-3 w-3 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent"
+        aria-hidden
+      />
+      {state === 'preparing' ? uiText('Starting recording…') : uiText('Processing…')}
+      {state === 'preparing' && (
+        <Button type="button" variant="secondary" size="sm" onClick={onStop}>
+          {uiText('Cancel')}
+        </Button>
+      )}
     </div>
   )
 }

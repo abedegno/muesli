@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { useCallback, useEffect, useState } from 'react'
 import type { ApiClient } from '../api/client'
 import type { EmbeddingStatus } from '../api/types'
@@ -48,12 +49,12 @@ export function EmbeddingsView({ client }: Props) {
   return (
     <section>
       <div className="row">
-        <h1>Re-embed notes</h1>
+        <h1>{uiText('Re-embed notes')}</h1>
         <button onClick={() => void refresh()} disabled={reembedding}>
-          Refresh
+          {uiText('Refresh')}
         </button>
         <button onClick={() => void reembedAll()} disabled={disabled}>
-          {reembedding ? 'Re-embedding…' : 'Re-embed all notes'}
+          {reembedding ? uiText('Re-embedding…') : uiText('Re-embed all notes')}
         </button>
       </div>
 
@@ -64,23 +65,23 @@ export function EmbeddingsView({ client }: Props) {
         <table>
           <tbody>
             <tr>
-              <th>Status</th>
+              <th>{uiText('Status')}</th>
               <td>
-                <strong>{status.enabled ? 'Enabled' : 'Disabled'}</strong>
+                <strong>{status.enabled ? uiText('Enabled') : uiText('Disabled')}</strong>
               </td>
             </tr>
             <tr>
-              <th>Model</th>
-              <td>{status.model || '(not set)'}</td>
+              <th>{uiText('Model')}</th>
+              <td>{status.model || uiText('(not set)')}</td>
             </tr>
             <tr>
-              <th>Dimension</th>
+              <th>{uiText('Dimension')}</th>
               <td>{status.dim}</td>
             </tr>
             <tr>
-              <th>Progress</th>
+              <th>{uiText('Progress')}</th>
               <td>
-                {status.done} / {status.total} notes embedded
+                {status.done} {uiText('/')} {status.total} {uiText('notes embedded')}
               </td>
             </tr>
           </tbody>

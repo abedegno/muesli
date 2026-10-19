@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => {
     on: vi.fn(),
     once: vi.fn(),
     webContents: {
+      on: vi.fn(),
       send: vi.fn(),
     },
   }
@@ -25,7 +26,7 @@ const mocks = vi.hoisted(() => {
     }),
     {
       getAllWindows: vi.fn(() => []),
-    },
+    }
   )
   const notification = {
     on: vi.fn(),
@@ -224,14 +225,14 @@ describe('main bootstrap wiring', () => {
           sandbox: true,
           preload: expect.stringMatching(/preload[\\/]+preload\.js$/),
         }),
-      }),
+      })
     )
 
     expect(mocks.permissionHandler).toHaveBeenCalledTimes(1)
     const permissionHandler = mocks.permissionHandler.mock.calls[0][0] as (
       wc: unknown,
       permission: string,
-      cb: (allowed: boolean) => void,
+      cb: (allowed: boolean) => void
     ) => void
 
     const grantedPermissions = ['media', 'microphone', 'audioCapture']
@@ -246,40 +247,56 @@ describe('main bootstrap wiring', () => {
     expect(deniedCallback).toHaveBeenCalledWith(false)
 
     const registeredChannels = mocks.ipcHandle.mock.calls.map(([channel]) => channel)
-    expect(registeredChannels).toEqual(expect.arrayContaining([
-      'muesli:getConfig',
-      'muesli:listNotes',
-      'muesli:uploadAudio',
-      'muesli:exportNote',
-      'muesli:micStatus',
-      'muesli:search',
-      'muesli:getCalendarPrefs',
-      'muesli:setCalendarPrefs',
-      'muesli:getKeepRunningInBackground',
-      'muesli:setKeepRunningInBackground',
-      'muesli:getEmbeddedStartupStatus',
-      'muesli:meetingDetectionRendererReady',
-      'muesli:meetingDetectionPromptAccept',
-      'muesli:meetingDetectionPromptDismiss',
-    ]))
+    expect(registeredChannels).toEqual(
+      expect.arrayContaining([
+        'muesli:getConfig',
+        'muesli:listNotes',
+        'muesli:uploadAudio',
+        'muesli:exportNote',
+        'muesli:micStatus',
+        'muesli:search',
+        'muesli:getCalendarPrefs',
+        'muesli:setCalendarPrefs',
+        'muesli:getKeepRunningInBackground',
+        'muesli:setKeepRunningInBackground',
+        'muesli:getEmbeddedStartupStatus',
+        'muesli:meetingDetectionRendererReady',
+        'muesli:meetingDetectionPromptAccept',
+        'muesli:meetingDetectionPromptDismiss',
+      ])
+    )
     expect(new Set(registeredChannels).size).toBe(registeredChannels.length)
 
-    const getEmbeddedStartupStatusHandler = mocks.ipcHandle.mock.calls.find(([channel]) => channel === 'muesli:getEmbeddedStartupStatus')?.[1] as (() => Promise<unknown>) | undefined
+    const getEmbeddedStartupStatusHandler = mocks.ipcHandle.mock.calls.find(
+      ([channel]) => channel === 'muesli:getEmbeddedStartupStatus'
+    )?.[1] as (() => Promise<unknown>) | undefined
     expect(getEmbeddedStartupStatusHandler).toBeTypeOf('function')
     await expect(getEmbeddedStartupStatusHandler?.()).resolves.toBeNull()
 
-    const onStatus = mocks.startEmbeddedStartupMonitor.mock.calls[0]?.[0]?.onStatus as ((status: unknown) => void) | undefined
+    const onStatus = mocks.startEmbeddedStartupMonitor.mock.calls[0]?.[0]?.onStatus as
+      ((status: unknown) => void) | undefined
     expect(onStatus).toBeTypeOf('function')
     onStatus?.({ status: 'ready', degraded: false })
-    await expect(getEmbeddedStartupStatusHandler?.()).resolves.toEqual({ status: 'ready', degraded: false })
+    await expect(getEmbeddedStartupStatusHandler?.()).resolves.toEqual({
+      status: 'ready',
+      degraded: false,
+    })
 
     expect(mocks.makeServerLogPath).toHaveBeenCalledWith('/sentinel/userData/user-data')
-    expect(mocks.tokenStoreCtor).toHaveBeenCalledWith('/sentinel/userData/user-data', expect.any(Object))
-    expect(mocks.secretStoreCtor).toHaveBeenCalledWith('/sentinel/userData/user-data', expect.any(Object))
-    expect(mocks.startServerSupervisor).toHaveBeenCalledWith(expect.objectContaining({
-      userDataPath: '/sentinel/userData/user-data',
-      logPath: '/sentinel/userData/user-data/logs/server.log',
-    }))
+    expect(mocks.tokenStoreCtor).toHaveBeenCalledWith(
+      '/sentinel/userData/user-data',
+      expect.any(Object)
+    )
+    expect(mocks.secretStoreCtor).toHaveBeenCalledWith(
+      '/sentinel/userData/user-data',
+      expect.any(Object)
+    )
+    expect(mocks.startServerSupervisor).toHaveBeenCalledWith(
+      expect.objectContaining({
+        userDataPath: '/sentinel/userData/user-data',
+        logPath: '/sentinel/userData/user-data/logs/server.log',
+      })
+    )
   })
 
   it('creates the tray from startup state, routes tray actions, and destroys it when disabled', async () => {
@@ -288,14 +305,18 @@ describe('main bootstrap wiring', () => {
     await flushBoot()
 
     expect(mocks.trayCtor).toHaveBeenCalledTimes(1)
-    expect(mocks.nativeImage.createFromPath).toHaveBeenCalledWith('/tmp/app/build/tray-iconTemplate.png')
+    expect(mocks.nativeImage.createFromPath).toHaveBeenCalledWith(
+      '/tmp/app/build/tray-iconTemplate.png'
+    )
     expect(mocks.menu.buildFromTemplate).toHaveBeenCalledTimes(1)
-    expect(mocks.tray.setContextMenu).toHaveBeenCalledWith(expect.arrayContaining([
-      expect.objectContaining({ label: 'Open Muesli' }),
-      expect.objectContaining({ label: 'New meeting' }),
-      expect.objectContaining({ label: 'Settings' }),
-      expect.objectContaining({ label: 'Quit Muesli' }),
-    ]))
+    expect(mocks.tray.setContextMenu).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({ label: 'Open Muesli' }),
+        expect.objectContaining({ label: 'New meeting' }),
+        expect.objectContaining({ label: 'Settings' }),
+        expect.objectContaining({ label: 'Quit Muesli' }),
+      ])
+    )
 
     const template = mocks.menu.buildFromTemplate.mock.calls[0][0] as Array<{
       label?: string
@@ -315,15 +336,17 @@ describe('main bootstrap wiring', () => {
     expect(mocks.browserWindow.webContents.send).toHaveBeenCalledWith('muesli:trayNavigate', '/new')
 
     settingsItem?.click?.()
-    expect(mocks.browserWindow.webContents.send).toHaveBeenCalledWith('muesli:trayNavigate', '/settings')
+    expect(mocks.browserWindow.webContents.send).toHaveBeenCalledWith(
+      'muesli:trayNavigate',
+      '/settings'
+    )
 
     quitItem?.click?.()
     expect(mocks.app.quit).toHaveBeenCalled()
 
-    const setKeepRunningHandler = mocks.ipcHandle.mock.calls.find(([channel]) => channel === 'muesli:setKeepRunningInBackground')?.[1] as (
-      _e: unknown,
-      next: boolean,
-    ) => void
+    const setKeepRunningHandler = mocks.ipcHandle.mock.calls.find(
+      ([channel]) => channel === 'muesli:setKeepRunningInBackground'
+    )?.[1] as (_e: unknown, next: boolean) => void
     setKeepRunningHandler({}, false)
     expect(mocks.tray.destroy).toHaveBeenCalledTimes(1)
   })

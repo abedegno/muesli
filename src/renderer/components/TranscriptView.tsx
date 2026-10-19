@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Search } from 'lucide-react'
 import type { CSSProperties } from 'react'
@@ -76,7 +77,7 @@ function clamp(value: number, min: number, max: number): number {
 function groupBySpeaker(filtered: FilteredItem[]): SpeakerGroup[] {
   const groups: SpeakerGroup[] = []
   for (const item of filtered) {
-    const speaker = (item.seg.speaker != null && item.seg.speaker !== '') ? item.seg.speaker : null
+    const speaker = item.seg.speaker != null && item.seg.speaker !== '' ? item.seg.speaker : null
     const last = groups[groups.length - 1]
     if (!last || last.speaker !== speaker) {
       groups.push({ speaker, items: [item] })
@@ -87,7 +88,11 @@ function groupBySpeaker(filtered: FilteredItem[]): SpeakerGroup[] {
   return groups
 }
 
-function buildSearchMeta(filtered: FilteredItem[], effectiveQuery: string, searchStartIndex: number): Map<number, SearchMeta> {
+function buildSearchMeta(
+  filtered: FilteredItem[],
+  effectiveQuery: string,
+  searchStartIndex: number
+): Map<number, SearchMeta> {
   const meta = new Map<number, SearchMeta>()
   let cursor = searchStartIndex
   for (const { seg, idx } of filtered) {
@@ -101,7 +106,7 @@ function buildSearchMeta(filtered: FilteredItem[], effectiveQuery: string, searc
 function buildTranscriptRows(
   filtered: FilteredItem[],
   speakerIndexMap: Record<string, number>,
-  speakerAliases: Record<string, string> | undefined,
+  speakerAliases: Record<string, string> | undefined
 ): {
   rows: TranscriptRow[]
   segmentRowIndexByRawIdx: Map<number, number>
@@ -199,18 +204,20 @@ export function TranscriptView({
     const needle = effectiveQuery.toLowerCase()
     return segments
       .map((seg, idx) => ({ seg, idx }))
-      .filter(({ seg }) => (externalSearch ? true : (needle ? seg.text.toLowerCase().includes(needle) : true)))
+      .filter(({ seg }) =>
+        externalSearch ? true : needle ? seg.text.toLowerCase().includes(needle) : true
+      )
   }, [effectiveQuery, externalSearch, segments])
 
   const searchMeta = useMemo(
     () => buildSearchMeta(filtered, effectiveQuery, searchStartIndex),
-    [effectiveQuery, filtered, searchStartIndex],
+    [effectiveQuery, filtered, searchStartIndex]
   )
 
   // Whether diarization is on: any segment in the FULL array has a non-empty speaker.
   const hasSpeakers = useMemo(
-    () => segments.some(s => s.speaker != null && s.speaker !== ''),
-    [segments],
+    () => segments.some((s) => s.speaker != null && s.speaker !== ''),
+    [segments]
   )
 
   // Assign each new speaker a sequential 0-based index by order of first appearance.
@@ -230,7 +237,7 @@ export function TranscriptView({
 
   const { rows, segmentRowIndexByRawIdx } = useMemo(
     () => buildTranscriptRows(filtered, speakerIndexMap, speakerAliases),
-    [filtered, speakerAliases, speakerIndexMap],
+    [filtered, speakerAliases, speakerIndexMap]
   )
   const virtualized = rows.length > VIRTUALIZE_AFTER_SEGMENTS
 
@@ -276,7 +283,7 @@ export function TranscriptView({
       parts.push(
         `${seg.start_ms}`,
         `${speaker.length}:${speaker}`,
-        `${seg.text.length}:${seg.text}`,
+        `${seg.text.length}:${seg.text}`
       )
     }
     return parts.join('|')
@@ -411,7 +418,7 @@ export function TranscriptView({
         const nextScrollTop = clamp(
           row.top - Math.max((viewportHeight - row.height) / 2, 0),
           0,
-          maxScrollTop,
+          maxScrollTop
         )
         viewportRef.current?.scrollTo?.({ top: nextScrollTop })
         if (viewportRef.current) viewportRef.current.scrollTop = nextScrollTop
@@ -424,7 +431,15 @@ export function TranscriptView({
     if (typeof el.scrollIntoView === 'function') {
       el.scrollIntoView({ block: 'center' })
     }
-  }, [hasHighlight, highlightIndex, rowLayout, segmentRowIndexByRawIdx, virtualized, viewportHeight, scrollTop])
+  }, [
+    hasHighlight,
+    highlightIndex,
+    rowLayout,
+    segmentRowIndexByRawIdx,
+    virtualized,
+    viewportHeight,
+    scrollTop,
+  ])
 
   const virtualWindow = useMemo(() => {
     if (!virtualized) {
@@ -441,7 +456,10 @@ export function TranscriptView({
     const endPx = scrollTop + viewportHeight + overscanPx
 
     let start = 0
-    while (start < rowLayout.positions.length && rowLayout.positions[start].top + rowLayout.positions[start].height < startPx) {
+    while (
+      start < rowLayout.positions.length &&
+      rowLayout.positions[start].top + rowLayout.positions[start].height < startPx
+    ) {
       start++
     }
 
@@ -470,7 +488,12 @@ export function TranscriptView({
       end,
       syntheticHeading,
       topSpacer: Math.max((rowLayout.positions[start]?.top ?? 0) - headingHeight, 0),
-      bottomSpacer: Math.max(totalHeight - (rowLayout.positions[end - 1]?.top ?? 0) - (rowLayout.positions[end - 1]?.height ?? 0), 0),
+      bottomSpacer: Math.max(
+        totalHeight -
+          (rowLayout.positions[end - 1]?.top ?? 0) -
+          (rowLayout.positions[end - 1]?.height ?? 0),
+        0
+      ),
     }
   }, [measured, rowLayout, rows.length, scrollTop, virtualized, viewportHeight])
 
@@ -478,16 +501,23 @@ export function TranscriptView({
     const search = searchMeta.get(row.idx) ?? { start: searchStartIndex, matchCount: 0 }
     const cited = hasHighlight && row.idx === highlightIndex
     const playing = playingIndex != null && row.idx === playingIndex
-    const highlighted = highlightSearchText(row.seg.text, effectiveQuery, search.start, searchCurrentIndex ?? null)
+    const highlighted = highlightSearchText(
+      row.seg.text,
+      effectiveQuery,
+      search.start,
+      searchCurrentIndex ?? null
+    )
     const interactiveClass = cn(
       'flex w-full gap-3 rounded-[var(--radius)] text-sm text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
       onSeek && 'cursor-pointer',
       cited && 'bg-primary/10 ring-2 ring-primary',
-      playing && 'bg-emerald-500/10 ring-1 ring-emerald-500/40',
+      playing && 'bg-emerald-500/10 ring-1 ring-emerald-500/40'
     )
     const content = (
       <>
-        <span className="shrink-0 font-mono tabular-nums text-muted-foreground">{ts(row.seg.start_ms)}</span>
+        <span className="shrink-0 font-mono tabular-nums text-muted-foreground">
+          {ts(row.seg.start_ms)}
+        </span>
         <span>{highlighted.nodes}</span>
       </>
     )
@@ -513,34 +543,35 @@ export function TranscriptView({
             {content}
           </button>
         ) : (
-          <div className={interactiveClass}>
-            {content}
-          </div>
+          <div className={interactiveClass}>{content}</div>
         )}
       </li>
     )
   }
 
   if (segments.length === 0) {
-    return <p className="text-sm text-muted-foreground">No transcript yet.</p>
+    return <p className="text-sm text-muted-foreground">{uiText('No transcript yet.')}</p>
   }
 
   return (
     <div className="flex flex-col gap-2">
       {!externalSearch && !hideSearchInput ? (
         <label className="relative block">
-          <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+          <Search
+            size={14}
+            className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+          />
           <input
-            aria-label="Search transcript"
+            aria-label={uiText('Search transcript')}
             value={q}
             onChange={(e) => setQ(e.target.value)}
-            placeholder="Search transcript…"
+            placeholder={uiText('Search transcript…')}
             className="h-8 w-full rounded-[var(--radius)] border border-input bg-background pl-7 pr-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           />
         </label>
       ) : null}
       {!externalSearch && filtered.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No matching lines.</p>
+        <p className="text-sm text-muted-foreground">{uiText('No matching lines.')}</p>
       ) : virtualized ? (
         <div
           ref={viewportRef}
@@ -573,13 +604,13 @@ export function TranscriptView({
                       >
                         <div
                           className="border-l-2 pl-2 text-xs font-semibold uppercase tracking-wide"
-                          style={speakerStyle((speakerIndexMap[speaker] ?? 0))}
+                          style={speakerStyle(speakerIndexMap[speaker] ?? 0)}
                           data-speaker={speaker}
                           data-speaker-accent={speakerIndexMap[speaker] ?? 0}
                         >
                           {speakerAliases?.[speaker] ?? speaker}
                         </div>
-                      </div>,
+                      </div>
                     )
                   }
                 }
@@ -587,11 +618,7 @@ export function TranscriptView({
                 for (const row of slice) {
                   if (row.kind === 'speaker') {
                     nodes.push(
-                      <div
-                        key={row.key}
-                        ref={(node) => observeRow(row.key, node)}
-                        className="pb-3"
-                      >
+                      <div key={row.key} ref={(node) => observeRow(row.key, node)} className="pb-3">
                         <div
                           className="border-l-2 pl-2 text-xs font-semibold uppercase tracking-wide"
                           style={speakerStyle(row.accentIdx)}
@@ -600,7 +627,7 @@ export function TranscriptView({
                         >
                           {row.displayName}
                         </div>
-                      </div>,
+                      </div>
                     )
                   } else {
                     nodes.push(
@@ -610,7 +637,7 @@ export function TranscriptView({
                         className="flex flex-col pb-2"
                       >
                         {renderSegmentRow(row)}
-                      </ul>,
+                      </ul>
                     )
                   }
                 }
@@ -626,9 +653,8 @@ export function TranscriptView({
           {groupBySpeaker(filtered).map((group, gi) => {
             const rawSpeaker = group.speaker
             const accentIdx = speakerIndexMap[rawSpeaker ?? ''] ?? 0
-            const displayName = rawSpeaker != null
-              ? (speakerAliases?.[rawSpeaker] ?? rawSpeaker)
-              : null
+            const displayName =
+              rawSpeaker != null ? (speakerAliases?.[rawSpeaker] ?? rawSpeaker) : null
             return (
               <div key={gi}>
                 {rawSpeaker != null && (
@@ -642,13 +668,15 @@ export function TranscriptView({
                   </div>
                 )}
                 <ul className="flex flex-col gap-2">
-                  {group.items.map(({ seg, idx }) => renderSegmentRow({
-                    kind: 'segment',
-                    key: `segment-${idx}`,
-                    idx,
-                    seg,
-                    speaker: seg.speaker != null && seg.speaker !== '' ? seg.speaker : null,
-                  }))}
+                  {group.items.map(({ seg, idx }) =>
+                    renderSegmentRow({
+                      kind: 'segment',
+                      key: `segment-${idx}`,
+                      idx,
+                      seg,
+                      speaker: seg.speaker != null && seg.speaker !== '' ? seg.speaker : null,
+                    })
+                  )}
                 </ul>
               </div>
             )
@@ -656,13 +684,15 @@ export function TranscriptView({
         </div>
       ) : (
         <ul className="flex flex-col gap-2">
-          {filtered.map(({ seg, idx }) => renderSegmentRow({
-            kind: 'segment',
-            key: `segment-${idx}`,
-            idx,
-            seg,
-            speaker: seg.speaker != null && seg.speaker !== '' ? seg.speaker : null,
-          }))}
+          {filtered.map(({ seg, idx }) =>
+            renderSegmentRow({
+              kind: 'segment',
+              key: `segment-${idx}`,
+              idx,
+              seg,
+              speaker: seg.speaker != null && seg.speaker !== '' ? seg.speaker : null,
+            })
+          )}
         </ul>
       )}
     </div>

@@ -42,6 +42,7 @@ type TagCount struct {
 }
 
 type User struct {
+	Role         string    `json:"role"`
 	ID           string    `json:"id"`
 	Email        string    `json:"email"`
 	PasswordHash string    `json:"-"`
@@ -49,6 +50,7 @@ type User struct {
 }
 
 type Note struct {
+	CaptureNeedsReview  bool       `json:"capture_needs_review,omitempty"`
 	ID                  string     `json:"id"`
 	OwnerID             string     `json:"owner_id"`
 	Title               string     `json:"title"`

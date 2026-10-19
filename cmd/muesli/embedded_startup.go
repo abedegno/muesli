@@ -50,41 +50,42 @@ func runEmbeddedStartupPhases(ctx context.Context, cfg *config.Config, reporter 
 	}
 
 	reporter.Advance(embedded.PhaseModelPull, "pulling Ollama models")
-	var pulls sync.WaitGroup
-	pulls.Add(2)
-	startupDone := make(chan struct{})
-	go func() {
-		pulls.Wait()
-		<-startupDone
-		reporter.Advance(embedded.PhaseReady, "ready")
-		if hooks.onReady != nil {
-			hooks.onReady()
-		}
-	}()
+	reporter.SetModel(cfg.EmbeddingsModel, "downloading", 0, "")
+	reporter.SetModel(embedded.DefaultOllamaAgentModel, "downloading", 0, "")
 
 	go func() {
-		defer pulls.Done()
 		pullCtx, cancel := context.WithTimeout(ctx, modelPullTimeout)
 		defer cancel()
 		if err := hooks.pullEmbedding(pullCtx, ollamaURL, cfg.EmbeddingsModel, func(percent int) {
 			reporter.SetSourcePercent("embedding", percent)
+			reporter.SetModel(cfg.EmbeddingsModel, "downloading", percent, "")
 		}); err != nil {
-			// The caller logs failures; the progress feed should still advance.
+			reporter.SetModel(cfg.EmbeddingsModel, "failed", 0, "Download failed. Check the connection and retry.")
+		} else {
+			reporter.SetModel(cfg.EmbeddingsModel, "ready", 100, "")
 		}
 	}()
 	go func() {
-		defer pulls.Done()
 		pullCtx, cancel := context.WithTimeout(ctx, modelPullTimeout)
 		defer cancel()
 		if err := hooks.pullModel(pullCtx, ollamaURL, embedded.DefaultOllamaAgentModel, func(percent int) {
 			reporter.SetSourcePercent("agent", percent)
+			reporter.SetModel(embedded.DefaultOllamaAgentModel, "downloading", percent, "")
 		}); err != nil {
-			// The caller logs failures; the progress feed should still advance.
+			reporter.SetModel(embedded.DefaultOllamaAgentModel, "failed", 0, "Download failed. Check the connection and retry.")
+		} else {
+			reporter.SetModel(embedded.DefaultOllamaAgentModel, "ready", 100, "")
 		}
 	}()
 
+	var once sync.Once
 	return func() {
-		close(startupDone)
+		once.Do(func() {
+			reporter.Advance(embedded.PhaseReady, "ready; optional AI models may still be downloading")
+			if hooks.onReady != nil {
+				hooks.onReady()
+			}
+		})
 	}, nil
 }
 
@@ -99,13 +100,4 @@ func applyEmbeddedAgentDefault(cfg *config.Config, endpointURL string) {
 		return
 	}
 	cfg.DefaultAgentURL = endpointURL
-}
-
-// applyEmbeddedTranscriberDefault is applyEmbeddedAgentDefault's counterpart
-// for the bundled whisper.cpp transcriber.
-func applyEmbeddedTranscriberDefault(cfg *config.Config, endpointURL string) {
-	if endpointURL == "" {
-		return
-	}
-	cfg.DefaultTranscriberURL = endpointURL
 }

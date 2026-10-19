@@ -34,6 +34,13 @@ export class ApiClient {
     private fetchFn: typeof fetch = globalThis.fetch.bind(globalThis)
   ) {}
 
+  async getCapabilities(): Promise<{ is_admin: boolean }> {
+    return this.request('GET', '/api/capabilities')
+  }
+  async setUserRole(email: string, role: 'admin' | 'member'): Promise<void> {
+    await this.request('PUT', '/api/admin/users/role', { email, role })
+  }
+
   // ----- Plan 1a: setup + login -----
 
   async getSetupStatus(): Promise<SetupStatus> {

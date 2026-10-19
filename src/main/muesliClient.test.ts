@@ -29,7 +29,9 @@ describe('MuesliClient', () => {
       }
       if (path === '/api/setup' && (init?.method ?? 'GET').toUpperCase() === 'POST') {
         needsSetup = false
-        return new Response(JSON.stringify({ id: 'u1', email: 'owner@example.com' }), { status: 200 })
+        return new Response(JSON.stringify({ id: 'u1', email: 'owner@example.com' }), {
+          status: 200,
+        })
       }
       return new Response('unexpected', { status: 500 })
     }
@@ -58,16 +60,16 @@ describe('MuesliClient', () => {
     server.seedUser('owner@example.com', 'password123')
     const session = await new MuesliClient({ baseUrl: BASE, fetch: server.fetch }).login(
       'owner@example.com',
-      'password123',
+      'password123'
     )
     const appToken = await new MuesliClient({ baseUrl: BASE, fetch: server.fetch }).createToken(
       'desktop',
-      session,
+      session
     )
 
     const c = new MuesliClient({ baseUrl: BASE, fetch: server.fetch, token: appToken })
     const note = await c.createNote('Sprint planning')
-    expect(note.status).toBe('recording')
+    expect(note.status).toBe('draft')
 
     const list = await c.listNotes()
     expect(list).toHaveLength(1)
@@ -85,20 +87,71 @@ describe('MuesliClient', () => {
       calls.push({ url: String(url), method: init?.method })
       const path = new URL(String(url)).pathname
       if (path === '/api/people/p1/notes') {
-        return new Response(JSON.stringify([{ id: 'n1', title: 'Meeting', status: 'ready', created_at: '', updated_at: '', partial_transcript: false }]), { status: 200 })
+        return new Response(
+          JSON.stringify([
+            {
+              id: 'n1',
+              title: 'Meeting',
+              status: 'ready',
+              created_at: '',
+              updated_at: '',
+              partial_transcript: false,
+            },
+          ]),
+          { status: 200 }
+        )
       }
       if (path === '/api/people/p1') {
-        return new Response(JSON.stringify({ id: 'p1', primary_email: 'alex@example.com', display_name: 'Alex Doe', first_seen_at: '', updated_at: '', company: { id: 'c1', owner_id: 'o1', domain: 'example.com', name: 'Example Inc', created_at: '', updated_at: '' } }), { status: 200 })
+        return new Response(
+          JSON.stringify({
+            id: 'p1',
+            primary_email: 'alex@example.com',
+            display_name: 'Alex Doe',
+            first_seen_at: '',
+            updated_at: '',
+            company: {
+              id: 'c1',
+              owner_id: 'o1',
+              domain: 'example.com',
+              name: 'Example Inc',
+              created_at: '',
+              updated_at: '',
+            },
+          }),
+          { status: 200 }
+        )
       }
       if (path === '/api/companies/c1') {
-        return new Response(JSON.stringify({ id: 'c1', owner_id: 'o1', domain: 'example.com', name: 'Example Inc', created_at: '', updated_at: '', people: [{ id: 'p1', primary_email: 'alex@example.com', display_name: 'Alex Doe', first_seen_at: '', updated_at: '' }] }), { status: 200 })
+        return new Response(
+          JSON.stringify({
+            id: 'c1',
+            owner_id: 'o1',
+            domain: 'example.com',
+            name: 'Example Inc',
+            created_at: '',
+            updated_at: '',
+            people: [
+              {
+                id: 'p1',
+                primary_email: 'alex@example.com',
+                display_name: 'Alex Doe',
+                first_seen_at: '',
+                updated_at: '',
+              },
+            ],
+          }),
+          { status: 200 }
+        )
       }
       return new Response('unexpected', { status: 500 })
     }
     const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
     await expect(client.getPerson('p1')).resolves.toMatchObject({ id: 'p1', company: { id: 'c1' } })
     await expect(client.getPersonNotes('p1')).resolves.toHaveLength(1)
-    await expect(client.getCompany('c1')).resolves.toMatchObject({ id: 'c1', people: [{ id: 'p1' }] })
+    await expect(client.getCompany('c1')).resolves.toMatchObject({
+      id: 'c1',
+      people: [{ id: 'p1' }],
+    })
     expect(calls.map((c) => `${c.method ?? 'GET'} ${c.url}`)).toEqual([
       'GET http://x/api/people/p1',
       'GET http://x/api/people/p1/notes',
@@ -112,29 +165,32 @@ describe('MuesliClient', () => {
       calls.push({ url: String(url), method: init?.method })
       const path = new URL(String(url)).pathname
       if (path === '/api/notes/note-1/action-items') {
-        return new Response(JSON.stringify({
-          action_items: [
-            {
-              id: 'ai-1',
-              note_id: 'note-1',
-              owner_id: 'owner-1',
-              text: 'Ship the launch notes',
-              owner_person_id: null,
-              status: 'open',
-              due_hint: 'Tomorrow',
-              created_at: '2026-07-11T00:00:00Z',
-            },
-          ],
-          decisions: [
-            {
-              id: 'd-1',
-              note_id: 'note-1',
-              owner_id: 'owner-1',
-              text: 'Use the weekly cadence',
-              created_at: '2026-07-11T00:00:00Z',
-            },
-          ],
-        }), { status: 200 })
+        return new Response(
+          JSON.stringify({
+            action_items: [
+              {
+                id: 'ai-1',
+                note_id: 'note-1',
+                owner_id: 'owner-1',
+                text: 'Ship the launch notes',
+                owner_person_id: null,
+                status: 'open',
+                due_hint: 'Tomorrow',
+                created_at: '2026-07-11T00:00:00Z',
+              },
+            ],
+            decisions: [
+              {
+                id: 'd-1',
+                note_id: 'note-1',
+                owner_id: 'owner-1',
+                text: 'Use the weekly cadence',
+                created_at: '2026-07-11T00:00:00Z',
+              },
+            ],
+          }),
+          { status: 200 }
+        )
       }
       return new Response('unexpected', { status: 500 })
     }
@@ -154,18 +210,21 @@ describe('MuesliClient', () => {
       calls.push({ url: String(url), method: init?.method })
       const fullUrl = String(url)
       if (fullUrl === 'http://x/api/action-items?status=all') {
-        return new Response(JSON.stringify([
-          {
-            id: 'ai-1',
-            note_id: 'note-1',
-            owner_id: 'owner-1',
-            text: 'Ship the launch notes',
-            owner_person_id: null,
-            status: 'done',
-            due_hint: 'Tomorrow',
-            created_at: '2026-07-11T00:00:00Z',
-          },
-        ]), { status: 200 })
+        return new Response(
+          JSON.stringify([
+            {
+              id: 'ai-1',
+              note_id: 'note-1',
+              owner_id: 'owner-1',
+              text: 'Ship the launch notes',
+              owner_person_id: null,
+              status: 'done',
+              due_hint: 'Tomorrow',
+              created_at: '2026-07-11T00:00:00Z',
+            },
+          ]),
+          { status: 200 }
+        )
       }
       return new Response('unexpected', { status: 500 })
     }
@@ -190,8 +249,13 @@ describe('MuesliClient', () => {
       })
     }
     const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
-    const out = await client.exportNote('note-1', 'md', { includeTranscript: false, redactSpeakers: true })
-    expect(calls[0].url).toBe('http://x/api/notes/note-1/export?format=md&include_transcript=false&redact_speakers=true')
+    const out = await client.exportNote('note-1', 'md', {
+      includeTranscript: false,
+      redactSpeakers: true,
+    })
+    expect(calls[0].url).toBe(
+      'http://x/api/notes/note-1/export?format=md&include_transcript=false&redact_speakers=true'
+    )
     expect(calls[0].init?.method).toBe('GET')
     expect(Buffer.from(out.bytes).toString('utf8')).toBe('exported markdown')
     expect(out.filename).toBe('Quarterly Review.md')
@@ -211,7 +275,10 @@ describe('MuesliClient', () => {
       })
     }
     const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
-    const out = await client.exportFolder('folder-1', 'pdf', { includeTranscript: false, redactSpeakers: true })
+    const out = await client.exportFolder('folder-1', 'pdf', {
+      includeTranscript: false,
+      redactSpeakers: true,
+    })
     expect(calls[0].url).toBe('http://x/api/export/batch')
     expect(calls[0].init?.method).toBe('POST')
     expect(JSON.parse(String(calls[0].init?.body))).toEqual({
@@ -232,18 +299,21 @@ describe('MuesliClient', () => {
         headers: { 'Content-Type': 'application/json' },
       })
     const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
-    await expect(client.exportNote('note-1', 'docx')).rejects.toMatchObject({ status: 400, message: 'unsupported format' })
+    await expect(client.exportNote('note-1', 'docx')).rejects.toMatchObject({
+      status: 400,
+      message: 'unsupported format',
+    })
   })
 
   it('walks the full presigned upload + body flow', async () => {
     server.seedUser('o@example.com', 'password123')
     const session = await new MuesliClient({ baseUrl: BASE, fetch: server.fetch }).login(
       'o@example.com',
-      'password123',
+      'password123'
     )
     const appToken = await new MuesliClient({ baseUrl: BASE, fetch: server.fetch }).createToken(
       'desktop',
-      session,
+      session
     )
     const c = new MuesliClient({ baseUrl: BASE, fetch: server.fetch, token: appToken })
 
@@ -266,11 +336,11 @@ describe('MuesliClient', () => {
     server.seedUser('o@example.com', 'password123')
     const session = await new MuesliClient({ baseUrl: BASE, fetch: server.fetch }).login(
       'o@example.com',
-      'password123',
+      'password123'
     )
     const appToken = await new MuesliClient({ baseUrl: BASE, fetch: server.fetch }).createToken(
       'desktop',
-      session,
+      session
     )
     const c = new MuesliClient({ baseUrl: BASE, fetch: server.fetch, token: appToken })
 
@@ -329,16 +399,19 @@ describe('MuesliClient', () => {
     const calls: Array<{ url: string; init?: RequestInit }> = []
     const fetchMock: FetchLike = async (url, init) => {
       calls.push({ url: String(url), init })
-      return new Response(JSON.stringify({
-        id: 'ai-1',
-        note_id: 'note-1',
-        owner_id: 'owner-1',
-        text: 'Ship the launch notes',
-        owner_person_id: null,
-        status: 'done',
-        due_hint: 'Tomorrow',
-        created_at: '2026-07-11T00:00:00Z',
-      }), { status: 200 })
+      return new Response(
+        JSON.stringify({
+          id: 'ai-1',
+          note_id: 'note-1',
+          owner_id: 'owner-1',
+          text: 'Ship the launch notes',
+          owner_person_id: null,
+          status: 'done',
+          due_hint: 'Tomorrow',
+          created_at: '2026-07-11T00:00:00Z',
+        }),
+        { status: 200 }
+      )
     }
     const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
     const out = await client.updateActionItem('ai-1', { status: 'done' })
@@ -364,7 +437,10 @@ describe('MuesliClient', () => {
     const calls: Array<{ url: string; init?: RequestInit }> = []
     const fetchMock: FetchLike = async (url, init) => {
       calls.push({ url: String(url), init })
-      return new Response(JSON.stringify({ id: 'note-copy', title: 'Copy of Standup', status: 'recording' }), { status: 201 })
+      return new Response(
+        JSON.stringify({ id: 'note-copy', title: 'Copy of Standup', status: 'recording' }),
+        { status: 201 }
+      )
     }
     const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
     const out = await client.duplicateNote('note-1')
@@ -398,8 +474,16 @@ describe('MuesliClient', () => {
     const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
     await client.linkNoteEvent('note-1', 'evt-1')
     await client.unlinkNoteEvent('note-1')
-    expect(calls[0]).toEqual({ url: 'http://x/api/notes/note-1/event', method: 'POST', body: JSON.stringify({ event_id: 'evt-1' }) })
-    expect(calls[1]).toEqual({ url: 'http://x/api/notes/note-1/event', method: 'DELETE', body: undefined })
+    expect(calls[0]).toEqual({
+      url: 'http://x/api/notes/note-1/event',
+      method: 'POST',
+      body: JSON.stringify({ event_id: 'evt-1' }),
+    })
+    expect(calls[1]).toEqual({
+      url: 'http://x/api/notes/note-1/event',
+      method: 'DELETE',
+      body: undefined,
+    })
   })
 
   it('listNotes can scope to a single folder via folder_id', async () => {
@@ -472,7 +556,10 @@ describe('MuesliClient', () => {
     const calls: Array<{ url: string; init?: RequestInit }> = []
     const fetchMock: FetchLike = async (url, init) => {
       calls.push({ url: String(url), init })
-      return new Response(JSON.stringify({ token: 'share-token', url: 'http://x/shared/share-token' }), { status: 201 })
+      return new Response(
+        JSON.stringify({ token: 'share-token', url: 'http://x/shared/share-token' }),
+        { status: 201 }
+      )
     }
     const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
 
@@ -608,7 +695,11 @@ describe('MuesliClient', () => {
   it('resummarize POSTs to /api/notes/{id}/resummarize with no body', async () => {
     const calls: Array<{ url: string; method?: string; body?: string | null }> = []
     const fetchMock: FetchLike = async (url, init) => {
-      calls.push({ url: String(url), method: init?.method, body: init?.body as string | null ?? null })
+      calls.push({
+        url: String(url),
+        method: init?.method,
+        body: (init?.body as string | null) ?? null,
+      })
       return new Response('', { status: 202 })
     }
     const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
@@ -621,14 +712,22 @@ describe('MuesliClient', () => {
   it('addTag POSTs and removeTag DELETEs (by name, encoded)', async () => {
     const calls: Array<{ url: string; method?: string; body?: unknown }> = []
     const fetchMock: FetchLike = async (url, init) => {
-      calls.push({ url: String(url), method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      calls.push({
+        url: String(url),
+        method: init?.method,
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      })
       return new Response(JSON.stringify({ id: 't1', name: '1on1' }), { status: 200 })
     }
     const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
 
     const tag = await client.addTag('n1', '1on1')
     expect(tag).toEqual({ id: 't1', name: '1on1' })
-    expect(calls[0]).toMatchObject({ url: 'http://x/api/notes/n1/tags', method: 'POST', body: { name: '1on1' } })
+    expect(calls[0]).toMatchObject({
+      url: 'http://x/api/notes/n1/tags',
+      method: 'POST',
+      body: { name: '1on1' },
+    })
 
     await client.removeTag('n1', '1on1')
     expect(calls[1].method).toBe('DELETE')
@@ -656,8 +755,15 @@ describe('MuesliClient', () => {
   it('smart-list CRUD hits the right endpoints', async () => {
     const calls: Array<{ url: string; method?: string; body?: unknown }> = []
     const fetchMock: FetchLike = async (url, init) => {
-      calls.push({ url: String(url), method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined })
-      return new Response(JSON.stringify({ id: 'l1', name: 'X', rule: { op: 'and', children: [] }, created_at: '' }), { status: 200 })
+      calls.push({
+        url: String(url),
+        method: init?.method,
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      })
+      return new Response(
+        JSON.stringify({ id: 'l1', name: 'X', rule: { op: 'and', children: [] }, created_at: '' }),
+        { status: 200 }
+      )
     }
     const c = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
     const rule = { op: 'and' as const, children: [] }
@@ -665,16 +771,28 @@ describe('MuesliClient', () => {
     await c.listSmartLists()
     await c.updateSmartList('l1', 'Y', rule)
     await c.deleteSmartList('l1')
-    expect(calls[0]).toMatchObject({ url: 'http://x/api/smart-lists', method: 'POST', body: { name: 'X', rule } })
+    expect(calls[0]).toMatchObject({
+      url: 'http://x/api/smart-lists',
+      method: 'POST',
+      body: { name: 'X', rule },
+    })
     expect(calls[1]).toMatchObject({ url: 'http://x/api/smart-lists', method: 'GET' })
-    expect(calls[2]).toMatchObject({ url: 'http://x/api/smart-lists/l1', method: 'PUT', body: { name: 'Y', rule } })
+    expect(calls[2]).toMatchObject({
+      url: 'http://x/api/smart-lists/l1',
+      method: 'PUT',
+      body: { name: 'Y', rule },
+    })
     expect(calls[3]).toMatchObject({ url: 'http://x/api/smart-lists/l1', method: 'DELETE' })
   })
 
   it('folder CRUD hits the right endpoints', async () => {
     const calls: Array<{ url: string; method?: string; body?: unknown }> = []
     const fetchMock: FetchLike = async (url, init) => {
-      calls.push({ url: String(url), method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      calls.push({
+        url: String(url),
+        method: init?.method,
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      })
       const path = new URL(String(url)).pathname
       const body =
         init?.method === 'PUT' && path === '/api/folders/f1'
@@ -690,37 +808,82 @@ describe('MuesliClient', () => {
     await c.addNoteFolder('n1', 'f1')
     await c.removeNoteFolder('n1', 'f1')
     expect(calls[0]).toMatchObject({ url: 'http://x/api/folders', method: 'GET' })
-    expect(calls[1]).toMatchObject({ url: 'http://x/api/folders', method: 'POST', body: { name: 'Clients', parent_id: null } })
-    expect(calls[2]).toMatchObject({ url: 'http://x/api/folders/f1', method: 'PUT', body: { name: 'Accounts', parent_id: null } })
+    expect(calls[1]).toMatchObject({
+      url: 'http://x/api/folders',
+      method: 'POST',
+      body: { name: 'Clients', parent_id: null },
+    })
+    expect(calls[2]).toMatchObject({
+      url: 'http://x/api/folders/f1',
+      method: 'PUT',
+      body: { name: 'Accounts', parent_id: null },
+    })
     expect(calls[3]).toMatchObject({ url: 'http://x/api/folders/f1', method: 'DELETE' })
-    expect(calls[4]).toMatchObject({ url: 'http://x/api/notes/n1/folders', method: 'POST', body: { folder_id: 'f1' } })
+    expect(calls[4]).toMatchObject({
+      url: 'http://x/api/notes/n1/folders',
+      method: 'POST',
+      body: { folder_id: 'f1' },
+    })
     expect(calls[5]).toMatchObject({ url: 'http://x/api/notes/n1/folders/f1', method: 'DELETE' })
-    expect(updated).toMatchObject({ id: 'f1', name: 'Accounts', created_at: '2026-07-10T00:00:00Z' })
+    expect(updated).toMatchObject({
+      id: 'f1',
+      name: 'Accounts',
+      created_at: '2026-07-10T00:00:00Z',
+    })
 
     // createFolder with a parentId sends parent_id in the request body
     await c.createFolder('X', 'p1')
     const withParent = calls[calls.length - 1]
-    expect(withParent).toMatchObject({ url: 'http://x/api/folders', method: 'POST', body: { name: 'X', parent_id: 'p1' } })
+    expect(withParent).toMatchObject({
+      url: 'http://x/api/folders',
+      method: 'POST',
+      body: { name: 'X', parent_id: 'p1' },
+    })
   })
 
   it('reorderFolder PUTs /api/folders/{id}/reorder with after_id (sibling and null)', async () => {
     const calls: Array<{ url: string; method?: string; body?: unknown }> = []
     const fetchMock: FetchLike = async (url, init) => {
-      calls.push({ url: String(url), method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined })
+      calls.push({
+        url: String(url),
+        method: init?.method,
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      })
       return new Response(JSON.stringify({ status: 'ok' }), { status: 200 })
     }
     const c = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
     await c.reorderFolder('f1', 'f0')
-    expect(calls[0]).toMatchObject({ url: 'http://x/api/folders/f1/reorder', method: 'PUT', body: { after_id: 'f0' } })
+    expect(calls[0]).toMatchObject({
+      url: 'http://x/api/folders/f1/reorder',
+      method: 'PUT',
+      body: { after_id: 'f0' },
+    })
     await c.reorderFolder('f1', null)
-    expect(calls[1]).toMatchObject({ url: 'http://x/api/folders/f1/reorder', method: 'PUT', body: { after_id: null } })
+    expect(calls[1]).toMatchObject({
+      url: 'http://x/api/folders/f1/reorder',
+      method: 'PUT',
+      body: { after_id: null },
+    })
   })
 
   it('template CRUD hits the right endpoints', async () => {
     const calls: Array<{ url: string; method?: string; body?: unknown }> = []
     const fetchMock: FetchLike = async (url, init) => {
-      calls.push({ url: String(url), method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined })
-      return new Response(JSON.stringify({ id: 't1', name: 'Default', phase: 'after', sections: [], built_in: false }), { status: 200 })
+      calls.push({
+        url: String(url),
+        method: init?.method,
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      })
+      return new Response(
+        JSON.stringify({
+          id: 't1',
+          name: 'Default',
+          phase: 'after',
+          sections: [],
+          built_in: false,
+        }),
+        { status: 200 }
+      )
     }
     const c = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
     const sections = [{ heading: 'Overview', instruction: 'Summarise' }]
@@ -729,8 +892,16 @@ describe('MuesliClient', () => {
     await c.updateTemplate('t1', 'Renamed', 'after', sections, false)
     await c.deleteTemplate('t1')
     expect(calls[0]).toMatchObject({ url: 'http://x/api/templates', method: 'GET' })
-    expect(calls[1]).toMatchObject({ url: 'http://x/api/templates', method: 'POST', body: { name: 'Default', phase: 'after', sections } })
-    expect(calls[2]).toMatchObject({ url: 'http://x/api/templates/t1', method: 'PUT', body: { name: 'Renamed', phase: 'after', sections } })
+    expect(calls[1]).toMatchObject({
+      url: 'http://x/api/templates',
+      method: 'POST',
+      body: { name: 'Default', phase: 'after', sections },
+    })
+    expect(calls[2]).toMatchObject({
+      url: 'http://x/api/templates/t1',
+      method: 'PUT',
+      body: { name: 'Renamed', phase: 'after', sections },
+    })
     expect(calls[3]).toMatchObject({ url: 'http://x/api/templates/t1', method: 'DELETE' })
   })
 
@@ -738,10 +909,13 @@ describe('MuesliClient', () => {
     const calls: Array<{ url: string; method?: string }> = []
     const fetchMock: FetchLike = async (url, init) => {
       calls.push({ url: String(url), method: init?.method })
-      return new Response(JSON.stringify([
-        { note_id: 'id1', match_type: 'title' },
-        { note_id: 'id2', match_type: 'summary', snippet: 'a b in context' },
-      ]), { status: 200, headers: { 'X-Muesli-Semantic-Search': 'available' } })
+      return new Response(
+        JSON.stringify([
+          { note_id: 'id1', match_type: 'title' },
+          { note_id: 'id2', match_type: 'summary', snippet: 'a b in context' },
+        ]),
+        { status: 200, headers: { 'X-Muesli-Semantic-Search': 'available' } }
+      )
     }
     const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
     const matches = await client.search('a b')
@@ -759,9 +933,13 @@ describe('MuesliClient', () => {
   it('surfaces unavailable semantic search response metadata', async () => {
     const client = new MuesliClient({
       baseUrl: 'http://x',
-      fetch: async () => new Response('[]', { status: 200, headers: { 'X-Muesli-Semantic-Search': 'unavailable' } }),
+      fetch: async () =>
+        new Response('[]', { status: 200, headers: { 'X-Muesli-Semantic-Search': 'unavailable' } }),
     })
-    await expect(client.search('rare term')).resolves.toEqual({ matches: [], semanticSearchAvailable: false })
+    await expect(client.search('rare term')).resolves.toEqual({
+      matches: [],
+      semanticSearchAvailable: false,
+    })
   })
 
   it('search appends from/to onto the querystring when present, encoded', async () => {
@@ -772,7 +950,9 @@ describe('MuesliClient', () => {
     }
     const client = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
     await client.search('a b', { from: '2024-01-01T00:00:00Z', to: '2024-02-01' })
-    expect(calls[0].url).toBe('http://x/api/search?q=a+b&from=2024-01-01T00%3A00%3A00Z&to=2024-02-01')
+    expect(calls[0].url).toBe(
+      'http://x/api/search?q=a+b&from=2024-01-01T00%3A00%3A00Z&to=2024-02-01'
+    )
   })
 
   it('search omits from/to from the querystring when absent', async () => {
@@ -801,7 +981,7 @@ describe('MuesliClient', () => {
       tag: 'weekly sync',
     })
     expect(calls[0].url).toBe(
-      'http://x/api/search?q=budget+review&from=2024-01-01&to=2024-02-01T00%3A00%3A00Z&person_id=p-123&folder_id=f-123&tag=weekly+sync',
+      'http://x/api/search?q=budget+review&from=2024-01-01&to=2024-02-01T00%3A00%3A00Z&person_id=p-123&folder_id=f-123&tag=weekly+sync'
     )
   })
 
@@ -809,11 +989,11 @@ describe('MuesliClient', () => {
     server.seedUser('o@example.com', 'password123')
     const session = await new MuesliClient({ baseUrl: BASE, fetch: server.fetch }).login(
       'o@example.com',
-      'password123',
+      'password123'
     )
     const appToken = await new MuesliClient({ baseUrl: BASE, fetch: server.fetch }).createToken(
       'desktop',
-      session,
+      session
     )
     const c = new MuesliClient({ baseUrl: BASE, fetch: server.fetch, token: appToken })
     const note = await c.createNote('M')
@@ -833,8 +1013,15 @@ describe('MuesliClient', () => {
   it('chat CRUD hits the right endpoints (list/create/get/delete/messages/send)', async () => {
     const calls: Array<{ url: string; method?: string; body?: unknown }> = []
     const fetchMock: FetchLike = async (url, init) => {
-      calls.push({ url: String(url), method: init?.method, body: init?.body ? JSON.parse(String(init.body)) : undefined })
-      return new Response(JSON.stringify({ id: 'c1', title: 'Q&A', created_at: '', updated_at: '' }), { status: 200 })
+      calls.push({
+        url: String(url),
+        method: init?.method,
+        body: init?.body ? JSON.parse(String(init.body)) : undefined,
+      })
+      return new Response(
+        JSON.stringify({ id: 'c1', title: 'Q&A', created_at: '', updated_at: '' }),
+        { status: 200 }
+      )
     }
     const c = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
     await c.listConversations()
@@ -846,12 +1033,23 @@ describe('MuesliClient', () => {
     await c.sendMessage('c1', { content: 'Hello' })
 
     expect(calls[0]).toMatchObject({ url: 'http://x/api/conversations', method: 'GET' })
-    expect(calls[1]).toMatchObject({ url: 'http://x/api/conversations?note_id=note-1', method: 'GET' })
-    expect(calls[2]).toMatchObject({ url: 'http://x/api/conversations', method: 'POST', body: { title: 'Q&A', note_id: 'note-1', content: 'Hi' } })
+    expect(calls[1]).toMatchObject({
+      url: 'http://x/api/conversations?note_id=note-1',
+      method: 'GET',
+    })
+    expect(calls[2]).toMatchObject({
+      url: 'http://x/api/conversations',
+      method: 'POST',
+      body: { title: 'Q&A', note_id: 'note-1', content: 'Hi' },
+    })
     expect(calls[3]).toMatchObject({ url: 'http://x/api/conversations/c1', method: 'GET' })
     expect(calls[4]).toMatchObject({ url: 'http://x/api/conversations/c1', method: 'DELETE' })
     expect(calls[5]).toMatchObject({ url: 'http://x/api/conversations/c1/messages', method: 'GET' })
-    expect(calls[6]).toMatchObject({ url: 'http://x/api/conversations/c1/messages', method: 'POST', body: { content: 'Hello' } })
+    expect(calls[6]).toMatchObject({
+      url: 'http://x/api/conversations/c1/messages',
+      method: 'POST',
+      body: { content: 'Hello' },
+    })
   })
 
   it('sendMessage rejects with ApiError(409) on an in-flight send guard', async () => {
@@ -868,6 +1066,9 @@ describe('MuesliClient', () => {
     const fetchMock: FetchLike = async () =>
       new Response(JSON.stringify({ error: 'internal error' }), { status: 500 })
     const c = new MuesliClient({ baseUrl: 'http://x', token: 't', fetch: fetchMock })
-    await expect(c.sendMessage('c1', { content: 'hi' })).rejects.toMatchObject({ status: 500, message: 'internal error' })
+    await expect(c.sendMessage('c1', { content: 'hi' })).rejects.toMatchObject({
+      status: 500,
+      message: 'internal error',
+    })
   })
 })

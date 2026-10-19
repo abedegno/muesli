@@ -26,7 +26,7 @@ type ListNotesFilter struct {
 	CreatedTo   *time.Time
 }
 
-const getNoteSelectQuery = `SELECT id, owner_id, title, status, pinned, started_at, ended_at, partial_transcript, audio_object_key, retention_state, created_at, updated_at, event_id
+const getNoteSelectQuery = `SELECT id, owner_id, title, status, pinned, started_at, ended_at, partial_transcript, audio_object_key, retention_state, created_at, updated_at, event_id, (status='recording' AND (capture_expires_at IS NULL OR capture_expires_at<now()))
 		 FROM notes WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL`
 
 func notesOrderClause(folderIDSet bool) string {
@@ -154,13 +154,29 @@ func (s *Store) DuplicateNote(ctx context.Context, ownerID, noteID string) (mode
 	return copyNote, nil
 }
 
+// StopNoteCapture clears the recording marker only while audio has not been uploaded.
+// The owner guard and conditional update keep another user's or a completed note unchanged.
+func (s *Store) StopNoteCapture(ctx context.Context, ownerID, noteID string) (*model.Note, error) {
+	_, err := s.pool.Exec(ctx, `UPDATE notes SET status=$1, ended_at=now(), updated_at=now()
+ WHERE id=$2 AND owner_id=$3 AND deleted_at IS NULL AND status=$4 AND audio_object_key IS NULL AND capture_id IS NULL`,
+		model.NoteDraft, noteID, ownerID, model.NoteRecording)
+	if err != nil {
+		return nil, err
+	}
+	n, err := s.GetNote(ctx, ownerID, noteID)
+	if err != nil {
+		return nil, err
+	}
+	return &n, nil
+}
+
 // StartNoteCapture advances a draft note to recording. Notes already beyond
 // the draft state are returned unchanged so retries cannot regress the pipeline.
 func (s *Store) StartNoteCapture(ctx context.Context, ownerID, noteID string) (*model.Note, error) {
 	var n model.Note
 	var audioKey, retention *string
 	err := s.pool.QueryRow(ctx,
-		`UPDATE notes SET status=$1, updated_at=now()
+		`UPDATE notes SET status=$1, started_at=now(), ended_at=NULL, updated_at=now()
 		 WHERE id=$2 AND owner_id=$3 AND deleted_at IS NULL AND status=$4
 		 RETURNING id, owner_id, title, status, pinned, started_at, ended_at, partial_transcript, audio_object_key, retention_state, created_at, updated_at, event_id`,
 		model.NoteRecording, noteID, ownerID, model.NoteDraft).
@@ -188,7 +204,7 @@ func (s *Store) GetNote(ctx context.Context, ownerID, noteID string) (model.Note
 	var n model.Note
 	var audioKey, retention *string
 	err := s.pool.QueryRow(ctx, getNoteSelectQuery, noteID, ownerID).
-		Scan(&n.ID, &n.OwnerID, &n.Title, &n.Status, &n.Pinned, &n.StartedAt, &n.EndedAt, &n.PartialTranscript, &audioKey, &retention, &n.CreatedAt, &n.UpdatedAt, &n.EventID)
+		Scan(&n.ID, &n.OwnerID, &n.Title, &n.Status, &n.Pinned, &n.StartedAt, &n.EndedAt, &n.PartialTranscript, &audioKey, &retention, &n.CreatedAt, &n.UpdatedAt, &n.EventID, &n.CaptureNeedsReview)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return model.Note{}, ErrNotFound
 	}
@@ -511,7 +527,7 @@ func (s *Store) ListNotes(ctx context.Context, ownerID string, f ListNotesFilter
 
 	query := fmt.Sprintf(
 		`SELECT n.id, n.owner_id, n.title, n.status, n.pinned, n.started_at, n.ended_at,
-		        n.partial_transcript, n.created_at, n.updated_at, COALESCE(nb.content, ''), n.event_id
+		        n.partial_transcript, n.created_at, n.updated_at, COALESCE(nb.content, ''), n.event_id, (n.status='recording' AND (n.capture_expires_at IS NULL OR n.capture_expires_at<now()))
 		 FROM notes n
 		 %s
 		 LEFT JOIN note_bodies nb ON nb.note_id = n.id
@@ -530,7 +546,7 @@ func (s *Store) ListNotes(ctx context.Context, ownerID string, f ListNotesFilter
 		var n model.Note
 		var body string
 		if err := rows.Scan(&n.ID, &n.OwnerID, &n.Title, &n.Status, &n.Pinned,
-			&n.StartedAt, &n.EndedAt, &n.PartialTranscript, &n.CreatedAt, &n.UpdatedAt, &body, &n.EventID); err != nil {
+			&n.StartedAt, &n.EndedAt, &n.PartialTranscript, &n.CreatedAt, &n.UpdatedAt, &body, &n.EventID, &n.CaptureNeedsReview); err != nil {
 			return nil, err
 		}
 		n.Snippet = snippet(body)

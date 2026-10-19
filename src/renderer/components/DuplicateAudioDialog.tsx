@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { Dialog } from '@/components/ui/Dialog'
 import { Button } from '@/components/ui/Button'
 
@@ -7,21 +8,25 @@ interface Props {
   onTranscribeAgain: () => void
 }
 
-export function DuplicateAudioDialog({ existingNoteTitle, onOpenExisting, onTranscribeAgain }: Props) {
+export function DuplicateAudioDialog({
+  existingNoteTitle,
+  onOpenExisting,
+  onTranscribeAgain,
+}: Props) {
   return (
-    <Dialog open onOpenChange={() => {}} title="Already imported?">
+    <Dialog open onOpenChange={() => {}} title={uiText('Already imported?')}>
       <p className="text-sm text-muted-foreground">
-        This looks like an existing recording — open it, or transcribe again?
+        {uiText('This looks like an existing recording — open it, or transcribe again?')}
       </p>
       {existingNoteTitle && (
         <p className="mt-1 text-sm font-medium truncate">{existingNoteTitle}</p>
       )}
       <div className="mt-4 flex justify-end gap-2">
         <Button variant="secondary" size="sm" onClick={onTranscribeAgain}>
-          Transcribe again
+          {uiText('Transcribe again')}
         </Button>
         <Button variant="primary" size="sm" onClick={onOpenExisting}>
-          Open existing recording
+          {uiText('Open existing recording')}
         </Button>
       </div>
     </Dialog>

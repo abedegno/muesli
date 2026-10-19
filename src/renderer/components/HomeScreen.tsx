@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { useMemo, type ReactNode } from 'react'
 import { useNavigate, useOutletContext } from 'react-router-dom'
 import { Button } from '@/components/ui/Button'
@@ -61,7 +62,7 @@ export function HomeScreen() {
       id: 'upcoming',
       render: () => (
         <section>
-          <h2 className="mb-3 font-serif text-xl font-semibold">Upcoming</h2>
+          <h2 className="mb-3 font-serif text-xl font-semibold">{uiText('Upcoming')}</h2>
           <UpcomingEventsPanel />
         </section>
       ),
@@ -70,12 +71,12 @@ export function HomeScreen() {
       id: 'recent-notes',
       render: () => (
         <section>
-          <h2 className="mb-3 font-serif text-xl font-semibold">Recent notes</h2>
+          <h2 className="mb-3 font-serif text-xl font-semibold">{uiText('Recent notes')}</h2>
           {recentGroups.length === 0 ? (
             <EmptyState
-              title="No recent notes yet"
-              hint="Start your first meeting and it will appear here."
-              action={<Button onClick={() => navigate('/new')}>New meeting</Button>}
+              title={uiText('No recent notes yet')}
+              hint={uiText('Start your first meeting and it will appear here.')}
+              action={<Button onClick={() => navigate('/new')}>{uiText('New meeting')}</Button>}
             />
           ) : (
             <GroupedNoteSections
@@ -92,12 +93,10 @@ export function HomeScreen() {
 
   return (
     <div className="mx-auto max-w-3xl p-6">
-      <h1 className="mb-4 font-serif text-xl font-semibold">Home</h1>
+      <h1 className="mb-4 font-serif text-xl font-semibold">{uiText('Home')}</h1>
       <ol className="flex list-none flex-col gap-8 p-0">
         {sections.map((section) => (
-          <li key={section.id}>
-            {section.render()}
-          </li>
+          <li key={section.id}>{section.render()}</li>
         ))}
       </ol>
     </div>

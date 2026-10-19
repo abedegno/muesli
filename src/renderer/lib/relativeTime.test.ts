@@ -1,3 +1,11 @@
+// @vitest-environment jsdom
+import { beforeEach, afterEach } from 'vitest'
+import { setRegion, setDisplayLanguage } from '@/i18n'
+beforeEach(() => {
+  localStorage.clear()
+  setRegion('en-GB')
+})
+afterEach(() => localStorage.clear())
 import { describe, it, expect } from 'vitest'
 import { relativeTime } from './relativeTime'
 
@@ -35,4 +43,10 @@ describe('relativeTime', () => {
   it('accepts an ISO string input', () => {
     expect(relativeTime(ago(59_000).toISOString(), NOW)).toBe('just now')
   })
+})
+
+it('localizes relative labels without changing the chosen date region', () => {
+  setDisplayLanguage('fr')
+  expect(relativeTime(ago(60_000), NOW)).toBe('il y a 1 min')
+  expect(relativeTime(ago(7 * 86400_000), NOW)).toBe('6 Jul')
 })

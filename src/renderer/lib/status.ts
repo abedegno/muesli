@@ -1,21 +1,22 @@
+import { uiText } from '@/i18n'
 import type { NoteStatus } from '../../shared/types'
 
 export function statusLabel(s: NoteStatus): string {
   switch (s) {
     case 'draft':
-      return 'Draft'
+      return uiText('Draft')
     case 'recording':
-      return 'Recording'
+      return uiText('Recording')
     case 'uploaded':
-      return 'Uploaded'
+      return uiText('Uploaded')
     case 'transcribing':
-      return 'Transcribing'
+      return uiText('Transcribing')
     case 'summarizing':
-      return 'Summarizing'
+      return uiText('Summarizing')
     case 'ready':
-      return 'Ready'
+      return uiText('Ready')
     case 'failed':
-      return 'Failed'
+      return uiText('Failed')
   }
 }
 

@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { Fragment, useEffect, useState } from 'react'
 import { useNavigate, useOutletContext } from 'react-router-dom'
 import { muesli } from '@/api'
@@ -61,7 +62,9 @@ function ReorderGap({
 }
 
 const MATCH_TYPE_LABEL: Record<SearchMatch['match_type'], string> = {
-  title: 'Title',
+  get title() {
+    return uiText('Title')
+  },
   transcript: 'Transcript',
   summary: 'Summary',
 }
@@ -71,7 +74,15 @@ const MATCH_TYPE_LABEL: Record<SearchMatch['match_type'], string> = {
 // Clicking a transcript hit navigates to the note AND jumps to the exact
 // segment (via the `segment` query param, resolved by NoteScreen/NoteView);
 // title/summary hits just open the note.
-function MatchRow({ noteId, match, onNavigate }: { noteId: string; match: SearchMatch; onNavigate: (path: string) => void }) {
+function MatchRow({
+  noteId,
+  match,
+  onNavigate,
+}: {
+  noteId: string
+  match: SearchMatch
+  onNavigate: (path: string) => void
+}) {
   const target =
     match.match_type === 'transcript' && match.segment_id
       ? `/notes/${noteId}?segment=${encodeURIComponent(match.segment_id)}`
@@ -79,7 +90,10 @@ function MatchRow({ noteId, match, onNavigate }: { noteId: string; match: Search
   return (
     <button
       type="button"
-      aria-label={`${MATCH_TYPE_LABEL[match.match_type]} match${match.snippet ? `: ${match.snippet}` : ''}`}
+      aria-label={uiText('{value1} match{value2}', {
+        value1: MATCH_TYPE_LABEL[match.match_type],
+        value2: match.snippet ? `: ${match.snippet}` : '',
+      })}
       data-testid={`match-${match.match_type}-${noteId}`}
       onClick={() => onNavigate(target)}
       className="ml-3 flex w-[calc(100%-0.75rem)] items-center gap-2 rounded-[var(--radius)] px-2 py-1 text-left text-xs text-muted-foreground hover:bg-muted"
@@ -100,26 +114,47 @@ function OnboardingHint({ isEmbeddedMode }: { isEmbeddedMode: boolean }) {
       data-testid="onboarding-hint"
     >
       <li>
-        <span className="font-medium text-foreground">1. Click &ldquo;New meeting&rdquo;</span>
-        {' — '}start a new meeting here to begin recording your microphone and system audio.
+        <span className="font-medium text-foreground">{uiText('1. Click “New meeting”')}</span>
+        {uiText(' — ')}
+        {uiText('start a new meeting here to begin recording your microphone and system audio.')}
       </li>
       <li>
-        <span className="font-medium text-foreground">2. Let the app process it</span>
-        {' — '}
+        <span className="font-medium text-foreground">{uiText('2. Let the app process it')}</span>
+        {uiText(' — ')}
         {isEmbeddedMode
-          ? 'the recording stays on this device, where processing happens locally on this device and creates the summary.'
-          : 'the recording goes to your connected server, which transcribes it and creates the summary.'}
+          ? uiText(
+              'the recording stays on this device, where processing happens locally on this device and creates the summary.'
+            )
+          : uiText(
+              'the recording goes to your connected server, which transcribes it and creates the summary.'
+            )}
       </li>
       <li>
-        <span className="font-medium text-foreground">3. Review the finished note</span>
-        {' — '}when processing finishes, the note appears in this list, ready to open, search, and refine.
+        <span className="font-medium text-foreground">{uiText('3. Review the finished note')}</span>
+        {uiText(' — ')}
+        {uiText(
+          'when processing finishes, the note appears in this list, ready to open, search, and refine.'
+        )}
       </li>
     </ol>
   )
 }
 
 export function NotesListScreen() {
-  const { notes, semanticNotes = [], semanticMatches = {}, semanticSearchAvailable, folders, heading, view, loaded, refresh, searching, searchQuery = '', onReorderNote } = useOutletContext<Ctx>()
+  const {
+    notes,
+    semanticNotes = [],
+    semanticMatches = {},
+    semanticSearchAvailable,
+    folders,
+    heading,
+    view,
+    loaded,
+    refresh,
+    searching,
+    searchQuery = '',
+    onReorderNote,
+  } = useOutletContext<Ctx>()
   const navigate = useNavigate()
   const [isEmbeddedMode, setIsEmbeddedMode] = useState(true)
   const showFolderOrdering = view.type === 'folder' && searchQuery.trim() === ''
@@ -141,10 +176,19 @@ export function NotesListScreen() {
 
   if (!loaded) {
     return (
-      <div role="status" aria-label="Loading notes" className="mx-auto max-w-3xl p-6" data-testid="notes-loading">
-        <div className="mb-4 h-7 w-40"><Skeleton className="h-full w-full" /></div>
+      <div
+        role="status"
+        aria-label={uiText('Loading notes')}
+        className="mx-auto max-w-3xl p-6"
+        data-testid="notes-loading"
+      >
+        <div className="mb-4 h-7 w-40">
+          <Skeleton className="h-full w-full" />
+        </div>
         <div className="flex flex-col gap-2">
-          {Array.from({ length: 5 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
+          {Array.from({ length: 5 }).map((_, i) => (
+            <Skeleton key={i} className="h-12 w-full" />
+          ))}
         </div>
       </div>
     )
@@ -157,21 +201,34 @@ export function NotesListScreen() {
       {searching && <Skeleton className="h-1 w-full mb-3" data-testid="search-loading" />}
       {notes.length === 0 && semanticNotes.length === 0 ? (
         searchQuery.trim() !== '' ? (
-          <EmptyState title="No matching notes" hint={semanticSearchAvailable === false
-            ? `No keyword matches for "${searchQuery}". Semantic search is unavailable, so related notes may not appear.`
-            : `No notes matched "${searchQuery}". Try broader keywords or a different view.`} />
+          <EmptyState
+            title={uiText('No matching notes')}
+            hint={
+              semanticSearchAvailable === false
+                ? uiText(
+                    'No keyword matches for "{value1}". Semantic search is unavailable, so related notes may not appear.',
+                    { value1: searchQuery }
+                  )
+                : uiText('No notes matched "{value1}". Try broader keywords or a different view.', {
+                    value1: searchQuery,
+                  })
+            }
+          />
         ) : view.type === 'folder' ? (
-          <EmptyState title="This folder is empty" hint="Drag a note here or start a new meeting." />
+          <EmptyState
+            title={uiText('This folder is empty')}
+            hint={uiText('Drag a note here or start a new meeting.')}
+          />
         ) : view.type === 'list' ? (
-          <EmptyState title="No notes match this smart list" />
+          <EmptyState title={uiText('No notes match this smart list')} />
         ) : view.type === 'tag' ? (
-          <EmptyState title="No notes with this tag" />
+          <EmptyState title={uiText('No notes with this tag')} />
         ) : (
           <>
             <EmptyState
-              title="No notes yet"
-              hint="Start your first meeting and your notes will appear here."
-              action={<Button onClick={() => navigate('/new')}>New meeting</Button>}
+              title={uiText('No notes yet')}
+              hint={uiText('Start your first meeting and your notes will appear here.')}
+              action={<Button onClick={() => navigate('/new')}>{uiText('New meeting')}</Button>}
             />
             <OnboardingHint isEmbeddedMode={isEmbeddedMode} />
           </>
@@ -184,7 +241,7 @@ export function NotesListScreen() {
                 <ReorderGap
                   folderId={view.id}
                   afterId={null}
-                  label="reorder gap first"
+                  label={uiText('reorder gap first')}
                   onReorderNote={onReorderNote}
                 />
               )}
@@ -202,7 +259,9 @@ export function NotesListScreen() {
                     <ReorderGap
                       folderId={view.id}
                       afterId={n.id}
-                      label={`reorder gap after ${n.title || 'Untitled'}`}
+                      label={uiText('reorder gap after {value1}', {
+                        value1: n.title || 'Untitled',
+                      })}
                       onReorderNote={onReorderNote}
                     />
                   )}
@@ -210,20 +269,27 @@ export function NotesListScreen() {
               ))}
             </ul>
           ) : (
-          <GroupedNoteSections
-            groups={groups}
-            folders={folders}
-            refresh={refresh}
-            onOpenNote={(note) => navigate(`/notes/${note.id}`)}
-          />
+            <GroupedNoteSections
+              groups={groups}
+              folders={folders}
+              refresh={refresh}
+              onOpenNote={(note) => navigate(`/notes/${note.id}`)}
+            />
           )}
           {semanticNotes.length > 0 && (
             <div className="mt-6">
-              <h2 className="px-1 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Similar results</h2>
+              <h2 className="px-1 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                {uiText('Similar results')}
+              </h2>
               <ul className="flex flex-col gap-1">
                 {semanticNotes.map((n) => (
                   <li key={n.id} className="flex flex-col gap-1">
-                    <FeedNoteRow note={n} folders={folders} refresh={refresh} onOpen={() => navigate(`/notes/${n.id}`)} />
+                    <FeedNoteRow
+                      note={n}
+                      folders={folders}
+                      refresh={refresh}
+                      onOpen={() => navigate(`/notes/${n.id}`)}
+                    />
                     {(semanticMatches[n.id] ?? []).map((m, i) => (
                       <MatchRow key={i} noteId={n.id} match={m} onNavigate={navigate} />
                     ))}

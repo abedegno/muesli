@@ -24,7 +24,10 @@ afterEach(() => {
 
 describe('makeMicPermission', () => {
   it('uses macOS media access APIs and opens System Settings on darwin', async () => {
-    getMediaAccessStatus.mockReturnValueOnce('not-determined').mockReturnValueOnce('granted')
+    getMediaAccessStatus
+      .mockReturnValueOnce('not-determined')
+      .mockReturnValueOnce('not-determined')
+      .mockReturnValueOnce('granted')
     askForMediaAccess.mockResolvedValue(true)
 
     const mic = makeMicPermission({
@@ -41,7 +44,7 @@ describe('makeMicPermission', () => {
 
     mic.openSettings()
     expect(openExternal).toHaveBeenCalledWith(
-      'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone',
+      'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
     )
   })
 
@@ -79,3 +82,16 @@ describe('makeMicPermission', () => {
     expect(openExternal).not.toHaveBeenCalled()
   })
 })
+
+it.each(['granted', 'denied', 'restricted'])(
+  'does not request microphone permission again when the OS reports %s',
+  async (status) => {
+    getMediaAccessStatus.mockReturnValue(status)
+    const mic = makeMicPermission({
+      platform: 'darwin',
+      systemPreferences: { getMediaAccessStatus, askForMediaAccess },
+    })
+    expect(await mic.request()).toBe(status)
+    expect(askForMediaAccess).not.toHaveBeenCalled()
+  }
+)

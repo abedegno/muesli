@@ -37,15 +37,28 @@ vi.mock('@/api', () => ({
       },
       summaries: [],
     })),
-    addTag: vi.fn(), removeTag: vi.fn(), addNoteFolder: vi.fn(), removeNoteFolder: vi.fn(),
-    createFolder: vi.fn(), updateBody: vi.fn(), resummarize: vi.fn(), regenerateSummary: vi.fn(),
+    addTag: vi.fn(),
+    removeTag: vi.fn(),
+    addNoteFolder: vi.fn(),
+    removeNoteFolder: vi.fn(),
+    createFolder: vi.fn(),
+    updateBody: vi.fn(),
+    resummarize: vi.fn(),
+    regenerateSummary: vi.fn(),
     listTemplates: vi.fn(async () => []),
     listNoteActionItems: vi.fn(async () => ({ actionItems: [], decisions: [] })),
     listNoteLinks: vi.fn(async () => ({ outgoing: [], backlinks: [] })),
-    listRelatedNotes: vi.fn(async () => []), updateActionItem: vi.fn(), deleteNote: vi.fn(),
-    createShare: vi.fn(), listNoteShares: vi.fn(async () => []), revokeShare: vi.fn(),
-    exportFile: vi.fn(), exportNote: vi.fn(), uploadAudio: vi.fn(),
-    onUploadProgress: vi.fn(() => () => {}), checkAudioDedup: vi.fn(async () => ({})),
+    listRelatedNotes: vi.fn(async () => []),
+    updateActionItem: vi.fn(),
+    deleteNote: vi.fn(),
+    createShare: vi.fn(),
+    listNoteShares: vi.fn(async () => []),
+    revokeShare: vi.fn(),
+    exportFile: vi.fn(),
+    exportNote: vi.fn(),
+    uploadAudio: vi.fn(),
+    onUploadProgress: vi.fn(() => () => {}),
+    checkAudioDedup: vi.fn(async () => ({})),
   },
 }))
 
@@ -53,7 +66,9 @@ vi.mock('../../main/recorder', () => ({ RecordingSession: class {} }))
 vi.mock('../capture/electronCapture', () => ({ ElectronCapture: class {} }))
 vi.mock('./NoteHeader', () => ({
   NoteHeader: ({ disabledReason }: { disabledReason?: string }) => (
-    <div>{disabledReason ? <div role="status">{disabledReason}</div> : <button>Record</button>}</div>
+    <div>
+      {disabledReason ? <div role="status">{disabledReason}</div> : <button>Record</button>}
+    </div>
   ),
 }))
 vi.mock('./ProcessingBanner', () => ({ ProcessingBanner: () => null }))
@@ -69,7 +84,9 @@ vi.mock('@/components/ui/Toast', () => ({ useToast: () => ({ notify: vi.fn() }) 
 
 import { NoteScreen } from './NoteScreen'
 
-beforeEach(() => { state.status = 'ready' })
+beforeEach(() => {
+  state.status = 'ready'
+})
 afterEach(cleanup)
 
 describe('NoteScreen record availability', () => {
@@ -87,6 +104,8 @@ describe('NoteScreen record availability', () => {
     render(<NoteScreen />)
 
     expect(await screen.findByRole('button', { name: 'Record' })).toBeEnabled()
-    expect(screen.queryByRole('status')).not.toBeInTheDocument()
+    expect(screen.getByRole('status')).toHaveTextContent(
+      'For recordings started with older versions'
+    )
   })
 })

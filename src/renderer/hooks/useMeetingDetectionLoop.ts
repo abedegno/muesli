@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { NavigateFunction } from 'react-router-dom'
 import { muesli } from '@/api'
@@ -14,7 +15,7 @@ async function createLinkedMeetingNote(
   event: CalendarEvent,
   navigate: NavigateFunction,
   notify: (message: string, tone?: 'error' | 'info') => void,
-  refresh: () => void,
+  refresh: () => void
 ): Promise<void> {
   try {
     const note = await muesli.createNote(event.title)
@@ -23,11 +24,18 @@ async function createLinkedMeetingNote(
     refresh()
     navigate(`/notes/${note.id}?capture=1&autostart=1`, { replace: true })
   } catch (err) {
-    notify(err instanceof Error ? err.message : 'Could not start meeting recording', 'error')
+    notify(
+      err instanceof Error ? err.message : uiText('Could not start meeting recording'),
+      'error'
+    )
   }
 }
 
-export function useMeetingDetectionLoop({ navigate, notify, refresh }: UseMeetingDetectionLoopArgs) {
+export function useMeetingDetectionLoop({
+  navigate,
+  notify,
+  refresh,
+}: UseMeetingDetectionLoopArgs) {
   const [promptEvent, setPromptEvent] = useState<CalendarEvent | null>(null)
   const promptKeyRef = useRef<string | null>(null)
 
@@ -36,25 +44,37 @@ export function useMeetingDetectionLoop({ navigate, notify, refresh }: UseMeetin
     setPromptEvent(null)
   }, [])
 
-  const handlePromptShow = useCallback((payload: { event: CalendarEvent; occurrenceKey: string }) => {
-    promptKeyRef.current = payload.occurrenceKey
-    setPromptEvent(payload.event)
-  }, [])
+  const handlePromptShow = useCallback(
+    (payload: { event: CalendarEvent; occurrenceKey: string }) => {
+      promptKeyRef.current = payload.occurrenceKey
+      setPromptEvent(payload.event)
+    },
+    []
+  )
 
-  const handlePromptClear = useCallback((payload: { occurrenceKey: string }) => {
-    if (payload.occurrenceKey !== promptKeyRef.current) return
-    clearPrompt()
-  }, [clearPrompt])
+  const handlePromptClear = useCallback(
+    (payload: { occurrenceKey: string }) => {
+      if (payload.occurrenceKey !== promptKeyRef.current) return
+      clearPrompt()
+    },
+    [clearPrompt]
+  )
 
-  const handleAutoRecord = useCallback(async (payload: { noteId: string }) => {
-    clearPrompt()
-    try {
-      await muesli.startNoteCapture(payload.noteId)
-      navigate(`/notes/${payload.noteId}?capture=1&autostart=1`, { replace: true })
-    } catch (err) {
-      notify(err instanceof Error ? err.message : 'Could not start meeting recording', 'error')
-    }
-  }, [clearPrompt, navigate, notify])
+  const handleAutoRecord = useCallback(
+    async (payload: { noteId: string }) => {
+      clearPrompt()
+      try {
+        await muesli.startNoteCapture(payload.noteId)
+        navigate(`/notes/${payload.noteId}?capture=1&autostart=1`, { replace: true })
+      } catch (err) {
+        notify(
+          err instanceof Error ? err.message : uiText('Could not start meeting recording'),
+          'error'
+        )
+      }
+    },
+    [clearPrompt, navigate, notify]
+  )
 
   useEffect(() => {
     void muesli.meetingDetectionRendererReady?.()

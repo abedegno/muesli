@@ -7,8 +7,13 @@ import type { Note, Folder } from '../../shared/types'
 afterEach(cleanup)
 
 const note: Note = {
-  id: '1', title: 'Standup', status: 'ready',
-  created_at: new Date(2026, 5, 13, 17, 15).toISOString(), updated_at: '', snippet: 'auth to prod', partial_transcript: false,
+  id: '1',
+  title: 'Standup',
+  status: 'ready',
+  created_at: new Date(2026, 5, 13, 17, 15).toISOString(),
+  updated_at: '',
+  snippet: 'auth to prod',
+  partial_transcript: false,
 }
 
 describe('NoteListItem', () => {
@@ -67,4 +72,14 @@ describe('NoteListItem', () => {
     expect(screen.getByText('Draft')).toBeInTheDocument()
     expect(screen.queryByText('Recording')).not.toBeInTheDocument()
   })
+})
+
+it('asks for a recording check after expiry while keeping active recording status distinct', () => {
+  const { rerender } = render(
+    <NoteListItem note={{ ...note, status: 'recording', capture_needs_review: true }} />
+  )
+  expect(screen.getByText('Check recording')).toBeVisible()
+  expect(screen.queryByText('Recording')).not.toBeInTheDocument()
+  rerender(<NoteListItem note={{ ...note, status: 'recording', capture_needs_review: false }} />)
+  expect(screen.getByText('Recording')).toBeVisible()
 })

@@ -292,3 +292,10 @@ func (s *Store) ListEvents(ctx context.Context, ownerID string, from, to time.Ti
 	}
 	return out, rows.Err()
 }
+
+// CalendarReadiness aggregates only the current owner's connection state; no
+// credentials or unbounded source list are needed for onboarding.
+func (s *Store) CalendarReadiness(ctx context.Context, owner string) (connections, failures int, lastSynced *time.Time, err error) {
+	err = s.pool.QueryRow(ctx, `SELECT count(*),count(*) FILTER(WHERE status<>'ok'),max(last_synced_at) FROM calendar_sources WHERE owner_id=$1`, owner).Scan(&connections, &failures, &lastSynced)
+	return
+}

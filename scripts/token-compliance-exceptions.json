@@ -104,14 +104,6 @@
     "count": 6
   },
   {
-    "file": "src/renderer/components/SetupWizard.tsx",
-    "rule": "raw-palette-class",
-    "reason": "setup step success/warning surface awaiting semantic status tokens in Plating Stage 3",
-    "owner": "abedegno",
-    "expires": "2026-11-20",
-    "count": 4
-  },
-  {
     "file": "src/renderer/components/StartupScreen.tsx",
     "rule": "raw-palette-class",
     "reason": "AI-unavailable startup banner awaiting semantic status tokens in Plating Stage 3",

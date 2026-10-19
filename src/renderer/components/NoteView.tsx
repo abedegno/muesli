@@ -1,5 +1,15 @@
+import { uiText } from '@/i18n'
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
-import { MessageSquare, Sparkles, Copy, Check, RefreshCw, Search, ChevronUp, ChevronDown } from 'lucide-react'
+import {
+  MessageSquare,
+  Sparkles,
+  Copy,
+  Check,
+  RefreshCw,
+  Search,
+  ChevronUp,
+  ChevronDown,
+} from 'lucide-react'
 import { muesli } from '@/api'
 import { Badge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
@@ -9,7 +19,9 @@ import { writeClipboardText } from '@/lib/clipboard'
 import { countCaseInsensitiveMatches, highlightSearchText } from '@/lib/searchHighlight'
 import { segmentIndexAtTime } from '@/lib/transcriptPlayback'
 import { transcriptToPlainText } from '@/lib/transcriptText'
-const NoteChatPanel = lazy(() => import('./chat/NoteChatPanel').then((m) => ({ default: m.NoteChatPanel })))
+const NoteChatPanel = lazy(() =>
+  import('./chat/NoteChatPanel').then((m) => ({ default: m.NoteChatPanel }))
+)
 import { DiarizationReviewPanel } from './DiarizationReviewPanel'
 import { Markdown } from './Markdown'
 import { TranscriptView } from './TranscriptView'
@@ -39,7 +51,11 @@ function renderMarkdownLine(line: string): string | null {
   return line
 }
 
-function countSummaryMatches(query: string, tab: Tab, selectedSummary: FullNote['summaries'][number] | undefined): number {
+function countSummaryMatches(
+  query: string,
+  tab: Tab,
+  selectedSummary: FullNote['summaries'][number] | undefined
+): number {
   if (tab !== 'enhanced' || !selectedSummary) return 0
   const needle = query.trim()
   if (!needle) return 0
@@ -124,10 +140,18 @@ function SpeakerLegend({
       return
     }
     list(full.note.id)
-      .then((result) => { if (!cancelled) setAliases(result ?? []) })
-      .catch(() => { if (!cancelled) setAliases([]) })
-      .finally(() => { if (!cancelled) setAliasesLoaded(true) })
-    return () => { cancelled = true }
+      .then((result) => {
+        if (!cancelled) setAliases(result ?? [])
+      })
+      .catch(() => {
+        if (!cancelled) setAliases([])
+      })
+      .finally(() => {
+        if (!cancelled) setAliasesLoaded(true)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [full.note.id])
 
   const rows = useMemo(() => computeSpeakerRows(full, aliases), [full, aliases])
@@ -155,9 +179,9 @@ function SpeakerLegend({
 
   return (
     <div className="mb-4">
-      <h3 className="mb-2 text-sm font-semibold">Speakers</h3>
+      <h3 className="mb-2 text-sm font-semibold">{uiText('Speakers')}</h3>
       {!aliasesLoaded && (
-        <p className="mb-2 text-xs text-muted-foreground">Loading speakers…</p>
+        <p className="mb-2 text-xs text-muted-foreground">{uiText('Loading speakers…')}</p>
       )}
       <div className="flex flex-col gap-2">
         {rows.map((row) => {
@@ -166,20 +190,29 @@ function SpeakerLegend({
             <label key={row.displayed} className="flex flex-col gap-1 text-xs">
               <span className="text-muted-foreground">{row.displayed}</span>
               <input
-                aria-label={`Rename ${row.displayed}`}
+                aria-label={uiText('Rename {value1}', { value1: row.displayed })}
                 value={value}
                 disabled={!aliasesLoaded}
                 aria-busy={!aliasesLoaded}
                 onChange={(e) => setDrafts((d) => ({ ...d, [row.displayed]: e.target.value }))}
                 onBlur={() => void commit(row)}
-                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); void commit(row) } }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault()
+                    void commit(row)
+                  }
+                }}
                 className="h-8 rounded-[var(--radius)] border border-input bg-background px-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
               />
             </label>
           )
         })}
       </div>
-      {error && <p role="alert" className="mt-1 text-xs text-destructive">{error}</p>}
+      {error && (
+        <p role="alert" className="mt-1 text-xs text-destructive">
+          {error}
+        </p>
+      )}
     </div>
   )
 }
@@ -194,7 +227,9 @@ interface TemplateEntry {
 // selection — matches the historical "biggest summary wins" default.
 function richestTemplateId(list: TemplateEntry[]): string | null {
   if (!list.length) return null
-  return list.reduce((best, e) => ((e.summary?.sections.length ?? 0) > (best.summary?.sections.length ?? 0) ? e : best)).templateId
+  return list.reduce((best, e) =>
+    (e.summary?.sections.length ?? 0) > (best.summary?.sections.length ?? 0) ? e : best
+  ).templateId
 }
 
 // True once EVERY template-summary entry for this note is either absent or has
@@ -219,8 +254,10 @@ export function NoteView({
   regeneratingTemplateId,
   initialSegmentId,
   initialSegmentIndex,
+  initialTab,
 }: {
   full: FullNote
+  initialTab?: Tab
   onSaveBody: (md: string) => Promise<void>
   onRenameSpeaker?: (label: string, name: string) => void | Promise<void>
   // ALL templates visible to the owner (built-ins + their own), fetched via
@@ -245,7 +282,9 @@ export function NoteView({
   initialSegmentIndex?: number
 }) {
   const { announce } = useAnnouncer()
-  const [tab, setTab] = useState<Tab>(() => (hasAnySummary(full.summaries) ? 'enhanced' : 'transcript'))
+  const [tab, setTab] = useState<Tab>(
+    () => initialTab ?? (hasAnySummary(full.summaries) ? 'enhanced' : 'transcript')
+  )
   const [showChat, setShowChat] = useState(false)
   const [findQuery, setFindQuery] = useState('')
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0)
@@ -259,9 +298,11 @@ export function NoteView({
   // speaker string (matching TranscriptView's speakerAliases contract) so a
   // rename re-labels the transcript immediately without a refetch.
   const [speakerOverrides, setSpeakerOverrides] = useState<Record<string, string>>({})
-  useEffect(() => { setSpeakerOverrides({}) }, [full.note.id])
   useEffect(() => {
-    setTab(hasAnySummary(full.summaries) ? 'enhanced' : 'transcript')
+    setSpeakerOverrides({})
+  }, [full.note.id])
+  useEffect(() => {
+    setTab(initialTab ?? (hasAnySummary(full.summaries) ? 'enhanced' : 'transcript'))
     // Re-derive only on note change, not on every summaries update -- a summary
     // finishing generation mid-session must not yank the user off a tab they
     // deliberately picked. Mirrors the speakerOverrides reset effect above.
@@ -291,7 +332,9 @@ export function NoteView({
       .catch(() => {
         if (!cancelled) setTranscriptAudioUrl(null)
       })
-    return () => { cancelled = true }
+    return () => {
+      cancelled = true
+    }
   }, [tab, full.note.id])
 
   // Resolve `initialSegmentId` to a transcript-segment array index and jump to
@@ -338,17 +381,19 @@ export function NoteView({
 
   const summaries = full.summaries
   const transcriptSegments = full.transcript?.segments ?? []
-  const playingIndex = transcriptAudioUrl != null
-    ? segmentIndexAtTime(transcriptSegments, audioCurrentTime * 1000)
-    : null
-  const seekTranscript = transcriptAudioUrl != null
-    ? (startMs: number) => {
-        const audio = audioRef.current
-        if (!audio) return
-        audio.currentTime = startMs / 1000
-        setAudioCurrentTime(startMs / 1000)
-      }
-    : undefined
+  const playingIndex =
+    transcriptAudioUrl != null
+      ? segmentIndexAtTime(transcriptSegments, audioCurrentTime * 1000)
+      : null
+  const seekTranscript =
+    transcriptAudioUrl != null
+      ? (startMs: number) => {
+          const audio = audioRef.current
+          if (!audio) return
+          audio.currentTime = startMs / 1000
+          setAudioCurrentTime(startMs / 1000)
+        }
+      : undefined
 
   // One entry per template visible to the owner (built-ins + their own), each
   // paired with its existing summary for this note (if any). When `templates`
@@ -379,7 +424,9 @@ export function NoteView({
   // position, so it survives `entries` reordering or growing — e.g. when the
   // async template list resolves after first paint and reorders relative to
   // the summary-only fallback order used before it arrived (TPL01).
-  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(() => richestTemplateId(entries))
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(() =>
+    richestTemplateId(entries)
+  )
 
   // Reconcile the selection whenever `entries` changes: if the previously
   // selected template is still present, keep it selected (regardless of its
@@ -406,14 +453,15 @@ export function NoteView({
   const findQueryTrimmed = findQuery.trim()
   const summaryMatchCount = useMemo(
     () => countSummaryMatches(findQueryTrimmed, tab, active),
-    [active, findQueryTrimmed, tab],
+    [active, findQueryTrimmed, tab]
   )
   const transcriptMatchCount = useMemo(
     () => countTranscriptMatches(full, findQueryTrimmed, tab),
-    [findQueryTrimmed, full, tab],
+    [findQueryTrimmed, full, tab]
   )
   const totalFindMatches = summaryMatchCount + transcriptMatchCount
-  const currentFindIndex = totalFindMatches > 0 ? Math.min(currentMatchIndex, totalFindMatches - 1) : 0
+  const currentFindIndex =
+    totalFindMatches > 0 ? Math.min(currentMatchIndex, totalFindMatches - 1) : 0
 
   useEffect(() => {
     if (totalFindMatches === 0) {
@@ -427,12 +475,18 @@ export function NoteView({
 
   useEffect(() => {
     if (!findQueryTrimmed) return
-    announce(totalFindMatches === 0 ? '0 matches' : `${currentFindIndex + 1}/${totalFindMatches}`)
+    announce(
+      totalFindMatches === 0
+        ? uiText('0 matches')
+        : uiText('{value1}/{value2}', { value1: currentFindIndex + 1, value2: totalFindMatches })
+    )
   }, [announce, currentFindIndex, findQueryTrimmed, totalFindMatches])
 
   useEffect(() => {
     if (!findQueryTrimmed || totalFindMatches === 0) return
-    const current = noteViewRef.current?.querySelector('[data-note-search-current="true"]') as HTMLElement | null
+    const current = noteViewRef.current?.querySelector(
+      '[data-note-search-current="true"]'
+    ) as HTMLElement | null
     if (!current || typeof current.scrollIntoView !== 'function') return
     current.scrollIntoView({ block: 'center', inline: 'nearest' })
   }, [currentFindIndex, findQueryTrimmed, tab, totalFindMatches])
@@ -476,7 +530,10 @@ export function NoteView({
       if (!pickerRef.current || !pickerRef.current.contains(e.target as Node)) setPickerOpen(false)
     }
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { setPickerOpen(false); triggerRef.current?.focus() }
+      if (e.key === 'Escape') {
+        setPickerOpen(false)
+        triggerRef.current?.focus()
+      }
     }
     // Defer the doc listener so the opening click doesn't immediately close it.
     const t = setTimeout(() => document.addEventListener('mousedown', onDoc), 0)
@@ -504,7 +561,12 @@ export function NoteView({
 
   let summarySearchCursor = 0
   const renderSearchableSummaryText = (text: string) => {
-    const rendered = highlightSearchText(text, findQueryTrimmed, summarySearchCursor, currentFindIndex)
+    const rendered = highlightSearchText(
+      text,
+      findQueryTrimmed,
+      summarySearchCursor,
+      currentFindIndex
+    )
     summarySearchCursor += rendered.matchCount
     return rendered.nodes
   }
@@ -514,24 +576,27 @@ export function NoteView({
       <div className="min-w-0 flex-1">
         <div className="mx-auto flex max-w-[72ch] items-center justify-between">
           <SegmentedControl
-            ariaLabel="Note view"
+            ariaLabel={uiText('Note view')}
             value={tab}
             onValueChange={(v) => {
               const next = v as Tab
               setTab(next)
             }}
             options={[
-              { value: 'enhanced', label: 'Enhanced' },
-              { value: 'transcript', label: 'Transcript' },
-              { value: 'notes', label: 'My notes' },
+              { value: 'notes', label: uiText('My notes') },
+              { value: 'transcript', label: uiText('Transcript') },
+              { value: 'enhanced', label: uiText('Summary') },
             ]}
           />
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-2 rounded-[var(--radius)] border border-border bg-background px-2 py-1">
               <label className="relative block">
-                <Search size={14} className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <Search
+                  size={14}
+                  className="absolute left-2 top-1/2 -translate-y-1/2 text-muted-foreground"
+                />
                 <input
-                  aria-label="Find in note"
+                  aria-label={uiText('Find in note')}
                   value={findQuery}
                   onChange={(e) => updateFindQuery(e.target.value)}
                   onKeyDown={(e) => {
@@ -543,19 +608,28 @@ export function NoteView({
                       goToNextMatch()
                     }
                   }}
-                  placeholder="Find in note…"
+                  placeholder={uiText('Find in note…')}
                   className="h-7 w-40 rounded-[var(--radius)] border border-input bg-background pl-7 pr-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 />
               </label>
-              <span aria-live="polite" aria-atomic="true" className="min-w-16 text-center text-xs text-muted-foreground">
-                {totalFindMatches === 0 ? '0 matches' : `${currentFindIndex + 1}/${totalFindMatches}`}
+              <span
+                aria-live="polite"
+                aria-atomic="true"
+                className="min-w-16 text-center text-xs text-muted-foreground"
+              >
+                {totalFindMatches === 0
+                  ? uiText('0 matches')
+                  : uiText('{value1}/{value2}', {
+                      value1: currentFindIndex + 1,
+                      value2: totalFindMatches,
+                    })}
               </span>
               <Button
                 type="button"
                 variant="secondary"
                 size="sm"
                 className="h-7 px-2 text-xs"
-                aria-label="Previous match"
+                aria-label={uiText('Previous match')}
                 disabled={totalFindMatches === 0}
                 onClick={goToPrevMatch}
               >
@@ -566,7 +640,7 @@ export function NoteView({
                 variant="secondary"
                 size="sm"
                 className="h-7 px-2 text-xs"
-                aria-label="Next match"
+                aria-label={uiText('Next match')}
                 disabled={totalFindMatches === 0}
                 onClick={goToNextMatch}
               >
@@ -578,26 +652,42 @@ export function NoteView({
                 <button
                   ref={triggerRef}
                   type="button"
-                  aria-label="Switch template"
+                  aria-label={uiText('Switch template')}
                   aria-haspopup="listbox"
                   aria-expanded={pickerOpen}
                   onClick={() => setPickerOpen((o) => !o)}
                   className="inline-flex items-center gap-1 rounded-[var(--radius)] px-3 py-1 text-sm font-medium text-muted-foreground hover:bg-muted"
                 >
-                  <Sparkles size={16} /> {currentEntry?.templateName ?? 'Template'}
+                  <Sparkles size={16} /> {currentEntry?.templateName ?? uiText('Template')}
                 </button>
                 {pickerOpen && (
-                  <div role="listbox" aria-label="Select template" className="absolute right-0 z-10 mt-1 w-56 rounded-[var(--radius)] border border-border bg-popover p-1 shadow-md">
+                  <div
+                    role="listbox"
+                    aria-label={uiText('Select template')}
+                    className="absolute right-0 z-10 mt-1 w-56 rounded-[var(--radius)] border border-border bg-popover p-1 shadow-md"
+                  >
                     {entries.map((e) => (
                       <button
                         key={e.templateId}
                         role="option"
                         aria-selected={e.templateId === selectedTemplateId}
-                        onClick={() => { setSelectedTemplateId(e.templateId); setPickerOpen(false); triggerRef.current?.focus() }}
-                        className={cn('block w-full truncate rounded px-2 py-1 text-left text-sm hover:bg-muted', e.templateId === selectedTemplateId && 'text-primary')}
+                        onClick={() => {
+                          setSelectedTemplateId(e.templateId)
+                          setPickerOpen(false)
+                          triggerRef.current?.focus()
+                        }}
+                        className={cn(
+                          'block w-full truncate rounded px-2 py-1 text-left text-sm hover:bg-muted',
+                          e.templateId === selectedTemplateId && 'text-primary'
+                        )}
                       >
                         {e.templateName}
-                        {!e.summary && <span className="text-muted-foreground"> · Not generated</span>}
+                        {!e.summary && (
+                          <span className="text-muted-foreground">
+                            {' '}
+                            {uiText('· Not generated')}
+                          </span>
+                        )}
                       </button>
                     ))}
                   </div>
@@ -613,16 +703,21 @@ export function NoteView({
                 onClick={() => onRegenerateTemplate(currentEntry.templateId)}
                 className="inline-flex items-center gap-1 rounded-[var(--radius)] px-3 py-1 text-sm font-medium text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-60"
               >
-                <SummaryActionIcon size={16} className={cn(isRegeneratingCurrent && 'animate-spin')} /> {summaryActionLabel}
+                <SummaryActionIcon
+                  size={16}
+                  className={cn(isRegeneratingCurrent && 'animate-spin')}
+                />{' '}
+                {summaryActionLabel}
               </button>
             )}
             <button
               type="button"
-              aria-label="Copy as Markdown"
+              aria-label={uiText('Copy as Markdown')}
               onClick={handleCopy}
               className="inline-flex items-center gap-1 rounded-[var(--radius)] px-3 py-1 text-sm font-medium text-muted-foreground hover:bg-muted"
             >
-              {copied ? <Check size={16} /> : <Copy size={16} />} {copied ? 'Copied' : 'Copy'}
+              {copied ? <Check size={16} /> : <Copy size={16} />}{' '}
+              {copied ? uiText('Copied') : uiText('Copy')}
             </button>
             <DiarizationReviewPanel
               noteId={full.note.id}
@@ -630,40 +725,47 @@ export function NoteView({
             />
             <button
               type="button"
-              aria-label="Ask about this note"
+              aria-label={uiText('Ask about this note')}
               aria-pressed={showChat}
               onClick={() => setShowChat((s) => !s)}
               className={cn(
                 'inline-flex items-center gap-1 rounded-[var(--radius)] px-3 py-1 text-sm font-medium',
-                showChat ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted',
+                showChat ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-muted'
               )}
             >
-              <MessageSquare size={16} /> Chat
+              <MessageSquare size={16} /> {uiText('Chat')}
             </button>
           </div>
         </div>
 
-          <div className="mx-auto mt-4 max-w-[72ch]">
+        <div className="mx-auto mt-4 max-w-[72ch]">
           {tab === 'enhanced' &&
             (active && active.sections.length > 0 ? (
               <>
                 {active.truncated && (
                   <Badge tone="accent" className="mb-3">
-                    May be truncated
+                    {uiText('May be truncated')}
                   </Badge>
                 )}
                 {active.sections.map((sec, i) => (
                   <section key={i} className="mb-6">
-                    <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-muted-foreground">{renderSearchableSummaryText(sec.heading)}</h3>
-                    <Markdown source={sec.content_markdown} renderText={renderSearchableSummaryText} />
+                    <h3 className="mb-1 text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+                      {renderSearchableSummaryText(sec.heading)}
+                    </h3>
+                    <Markdown
+                      source={sec.content_markdown}
+                      renderText={renderSearchableSummaryText}
+                    />
                     {sec.refs && sec.refs.length > 0 && (
                       <div className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-                        <span>Sources:</span>
+                        <span>{uiText('Sources:')}</span>
                         {sec.refs.map((ref) => (
                           <button
                             key={ref}
                             type="button"
-                            aria-label={`Jump to transcript segment ${ref + 1}`}
+                            aria-label={uiText('Jump to transcript segment {value1}', {
+                              value1: ref + 1,
+                            })}
                             onClick={() => jumpToCitation(ref)}
                             className="inline-flex min-w-[1.5rem] items-center justify-center rounded-[var(--radius)] border border-border px-1.5 py-0.5 font-mono tabular-nums text-muted-foreground hover:bg-primary/10 hover:text-primary"
                           >
@@ -675,25 +777,40 @@ export function NoteView({
                   </section>
                 ))}
               </>
-            ) : isTerminal(full.note.status) && transcriptSegments.length > 0 && noTemplateHasEverSummarized(entries) ? (
+            ) : isTerminal(full.note.status) &&
+              transcriptSegments.length > 0 &&
+              noTemplateHasEverSummarized(entries) ? (
               <div className="mx-auto flex max-w-sm flex-col items-center gap-2 rounded-[var(--radius)] border border-border bg-card px-6 py-10 text-center">
-                <p className="text-sm font-medium text-foreground">No AI summary yet</p>
+                <p className="text-sm font-medium text-foreground">{uiText('No AI summary yet')}</p>
                 <p className="text-sm text-muted-foreground">
-                  Muesli summarizes with Ollama.{' '}
-                  <a className="underline underline-offset-2 hover:no-underline" href="https://ollama.com/download" target="_blank" rel="noreferrer">
-                    Install Ollama
+                  {uiText('Muesli summarizes with Ollama.')}{' '}
+                  <a
+                    className="underline underline-offset-2 hover:no-underline"
+                    href="https://ollama.com/download"
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {uiText('Install Ollama')}
                   </a>
                 </p>
-                <p className="text-sm text-muted-foreground">Your transcript is on the Transcript tab.</p>
-                <Button type="button" variant="secondary" size="sm" className="mt-2" onClick={() => setTab('transcript')}>
-                  View transcript
+                <p className="text-sm text-muted-foreground">
+                  {uiText('Your transcript is on the Transcript tab.')}
+                </p>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  className="mt-2"
+                  onClick={() => setTab('transcript')}
+                >
+                  {uiText('View transcript')}
                 </Button>
               </div>
             ) : templates && templates.length > 0 && currentEntry && onRegenerateTemplate ? (
               <div className="mx-auto flex max-w-sm flex-col items-center gap-2 rounded-[var(--radius)] border border-border bg-card px-6 py-10 text-center">
-                <p className="text-sm font-medium text-foreground">No summary yet</p>
+                <p className="text-sm font-medium text-foreground">{uiText('No summary yet')}</p>
                 <p className="text-sm text-muted-foreground">
-                  Generate a summary with the currently selected template.
+                  {uiText('Generate a summary with the currently selected template.')}
                 </p>
                 <Button
                   type="button"
@@ -704,14 +821,22 @@ export function NoteView({
                   disabled={isRegeneratingCurrent}
                   onClick={() => onRegenerateTemplate(currentEntry.templateId)}
                 >
-                  <SummaryActionIcon size={16} className={cn(isRegeneratingCurrent && 'animate-spin')} /> {summaryActionLabel}
+                  <SummaryActionIcon
+                    size={16}
+                    className={cn(isRegeneratingCurrent && 'animate-spin')}
+                  />{' '}
+                  {summaryActionLabel}
                 </Button>
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">No summary yet.</p>
+              <p className="text-sm text-muted-foreground">{uiText('No summary yet.')}</p>
             ))}
           {tab === 'notes' && (
-            <Suspense fallback={<div className="p-4 text-sm text-muted-foreground">Loading editor…</div>}>
+            <Suspense
+              fallback={
+                <div className="p-4 text-sm text-muted-foreground">{uiText('Loading editor…')}</div>
+              }
+            >
               <NoteEditor initialMarkdown={full.body_markdown} onSave={onSaveBody} />
             </Suspense>
           )}
@@ -728,7 +853,12 @@ export function NoteView({
                   onLoadedMetadata={(e) => setAudioCurrentTime(e.currentTarget.currentTime)}
                 />
               )}
-              <SpeakerLegend full={full} overrides={speakerOverrides} setOverrides={setSpeakerOverrides} onRenameSpeaker={onRenameSpeaker} />
+              <SpeakerLegend
+                full={full}
+                overrides={speakerOverrides}
+                setOverrides={setSpeakerOverrides}
+                onRenameSpeaker={onRenameSpeaker}
+              />
               <TranscriptView
                 segments={transcriptSegments}
                 highlightIndex={citationTarget}
@@ -747,7 +877,11 @@ export function NoteView({
 
       {showChat && (
         <aside className="w-[22rem] shrink-0 border-l border-border pl-4">
-          <Suspense fallback={<div className="pt-1 text-sm text-muted-foreground">Loading chat…</div>}>
+          <Suspense
+            fallback={
+              <div className="pt-1 text-sm text-muted-foreground">{uiText('Loading chat…')}</div>
+            }
+          >
             <NoteChatPanel
               noteId={full.note.id}
               onClose={() => setShowChat(false)}

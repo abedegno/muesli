@@ -1,13 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { MemoryRouter, Outlet, useLocation } from 'react-router-dom'
 
 const getConfig = vi.fn()
 const getOnboarded = vi.fn()
 const authListeners: Array<(notice: { message: string }) => void> = []
-const startupListeners: Array<(status: import('../shared/types').EmbeddedStartupStatus) => void> = []
+const startupListeners: Array<(status: import('../shared/types').EmbeddedStartupStatus) => void> =
+  []
 const trayListeners: Array<(target: '/new' | '/settings') => void> = []
 const connect = vi.fn()
 
@@ -19,7 +19,9 @@ vi.mock('@/api', () => ({
       authListeners.push(listener)
       return () => {}
     },
-    onEmbeddedStartupStatus: (listener: (status: import('../shared/types').EmbeddedStartupStatus) => void) => {
+    onEmbeddedStartupStatus: (
+      listener: (status: import('../shared/types').EmbeddedStartupStatus) => void
+    ) => {
       startupListeners.push(listener)
       return () => {}
     },
@@ -80,7 +82,7 @@ describe('App', () => {
     render(
       <MemoryRouter>
         <App />
-      </MemoryRouter>,
+      </MemoryRouter>
     )
 
     await act(async () => {
@@ -91,23 +93,25 @@ describe('App', () => {
     const listener = authListeners[0]
     expect(listener).toBeTypeOf('function')
 
-    listener({ message: 'Your saved sign-in is no longer valid for this server. Sign in again to reconnect.' })
+    listener({
+      message: 'Your saved sign-in is no longer valid for this server. Sign in again to reconnect.',
+    })
 
     expect(await screen.findByText('Connect to Muesli')).toBeInTheDocument()
-    expect(screen.getByRole('alert')).toHaveTextContent('Your saved sign-in is no longer valid for this server. Sign in again to reconnect.')
+    expect(screen.getByRole('alert')).toHaveTextContent(
+      'Your saved sign-in is no longer valid for this server. Sign in again to reconnect.'
+    )
     expect(screen.queryByText('Error invoking remote method')).toBeNull()
   })
 
-  it('routes the startup banner into the AI / Transcription settings section', async () => {
+  it('keeps optional AI absence out of the global meeting shell', async () => {
     getConfig.mockResolvedValue({ serverUrl: 'http://localhost:8080', token: 'app-token' })
     getOnboarded.mockResolvedValue(true)
-
-    const user = userEvent.setup()
 
     render(
       <MemoryRouter>
         <App />
-      </MemoryRouter>,
+      </MemoryRouter>
     )
 
     await act(async () => {
@@ -115,9 +119,10 @@ describe('App', () => {
     })
     expect(await screen.findByText('home app')).toBeInTheDocument()
 
-    await user.click(await screen.findByRole('button', { name: /open ai settings/i }))
-
-    expect(await screen.findByTestId('settings-route')).toHaveTextContent('/settings#ai-transcription')
+    expect(screen.queryByRole('button', { name: /open ai settings/i })).not.toBeInTheDocument()
+    expect(
+      screen.queryByText(/AI features need an agent plugin configured/i)
+    ).not.toBeInTheDocument()
   })
 
   it('routes tray commands into the requested view', async () => {
@@ -127,7 +132,7 @@ describe('App', () => {
     render(
       <MemoryRouter>
         <App />
-      </MemoryRouter>,
+      </MemoryRouter>
     )
 
     await act(async () => {
@@ -153,7 +158,7 @@ describe('App', () => {
     const { unmount } = render(
       <MemoryRouter initialEntries={['/']}>
         <App />
-      </MemoryRouter>,
+      </MemoryRouter>
     )
 
     await act(async () => {
@@ -166,7 +171,7 @@ describe('App', () => {
     render(
       <MemoryRouter initialEntries={['/notes']}>
         <App />
-      </MemoryRouter>,
+      </MemoryRouter>
     )
 
     await act(async () => {
@@ -182,7 +187,7 @@ describe('App', () => {
     render(
       <MemoryRouter initialEntries={['/coming-up']}>
         <App />
-      </MemoryRouter>,
+      </MemoryRouter>
     )
 
     await act(async () => {

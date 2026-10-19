@@ -1,3 +1,5 @@
+import { uiText } from '@/i18n'
+import { RecoveryInbox } from '../RecoveryInbox'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Outlet, useNavigate } from 'react-router-dom'
 import { muesli } from '@/api'
@@ -20,9 +22,17 @@ import { Sidebar } from './Sidebar'
 import { MeetingRecordPrompt } from './MeetingRecordPrompt'
 import { useMeetingDetectionLoop } from '@/hooks/useMeetingDetectionLoop'
 
-export type ActiveView = { type: 'all' } | { type: 'tag'; tag: string } | { type: 'list'; id: string } | { type: 'folder'; id: string }
+export type ActiveView =
+  | { type: 'all' }
+  | { type: 'tag'; tag: string }
+  | { type: 'list'; id: string }
+  | { type: 'folder'; id: string }
 
-function reorderById<T extends { id: string }>(items: T[], movedId: string, afterId: string | null): T[] {
+function reorderById<T extends { id: string }>(
+  items: T[],
+  movedId: string,
+  afterId: string | null
+): T[] {
   const moved = items.find((item) => item.id === movedId)
   if (!moved) return items
   const rest = items.filter((item) => item.id !== movedId)
@@ -44,8 +54,14 @@ export function AppLayout() {
   const [sidebarTags, setSidebarTags] = useState<TagCount[]>([])
   const [query, setQuery] = useState('')
   const [view, setView] = useState<ActiveView>({ type: 'all' })
-  const [editing, setEditing] = useState<{ list?: SmartList; seed?: { name: string; rule: RuleGroup } } | null>(null)
-  const [editingFolder, setEditingFolder] = useState<{ folder?: Folder; parentId?: string | null } | null>(null)
+  const [editing, setEditing] = useState<{
+    list?: SmartList
+    seed?: { name: string; rule: RuleGroup }
+  } | null>(null)
+  const [editingFolder, setEditingFolder] = useState<{
+    folder?: Folder
+    parentId?: string | null
+  } | null>(null)
   const [renamingTag, setRenamingTag] = useState<{ id: string; name: string } | null>(null)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [showShortcuts, setShowShortcuts] = useState(false)
@@ -71,10 +87,16 @@ export function AppLayout() {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPaletteOpen((o) => !o) }
-      else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') { e.preventDefault(); navigate('/new') }
-      else if ((e.metaKey || e.ctrlKey) && e.key === '\\') { e.preventDefault(); toggleCollapsed() }
-      else if (e.key === '?') {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setPaletteOpen((o) => !o)
+      } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'n') {
+        e.preventDefault()
+        navigate('/new')
+      } else if ((e.metaKey || e.ctrlKey) && e.key === '\\') {
+        e.preventDefault()
+        toggleCollapsed()
+      } else if (e.key === '?') {
         const t = e.target as HTMLElement
         const tag = t.tagName
         if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || t.isContentEditable) return
@@ -88,23 +110,47 @@ export function AppLayout() {
   }, [navigate, toggleCollapsed])
 
   const refresh = useCallback(() => {
-    void muesli.listNotes().then(setNotes).catch(() => {
-      notify('Failed to load notes — check your connection', 'error')
-    }).finally(() => setLoaded(true))
+    void muesli
+      .listNotes()
+      .then(setNotes)
+      .catch(() => {
+        notify(uiText('Failed to load notes — check your connection'), 'error')
+      })
+      .finally(() => setLoaded(true))
     if (view.type === 'folder') {
       setFolderNotesLoaded(false)
-      void muesli.listNotes(view.id).then(setFolderNotes).catch(() => {
-        notify('Failed to load notes — check your connection', 'error')
-      }).finally(() => setFolderNotesLoaded(true))
+      void muesli
+        .listNotes(view.id)
+        .then(setFolderNotes)
+        .catch(() => {
+          notify(uiText('Failed to load notes — check your connection'), 'error')
+        })
+        .finally(() => setFolderNotesLoaded(true))
     } else {
       setFolderNotes([])
       setFolderNotesLoaded(true)
     }
-    void muesli.listSmartLists().then(setLists).catch(() => {})
-    void muesli.listFolders().then(setFolders).catch(() => {})
-    void muesli.listTags().then(setSidebarTags).catch(() => {})
+    void muesli
+      .listSmartLists()
+      .then(setLists)
+      .catch(() => {})
+    void muesli
+      .listFolders()
+      .then(setFolders)
+      .catch(() => {})
+    void muesli
+      .listTags()
+      .then(setSidebarTags)
+      .catch(() => {})
   }, [notify, view])
-  useEffect(() => { refresh() }, [refresh])
+  useEffect(() => {
+    refresh()
+  }, [refresh])
+  useEffect(() => {
+    const update = () => refresh()
+    window.addEventListener('muesli:notes-changed', update)
+    return () => window.removeEventListener('muesli:notes-changed', update)
+  }, [refresh])
 
   const { promptEvent, acceptPrompt, dismissPrompt } = useMeetingDetectionLoop({
     navigate,
@@ -127,12 +173,18 @@ export function AppLayout() {
     const q = query.trim()
     const key = `${q}|${dateFrom}|${dateTo}`
     latestSearchKeyRef.current = key
-    if (!q) { setSearchMatches(null); setSemanticSearchAvailable(null); setSearching(false); return }
+    if (!q) {
+      setSearchMatches(null)
+      setSemanticSearchAvailable(null)
+      setSearching(false)
+      return
+    }
     setSearchMatches(null)
     setSemanticSearchAvailable(null)
     const h = setTimeout(() => {
       setSearching(true)
-      muesli.search(q, { from: dateFrom || undefined, to: dateTo || undefined })
+      muesli
+        .search(q, { from: dateFrom || undefined, to: dateTo || undefined })
         .then((result) => {
           if (latestSearchKeyRef.current !== key) return
           // Array compatibility keeps older preload mocks/servers harmless
@@ -145,10 +197,16 @@ export function AppLayout() {
             setSemanticSearchAvailable(result.semanticSearchAvailable)
           }
         })
-        .catch(() => { if (latestSearchKeyRef.current === key) setSearchMatches(null) })
-        .finally(() => { if (latestSearchKeyRef.current === key) setSearching(false) })
+        .catch(() => {
+          if (latestSearchKeyRef.current === key) setSearchMatches(null)
+        })
+        .finally(() => {
+          if (latestSearchKeyRef.current === key) setSearching(false)
+        })
     }, 250)
-    return () => { clearTimeout(h) }
+    return () => {
+      clearTimeout(h)
+    }
   }, [query, dateFrom, dateTo])
 
   const tags = tagIndex(notes)
@@ -161,7 +219,10 @@ export function AppLayout() {
     const seen = new Set<string>()
     const ids: string[] = []
     for (const m of searchMatches) {
-      if (!seen.has(m.note_id)) { seen.add(m.note_id); ids.push(m.note_id) }
+      if (!seen.has(m.note_id)) {
+        seen.add(m.note_id)
+        ids.push(m.note_id)
+      }
     }
     return ids
   }, [searchMatches])
@@ -172,7 +233,7 @@ export function AppLayout() {
   const semanticMatches = useMemo(() => {
     const map: Record<string, SearchMatch[]> = {}
     for (const m of searchMatches ?? []) {
-      (map[m.note_id] ??= []).push(m)
+      ;(map[m.note_id] ??= []).push(m)
     }
     return map
   }, [searchMatches])
@@ -186,7 +247,8 @@ export function AppLayout() {
   } else {
     const inView = (n: Note): boolean => {
       if (view.type === 'all') return true
-      if (view.type === 'tag') return (n.tags ?? []).some((t) => t.toLowerCase() === view.tag.toLowerCase())
+      if (view.type === 'tag')
+        return (n.tags ?? []).some((t) => t.toLowerCase() === view.tag.toLowerCase())
       return false
     }
     inViewNotes = notes.filter(inView)
@@ -199,13 +261,16 @@ export function AppLayout() {
     semanticNotes = []
   } else {
     const lq = query.toLowerCase()
-    lexicalNotes = orderedInViewNotes.filter((n) => `${n.title} ${n.snippet ?? ''}`.toLowerCase().includes(lq))
+    lexicalNotes = orderedInViewNotes.filter((n) =>
+      `${n.title} ${n.snippet ?? ''}`.toLowerCase().includes(lq)
+    )
     if (semanticIds && semanticIds.length) {
       const lexicalIds = new Set(lexicalNotes.map((n) => n.id))
       const rank = new Map(semanticIds.map((id, i) => [id, i] as const))
       semanticNotes = sortNotesPinnedFirst(
-        [...orderedInViewNotes.filter((n) => !lexicalIds.has(n.id) && rank.has(n.id))]
-          .sort((a, b) => rank.get(a.id)! - rank.get(b.id)!),
+        [...orderedInViewNotes.filter((n) => !lexicalIds.has(n.id) && rank.has(n.id))].sort(
+          (a, b) => rank.get(a.id)! - rank.get(b.id)!
+        )
       )
     } else {
       semanticNotes = []
@@ -213,19 +278,25 @@ export function AppLayout() {
   }
 
   const heading =
-    view.type === 'tag' ? `#${view.tag}` :
-    view.type === 'list' ? (lists.find((l) => l.id === view.id)?.name ?? 'List') :
-    view.type === 'folder' ? (folders.find((f) => f.id === view.id)?.name ?? 'Folder') :
-    'All notes'
+    view.type === 'tag'
+      ? `#${view.tag}`
+      : view.type === 'list'
+        ? (lists.find((l) => l.id === view.id)?.name ?? 'List')
+        : view.type === 'folder'
+          ? (folders.find((f) => f.id === view.id)?.name ?? 'Folder')
+          : 'All notes'
   const isFiltered = view.type !== 'all' || query !== ''
   const currentNotesLoaded = loaded && (view.type !== 'folder' || folderNotesLoaded)
 
   async function saveSuggestion(stem: string) {
     try {
-      await muesli.createSmartList(stem, { op: 'and', children: [{ field: 'title', operator: 'contains', value: stem }] })
+      await muesli.createSmartList(stem, {
+        op: 'and',
+        children: [{ field: 'title', operator: 'contains', value: stem }],
+      })
       refresh()
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Could not save list', 'error')
+      notify(err instanceof Error ? err.message : uiText('Could not save list'), 'error')
     }
   }
 
@@ -236,7 +307,7 @@ export function AppLayout() {
       if (view.type === 'folder' && view.id === id) setView({ type: 'all' })
       refresh()
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Could not delete folder', 'error')
+      notify(err instanceof Error ? err.message : uiText('Could not delete folder'), 'error')
     }
   }
   // Smart-list delete is a soft/reversible recycle-bin move, so it acts immediately (no confirm).
@@ -246,7 +317,7 @@ export function AppLayout() {
       if (view.type === 'list' && view.id === id) setView({ type: 'all' })
       refresh()
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Could not delete list', 'error')
+      notify(err instanceof Error ? err.message : uiText('Could not delete list'), 'error')
     }
   }
 
@@ -255,7 +326,7 @@ export function AppLayout() {
     try {
       await muesli.reorderNoteInFolder(folderId, movedNoteId, afterId)
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Could not reorder note', 'error')
+      notify(err instanceof Error ? err.message : uiText('Could not reorder note'), 'error')
     } finally {
       refresh()
     }
@@ -264,67 +335,140 @@ export function AppLayout() {
   return (
     <div className="app-layout flex h-full min-h-0 [container-type:inline-size]">
       <Sidebar
-        collapsed={collapsed} width={width} onToggleCollapsed={toggleCollapsed} onResize={setWidth}
-        query={query} onQuery={setQuery}
-        dateFrom={dateFrom} dateTo={dateTo} onDateFrom={setDateFrom} onDateTo={setDateTo}
-        tags={sidebarTags} lists={lists} listCount={(l) => countList(notes, l)} suggestions={suggestions}
-        folders={folders} folderCount={(f) => countFolder(notes, folders, f)}
-        activeView={view} onSelectView={selectView}
-        onNewList={() => setEditing({})} onEditList={(l) => setEditing({ list: l })} onSaveSuggestion={saveSuggestion}
+        collapsed={collapsed}
+        width={width}
+        onToggleCollapsed={toggleCollapsed}
+        onResize={setWidth}
+        query={query}
+        onQuery={setQuery}
+        dateFrom={dateFrom}
+        dateTo={dateTo}
+        onDateFrom={setDateFrom}
+        onDateTo={setDateTo}
+        tags={sidebarTags}
+        lists={lists}
+        listCount={(l) => countList(notes, l)}
+        suggestions={suggestions}
+        folders={folders}
+        folderCount={(f) => countFolder(notes, folders, f)}
+        activeView={view}
+        onSelectView={selectView}
+        onNewList={() => setEditing({})}
+        onEditList={(l) => setEditing({ list: l })}
+        onSaveSuggestion={saveSuggestion}
         onDeleteList={deleteList}
-        onSaveTagAsList={(name) => setEditing({ seed: { name, rule: { op: 'and', children: [{ field: 'tag', operator: 'is', value: name }] } } })}
+        onSaveTagAsList={(name) =>
+          setEditing({
+            seed: {
+              name,
+              rule: { op: 'and', children: [{ field: 'tag', operator: 'is', value: name }] },
+            },
+          })
+        }
         onRenameTag={(tag) => setRenamingTag(tag)}
-        onSaveSearchAsList={(q) => setEditing({ seed: { name: q, rule: { op: 'and', children: [{ field: 'title', operator: 'contains', value: q }] } } })}
-        onNewFolder={() => setEditingFolder({})} onEditFolder={(f) => setEditingFolder({ folder: f })}
+        onSaveSearchAsList={(q) =>
+          setEditing({
+            seed: {
+              name: q,
+              rule: { op: 'and', children: [{ field: 'title', operator: 'contains', value: q }] },
+            },
+          })
+        }
+        onNewFolder={() => setEditingFolder({})}
+        onEditFolder={(f) => setEditingFolder({ folder: f })}
         onNewSubfolder={(parentId) => setEditingFolder({ parentId })}
         onDeleteFolder={deleteFolder}
         onDropNote={async (folderId, noteId) => {
-          try { await muesli.addNoteFolder(noteId, folderId); refresh() }
-          catch (err) { notify(err instanceof Error ? err.message : 'Could not file note', 'error') }
+          try {
+            await muesli.addNoteFolder(noteId, folderId)
+            refresh()
+          } catch (err) {
+            notify(err instanceof Error ? err.message : uiText('Could not file note'), 'error')
+          }
         }}
         onReparentFolder={async (folderId, parentId) => {
           const f = folders.find((x) => x.id === folderId)
           if (!f || (f.parent_id ?? null) === (parentId ?? null)) return
-          try { await muesli.updateFolder(folderId, f.name, parentId); refresh() }
-          catch (err) { notify(err instanceof Error ? err.message : 'Could not move folder', 'error') }
+          try {
+            await muesli.updateFolder(folderId, f.name, parentId)
+            refresh()
+          } catch (err) {
+            notify(err instanceof Error ? err.message : uiText('Could not move folder'), 'error')
+          }
         }}
         onReorderFolder={async (id, afterId) => {
-          try { await muesli.reorderFolder(id, afterId); refresh() }
-          catch (err) { notify(err instanceof Error ? err.message : 'Could not reorder folder', 'error') }
+          try {
+            await muesli.reorderFolder(id, afterId)
+            refresh()
+          } catch (err) {
+            notify(err instanceof Error ? err.message : uiText('Could not reorder folder'), 'error')
+          }
         }}
       />
       <main className="flex-1 overflow-y-auto">
+        <RecoveryInbox />
         {promptEvent && (
           <MeetingRecordPrompt
             event={promptEvent}
-            onAccept={() => { void acceptPrompt() }}
+            onAccept={() => {
+              void acceptPrompt()
+            }}
             onDismiss={dismissPrompt}
           />
         )}
-        <Outlet context={{ notes: lexicalNotes, semanticNotes, semanticMatches, semanticSearchAvailable, allNotes: notes, refresh, heading, isFiltered, view, searchQuery: query.trim(), folders, loaded: currentNotesLoaded, searching, onReorderNote: reorderNote }} />
+        <Outlet
+          context={{
+            notes: lexicalNotes,
+            semanticNotes,
+            semanticMatches,
+            semanticSearchAvailable,
+            allNotes: notes,
+            refresh,
+            heading,
+            isFiltered,
+            view,
+            searchQuery: query.trim(),
+            folders,
+            loaded: currentNotesLoaded,
+            searching,
+            onReorderNote: reorderNote,
+          }}
+        />
       </main>
       {editingFolder && (
         <FolderDialog
           open
-          title={editingFolder.folder ? 'Edit folder' : 'New folder'}
+          title={editingFolder.folder ? uiText('Edit folder') : uiText('New folder')}
           initialName={editingFolder.folder?.name}
           initialParentId={editingFolder.folder?.parent_id ?? editingFolder.parentId ?? null}
           parentOptions={(() => {
-            const excluded = editingFolder.folder ? descendantIds(folders, editingFolder.folder.id) : new Set<string>()
-            return folders.filter((f) => !excluded.has(f.id)).map((f) => ({ id: f.id, name: f.name }))
+            const excluded = editingFolder.folder
+              ? descendantIds(folders, editingFolder.folder.id)
+              : new Set<string>()
+            return folders
+              .filter((f) => !excluded.has(f.id))
+              .map((f) => ({ id: f.id, name: f.name }))
           })()}
           onSave={async (name, parentId) => {
             try {
-              if (editingFolder.folder) await muesli.updateFolder(editingFolder.folder.id, name, parentId)
+              if (editingFolder.folder)
+                await muesli.updateFolder(editingFolder.folder.id, name, parentId)
               else await muesli.createFolder(name, parentId)
               refresh()
-            } catch (err) { notify(err instanceof Error ? err.message : 'Could not save folder', 'error'); throw err }
+            } catch (err) {
+              notify(err instanceof Error ? err.message : uiText('Could not save folder'), 'error')
+              throw err
+            }
           }}
-          onDelete={editingFolder.folder ? async () => {
-            const id = editingFolder.folder!.id
-            setEditingFolder(null)
-            await deleteFolder(id)
-          } : undefined}
+          onDelete={
+            editingFolder.folder
+              ? async () => {
+                  const id = editingFolder.folder!.id
+                  setEditingFolder(null)
+                  await deleteFolder(id)
+                }
+              : undefined
+          }
           onClose={() => setEditingFolder(null)}
         />
       )}
@@ -337,10 +481,11 @@ export function AppLayout() {
             try {
               await muesli.renameTag(renamingTag.id, newName)
               // Keep the active tag view selected if it pointed at the renamed tag.
-              if (view.type === 'tag' && view.tag === oldName) setView({ type: 'tag', tag: newName })
+              if (view.type === 'tag' && view.tag === oldName)
+                setView({ type: 'tag', tag: newName })
               refresh()
             } catch (err) {
-              notify(err instanceof Error ? err.message : 'Could not rename tag', 'error')
+              notify(err instanceof Error ? err.message : uiText('Could not rename tag'), 'error')
               throw err
             }
           }}
@@ -350,8 +495,18 @@ export function AppLayout() {
       {editing && (
         <RuleEditor
           open
-          title={editing.list ? 'Edit smart list' : 'New smart list'}
-          initial={editing.list ?? (editing.seed ? ({ id: '', created_at: '', name: editing.seed.name, rule: editing.seed.rule } as SmartList) : undefined)}
+          title={editing.list ? uiText('Edit smart list') : uiText('New smart list')}
+          initial={
+            editing.list ??
+            (editing.seed
+              ? ({
+                  id: '',
+                  created_at: '',
+                  name: editing.seed.name,
+                  rule: editing.seed.rule,
+                } as SmartList)
+              : undefined)
+          }
           knownTags={tags.map((t) => t.name)}
           knownFolders={folders}
           onSave={async (name, rule) => {
@@ -360,19 +515,28 @@ export function AppLayout() {
               else await muesli.createSmartList(name, rule)
               refresh()
             } catch (err) {
-              notify(err instanceof Error ? err.message : 'Could not save list', 'error')
+              notify(err instanceof Error ? err.message : uiText('Could not save list'), 'error')
               throw err
             }
           }}
-          onDelete={editing.list ? async () => {
-            try {
-              await muesli.deleteSmartList(editing.list!.id)
-              if (view.type === 'list' && view.id === editing.list!.id) setView({ type: 'all' })
-              setEditing(null); refresh()
-            } catch (err) {
-              notify(err instanceof Error ? err.message : 'Could not delete list', 'error')
-            }
-          } : undefined}
+          onDelete={
+            editing.list
+              ? async () => {
+                  try {
+                    await muesli.deleteSmartList(editing.list!.id)
+                    if (view.type === 'list' && view.id === editing.list!.id)
+                      setView({ type: 'all' })
+                    setEditing(null)
+                    refresh()
+                  } catch (err) {
+                    notify(
+                      err instanceof Error ? err.message : uiText('Could not delete list'),
+                      'error'
+                    )
+                  }
+                }
+              : undefined
+          }
           onClose={() => setEditing(null)}
         />
       )}
@@ -386,11 +550,14 @@ export function AppLayout() {
         lists={lists}
         tags={tags}
         onSelectNote={(id) => navigate(`/notes/${id}`)}
-        onSelectView={(v) => { selectView(v); navigate('/notes') }}
+        onSelectView={(v) => {
+          selectView(v)
+          navigate('/notes')
+        }}
         actions={[
-          { label: 'New meeting', run: () => navigate('/new') },
-          { label: 'Manage templates', run: () => navigate('/templates') },
-          { label: 'Settings', run: () => navigate('/settings') },
+          { label: uiText('New meeting'), run: () => navigate('/new') },
+          { label: uiText('Manage templates'), run: () => navigate('/templates') },
+          { label: uiText('Settings'), run: () => navigate('/settings') },
         ]}
       />
     </div>

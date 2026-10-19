@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FullNote, Note } from '../../shared/types'
 
 const mocks = vi.hoisted(() => ({
+  micRequest: vi.fn(),
   sessionStart: vi.fn(async () => {}),
   sessionStop: vi.fn(async () => ({ bytes: new Uint8Array(), mimeType: 'audio/webm' })),
   startNoteCapture: vi.fn(),
@@ -38,15 +39,30 @@ vi.mock('@/api', () => ({
       summaries: [],
     })),
     startNoteCapture: mocks.startNoteCapture,
-    addTag: vi.fn(), removeTag: vi.fn(), addNoteFolder: vi.fn(), removeNoteFolder: vi.fn(),
-    createFolder: vi.fn(), duplicateNote: vi.fn(), updateBody: vi.fn(), resummarize: vi.fn(),
-    regenerateSummary: vi.fn(), listTemplates: vi.fn(async () => []),
+    micRequest: mocks.micRequest,
+    addTag: vi.fn(),
+    removeTag: vi.fn(),
+    addNoteFolder: vi.fn(),
+    removeNoteFolder: vi.fn(),
+    createFolder: vi.fn(),
+    duplicateNote: vi.fn(),
+    updateBody: vi.fn(),
+    resummarize: vi.fn(),
+    regenerateSummary: vi.fn(),
+    listTemplates: vi.fn(async () => []),
     listNoteActionItems: vi.fn(async () => ({ actionItems: [], decisions: [] })),
     listNoteLinks: vi.fn(async () => ({ outgoing: [], backlinks: [] })),
-    listRelatedNotes: vi.fn(async () => []), updateActionItem: vi.fn(), deleteNote: vi.fn(),
-    createShare: vi.fn(), listNoteShares: vi.fn(async () => []), revokeShare: vi.fn(),
-    exportFile: vi.fn(), exportNote: vi.fn(), uploadAudio: mocks.uploadAudio,
-    onUploadProgress: vi.fn(() => () => {}), checkAudioDedup: mocks.checkAudioDedup,
+    listRelatedNotes: vi.fn(async () => []),
+    updateActionItem: vi.fn(),
+    deleteNote: vi.fn(),
+    createShare: vi.fn(),
+    listNoteShares: vi.fn(async () => []),
+    revokeShare: vi.fn(),
+    exportFile: vi.fn(),
+    exportNote: vi.fn(),
+    uploadAudio: mocks.uploadAudio,
+    onUploadProgress: vi.fn(() => () => {}),
+    checkAudioDedup: mocks.checkAudioDedup,
   },
 }))
 
@@ -59,7 +75,10 @@ vi.mock('../../main/recorder', () => ({
 vi.mock('../capture/electronCapture', () => ({ ElectronCapture: class {} }))
 vi.mock('./NoteHeader', () => ({
   NoteHeader: ({ onStart, recordState }: { onStart: () => void; recordState: string }) => (
-    <><button onClick={onStart}>Record</button><div data-testid="status-badge">{recordState === 'recording' ? 'Recording' : 'Draft'}</div></>
+    <>
+      <button onClick={onStart}>Record</button>
+      <div data-testid="status-badge">{recordState === 'recording' ? 'Recording' : 'Draft'}</div>
+    </>
   ),
 }))
 vi.mock('./ProcessingBanner', () => ({ ProcessingBanner: () => null }))
@@ -76,6 +95,7 @@ import { NoteScreen } from './NoteScreen'
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mocks.micRequest.mockReset().mockResolvedValue('granted')
   mocks.startNoteCapture.mockResolvedValue({ ...draftNote, status: 'recording' })
 })
 
@@ -104,7 +124,7 @@ describe('NoteScreen recording start', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Record' }))
 
     await waitFor(() =>
-      expect(mocks.notify).toHaveBeenCalledWith('Microphone unavailable', 'error'),
+      expect(mocks.notify).toHaveBeenCalledWith('Microphone unavailable', 'error')
     )
     expect(mocks.startNoteCapture).not.toHaveBeenCalled()
     expect(screen.getByTestId('status-badge')).toHaveTextContent('Draft')
@@ -124,4 +144,32 @@ describe('NoteScreen recording start', () => {
     expect(screen.getByTestId('status-badge')).toHaveTextContent('Draft')
     expect(screen.queryByText('Recording')).not.toBeInTheDocument()
   })
+})
+
+it('does not start a microphone capture after a pending permission request outlives the note', async () => {
+  let grant!: (status: string) => void
+  mocks.micRequest.mockReturnValue(
+    new Promise((resolve) => {
+      grant = resolve
+    })
+  )
+  const view = render(<NoteScreen />)
+  await screen.findByTestId('status-badge')
+  fireEvent.click(screen.getByRole('button', { name: 'Record' }))
+  await waitFor(() => expect(mocks.micRequest).toHaveBeenCalledTimes(1))
+  view.unmount()
+  grant('granted')
+  await Promise.resolve()
+  await Promise.resolve()
+  expect(mocks.sessionStart).not.toHaveBeenCalled()
+  expect(mocks.startNoteCapture).not.toHaveBeenCalled()
+})
+
+it('stops the owned capture when its note unmounts', async () => {
+  const view = render(<NoteScreen />)
+  await screen.findByTestId('status-badge')
+  fireEvent.click(screen.getByRole('button', { name: 'Record' }))
+  await waitFor(() => expect(mocks.startNoteCapture).toHaveBeenCalledTimes(1))
+  view.unmount()
+  await waitFor(() => expect(mocks.sessionStop).toHaveBeenCalledTimes(1))
 })

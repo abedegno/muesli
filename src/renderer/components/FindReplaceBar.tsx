@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 export interface FindReplaceBarProps {
   mode: 'find' | 'replace'
   query: string
@@ -27,22 +28,21 @@ export function FindReplaceBar({
   onReplaceAll,
   onClose,
 }: FindReplaceBarProps) {
-  const matchLabel =
-    matchCount === 0 ? '0 of 0' : `${currentMatch + 1} of ${matchCount}`
+  const matchLabel = matchCount === 0 ? '0 of 0' : `${currentMatch + 1} of ${matchCount}`
 
   return (
     <div
       role="search"
-      aria-label="Find and replace"
+      aria-label={uiText('Find and replace')}
       className="flex flex-wrap items-center gap-1 rounded border border-border bg-muted/50 px-2 py-1 text-sm"
     >
       {/* Search row */}
       <input
         type="text"
-        aria-label="Find"
-        placeholder="Find…"
+        aria-label={uiText('Find')}
+        placeholder={uiText('Find…')}
         value={query}
-        onChange={e => onQueryChange(e.target.value)}
+        onChange={(e) => onQueryChange(e.target.value)}
         className="h-6 min-w-[8rem] rounded border border-input bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
         autoFocus
       />
@@ -57,22 +57,22 @@ export function FindReplaceBar({
 
       <button
         type="button"
-        aria-label="Previous match"
+        aria-label={uiText('Previous match')}
         onClick={onPrev}
         disabled={matchCount === 0}
         className="flex h-6 w-6 items-center justify-center rounded hover:bg-accent disabled:opacity-40"
       >
-        ▲
+        {uiText('▲')}
       </button>
 
       <button
         type="button"
-        aria-label="Next match"
+        aria-label={uiText('Next match')}
         onClick={onNext}
         disabled={matchCount === 0}
         className="flex h-6 w-6 items-center justify-center rounded hover:bg-accent disabled:opacity-40"
       >
-        ▼
+        {uiText('▼')}
       </button>
 
       {/* Replace row — only in replace mode */}
@@ -80,10 +80,10 @@ export function FindReplaceBar({
         <>
           <input
             type="text"
-            aria-label="Replace"
-            placeholder="Replace…"
+            aria-label={uiText('Replace')}
+            placeholder={uiText('Replace…')}
             value={replacement}
-            onChange={e => onReplacementChange(e.target.value)}
+            onChange={(e) => onReplacementChange(e.target.value)}
             className="h-6 min-w-[8rem] rounded border border-input bg-background px-2 text-xs focus:outline-none focus:ring-1 focus:ring-ring"
           />
 
@@ -93,7 +93,7 @@ export function FindReplaceBar({
             disabled={matchCount === 0}
             className="h-6 rounded bg-primary px-2 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
           >
-            Replace
+            {uiText('Replace')}
           </button>
 
           <button
@@ -102,7 +102,7 @@ export function FindReplaceBar({
             disabled={matchCount === 0}
             className="h-6 rounded bg-primary px-2 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-40"
           >
-            Replace All
+            {uiText('Replace All')}
           </button>
         </>
       )}
@@ -110,11 +110,11 @@ export function FindReplaceBar({
       {/* Close */}
       <button
         type="button"
-        aria-label="Close find bar"
+        aria-label={uiText('Close find bar')}
         onClick={onClose}
         className="ml-auto flex h-6 w-6 items-center justify-center rounded hover:bg-accent"
       >
-        ×
+        {uiText('×')}
       </button>
     </div>
   )

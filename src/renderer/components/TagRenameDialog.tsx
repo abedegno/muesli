@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { useState } from 'react'
 import { Dialog } from '@/components/ui/Dialog'
 import { Button } from '@/components/ui/Button'
@@ -22,22 +23,37 @@ export function TagRenameDialog({
   const trimmed = name.trim()
 
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()} title="Rename tag">
+    <Dialog open={open} onOpenChange={(o) => !o && onClose()} title={uiText('Rename tag')}>
       <Input
-        aria-label="Tag name"
+        aria-label={uiText('Tag name')}
         autoFocus
         value={name}
         onChange={(e) => setName(e.target.value)}
-        placeholder="Tag name"
+        placeholder={uiText('Tag name')}
       />
       <p className="mt-3 text-xs text-muted-foreground">
-        Renames the tag on every note that carries it.
+        {uiText('Renames the tag on every note that carries it.')}
       </p>
       <div className="mt-4 flex items-center justify-end gap-2">
-        <Button variant="secondary" size="sm" onClick={onClose}>Cancel</Button>
-        <Button size="sm" disabled={!trimmed || busy}
-          onClick={async () => { setBusy(true); try { await onSave(trimmed); onClose() } catch { /* stay open */ } finally { setBusy(false) } }}>
-          Save
+        <Button variant="secondary" size="sm" onClick={onClose}>
+          {uiText('Cancel')}
+        </Button>
+        <Button
+          size="sm"
+          disabled={!trimmed || busy}
+          onClick={async () => {
+            setBusy(true)
+            try {
+              await onSave(trimmed)
+              onClose()
+            } catch {
+              /* stay open */
+            } finally {
+              setBusy(false)
+            }
+          }}
+        >
+          {uiText('Save')}
         </Button>
       </div>
     </Dialog>

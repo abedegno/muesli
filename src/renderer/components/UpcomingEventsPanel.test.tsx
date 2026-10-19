@@ -35,7 +35,7 @@ function renderPanel() {
     <MemoryRouter initialEntries={['/']}>
       <UpcomingEventsPanel />
       <LocationProbe />
-    </MemoryRouter>,
+    </MemoryRouter>
   )
 }
 
@@ -74,19 +74,28 @@ describe('UpcomingEventsPanel', () => {
 
     expect(await screen.findByText('No upcoming events')).toBeInTheDocument()
     await userEvent.click(screen.getByRole('button', { name: 'Open calendar settings' }))
-    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/settings#calendar'))
+    await waitFor(() =>
+      expect(screen.getByTestId('location')).toHaveTextContent('/settings#calendar')
+    )
   })
 
-  it('also falls back to the empty state when loading fails', async () => {
-    getCalendarEvents.mockRejectedValue(new Error('not configured'))
+  it('shows a retryable error instead of claiming the calendar is empty', async () => {
+    getCalendarEvents.mockRejectedValue(new Error('network unavailable'))
     renderPanel()
 
-    expect(await screen.findByText('No upcoming events')).toBeInTheDocument()
+    expect(await screen.findByText('Could not load your calendar')).toBeInTheDocument()
+    expect(screen.queryByText('No upcoming events')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeInTheDocument()
   })
 
   it('renders events chronologically with deterministic local-time ranges', async () => {
     getCalendarEvents.mockResolvedValue([
-      event({ id: 'later', title: 'Later meeting', starts_at: '2026-07-09T11:00:00.000Z', ends_at: '2026-07-09T12:00:00.000Z' }),
+      event({
+        id: 'later',
+        title: 'Later meeting',
+        starts_at: '2026-07-09T11:00:00.000Z',
+        ends_at: '2026-07-09T12:00:00.000Z',
+      }),
       event({ id: 'earlier', title: 'Earlier meeting' }),
     ])
     renderPanel()
@@ -99,14 +108,24 @@ describe('UpcomingEventsPanel', () => {
     expect(screen.getByText('9:00 AM – 9:30 AM')).toBeInTheDocument()
     expect(getCalendarEvents).toHaveBeenCalledWith(
       '2026-07-09T08:00:00.000Z',
-      '2026-07-16T08:00:00.000Z',
+      '2026-07-16T08:00:00.000Z'
     )
   })
 
   it('distinguishes an all-day midnight range from a timed event', async () => {
     getCalendarEvents.mockResolvedValue([
-      event({ id: 'all-day', title: 'Company holiday', starts_at: '2026-07-10T00:00:00.000Z', ends_at: '2026-07-11T00:00:00.000Z' }),
-      event({ id: 'timed', title: 'Morning sync', starts_at: '2026-07-10T09:00:00.000Z', ends_at: '2026-07-10T09:30:00.000Z' }),
+      event({
+        id: 'all-day',
+        title: 'Company holiday',
+        starts_at: '2026-07-10T00:00:00.000Z',
+        ends_at: '2026-07-11T00:00:00.000Z',
+      }),
+      event({
+        id: 'timed',
+        title: 'Morning sync',
+        starts_at: '2026-07-10T09:00:00.000Z',
+        ends_at: '2026-07-10T09:30:00.000Z',
+      }),
     ])
     renderPanel()
 

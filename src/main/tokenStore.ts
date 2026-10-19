@@ -1,4 +1,12 @@
-import { chmodSync, existsSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  existsSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs'
 import { join } from 'node:path'
 import type { ServerConfig } from '../shared/types'
 
@@ -10,6 +18,7 @@ export interface SafeStorageLike {
 }
 
 interface PersistedShape {
+  userId?: string
   serverUrl: string
   encrypted: boolean
   // base64 of either ciphertext (encrypted) or utf8 token (fallback)
@@ -40,7 +49,7 @@ function writeFileAtomic(path: string, data: string): void {
 export class TokenStore {
   constructor(
     private readonly userDataDir: string,
-    private readonly safe: SafeStorageLike,
+    private readonly safe: SafeStorageLike
   ) {}
 
   private get path(): string {
@@ -53,7 +62,7 @@ export class TokenStore {
       const data = JSON.parse(readFileSync(this.path, 'utf8')) as PersistedShape
       const buf = Buffer.from(data.token, 'base64')
       const token = data.encrypted ? this.safe.decryptString(buf) : buf.toString('utf8')
-      return { serverUrl: data.serverUrl, token }
+      return { serverUrl: data.serverUrl, token, ...(data.userId ? { userId: data.userId } : {}) }
     } catch {
       return null
     }
@@ -65,6 +74,7 @@ export class TokenStore {
       ? this.safe.encryptString(config.token).toString('base64')
       : Buffer.from(config.token, 'utf8').toString('base64')
     const shape: PersistedShape = {
+      ...(config.userId ? { userId: config.userId } : {}),
       serverUrl: config.serverUrl,
       encrypted: canEncrypt,
       token: tokenB64,

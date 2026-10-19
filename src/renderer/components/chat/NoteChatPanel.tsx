@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { useEffect, useState } from 'react'
 import { X } from 'lucide-react'
 import { muesli } from '@/api'
@@ -41,7 +42,8 @@ export function NoteChatPanel({
         setConversation(sorted[0] ?? null)
       })
       .catch((err) => {
-        if (!cancelled) setInitError(err instanceof Error ? err.message : 'Could not load conversation.')
+        if (!cancelled)
+          setInitError(err instanceof Error ? err.message : 'Could not load conversation.')
       })
       .finally(() => {
         if (!cancelled) setInitLoading(false)
@@ -60,10 +62,10 @@ export function NoteChatPanel({
   return (
     <div className="flex h-full flex-col">
       <div className="mb-2 flex items-center justify-between">
-        <h3 className="text-sm font-semibold">Ask about this note</h3>
+        <h3 className="text-sm font-semibold">{uiText('Ask about this note')}</h3>
         <button
           type="button"
-          aria-label="Close chat"
+          aria-label={uiText('Close chat')}
           onClick={onClose}
           className="text-muted-foreground hover:text-foreground"
         >
@@ -72,9 +74,11 @@ export function NoteChatPanel({
       </div>
 
       {initLoading ? (
-        <p className="text-sm text-muted-foreground">Loading conversation…</p>
+        <p className="text-sm text-muted-foreground">{uiText('Loading conversation…')}</p>
       ) : initError ? (
-        <p role="alert" className="text-sm text-destructive">{initError}</p>
+        <p role="alert" className="text-sm text-destructive">
+          {initError}
+        </p>
       ) : (
         <ChatThread
           messages={thread.messages}
@@ -90,7 +94,9 @@ export function NoteChatPanel({
           role="alert"
           className={cn(
             'mb-1 text-xs',
-            thread.error.kind === 'inflight' || thread.error.kind === 'no-agent' ? 'text-muted-foreground' : 'text-destructive',
+            thread.error.kind === 'inflight' || thread.error.kind === 'no-agent'
+              ? 'text-muted-foreground'
+              : 'text-destructive'
           )}
         >
           {thread.error.message}

@@ -22,8 +22,16 @@ beforeEach(() => {
 })
 
 const ev = (over: Partial<CalendarEvent>): CalendarEvent => ({
-  id: 'id', title: 'Event', starts_at: '', ends_at: '', description: '', location: '',
-  conferencing_url: '', attendees: [], source_id: 'src', ...over,
+  id: 'id',
+  title: 'Event',
+  starts_at: '',
+  ends_at: '',
+  description: '',
+  location: '',
+  conferencing_url: '',
+  attendees: [],
+  source_id: 'src',
+  ...over,
 })
 
 function SettingsStub() {
@@ -38,7 +46,7 @@ function renderComingUp() {
         <Route path="/coming-up" element={<ComingUpScreen />} />
         <Route path="/settings" element={<SettingsStub />} />
       </Routes>
-    </MemoryRouter>,
+    </MemoryRouter>
   )
 }
 
@@ -49,8 +57,14 @@ describe('ComingUpScreen', () => {
     const ends = new Date(now.getTime() + 90 * 60 * 1000).toISOString()
     getCalendarEventsMock.mockResolvedValue([
       ev({
-        id: 'e1', title: 'Design review', starts_at: starts, ends_at: ends,
-        attendees: [{ email: 'a@x.com', name: 'A', response: 'yes' }, { email: 'b@x.com', name: 'B', response: 'yes' }],
+        id: 'e1',
+        title: 'Design review',
+        starts_at: starts,
+        ends_at: ends,
+        attendees: [
+          { email: 'a@x.com', name: 'A', response: 'yes' },
+          { email: 'b@x.com', name: 'B', response: 'yes' },
+        ],
         conferencing_url: 'https://meet.example/e1',
       }),
     ])
@@ -70,17 +84,19 @@ describe('ComingUpScreen', () => {
     expect(screen.getByTestId('settings-route')).toHaveTextContent('/settings#calendar')
   })
 
-  it('shows a friendly empty state (not a crash) when getCalendarEvents rejects', async () => {
+  it('shows a recoverable connection error when getCalendarEvents rejects', async () => {
     getCalendarEventsMock.mockRejectedValue(new Error('no calendar source configured'))
     renderComingUp()
-    expect(await screen.findByText('No upcoming events')).toBeTruthy()
+    expect(await screen.findByText('Could not load your calendar')).toBeTruthy()
   })
 
   it('renders "No events" for a day with zero events when other days have events', async () => {
     const now = new Date()
     const starts = new Date(now.getTime() + 60 * 60 * 1000).toISOString()
     const ends = new Date(now.getTime() + 90 * 60 * 1000).toISOString()
-    getCalendarEventsMock.mockResolvedValue([ev({ id: 'e1', title: 'Only event', starts_at: starts, ends_at: ends })])
+    getCalendarEventsMock.mockResolvedValue([
+      ev({ id: 'e1', title: 'Only event', starts_at: starts, ends_at: ends }),
+    ])
     renderComingUp()
     await waitFor(() => expect(getCalendarEventsMock).toHaveBeenCalledTimes(1))
     expect(await screen.findByText('Only event')).toBeTruthy()

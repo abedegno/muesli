@@ -10,7 +10,7 @@ import (
 	"github.com/abedegno/muesli/internal/embedded"
 )
 
-func TestRunEmbeddedStartupPhases_OrderAndReadyGating(t *testing.T) {
+func TestRunEmbeddedStartupPhases_OptionalModelsDoNotBlockRecording(t *testing.T) {
 	t.Parallel()
 
 	cfg := config.Config{
@@ -100,8 +100,9 @@ func TestRunEmbeddedStartupPhases_OrderAndReadyGating(t *testing.T) {
 	mu.Unlock()
 
 	complete()
-	if reporter.Snapshot().Ready {
-		t.Fatal("ready flipped before pulls completed")
+	if !reporter.Snapshot().Ready {
+		close(allowPulls)
+		t.Fatal("optional model downloads blocked recording after server startup finished")
 	}
 
 	close(allowPulls)
@@ -262,25 +263,5 @@ func TestApplyEmbeddedAgentDefault_EmptyURLIsNoOp(t *testing.T) {
 	applyEmbeddedAgentDefault(&cfg, "")
 	if got, want := cfg.DefaultAgentURL, "http://existing"; got != want {
 		t.Fatalf("DefaultAgentURL = %q, want %q", got, want)
-	}
-}
-
-func TestApplyEmbeddedTranscriberDefault_SetsURL(t *testing.T) {
-	t.Parallel()
-
-	cfg := config.Config{}
-	applyEmbeddedTranscriberDefault(&cfg, "http://127.0.0.1:5555")
-	if got, want := cfg.DefaultTranscriberURL, "http://127.0.0.1:5555"; got != want {
-		t.Fatalf("DefaultTranscriberURL = %q, want %q", got, want)
-	}
-}
-
-func TestApplyEmbeddedTranscriberDefault_EmptyURLIsNoOp(t *testing.T) {
-	t.Parallel()
-
-	cfg := config.Config{DefaultTranscriberURL: "http://existing"}
-	applyEmbeddedTranscriberDefault(&cfg, "")
-	if got, want := cfg.DefaultTranscriberURL, "http://existing"; got != want {
-		t.Fatalf("DefaultTranscriberURL = %q, want %q", got, want)
 	}
 }

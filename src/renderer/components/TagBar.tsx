@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { useState } from 'react'
 import { X } from 'lucide-react'
 
@@ -33,14 +34,20 @@ export function TagBar({
           key={t}
           className="inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary"
         >
-          #{t}
-          <button type="button" aria-label={`Remove ${t}`} onClick={() => onRemove(t)} className="rounded-full hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+          {uiText('#')}
+          {t}
+          <button
+            type="button"
+            aria-label={uiText('Remove {value1}', { value1: t })}
+            onClick={() => onRemove(t)}
+            className="rounded-full hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          >
             <X size={12} />
           </button>
         </span>
       ))}
       <input
-        aria-label="Add tag"
+        aria-label={uiText('Add tag')}
         list={listId}
         value={value}
         onChange={(e) => setValue(e.target.value)}
@@ -50,7 +57,7 @@ export function TagBar({
             void commit()
           }
         }}
-        placeholder="Add tag…"
+        placeholder={uiText('Add tag…')}
         className="h-6 min-w-24 flex-1 rounded bg-transparent text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring placeholder:text-muted-foreground"
       />
       <datalist id={listId}>

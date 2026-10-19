@@ -1,55 +1,58 @@
-import React, { useCallback, useEffect, useState } from "react";
-import type { ApiClient } from "../api/client";
-import type { Plugin, PluginHealth, PluginInput, PluginPatch } from "../api/types";
-import { schemaToFields, type FormField } from "../schema/schemaForm";
+import { uiText } from '@/i18n'
+import React, { useCallback, useEffect, useState } from 'react'
+import type { ApiClient } from '../api/client'
+import type { Plugin, PluginHealth, PluginInput, PluginPatch } from '../api/types'
+import { schemaToFields, type FormField } from '../schema/schemaForm'
 
 interface Props {
   client: Pick<
     ApiClient,
-    "listPlugins" | "createPlugin" | "updatePlugin" | "deletePlugin" | "checkPluginHealth"
-  >;
+    'listPlugins' | 'createPlugin' | 'updatePlugin' | 'deletePlugin' | 'checkPluginHealth'
+  >
 }
 
 function StatusPill({ on, labelOn, labelOff }: { on: boolean; labelOn: string; labelOff: string }) {
   return (
-    <span className={`pill ${on ? "pill-yes" : "pill-no"}`}>
-      {on ? `✓ ${labelOn}` : `✗ ${labelOff}`}
+    <span className={`pill ${on ? 'pill-yes' : 'pill-no'}`}>
+      {on ? uiText('✓ {value1}', { value1: labelOn }) : uiText('✗ {value1}', { value1: labelOff })}
     </span>
-  );
+  )
 }
 
 export function PluginsView({ client }: Props) {
-  const [plugins, setPlugins] = useState<Plugin[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
+  const [plugins, setPlugins] = useState<Plugin[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [adding, setAdding] = useState(false)
 
   const refresh = useCallback(async () => {
     try {
-      setPlugins(await client.listPlugins());
-      setError(null);
+      setPlugins(await client.listPlugins())
+      setError(null)
     } catch (err) {
-      setError(err instanceof Error ? err.message : "failed to load plugins");
+      setError(err instanceof Error ? err.message : 'failed to load plugins')
     }
-  }, [client]);
+  }, [client])
 
   useEffect(() => {
-    void refresh();
-  }, [refresh]);
+    void refresh()
+  }, [refresh])
 
   async function act(fn: () => Promise<unknown>) {
     try {
-      await fn();
-      await refresh();
+      await fn()
+      await refresh()
     } catch (err) {
-      setError(err instanceof Error ? err.message : "operation failed");
+      setError(err instanceof Error ? err.message : 'operation failed')
     }
   }
 
   return (
     <section>
       <div className="row">
-        <h1>Plugins</h1>
-        <button onClick={() => setAdding((v) => !v)}>{adding ? "Cancel" : "Add plugin"}</button>
+        <h1>{uiText('Plugins')}</h1>
+        <button onClick={() => setAdding((v) => !v)}>
+          {adding ? uiText('Cancel') : uiText('Add plugin')}
+        </button>
       </div>
       {error && <p className="error">{error}</p>}
 
@@ -62,12 +65,12 @@ export function PluginsView({ client }: Props) {
       <table>
         <thead>
           <tr>
-            <th>Name</th>
-            <th>Kind</th>
-            <th>Endpoint</th>
-            <th>Enabled</th>
-            <th>Default</th>
-            <th>Actions</th>
+            <th>{uiText('Name')}</th>
+            <th>{uiText('Kind')}</th>
+            <th>{uiText('Endpoint')}</th>
+            <th>{uiText('Enabled')}</th>
+            <th>{uiText('Default')}</th>
+            <th>{uiText('Actions')}</th>
           </tr>
         </thead>
         <tbody>
@@ -86,15 +89,21 @@ export function PluginsView({ client }: Props) {
                   <StatusPill on={p.is_default} labelOn="Default" labelOff="No" />
                 </td>
                 <td className="row">
-                  <button onClick={() => act(() => client.updatePlugin(p.id, { enabled: !p.enabled }))}>
-                    {p.enabled ? "Disable" : "Enable"}
+                  <button
+                    onClick={() => act(() => client.updatePlugin(p.id, { enabled: !p.enabled }))}
+                  >
+                    {p.enabled ? uiText('Disable') : uiText('Enable')}
                   </button>
                   {!p.is_default && (
-                    <button onClick={() => act(() => client.updatePlugin(p.id, { is_default: true }))}>
-                      Set default
+                    <button
+                      onClick={() => act(() => client.updatePlugin(p.id, { is_default: true }))}
+                    >
+                      {uiText('Set default')}
                     </button>
                   )}
-                  <button onClick={() => act(() => client.deletePlugin(p.id))}>Delete</button>
+                  <button onClick={() => act(() => client.deletePlugin(p.id))}>
+                    {uiText('Delete')}
+                  </button>
                 </td>
               </tr>
               <PluginConfigRow plugin={p} client={client} onSaved={refresh} />
@@ -103,7 +112,7 @@ export function PluginsView({ client }: Props) {
         </tbody>
       </table>
     </section>
-  );
+  )
 }
 
 /**
@@ -117,24 +126,26 @@ function PluginConfigRow({
   client,
   onSaved,
 }: {
-  plugin: Plugin;
-  client: Props["client"];
-  onSaved: () => void;
+  plugin: Plugin
+  client: Props['client']
+  onSaved: () => void
 }) {
-  const [open, setOpen] = useState(false);
-  const fields = schemaToFields(plugin.config_schema);
-  if (fields.length === 0) return null;
+  const [open, setOpen] = useState(false)
+  const fields = schemaToFields(plugin.config_schema)
+  if (fields.length === 0) return null
 
   return (
     <tr>
       <td colSpan={6}>
-        <button onClick={() => setOpen((v) => !v)}>{open ? "Close" : "Configure"}</button>
+        <button onClick={() => setOpen((v) => !v)}>
+          {open ? uiText('Close') : uiText('Configure')}
+        </button>
         {open && (
           <PluginConfigEditor plugin={plugin} fields={fields} client={client} onSaved={onSaved} />
         )}
       </td>
     </tr>
-  );
+  )
 }
 
 /** initialConfigValue picks the starting value for one field: the plugin's
@@ -142,22 +153,26 @@ function PluginConfigRow({
  * fields) the first option. Secret fields are always seeded empty — an empty
  * secret input means "leave unchanged", matching PluginEditor's convention;
  * the server's redacted "*" placeholder must never be shown as a real value. */
-function initialConfigValue(field: FormField, config: Record<string, unknown> | undefined): unknown {
-  if (field.control === "secret") return "";
-  const current = config?.[field.name];
-  if (current !== undefined) return current;
-  if (field.default !== undefined) return field.default;
-  if (field.control === "select" && field.options && field.options.length > 0) return field.options[0];
-  if (field.control === "checkbox") return false;
-  return "";
+function initialConfigValue(
+  field: FormField,
+  config: Record<string, unknown> | undefined
+): unknown {
+  if (field.control === 'secret') return ''
+  const current = config?.[field.name]
+  if (current !== undefined) return current
+  if (field.default !== undefined) return field.default
+  if (field.control === 'select' && field.options && field.options.length > 0)
+    return field.options[0]
+  if (field.control === 'checkbox') return false
+  return ''
 }
 
 function initialConfigValues(fields: FormField[], config: Record<string, unknown> | undefined) {
-  const out: Record<string, unknown> = {};
+  const out: Record<string, unknown> = {}
   for (const field of fields) {
-    out[field.name] = initialConfigValue(field, config);
+    out[field.name] = initialConfigValue(field, config)
   }
-  return out;
+  return out
 }
 
 /**
@@ -174,57 +189,57 @@ function PluginConfigEditor({
   client,
   onSaved,
 }: {
-  plugin: Plugin;
-  fields: FormField[];
-  client: Props["client"];
-  onSaved: () => void;
+  plugin: Plugin
+  fields: FormField[]
+  client: Props['client']
+  onSaved: () => void
 }) {
-  const enumFields = fields.filter((f) => f.control === "select");
-  const otherFields = fields.filter((f) => f.control !== "select");
+  const enumFields = fields.filter((f) => f.control === 'select')
+  const otherFields = fields.filter((f) => f.control !== 'select')
 
   const [values, setValues] = useState<Record<string, unknown>>(() =>
     initialConfigValues(fields, plugin.config)
-  );
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [health, setHealth] = useState<PluginHealth | null>(null);
+  )
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [health, setHealth] = useState<PluginHealth | null>(null)
 
   function setField(name: string, value: unknown) {
-    setHealth(null);
-    setValues((v) => ({ ...v, [name]: value }));
+    setHealth(null)
+    setValues((v) => ({ ...v, [name]: value }))
   }
 
   function buildConfig(): Record<string, unknown> {
-    const config: Record<string, unknown> = {};
+    const config: Record<string, unknown> = {}
     for (const field of fields) {
-      const value = values[field.name];
+      const value = values[field.name]
       // A blank secret means "leave unchanged" — never send it, so the
       // server keeps the stored value instead of overwriting it with "".
-      if (field.control === "secret" && (value === undefined || value === "")) continue;
-      config[field.name] = value;
+      if (field.control === 'secret' && (value === undefined || value === '')) continue
+      config[field.name] = value
     }
-    return config;
+    return config
   }
 
   async function apply() {
-    setSaving(true);
-    setSaveError(null);
-    setHealth(null);
-    const patch: PluginPatch = { config: buildConfig() };
+    setSaving(true)
+    setSaveError(null)
+    setHealth(null)
+    const patch: PluginPatch = { config: buildConfig() }
     try {
-      await client.updatePlugin(plugin.id, patch);
+      await client.updatePlugin(plugin.id, patch)
     } catch (err) {
-      setSaving(false);
-      setSaveError(err instanceof Error ? err.message : "failed to save config");
-      return;
+      setSaving(false)
+      setSaveError(err instanceof Error ? err.message : 'failed to save config')
+      return
     }
-    onSaved();
+    onSaved()
     try {
-      setHealth(await client.checkPluginHealth(plugin.id));
+      setHealth(await client.checkPluginHealth(plugin.id))
     } catch (err) {
-      setSaveError(err instanceof Error ? err.message : "health check failed");
+      setSaveError(err instanceof Error ? err.message : 'health check failed')
     } finally {
-      setSaving(false);
+      setSaving(false)
     }
   }
 
@@ -233,13 +248,13 @@ function PluginConfigEditor({
       {enumFields.length > 0 && (
         <div className="plugin-config-picker">
           {enumFields.map((field) => {
-            const inputId = `config-${plugin.id}-${field.name}`;
+            const inputId = `config-${plugin.id}-${field.name}`
             return (
               <p key={field.name}>
                 <label htmlFor={inputId}>{field.label}</label>
                 <select
                   id={inputId}
-                  value={String(values[field.name] ?? "")}
+                  value={String(values[field.name] ?? '')}
                   onChange={(e) => setField(field.name, e.target.value)}
                 >
                   {(field.options ?? []).map((opt) => (
@@ -249,7 +264,7 @@ function PluginConfigEditor({
                   ))}
                 </select>
               </p>
-            );
+            )
           })}
         </div>
       )}
@@ -271,17 +286,19 @@ function PluginConfigEditor({
       {saveError && <p className="error">{saveError}</p>}
       <p className="row">
         <button onClick={apply} disabled={saving}>
-          Apply
+          {uiText('Apply')}
         </button>
         {health &&
           (health.healthy ? (
-            <span className="pill pill-yes">✓ Healthy</span>
+            <span className="pill pill-yes">{uiText('✓ Healthy')}</span>
           ) : (
-            <span className="pill pill-no">✗ Unhealthy: {health.error}</span>
+            <span className="pill pill-no">
+              {uiText('✗ Unhealthy:')} {health.error}
+            </span>
           ))}
       </p>
     </div>
-  );
+  )
 }
 
 function ConfigFieldInput({
@@ -290,14 +307,14 @@ function ConfigFieldInput({
   value,
   onChange,
 }: {
-  pluginId: string;
-  field: FormField;
-  value: unknown;
-  onChange: (value: unknown) => void;
+  pluginId: string
+  field: FormField
+  value: unknown
+  onChange: (value: unknown) => void
 }) {
-  const inputId = `config-${pluginId}-${field.name}`;
+  const inputId = `config-${pluginId}-${field.name}`
   switch (field.control) {
-    case "checkbox":
+    case 'checkbox':
       return (
         <label className="row" htmlFor={inputId}>
           <input
@@ -308,39 +325,43 @@ function ConfigFieldInput({
           />
           {field.label}
         </label>
-      );
-    case "number":
+      )
+    case 'number':
       return (
         <p>
           <label htmlFor={inputId}>{field.label}</label>
           <input
             id={inputId}
             type="number"
-            value={value === undefined || value === null ? "" : String(value)}
-            onChange={(e) => onChange(e.target.value === "" ? undefined : Number(e.target.value))}
+            value={value === undefined || value === null ? '' : String(value)}
+            onChange={(e) => onChange(e.target.value === '' ? undefined : Number(e.target.value))}
           />
         </p>
-      );
-    case "secret":
+      )
+    case 'secret':
       return (
         <p>
           <label htmlFor={inputId}>{field.label}</label>
           <input
             id={inputId}
             type="password"
-            value={String(value ?? "")}
+            value={String(value ?? '')}
             onChange={(e) => onChange(e.target.value)}
           />
-          <small>Leave blank to keep the stored value unchanged.</small>
+          <small>{uiText('Leave blank to keep the stored value unchanged.')}</small>
         </p>
-      );
+      )
     default:
       return (
         <p>
           <label htmlFor={inputId}>{field.label}</label>
-          <input id={inputId} value={String(value ?? "")} onChange={(e) => onChange(e.target.value)} />
+          <input
+            id={inputId}
+            value={String(value ?? '')}
+            onChange={(e) => onChange(e.target.value)}
+          />
         </p>
-      );
+      )
   }
 }
 
@@ -352,57 +373,70 @@ function ConfigFieldInput({
  * is present — see PluginConfigRow above.)
  */
 function PluginEditor({ onSave }: { onSave: (input: PluginInput) => void }) {
-  const [kind, setKind] = useState<PluginInput["kind"]>("transcriber");
-  const [name, setName] = useState("");
-  const [endpoint, setEndpoint] = useState("");
-  const [token, setToken] = useState("");
-  const [isDefault, setIsDefault] = useState(false);
-  const [rawConfig, setRawConfig] = useState("{}");
-  const [jsonError, setJsonError] = useState<string | null>(null);
+  const [kind, setKind] = useState<PluginInput['kind']>('transcriber')
+  const [name, setName] = useState('')
+  const [endpoint, setEndpoint] = useState('')
+  const [token, setToken] = useState('')
+  const [isDefault, setIsDefault] = useState(false)
+  const [rawConfig, setRawConfig] = useState('{}')
+  const [jsonError, setJsonError] = useState<string | null>(null)
 
   function save() {
-    let config: Record<string, unknown>;
+    let config: Record<string, unknown>
     try {
-      config = JSON.parse(rawConfig) as Record<string, unknown>;
+      config = JSON.parse(rawConfig) as Record<string, unknown>
     } catch {
-      setJsonError("config must be valid JSON");
-      return;
+      setJsonError('config must be valid JSON')
+      return
     }
-    setJsonError(null);
-    onSave({ kind, name, endpoint_url: endpoint, token, config, is_default: isDefault });
+    setJsonError(null)
+    onSave({ kind, name, endpoint_url: endpoint, token, config, is_default: isDefault })
   }
 
   return (
     <div>
-      <label htmlFor="new-kind">Kind</label>
-      <select id="new-kind" value={kind} onChange={(e) => setKind(e.target.value as PluginInput["kind"])}>
-        <option value="transcriber">transcriber</option>
-        <option value="agent">agent</option>
+      <label htmlFor="new-kind">{uiText('Kind')}</label>
+      <select
+        id="new-kind"
+        value={kind}
+        onChange={(e) => setKind(e.target.value as PluginInput['kind'])}
+      >
+        <option value="transcriber">{uiText('transcriber')}</option>
+        <option value="agent">{uiText('agent')}</option>
       </select>
-      <label htmlFor="new-name">Name</label>
+      <label htmlFor="new-name">{uiText('Name')}</label>
       <input id="new-name" value={name} onChange={(e) => setName(e.target.value)} />
-      <label htmlFor="new-endpoint">Endpoint URL</label>
+      <label htmlFor="new-endpoint">{uiText('Endpoint URL')}</label>
       <input id="new-endpoint" value={endpoint} onChange={(e) => setEndpoint(e.target.value)} />
-      <label htmlFor="new-token">Plugin auth token</label>
+      <label htmlFor="new-token">{uiText('Plugin auth token')}</label>
       <input
         id="new-token"
         type="password"
         value={token}
         onChange={(e) => setToken(e.target.value)}
       />
-      <small>Shared secret the server presents to this plugin (write-only).</small>
-      <label htmlFor="new-config">Config (JSON)</label>
-      <textarea id="new-config" rows={4} value={rawConfig} onChange={(e) => setRawConfig(e.target.value)} />
+      <small>{uiText('Shared secret the server presents to this plugin (write-only).')}</small>
+      <label htmlFor="new-config">{uiText('Config (JSON)')}</label>
+      <textarea
+        id="new-config"
+        rows={4}
+        value={rawConfig}
+        onChange={(e) => setRawConfig(e.target.value)}
+      />
       {jsonError && <p className="error">{jsonError}</p>}
       <label className="row">
-        <input type="checkbox" checked={isDefault} onChange={(e) => setIsDefault(e.target.checked)} />
-        Set as default for its kind
+        <input
+          type="checkbox"
+          checked={isDefault}
+          onChange={(e) => setIsDefault(e.target.checked)}
+        />
+        {uiText('Set as default for its kind')}
       </label>
       <p>
         <button onClick={save} disabled={!name || !endpoint || !token}>
-          Save plugin
+          {uiText('Save plugin')}
         </button>
       </p>
     </div>
-  );
+  )
 }

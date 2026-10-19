@@ -20,14 +20,17 @@ export function makeMicPermission(deps: MicPermissionDeps = {}) {
       return 'granted'
     },
     async request(): Promise<MicStatus> {
-      if (platform === 'darwin') {
+      if (platform === 'darwin' && api.status() === 'not-determined') {
         await sp.askForMediaAccess('microphone')
         return api.status()
       }
       return api.status()
     },
     openSettings(): void {
-      if (platform === 'darwin') void sh.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone')
+      if (platform === 'darwin')
+        void sh.openExternal(
+          'x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone'
+        )
       else if (platform === 'win32') void sh.openExternal('ms-settings:privacy-microphone')
     },
   }

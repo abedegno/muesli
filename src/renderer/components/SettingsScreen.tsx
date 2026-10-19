@@ -1,14 +1,21 @@
+import { LanguageSettings } from './LanguageSettings'
+import { uiText } from '@/i18n'
+import { CalendarReadiness } from './CalendarReadiness'
+import { ServiceReadiness } from './ServiceReadiness'
 import { useEffect, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 import { muesli } from '@/api'
 import { Button } from '@/components/ui/Button'
 import { Checkbox } from '@/components/ui/Checkbox'
 import { Dialog } from '@/components/ui/Dialog'
-import { Input } from '@/components/ui/Input'
 import { Select } from '@/components/ui/Select'
 import { loadCalendarPrefs, saveCalendarPrefs } from '@/lib/calendarPrefs'
 import { useToast } from '@/components/ui/Toast'
-import type { DigestConfig, Plugin, PluginHealth } from '../../shared/types'
+import { HelpTip } from '@/components/ui/HelpTip'
+import { TranscriptionPreferences } from './TranscriptionPreferences'
+import { LocalAiSetup } from './LocalAiSetup'
+import { t } from '@/i18n'
+import type { DigestConfig } from '../../shared/types'
 
 type Theme = 'system' | 'light' | 'dark'
 type HealthState =
@@ -21,180 +28,86 @@ type HealthState =
 const AI_SECTION_ID = 'ai-transcription'
 const CALENDAR_SECTION_ID = 'calendar'
 
-function pluginHealthMessage(health: PluginHealth, endpoint: string): string {
-  if (health.healthy) return 'Connection healthy.'
-  const error = health.error ?? ''
-  const status = error.match(/plugin returned (\d{3})/)?.[1]
-  if (status === '401' || status === '403') return 'Authentication failed: check the plugin token.'
-  if (status) return `Plugin is misconfigured (HTTP ${status}).`
-  return `Plugin is unreachable at ${endpoint}.`
-}
-
 function TranscriptionSection() {
-  const [current, setCurrent] = useState<Plugin | null>(null)
-  const [currentMessage, setCurrentMessage] = useState('Checking current transcriber…')
-  const [streaming, setStreaming] = useState<Plugin | null>(null)
-  const [url, setUrl] = useState('')
-  const [token, setToken] = useState('')
-  const [connectionMessage, setConnectionMessage] = useState('No streaming transcriber configured.')
-  const [saving, setSaving] = useState(false)
-
-  useEffect(() => {
-    let cancelled = false
-    void muesli.listPlugins().then(async (plugins) => {
-      if (cancelled) return
-      const defaultTranscriber = plugins.find((plugin) => plugin.kind === 'transcriber' && plugin.is_default) ?? null
-      const savedStreaming = plugins.find((plugin) => plugin.kind === 'streaming-transcriber') ?? null
-      setCurrent(defaultTranscriber)
-      setStreaming(savedStreaming)
-      setUrl(savedStreaming?.endpoint_url ?? '')
-      setConnectionMessage(savedStreaming ? 'Streaming transcriber configured. Test the connection when ready.' : 'No streaming transcriber configured.')
-      if (!defaultTranscriber) {
-        setCurrentMessage('No transcriber configured.')
-        return
-      }
-      const health = await muesli.checkPluginHealth(defaultTranscriber.id)
-      if (!cancelled) setCurrentMessage(pluginHealthMessage(health, defaultTranscriber.endpoint_url))
-    }).catch(() => {
-      if (!cancelled) setCurrentMessage('Current transcriber is unreachable because the server could not be contacted.')
-    })
-    return () => { cancelled = true }
-  }, [])
-
   return (
-    <section className="mb-6" aria-labelledby="transcription-heading">
-      <h2 id="transcription-heading" className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">Transcription</h2>
-      <div className="space-y-5">
-        <div>
-          <h3 className="text-sm font-medium">Current transcriber</h3>
-          {current ? <p className="mt-1 text-sm">{current.name} · {current.endpoint_url}</p> : null}
-          <p className="mt-1 text-sm text-muted-foreground" aria-live="polite">{currentMessage}</p>
-        </div>
-        <div>
-          <h3 className="text-sm font-medium">Streaming transcriber (optional)</h3>
-          <p className="mt-1 text-sm text-muted-foreground">Live transcript during recording requires a streaming transcriber to be configured.</p>
-          <div className="mt-3 space-y-2">
-            <label className="block text-sm" htmlFor="streaming-transcriber-url">URL</label>
-            <Input id="streaming-transcriber-url" type="url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="http://localhost:8090" />
-            <label className="block text-sm" htmlFor="streaming-transcriber-token">Token</label>
-            <Input id="streaming-transcriber-token" type="password" value={token} onChange={(event) => setToken(event.target.value)} placeholder={streaming ? 'Leave blank to keep the saved token' : 'Plugin token'} />
-          </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            <Button disabled={!url.trim() || saving} onClick={async () => {
-              setSaving(true)
-              try {
-                const saved = await muesli.setStreamingTranscriber({ url: url.trim(), token })
-                setStreaming(saved)
-                setUrl(saved.endpoint_url)
-                setToken('')
-                setConnectionMessage('Streaming transcriber configured. Test the connection when ready.')
-              } catch {
-                setConnectionMessage(`Plugin is unreachable at ${url.trim()}.`)
-              } finally { setSaving(false) }
-            }}>Save</Button>
-            <Button variant="secondary" disabled={!streaming || saving} onClick={async () => {
-              setSaving(true)
-              try {
-                await muesli.clearStreamingTranscriber()
-                setStreaming(null)
-                setUrl('')
-                setToken('')
-                setConnectionMessage('No streaming transcriber configured.')
-              } finally { setSaving(false) }
-            }}>Clear</Button>
-            <Button variant="secondary" disabled={saving} onClick={async () => {
-              if (!streaming) {
-                setConnectionMessage('No streaming transcriber configured.')
-                return
-              }
-              const health = await muesli.checkPluginHealth(streaming.id)
-              setConnectionMessage(pluginHealthMessage(health, streaming.endpoint_url))
-            }}>Test connection</Button>
-          </div>
-          <p className="mt-2 text-sm text-muted-foreground" aria-live="polite">{connectionMessage}</p>
-        </div>
-      </div>
+    <section className="mb-8" aria-labelledby="transcription-heading">
+      <h2
+        id="transcription-heading"
+        className="mb-3 text-sm font-medium uppercase tracking-wide text-muted-foreground"
+      >
+        {t('transcription.title')}
+      </h2>
+      <TranscriptionPreferences bridge={muesli} />
     </section>
   )
 }
 
-function AiTranscriptionSection() {
-  const [ollamaDetected, setOllamaDetected] = useState<boolean | null>(null)
+function AiTranscriptionSection({ hosted }: { hosted: boolean | null }) {
+  const [detected, setDetected] = useState<boolean | null>(null)
+  const [retry, setRetry] = useState(0)
   const sectionRef = useRef<HTMLElement | null>(null)
   const location = useLocation()
-
   useEffect(() => {
-    if (location.hash !== `#${AI_SECTION_ID}`) return
-    if (typeof sectionRef.current?.scrollIntoView === 'function') {
-      sectionRef.current.scrollIntoView({ block: 'start', behavior: 'smooth' })
+    if (location.hash === `#${AI_SECTION_ID}`) {
+      sectionRef.current?.scrollIntoView?.({ block: 'start', behavior: 'smooth' })
+      sectionRef.current?.focus()
     }
-    sectionRef.current?.focus()
   }, [location.hash])
-
   useEffect(() => {
-    let cancelled = false
-    let intervalId: number | null = null
-
-    const refresh = async () => {
-      try {
-        const status = await muesli.getReadyz()
-        if (!cancelled) setOllamaDetected(status?.ollamaDetected ?? null)
-      } catch {
-        if (!cancelled) setOllamaDetected(null)
-      }
-    }
-
-    void refresh()
-    intervalId = window.setInterval(() => {
-      void refresh()
-    }, 1000)
-
+    let active = true
+    if (hosted === false)
+      void muesli
+        .getReadyz()
+        .then((status) => {
+          if (active) setDetected(status?.ollamaDetected ?? null)
+        })
+        .catch(() => {
+          if (active) setDetected(null)
+        })
     return () => {
-      cancelled = true
-      if (intervalId !== null) window.clearInterval(intervalId)
+      active = false
     }
-  }, [])
-
-  const detected = ollamaDetected === true
-  const detectedLabel = ollamaDetected === null ? 'Detection unavailable' : detected ? 'Detected' : 'Not detected'
-
+  }, [hosted, retry])
   return (
     <section
       id={AI_SECTION_ID}
       ref={sectionRef}
       tabIndex={-1}
-      className="mb-6 scroll-mt-6"
+      className="mb-8 scroll-mt-6"
       aria-labelledby="ai-transcription-heading"
     >
-      <h2 id="ai-transcription-heading" className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">
-        AI / Transcription
-      </h2>
-      <p className="text-sm">
-        Ollama status: <span className="font-medium text-foreground">{detectedLabel}</span>
-      </p>
-      <p className="mt-1 text-sm text-muted-foreground">
-        {detected
-          ? 'Summaries and search are available.'
-          : 'Without Ollama, summaries and search stay unavailable.'}
-      </p>
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        <a
-          className="inline-flex h-10 items-center justify-center rounded-[var(--radius)] bg-muted px-4 text-sm font-medium text-foreground hover:bg-muted/80"
-          href="https://ollama.com/download"
-          target="_blank"
-          rel="noreferrer"
+      <div className="flex items-center gap-1">
+        <h2
+          id="ai-transcription-heading"
+          className="text-sm font-medium uppercase tracking-wide text-muted-foreground"
         >
-          Download Ollama
-        </a>
-        <span className="text-xs text-muted-foreground">
-          Detection updates live while this screen is open.
-        </span>
+          {t('settings.ai')}
+        </h2>
+        <HelpTip label={t('settings.ai')}>{t('settings.aiHelp')}</HelpTip>
       </div>
+      <p className="my-3 text-sm leading-6 text-muted-foreground">{t('settings.aiHelp')}</p>
+      <ServiceReadiness key={String(hosted)} />
+      {hosted === null ? (
+        <p>{t('common.loading')}</p>
+      ) : hosted ? (
+        <p className="text-sm leading-6">{t('settings.aiHosted')}</p>
+      ) : detected === true ? (
+        <p className="text-sm leading-6">{t('settings.aiDetected')}</p>
+      ) : detected === false ? (
+        <LocalAiSetup bridge={muesli} />
+      ) : (
+        <div className="space-y-2">
+          <p className="text-sm text-muted-foreground">{t('settings.aiUnknown')}</p>
+          <Button variant="secondary" onClick={() => setRetry((value) => value + 1)}>
+            {t('common.retry')}
+          </Button>
+        </div>
+      )}
     </section>
   )
 }
 
-function CalendarSection() {
+function CalendarSection({ hosted }: { hosted: boolean | null }) {
   const sectionRef = useRef<HTMLElement | null>(null)
   const location = useLocation()
 
@@ -214,10 +127,14 @@ function CalendarSection() {
       className="mb-6 scroll-mt-6"
       aria-labelledby="calendar-heading"
     >
-      <h2 id="calendar-heading" className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">Calendar</h2>
-      <p className="text-sm text-muted-foreground">
-        Control how calendar events are connected and when detected meetings are auto-recorded.
-      </p>
+      <h2
+        id="calendar-heading"
+        className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground"
+      >
+        {uiText('Calendar')}
+      </h2>
+      <p className="text-sm text-muted-foreground">{t('settings.calendarHelp')}</p>
+      <CalendarReadiness hosted={hosted} />
     </section>
   )
 }
@@ -230,12 +147,16 @@ export function SettingsScreen({
   onResetToBuiltIn: () => void
 }) {
   const [serverUrl, setServerUrl] = useState('')
+  const [canAdminister, setCanAdminister] = useState(false)
+  const [manualServer, setManualServer] = useState<boolean | null>(null)
   const [googleOAuthConfigured, setGoogleOAuthConfigured] = useState<boolean | null>(null)
   const [microsoftOAuthConfigured, setMicrosoftOAuthConfigured] = useState<boolean | null>(null)
-  const [theme, setTheme] = useState<Theme>((localStorage.getItem('muesli-theme') as Theme) || 'system')
+  const [theme, setTheme] = useState<Theme>(
+    (localStorage.getItem('muesli-theme') as Theme) || 'system'
+  )
   const [keepRunningInBackground, setKeepRunningInBackground] = useState(false)
   const [autoRecordDetectedMeetings, setAutoRecordDetectedMeetings] = useState<boolean>(
-    () => loadCalendarPrefs().autoRecordDetectedMeetings,
+    () => loadCalendarPrefs().autoRecordDetectedMeetings
   )
   const [digestCadence, setDigestCadence] = useState<DigestConfig['cadence']>('off')
   const [confirmDisconnect, setConfirmDisconnect] = useState(false)
@@ -244,7 +165,25 @@ export function SettingsScreen({
   const { notify } = useToast()
 
   useEffect(() => {
-    muesli.getConfig().then((cfg) => setServerUrl(cfg?.serverUrl ?? ''))
+    let active = true
+    void Promise.resolve(muesli.getCapabilities?.())
+      .then((caps) => {
+        if (active) setCanAdminister(caps?.isAdmin === true)
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [])
+
+  useEffect(() => {
+    void muesli
+      .getConfig()
+      .then((cfg) => {
+        setServerUrl(cfg?.serverUrl ?? '')
+        setManualServer(cfg?.manualServer ?? false)
+      })
+      .catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -254,7 +193,8 @@ export function SettingsScreen({
     }
 
     let cancelled = false
-    void muesli.getGoogleCalendarOAuthStatus()
+    void muesli
+      .getGoogleCalendarOAuthStatus()
       .then((status) => {
         if (!cancelled) setGoogleOAuthConfigured(status.configured)
       })
@@ -274,7 +214,8 @@ export function SettingsScreen({
     }
 
     let cancelled = false
-    void muesli.getMicrosoftCalendarOAuthStatus()
+    void muesli
+      .getMicrosoftCalendarOAuthStatus()
       .then((status) => {
         if (!cancelled) setMicrosoftOAuthConfigured(status.configured)
       })
@@ -289,7 +230,8 @@ export function SettingsScreen({
 
   useEffect(() => {
     let cancelled = false
-    void muesli.getDigestConfig()
+    void muesli
+      .getDigestConfig()
       .then((cfg) => {
         if (!cancelled) setDigestCadence(cfg.cadence)
       })
@@ -304,7 +246,8 @@ export function SettingsScreen({
 
   useEffect(() => {
     let cancelled = false
-    void muesli.getKeepRunningInBackground()
+    void muesli
+      .getKeepRunningInBackground()
       .then((enabled) => {
         if (!cancelled) setKeepRunningInBackground(enabled)
       })
@@ -320,43 +263,55 @@ export function SettingsScreen({
   function applyTheme(t: Theme) {
     setTheme(t)
     localStorage.setItem('muesli-theme', t)
-    const dark = t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
+    const dark =
+      t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches)
     document.documentElement.classList.toggle('dark', dark)
   }
 
   return (
     <div className="mx-auto max-w-xl p-8">
-      <h1 className="mb-6 text-xl font-semibold">Settings</h1>
+      <h1 className="mb-6 text-xl font-semibold">{uiText('Settings')}</h1>
+      <p className="mb-6 text-sm leading-6 text-muted-foreground">{t('settings.intro')}</p>
       <section className="mb-6">
-        <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">Server</h2>
-        <p className="text-sm">{serverUrl || 'Not connected'}</p>
-        <ServerHealthBadge serverUrl={serverUrl} />
-      </section>
-      <AiTranscriptionSection />
-      <TranscriptionSection />
-      <section className="mb-6">
-        <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">Appearance</h2>
+        <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">
+          {uiText('Appearance')}
+        </h2>
         <div className="flex gap-2">
-          {(['system', 'light', 'dark'] as Theme[]).map((t) => (
+          {(['system', 'light', 'dark'] as Theme[]).map((mode) => (
             <Button
-              key={t}
-              variant={theme === t ? 'primary' : 'secondary'}
+              key={mode}
+              variant={theme === mode ? 'primary' : 'secondary'}
               size="sm"
-              aria-pressed={theme === t}
-              onClick={() => applyTheme(t)}
+              aria-pressed={theme === mode}
+              onClick={() => applyTheme(mode)}
             >
-              {t}
+              {t(
+                mode === 'system'
+                  ? 'settings.system'
+                  : mode === 'light'
+                    ? 'settings.light'
+                    : 'settings.dark'
+              )}
             </Button>
           ))}
         </div>
       </section>
+
+      <LanguageSettings />
+      <AiTranscriptionSection hosted={manualServer} />
+      <TranscriptionSection />
       <section className="mb-6">
-        <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">Templates</h2>
+        <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">
+          {uiText('Templates')}
+        </h2>
+        <p className="mb-3 text-sm leading-6 text-muted-foreground">
+          {t('settings.templatesHelp')}
+        </p>
         <Button variant="secondary" onClick={() => navigate('/templates')}>
-          Manage templates
+          {uiText('Manage templates')}
         </Button>
       </section>
-      <CalendarSection />
+      <CalendarSection hosted={manualServer} />
       <section className="mb-6">
         <label htmlFor="keep-running-in-background" className="flex items-center gap-2 text-sm">
           <Checkbox
@@ -370,16 +325,19 @@ export function SettingsScreen({
                 await muesli.setKeepRunningInBackground(next)
               } catch (err) {
                 console.error('failed to update keep-running preference', err)
-                notify(err instanceof Error ? err.message : 'Could not update menu bar preference', 'error')
+                notify(
+                  err instanceof Error
+                    ? err.message
+                    : uiText('Could not update menu bar preference'),
+                  'error'
+                )
                 setKeepRunningInBackground(prev)
               }
             }}
           />
-          <span>Keep Muesli running in the menu bar when the window is closed</span>
+          <span>{uiText('Keep Muesli running in the menu bar when the window is closed')}</span>
         </label>
-        <p className="mt-1 text-xs text-muted-foreground">
-          When this is on, Muesli keeps a tray or menu-bar presence after you close the window so you can reopen it quickly.
-        </p>
+        <p className="mt-1 text-xs text-muted-foreground">{t('settings.backgroundHelp')}</p>
       </section>
       <section className="mb-6">
         <label htmlFor="auto-record-detected-meetings" className="flex items-center gap-2 text-sm">
@@ -392,50 +350,62 @@ export function SettingsScreen({
               saveCalendarPrefs({ autoRecordDetectedMeetings: next })
             }}
           />
-          <span>Auto-record detected meetings</span>
+          <span>{uiText('Auto-record detected meetings')}</span>
         </label>
-        <p className="mt-1 text-xs text-muted-foreground">
-          Auto-record only runs while Muesli is still open. If menu bar running is off, it can only work during the current session before the window closes.
-        </p>
-        {(googleOAuthConfigured || microsoftOAuthConfigured) ? (
+        <p className="mt-1 text-xs text-muted-foreground">{t('settings.recordHelp')}</p>
+        {googleOAuthConfigured || microsoftOAuthConfigured ? (
           <div className="mt-3 flex flex-wrap gap-2">
             {googleOAuthConfigured ? (
               <Button
                 variant="secondary"
-              onClick={async () => {
-                try {
-                  await muesli.openGoogleCalendarOAuthStart()
-                } catch (err) {
-                  console.error('failed to open Google Calendar OAuth start URL', err)
-                  notify(err instanceof Error ? err.message : 'Could not open Google Calendar OAuth start URL', 'error')
-                }
-              }}
-            >
-                Connect Google Calendar
+                onClick={async () => {
+                  try {
+                    await muesli.openGoogleCalendarOAuthStart()
+                  } catch (err) {
+                    console.error('failed to open Google Calendar OAuth start URL', err)
+                    notify(
+                      err instanceof Error
+                        ? err.message
+                        : uiText('Could not open Google Calendar OAuth start URL'),
+                      'error'
+                    )
+                  }
+                }}
+              >
+                {uiText('Connect Google Calendar')}
               </Button>
             ) : null}
             {microsoftOAuthConfigured ? (
               <Button
                 variant="secondary"
-              onClick={async () => {
-                try {
-                  await muesli.openMicrosoftCalendarOAuthStart()
-                } catch (err) {
-                  console.error('failed to open Microsoft Calendar OAuth start URL', err)
-                  notify(err instanceof Error ? err.message : 'Could not open Microsoft Calendar OAuth start URL', 'error')
-                }
-              }}
-            >
-                Connect Microsoft Calendar
+                onClick={async () => {
+                  try {
+                    await muesli.openMicrosoftCalendarOAuthStart()
+                  } catch (err) {
+                    console.error('failed to open Microsoft Calendar OAuth start URL', err)
+                    notify(
+                      err instanceof Error
+                        ? err.message
+                        : uiText('Could not open Microsoft Calendar OAuth start URL'),
+                      'error'
+                    )
+                  }
+                }}
+              >
+                {uiText('Connect Microsoft Calendar')}
               </Button>
             ) : null}
           </div>
         ) : null}
       </section>
-      <section className="mb-6">
-        <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">Digest</h2>
+      <details className="mb-8 rounded-xl border border-border p-4">
+        <summary className="cursor-pointer text-sm font-medium">
+          {t('settings.integrations')}
+        </summary>
+        <p className="my-3 text-sm leading-6 text-muted-foreground">{t('settings.digestHelp')}</p>
+        <h2 className="mb-2 text-sm font-medium text-muted-foreground">{t('settings.digest')}</h2>
         <label htmlFor="digest-cadence" className="flex items-center gap-2 text-sm">
-          <span className="min-w-24">Cadence</span>
+          <span className="min-w-24">{t('settings.digestFrequency')}</span>
           <Select
             id="digest-cadence"
             value={digestCadence}
@@ -447,45 +417,77 @@ export function SettingsScreen({
                 await muesli.updateDigestConfig(next)
               } catch (err) {
                 console.error('failed to update digest cadence', err)
-                notify(err instanceof Error ? err.message : 'Could not update digest cadence', 'error')
+                notify(
+                  err instanceof Error ? err.message : uiText('Could not update digest cadence'),
+                  'error'
+                )
                 setDigestCadence(prev)
               }
             }}
           >
-            <option value="off">off</option>
-            <option value="daily">daily</option>
-            <option value="weekly">weekly</option>
+            <option value="off">{t('settings.digestOff')}</option>
+            <option value="daily">{t('settings.digestDaily')}</option>
+            <option value="weekly">{t('settings.digestWeekly')}</option>
           </Select>
         </label>
-      </section>
+      </details>
       <section className="mb-6">
-        <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">Tags</h2>
+        <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">
+          {uiText('Tags')}
+        </h2>
+        <p className="mb-3 text-sm text-muted-foreground">{t('settings.tagsHelp')}</p>
         <Button variant="secondary" onClick={() => navigate('/settings/tags')}>
-          Manage tags
+          {uiText('Manage tags')}
         </Button>
       </section>
-      <Button
-        variant="destructive"
-        onClick={() => setConfirmDisconnect(true)}
-      >
-        Disconnect
-      </Button>
-      <div className="mt-3">
-        <Button
-          variant="secondary"
-          onClick={() => setConfirmResetToBuiltIn(true)}
-        >
-          Use this device&apos;s built-in server
+      <details className="mb-8 rounded-xl border border-border p-4">
+        <summary className="cursor-pointer text-sm font-medium">{t('settings.connection')}</summary>
+        <p className="my-3 text-sm leading-6 text-muted-foreground">
+          {t('settings.connectionHelp')}
+        </p>
+        {manualServer !== null && (
+          <p className="mb-3 text-sm">
+            {t(manualServer ? 'settings.connectionHosted' : 'settings.connectionLocal')}
+          </p>
+        )}
+        <section className="mb-6">
+          <h2 className="mb-2 text-sm font-medium uppercase tracking-wide text-muted-foreground">
+            {uiText('Server')}
+          </h2>
+          <p className="text-sm">{serverUrl || uiText('Not connected')}</p>
+          <ServerHealthBadge serverUrl={serverUrl} />
+          {manualServer && canAdminister && serverUrl && (
+            <a
+              className="mt-3 inline-block text-sm underline"
+              href={`${serverUrl.replace(/\/+$/, '')}/admin/`}
+              target="_blank"
+              rel="noreferrer"
+            >
+              {uiText('Open server administration')}
+            </a>
+          )}
+        </section>
+        <Button variant="destructive" onClick={() => setConfirmDisconnect(true)}>
+          {uiText('Disconnect')}
         </Button>
-      </div>
+        <div className="mt-3">
+          <Button variant="secondary" onClick={() => setConfirmResetToBuiltIn(true)}>
+            {uiText("Use this device's built-in server")}
+          </Button>
+        </div>
+      </details>
       {confirmDisconnect ? (
-        <Dialog open onOpenChange={(o) => !o && setConfirmDisconnect(false)} title="Disconnect from this server?">
+        <Dialog
+          open
+          onOpenChange={(o) => !o && setConfirmDisconnect(false)}
+          title={uiText('Disconnect from this server?')}
+        >
           <p className="text-sm text-muted-foreground">
-            Disconnect from this server? You will need to sign in again to reconnect.
+            {uiText('Disconnect from this server? You will need to sign in again to reconnect.')}
           </p>
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="secondary" size="sm" onClick={() => setConfirmDisconnect(false)}>
-              Cancel
+              {uiText('Cancel')}
             </Button>
             <Button
               variant="destructive"
@@ -497,11 +499,14 @@ export function SettingsScreen({
                   onDisconnected()
                 } catch (err) {
                   setConfirmDisconnect(false)
-                  notify(err instanceof Error ? err.message : 'Could not disconnect from server', 'error')
+                  notify(
+                    err instanceof Error ? err.message : uiText('Could not disconnect from server'),
+                    'error'
+                  )
                 }
               }}
             >
-              Disconnect
+              {uiText('Disconnect')}
             </Button>
           </div>
         </Dialog>
@@ -510,14 +515,16 @@ export function SettingsScreen({
         <Dialog
           open
           onOpenChange={(o) => !o && setConfirmResetToBuiltIn(false)}
-          title="Switch to this device's built-in server?"
+          title={uiText("Switch to this device's built-in server?")}
         >
           <p className="text-sm text-muted-foreground">
-            Switch to this device&apos;s built-in server? Your connection to the current server will be forgotten.
+            {uiText(
+              "Switch to this device's built-in server? Your connection to the current server will be forgotten."
+            )}
           </p>
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="secondary" size="sm" onClick={() => setConfirmResetToBuiltIn(false)}>
-              Cancel
+              {uiText('Cancel')}
             </Button>
             <Button
               variant="destructive"
@@ -527,15 +534,21 @@ export function SettingsScreen({
                   await muesli.resetToBuiltIn()
                   const cfg = await muesli.getConfig()
                   setServerUrl(cfg?.serverUrl ?? '')
+                  setManualServer(cfg?.manualServer ?? false)
                   setConfirmResetToBuiltIn(false)
                   await onResetToBuiltIn()
                 } catch (err) {
                   setConfirmResetToBuiltIn(false)
-                  notify(err instanceof Error ? err.message : 'Could not switch to built-in server', 'error')
+                  notify(
+                    err instanceof Error
+                      ? err.message
+                      : uiText('Could not switch to built-in server'),
+                    'error'
+                  )
                 }
               }}
             >
-              Switch to built-in server
+              {uiText('Switch to built-in server')}
             </Button>
           </div>
         </Dialog>
@@ -592,18 +605,18 @@ export function ServerHealthBadge({ serverUrl }: { serverUrl: string }) {
           ? 'bg-destructive/10 text-destructive'
           : health.status === 'sign-in-required'
             ? 'bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-200'
-          : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+            : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
       }`}
     >
       {health.status === 'connected'
         ? health.version
-          ? `Connected · v${health.version}`
-          : 'Connected'
+          ? uiText('Connected · v{value1}', { value1: health.version })
+          : uiText('Connected')
         : health.status === 'sign-in-required'
-          ? 'Sign in required'
-        : health.status === 'unreachable'
-          ? 'Unreachable'
-          : 'Checking'}
+          ? uiText('Sign in required')
+          : health.status === 'unreachable'
+            ? uiText('Unreachable')
+            : uiText('Checking')}
     </span>
   )
 }

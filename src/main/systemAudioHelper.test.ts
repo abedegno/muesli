@@ -77,14 +77,22 @@ describe('systemAudioHelper', () => {
     const started = helper.start((c) => pcm.push(c))
     child.stdout.write('META sr=48000 ch=2 fmt=f32le\n')
 
-    await expect(started).resolves.toEqual({ sampleRate: 48000, channels: 2 })
+    await expect(started).resolves.toMatchObject({
+      sampleRate: 48000,
+      channels: 2,
+      captureId: expect.any(String),
+    })
     child.stdout.write(Buffer.from([1, 2, 3, 4]))
     expect(pcm.at(-1)).toEqual(new Uint8Array([1, 2, 3, 4]))
     await helper.stop()
 
-    expect(spawnMock).toHaveBeenCalledWith('/tmp/muesli-audiotap', ['--start'], expect.objectContaining({
-      stdio: ['ignore', 'pipe', 'pipe'],
-    }))
+    expect(spawnMock).toHaveBeenCalledWith(
+      '/tmp/muesli-audiotap',
+      ['--start'],
+      expect.objectContaining({
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+    )
     expect(child.kill).toHaveBeenCalledWith('SIGTERM')
   })
 
@@ -100,9 +108,15 @@ describe('systemAudioHelper', () => {
 
     const pcm: Uint8Array[] = []
     const started = helper.start((c) => pcm.push(c))
-    child.stdout.write(Buffer.concat([Buffer.from('META sr=48000 ch=2 fmt=f32le\n'), Buffer.from([9, 9])]))
+    child.stdout.write(
+      Buffer.concat([Buffer.from('META sr=48000 ch=2 fmt=f32le\n'), Buffer.from([9, 9])])
+    )
 
-    await expect(started).resolves.toEqual({ sampleRate: 48000, channels: 2 })
+    await expect(started).resolves.toMatchObject({
+      sampleRate: 48000,
+      channels: 2,
+      captureId: expect.any(String),
+    })
     expect(pcm).toEqual([new Uint8Array([9, 9])])
     await helper.stop()
   })
@@ -177,8 +191,35 @@ describe('systemAudioHelper', () => {
     const started = helper.start(() => {})
     child.stdout.write('META sr=48000 ch=2 fmt=f32le\n')
 
-    await expect(started).resolves.toEqual({ sampleRate: 48000, channels: 2 })
+    await expect(started).resolves.toMatchObject({
+      sampleRate: 48000,
+      channels: 2,
+      captureId: expect.any(String),
+    })
     expect(() => child.emit('exit', 0, null)).not.toThrow()
     await helper.stop()
   })
+})
+
+it('a late stop from an old capture cannot stop the replacement capture', async () => {
+  spawnMock.mockReset()
+  const first = createFakeChild()
+  const second = createFakeChild()
+  spawnMock.mockReturnValueOnce(first).mockReturnValueOnce(second)
+  const { makeSystemAudioHelper } = await loadHelper()
+  const helper = makeSystemAudioHelper({ platform: 'darwin', binPath: '/tmp/muesli-audiotap' })
+  const firstPcm = vi.fn()
+  const firstStart = helper.start(firstPcm)
+  first.stdout.write('sr=48000 ch=2\n')
+  const oldCapture = await firstStart
+  const secondPcm = vi.fn()
+  const secondStart = helper.start(secondPcm)
+  second.stdout.write('sr=48000 ch=2\n')
+  await secondStart
+  await (helper.stop as (captureId?: string) => Promise<void>)(oldCapture?.captureId)
+  expect(second.killed).toBe(false)
+  first.stdout.write(Buffer.from([1, 2, 3, 4]))
+  expect(secondPcm).not.toHaveBeenCalled()
+  expect(firstPcm).not.toHaveBeenCalled()
+  await helper.stop()
 })

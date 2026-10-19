@@ -1,10 +1,50 @@
+import { LocaleSettings } from './localeSettings'
+import { TranscriptionModelManager } from './transcriptionModels'
+import { RecordingJournal } from './recordingJournal'
+import { RecordingRecoveryStore } from './recordingRecovery'
 import { randomBytes } from 'node:crypto'
 import { appendFileSync, mkdirSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, Notification, safeStorage, session, shell, Tray } from 'electron'
-import { IPC, type AuthInvalidatedNotice, type ConnectRequest, type CreateConversationRequest, type DiarizationReviewUpdate, type ExportRequestOptions, type MeetingDetectionEventPayload, type SearchOptions, type SendMessageRequest, type TrayNavigationTarget, type UpdateActionItemRequest, type UpdatePersonRequest, type UploadAudioRequest } from '../shared/ipc'
-import type { CalendarEvent, CreateShareRequest, DigestConfig, EmbeddedStartupStatus, RetranscribeNoteRequest, RuleGroup, TemplatePhase, TemplateSection } from '../shared/types'
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  Notification,
+  safeStorage,
+  session,
+  shell,
+  Tray,
+} from 'electron'
+import {
+  IPC,
+  type AuthInvalidatedNotice,
+  type ConnectRequest,
+  type CreateConversationRequest,
+  type DiarizationReviewUpdate,
+  type ExportRequestOptions,
+  type MeetingDetectionEventPayload,
+  type SearchOptions,
+  type SendMessageRequest,
+  type TrayNavigationTarget,
+  type UpdateActionItemRequest,
+  type UpdatePersonRequest,
+  type UploadAudioRequest,
+} from '../shared/ipc'
+import type {
+  CalendarEvent,
+  CreateShareRequest,
+  DigestConfig,
+  EmbeddedStartupStatus,
+  RetranscribeNoteRequest,
+  RuleGroup,
+  TemplatePhase,
+  TemplateSection,
+} from '../shared/types'
 import { createHandlers } from './ipcHandlers'
 import { makeMicPermission } from './micPermission'
 import { resolveAudiotapBin } from './resourcePaths'
@@ -14,11 +54,17 @@ import { NoteStreamRelay } from './noteStreamRelay'
 import { SecretStore } from './secretStore'
 import { makeSystemAudioPermission } from './systemAudioPermission'
 import { makeSystemAudioHelper } from './systemAudioHelper'
-import { DEFAULT_HEALTH_TIMEOUT_MS, makeServerLogPath, startServerSupervisor } from './serverSupervisor'
+import {
+  DEFAULT_HEALTH_TIMEOUT_MS,
+  makeServerLogPath,
+  startServerSupervisor,
+} from './serverSupervisor'
 import { TokenStore } from './tokenStore'
 import { CalendarPrefsStore } from './calendarPrefs'
 import { MeetingDetectionManager } from './meetingDetectionLoop'
+import { createOllamaSetup } from './ollamaSetup'
 
+let nativeText = (source: string) => source
 let mainWindow: BrowserWindow | null = null
 let fatalShutdownRequested = false
 let meetingDetectionManager: MeetingDetectionManager | null = null
@@ -38,18 +84,18 @@ function loadTrayIcon() {
 
 function buildTrayMenu() {
   return Menu.buildFromTemplate([
-    { label: 'Open Muesli', click: () => focusMainWindow() },
+    { label: nativeText('Open Muesli'), click: () => focusMainWindow() },
     {
-      label: 'New meeting',
+      label: nativeText('New meeting'),
       click: () => openTrayView('/new'),
     },
     {
-      label: 'Settings',
+      label: nativeText('Settings'),
       click: () => openTrayView('/settings'),
     },
     { type: 'separator' },
     {
-      label: 'Quit Muesli',
+      label: nativeText('Quit Muesli'),
       click: () => app.quit(),
     },
   ])
@@ -93,7 +139,7 @@ function writeFatalMainProcessLog(kind: 'uncaughtException' | 'unhandledRejectio
   const timestamp = new Date().toISOString()
   const message =
     err instanceof Error
-      ? err.stack ?? err.message
+      ? (err.stack ?? err.message)
       : typeof err === 'string'
         ? err
         : (() => {
@@ -115,7 +161,10 @@ function writeFatalMainProcessLog(kind: 'uncaughtException' | 'unhandledRejectio
   console.error(`[muesli-main ${kind}]`, err)
 }
 
-function requestFatalMainProcessQuit(kind: 'uncaughtException' | 'unhandledRejection', err: unknown) {
+function requestFatalMainProcessQuit(
+  kind: 'uncaughtException' | 'unhandledRejection',
+  err: unknown
+) {
   writeFatalMainProcessLog(kind, err)
   if (fatalShutdownRequested) return
   fatalShutdownRequested = true
@@ -146,9 +195,14 @@ function createWindow(options: { show?: boolean; route?: TrayNavigationTarget } 
   })
 
   if (process.env.ELECTRON_RENDERER_URL) {
-    void mainWindow.loadURL(route ? `${process.env.ELECTRON_RENDERER_URL}#${route}` : process.env.ELECTRON_RENDERER_URL)
+    void mainWindow.loadURL(
+      route ? `${process.env.ELECTRON_RENDERER_URL}#${route}` : process.env.ELECTRON_RENDERER_URL
+    )
   } else {
-    void mainWindow.loadFile(join(__dirname, '../renderer/index.html'), route ? { hash: route } : undefined)
+    void mainWindow.loadFile(
+      join(__dirname, '../renderer/index.html'),
+      route ? { hash: route } : undefined
+    )
   }
 
   if (!show) {
@@ -200,11 +254,27 @@ app.whenReady().then(async () => {
     const userDataDir = app.getPath('userData')
     const calendarPrefsStore = new CalendarPrefsStore(userDataDir)
     let calendarPrefs = calendarPrefsStore.load()
+    const localeSettings = new LocaleSettings(userDataDir, () => app.getLocale?.() ?? 'en')
+    nativeText = (source) => localeSettings.text(source)
     const secretStore = new SecretStore(userDataDir, safeStorage)
+    const recordingJournal = new RecordingJournal(join(userDataDir, 'recording-journal'))
+    const transcriptionModels = new TranscriptionModelManager({
+      directory: join(userDataDir, 'models', 'whisper'),
+      bundledDirectory: app.isPackaged
+        ? join(process.resourcesPath, 'models', 'whisper')
+        : process.env.MUESLI_WHISPER_MODEL_DIR,
+      isHosted: () => secretStore.getManualServer(),
+      isRecording: () => recordingJournal.isActive(),
+      restart: () => {
+        app.relaunch()
+        app.quit()
+      },
+    })
     keepRunningInBackground = secretStore.getKeepRunningInBackground()
     syncTrayState()
     const supervisor = await startServerSupervisor({
       onSecondInstance: focusMainWindow,
+      env: { ...process.env, ...(await transcriptionModels.environment()) },
       userDataPath: userDataDir,
       logPath: makeServerLogPath(userDataDir),
       healthTimeoutMs: DEFAULT_HEALTH_TIMEOUT_MS,
@@ -221,6 +291,19 @@ app.whenReady().then(async () => {
     const tokenStore = new TokenStore(userDataDir, safeStorage)
     const fetchImpl = globalThis.fetch?.bind(globalThis)
     const micPermission = makeMicPermission()
+    const ollamaSetup = createOllamaSetup({
+      platform: process.platform,
+      baseUrl: process.env.MUESLI_OLLAMA_URL?.trim() || 'http://127.0.0.1:11434',
+      isHosted: () => secretStore.getManualServer(),
+      openExternal: (url) => shell.openExternal(url),
+      openPath: (path) => shell.openPath(path),
+      getOnboarded: () => secretStore.getOnboarded(),
+      setOnboarded: (value) => secretStore.setOnboarded(value),
+      restart: () => {
+        app.relaunch()
+        app.quit()
+      },
+    })
     const systemAudioPermission = makeSystemAudioPermission()
     const systemAudioHelper = makeSystemAudioHelper({
       binPath: resolveAudiotapBin({
@@ -233,8 +316,22 @@ app.whenReady().then(async () => {
       getConfig: () => tokenStore.load(),
       emit: (event) => mainWindow?.webContents.send(IPC.noteStreamEvent, event),
     })
+    mainWindow?.webContents.on('render-process-gone', () => {
+      void recordingJournal
+        .close()
+        .catch((error) => console.error('Could not close recording journal', error))
+    })
+    app.on('web-contents-created', (_event, contents) =>
+      contents.on('render-process-gone', () => {
+        void recordingJournal
+          .close()
+          .catch((error) => console.error('Could not close recording journal', error))
+      })
+    )
     const handlers = createHandlers({
       tokenStore,
+      recordingJournal,
+      recordingRecovery: new RecordingRecoveryStore(join(userDataDir, 'recording-recovery')),
       fetch: fetchImpl,
       embedded: true,
       embeddedBaseUrl: supervisor.baseUrl,
@@ -291,6 +388,10 @@ app.whenReady().then(async () => {
       },
     })
 
+    ipcMain.handle(IPC.setAppLanguage, (_e, language: string) => {
+      localeSettings.set(language)
+      syncTrayState()
+    })
     ipcMain.handle(IPC.getConfig, () => handlers.getConfig())
     ipcMain.handle(IPC.getManualServer, () => handlers.getManualServer())
     ipcMain.handle(IPC.getOnboarded, () => handlers.getOnboarded())
@@ -302,6 +403,10 @@ app.whenReady().then(async () => {
       syncTrayState()
     })
     ipcMain.handle(IPC.getReadyz, () => handlers.getReadyz())
+    ipcMain.handle(IPC.getLocalOllamaStatus, () => ollamaSetup.status())
+    ipcMain.handle(IPC.downloadOllama, () => ollamaSetup.download())
+    ipcMain.handle(IPC.openOllama, () => ollamaSetup.openApp())
+    ipcMain.handle(IPC.finishOllamaSetup, () => ollamaSetup.finish())
     ipcMain.handle(IPC.getEmbeddedStartupStatus, async () => latestEmbeddedStartupStatus)
     ipcMain.handle(IPC.getServerHealth, () => handlers.getServerHealth())
     ipcMain.handle(IPC.connect, (_e, req: ConnectRequest) => handlers.connect(req))
@@ -310,25 +415,54 @@ app.whenReady().then(async () => {
     ipcMain.handle(IPC.listNotes, (_e, folderId?: string) => handlers.listNotes(folderId))
     ipcMain.handle(IPC.listPeople, () => handlers.listPeople())
     ipcMain.handle(IPC.listCompanies, () => handlers.listCompanies())
-    ipcMain.handle(IPC.getInsights, (_e, from?: string, to?: string) => handlers.getInsights(from, to))
+    ipcMain.handle(IPC.getInsights, (_e, from?: string, to?: string) =>
+      handlers.getInsights(from, to)
+    )
+    ipcMain.handle(IPC.getTranscriptionModels, () => transcriptionModels.state())
+    ipcMain.handle(IPC.installTranscriptionModel, (_e, id: string) =>
+      transcriptionModels.install(id)
+    )
+    ipcMain.handle(IPC.cancelTranscriptionModelDownload, () => transcriptionModels.cancel())
+    ipcMain.handle(IPC.activateTranscriptionModel, (_e, id: string, language: string) =>
+      transcriptionModels.activate(id, language)
+    )
+    ipcMain.handle(IPC.getServiceReadiness, () => handlers.getServiceReadiness())
+    ipcMain.handle(IPC.retryAIModels, () => handlers.retryAIModels())
     ipcMain.handle(IPC.getCapabilities, () => handlers.getCapabilities())
-    ipcMain.handle(IPC.listNoteActionItems, (_e, noteId: string) => handlers.listNoteActionItems(noteId))
+    ipcMain.handle(IPC.listNoteActionItems, (_e, noteId: string) =>
+      handlers.listNoteActionItems(noteId)
+    )
     ipcMain.handle(IPC.listNoteLinks, (_e, id: string) => handlers.listNoteLinks(id))
     ipcMain.handle(IPC.listRelatedNotes, (_e, id: string) => handlers.listRelatedNotes(id))
-    ipcMain.handle(IPC.addNoteLink, (_e, id: string, toNoteId: string) => handlers.addNoteLink(id, toNoteId))
+    ipcMain.handle(IPC.addNoteLink, (_e, id: string, toNoteId: string) =>
+      handlers.addNoteLink(id, toNoteId)
+    )
     ipcMain.handle(IPC.listActionItems, (_e, status?: string) => handlers.listActionItems(status))
     ipcMain.handle(IPC.getPerson, (_e, id: string) => handlers.getPerson(id))
     ipcMain.handle(IPC.getPersonNotes, (_e, id: string) => handlers.getPersonNotes(id))
-    ipcMain.handle(IPC.updatePerson, (_e, id: string, req: UpdatePersonRequest) => handlers.updatePerson(id, req))
-    ipcMain.handle(IPC.updateActionItem, (_e, id: string, req: UpdateActionItemRequest) => handlers.updateActionItem(id, req))
-    ipcMain.handle(IPC.mergePeople, (_e, fromId: string, intoId: string) => handlers.mergePeople(fromId, intoId))
+    ipcMain.handle(IPC.updatePerson, (_e, id: string, req: UpdatePersonRequest) =>
+      handlers.updatePerson(id, req)
+    )
+    ipcMain.handle(IPC.updateActionItem, (_e, id: string, req: UpdateActionItemRequest) =>
+      handlers.updateActionItem(id, req)
+    )
+    ipcMain.handle(IPC.mergePeople, (_e, fromId: string, intoId: string) =>
+      handlers.mergePeople(fromId, intoId)
+    )
     ipcMain.handle(IPC.deletePerson, (_e, id: string) => handlers.deletePerson(id))
     ipcMain.handle(IPC.getCompany, (_e, id: string) => handlers.getCompany(id))
-    ipcMain.handle(IPC.getCalendarEvents, (_e, from: string, to: string) => handlers.getCalendarEvents(from, to))
+    ipcMain.handle(IPC.getCalendarReadiness, () => handlers.getCalendarReadiness())
+    ipcMain.handle(IPC.getCalendarEvents, (_e, from: string, to: string) =>
+      handlers.getCalendarEvents(from, to)
+    )
     ipcMain.handle(IPC.getGoogleCalendarOAuthStatus, () => handlers.getGoogleCalendarOAuthStatus())
     ipcMain.handle(IPC.openGoogleCalendarOAuthStart, () => handlers.openGoogleCalendarOAuthStart())
-    ipcMain.handle(IPC.getMicrosoftCalendarOAuthStatus, () => handlers.getMicrosoftCalendarOAuthStatus())
-    ipcMain.handle(IPC.openMicrosoftCalendarOAuthStart, () => handlers.openMicrosoftCalendarOAuthStart())
+    ipcMain.handle(IPC.getMicrosoftCalendarOAuthStatus, () =>
+      handlers.getMicrosoftCalendarOAuthStatus()
+    )
+    ipcMain.handle(IPC.openMicrosoftCalendarOAuthStart, () =>
+      handlers.openMicrosoftCalendarOAuthStart()
+    )
     ipcMain.handle(IPC.getCalendarPrefs, () => calendarPrefs)
     ipcMain.handle(IPC.setCalendarPrefs, (_e, prefs: { autoRecordDetectedMeetings: boolean }) => {
       calendarPrefs = { autoRecordDetectedMeetings: prefs.autoRecordDetectedMeetings }
@@ -352,84 +486,207 @@ app.whenReady().then(async () => {
     ipcMain.handle(IPC.systemAudioOpenSettings, () => systemAudioPermission.openSettings())
     ipcMain.handle(IPC.systemAudioAvailable, () => systemAudioHelper.available())
     ipcMain.handle(IPC.systemAudioStart, () =>
-      systemAudioHelper.start((chunk) => mainWindow?.webContents.send(IPC.systemAudioPcm, chunk)),
+      systemAudioHelper.start((chunk) => mainWindow?.webContents.send(IPC.systemAudioPcm, chunk))
     )
-    ipcMain.handle(IPC.systemAudioStop, () => systemAudioHelper.stop())
+    ipcMain.handle(IPC.systemAudioStop, (_e, captureId?: string) =>
+      systemAudioHelper.stop(captureId)
+    )
     ipcMain.handle(IPC.writeClipboardText, (_e, text: string) => {
       clipboard.writeText(text)
     })
     ipcMain.handle(IPC.getDigestConfig, () => handlers.getDigestConfig())
-    ipcMain.handle(IPC.updateDigestConfig, (_e, cadence: DigestConfig['cadence']) => handlers.updateDigestConfig(cadence))
+    ipcMain.handle(IPC.updateDigestConfig, (_e, cadence: DigestConfig['cadence']) =>
+      handlers.updateDigestConfig(cadence)
+    )
     ipcMain.handle(IPC.getFull, (_e, id: string) => handlers.getFull(id))
     ipcMain.handle(IPC.createNote, (_e, title: string) => handlers.createNote(title))
-    ipcMain.handle(IPC.startNoteCapture, (_e, id: string) => handlers.startNoteCapture(id))
-    ipcMain.handle(IPC.updateBody, (_e, id: string, content: string) => handlers.updateBody(id, content))
-    ipcMain.handle(IPC.updateTitle, (_e, id: string, title: string) => handlers.updateTitle(id, title))
+    ipcMain.handle(IPC.stopNoteCapture, (_e, id: string, captureId?: string) =>
+      handlers.stopNoteCapture(id, captureId)
+    )
+    ipcMain.handle(IPC.startNoteCapture, (_e, id: string, captureId?: string) =>
+      handlers.startNoteCapture(id, captureId)
+    )
+    ipcMain.handle(IPC.updateBody, (_e, id: string, content: string, connectionId?: string) =>
+      handlers.updateBody(id, content, connectionId)
+    )
+    ipcMain.handle(IPC.updateTitle, (_e, id: string, title: string) =>
+      handlers.updateTitle(id, title)
+    )
     ipcMain.handle(IPC.deleteNote, (_e, id: string) => handlers.deleteNote(id))
     ipcMain.handle(IPC.duplicateNote, (_e, id: string) => handlers.duplicateNote(id))
     ipcMain.handle(IPC.pinNote, (_e, id: string) => handlers.pinNote(id))
     ipcMain.handle(IPC.unpinNote, (_e, id: string) => handlers.unpinNote(id))
-    ipcMain.handle(IPC.linkNoteEvent, (_e, id: string, eventId: string) => handlers.linkNoteEvent(id, eventId))
+    ipcMain.handle(IPC.linkNoteEvent, (_e, id: string, eventId: string) =>
+      handlers.linkNoteEvent(id, eventId)
+    )
     ipcMain.handle(IPC.unlinkNoteEvent, (_e, id: string) => handlers.unlinkNoteEvent(id))
     ipcMain.handle(IPC.listTrash, () => handlers.listTrash())
     ipcMain.handle(IPC.restoreNote, (_e, id: string) => handlers.restoreNote(id))
-    ipcMain.handle(IPC.retranscribeNote, (_e, id: string, options?: RetranscribeNoteRequest) => handlers.retranscribeNote(id, options))
-    ipcMain.handle(IPC.createShare, (_e, noteId: string, options?: CreateShareRequest) => handlers.createShare(noteId, options))
+    ipcMain.handle(IPC.retranscribeNote, (_e, id: string, options?: RetranscribeNoteRequest) =>
+      handlers.retranscribeNote(id, options)
+    )
+    ipcMain.handle(IPC.createShare, (_e, noteId: string, options?: CreateShareRequest) =>
+      handlers.createShare(noteId, options)
+    )
     ipcMain.handle(IPC.listNoteShares, (_e, noteId: string) => handlers.listNoteShares(noteId))
     ipcMain.handle(IPC.revokeShare, (_e, token: string) => handlers.revokeShare(token))
     ipcMain.handle(IPC.permanentDeleteNote, (_e, id: string) => handlers.permanentDeleteNote(id))
     ipcMain.handle(IPC.getNoteAudioUrl, (_e, noteId: string) => handlers.getNoteAudioUrl(noteId))
+    ipcMain.handle(IPC.beginRecordingJournal, (_e, id: string) =>
+      handlers.beginRecordingJournal(id)
+    )
+    ipcMain.handle(IPC.appendRecordingJournal, (_e, captureId: string, frame: ArrayBuffer) =>
+      handlers.appendRecordingJournal(captureId, frame)
+    )
+    ipcMain.handle(IPC.endRecordingJournal, (_e, captureId: string) =>
+      handlers.endRecordingJournal(captureId)
+    )
+    ipcMain.handle(IPC.listRecordingRecoveries, () => handlers.listRecordingRecoveries())
+    ipcMain.handle(IPC.exportRecordingRecovery, async (_e, id: string) => {
+      const audio = await handlers.recoveryAudio(id)
+      const ext = audio.mimeType.includes('wav') ? 'wav' : 'webm'
+      const options = {
+        title: 'Save recovered recording',
+        defaultPath: `Recovered recording.${ext}`,
+        filters: [{ name: 'Audio', extensions: [ext] }],
+      }
+      const result = mainWindow
+        ? await dialog.showSaveDialog(mainWindow, options)
+        : await dialog.showSaveDialog(options)
+      if (result.canceled || !result.filePath) return { success: false, error: 'cancelled' }
+      await writeFile(result.filePath, audio.bytes, { mode: 0o600 })
+      return { success: true }
+    })
+    ipcMain.handle(IPC.recoverNoteCapture, (_e, id: string) => handlers.recoverNoteCapture(id))
+    ipcMain.handle(IPC.saveRecordingRecovery, (_e, req: UploadAudioRequest) =>
+      handlers.saveRecordingRecovery(req)
+    )
+    ipcMain.handle(IPC.getRecordingRecovery, (_e, id: string) => handlers.getRecordingRecovery(id))
+    ipcMain.handle(IPC.retryRecordingUpload, (_e, id: string) => handlers.retryRecordingUpload(id))
+    ipcMain.handle(IPC.discardRecordingRecovery, (_e, id: string) =>
+      handlers.discardRecordingRecovery(id)
+    )
     ipcMain.handle(IPC.uploadAudio, (_e, req: UploadAudioRequest) => handlers.uploadAudio(req))
     ipcMain.handle(IPC.startNoteStream, (_e, noteId: string) => noteStream.start(noteId))
     ipcMain.handle(IPC.stopNoteStream, (_e, noteId: string) => noteStream.stop(noteId))
-    ipcMain.handle(IPC.sendNoteStreamAudio, (_e, noteId: string, audio: ArrayBuffer) => noteStream.sendAudio(noteId, audio))
+    ipcMain.handle(IPC.sendNoteStreamAudio, (_e, noteId: string, audio: ArrayBuffer) =>
+      noteStream.sendAudio(noteId, audio)
+    )
     ipcMain.handle(IPC.addTag, (_e, noteId: string, name: string) => handlers.addTag(noteId, name))
-    ipcMain.handle(IPC.removeTag, (_e, noteId: string, name: string) => handlers.removeTag(noteId, name))
+    ipcMain.handle(IPC.removeTag, (_e, noteId: string, name: string) =>
+      handlers.removeTag(noteId, name)
+    )
     ipcMain.handle(IPC.renameTag, (_e, id: string, name: string) => handlers.renameTag(id, name))
     ipcMain.handle(IPC.deleteTag, (_e, id: string) => handlers.deleteTag(id))
     ipcMain.handle(IPC.listTags, () => handlers.listTags())
     ipcMain.handle(IPC.listSmartLists, () => handlers.listSmartLists())
-    ipcMain.handle(IPC.createSmartList, (_e, name: string, rule: RuleGroup) => handlers.createSmartList(name, rule))
-    ipcMain.handle(IPC.updateSmartList, (_e, id: string, name: string, rule: RuleGroup) => handlers.updateSmartList(id, name, rule))
+    ipcMain.handle(IPC.createSmartList, (_e, name: string, rule: RuleGroup) =>
+      handlers.createSmartList(name, rule)
+    )
+    ipcMain.handle(IPC.updateSmartList, (_e, id: string, name: string, rule: RuleGroup) =>
+      handlers.updateSmartList(id, name, rule)
+    )
     ipcMain.handle(IPC.deleteSmartList, (_e, id: string) => handlers.deleteSmartList(id))
     ipcMain.handle(IPC.listTrashedSmartLists, () => handlers.listTrashedSmartLists())
     ipcMain.handle(IPC.restoreSmartList, (_e, id: string) => handlers.restoreSmartList(id))
-    ipcMain.handle(IPC.permanentDeleteSmartList, (_e, id: string) => handlers.permanentDeleteSmartList(id))
+    ipcMain.handle(IPC.permanentDeleteSmartList, (_e, id: string) =>
+      handlers.permanentDeleteSmartList(id)
+    )
     ipcMain.handle(IPC.listFolders, () => handlers.listFolders())
-    ipcMain.handle(IPC.createFolder, (_e, name: string, parentId?: string | null) => handlers.createFolder(name, parentId))
-    ipcMain.handle(IPC.updateFolder, (_e, id: string, name: string, parentId?: string | null) => handlers.updateFolder(id, name, parentId))
+    ipcMain.handle(IPC.createFolder, (_e, name: string, parentId?: string | null) =>
+      handlers.createFolder(name, parentId)
+    )
+    ipcMain.handle(IPC.updateFolder, (_e, id: string, name: string, parentId?: string | null) =>
+      handlers.updateFolder(id, name, parentId)
+    )
     ipcMain.handle(IPC.deleteFolder, (_e, id: string) => handlers.deleteFolder(id))
-    ipcMain.handle(IPC.reorderFolder, (_e, id: string, afterId: string | null) => handlers.reorderFolder(id, afterId))
-    ipcMain.handle(IPC.reorderNoteInFolder, (_e, folderId: string, noteId: string, afterId: string | null) => handlers.reorderNoteInFolder(folderId, noteId, afterId))
+    ipcMain.handle(IPC.reorderFolder, (_e, id: string, afterId: string | null) =>
+      handlers.reorderFolder(id, afterId)
+    )
+    ipcMain.handle(
+      IPC.reorderNoteInFolder,
+      (_e, folderId: string, noteId: string, afterId: string | null) =>
+        handlers.reorderNoteInFolder(folderId, noteId, afterId)
+    )
     ipcMain.handle(IPC.listTrashedFolders, () => handlers.listTrashedFolders())
     ipcMain.handle(IPC.restoreFolder, (_e, id: string) => handlers.restoreFolder(id))
-    ipcMain.handle(IPC.permanentDeleteFolder, (_e, id: string) => handlers.permanentDeleteFolder(id))
-    ipcMain.handle(IPC.addNoteFolder, (_e, noteId: string, folderId: string) => handlers.addNoteFolder(noteId, folderId))
-    ipcMain.handle(IPC.removeNoteFolder, (_e, noteId: string, folderId: string) => handlers.removeNoteFolder(noteId, folderId))
+    ipcMain.handle(IPC.permanentDeleteFolder, (_e, id: string) =>
+      handlers.permanentDeleteFolder(id)
+    )
+    ipcMain.handle(IPC.addNoteFolder, (_e, noteId: string, folderId: string) =>
+      handlers.addNoteFolder(noteId, folderId)
+    )
+    ipcMain.handle(IPC.removeNoteFolder, (_e, noteId: string, folderId: string) =>
+      handlers.removeNoteFolder(noteId, folderId)
+    )
     ipcMain.handle(IPC.listTemplates, () => handlers.listTemplates())
-    ipcMain.handle(IPC.createTemplate, (_e, name: string, phase: TemplatePhase, sections: TemplateSection[], autoRun: boolean) => handlers.createTemplate(name, phase, sections, autoRun))
-    ipcMain.handle(IPC.updateTemplate, (_e, id: string, name: string, phase: TemplatePhase, sections: TemplateSection[], autoRun: boolean) => handlers.updateTemplate(id, name, phase, sections, autoRun))
+    ipcMain.handle(
+      IPC.createTemplate,
+      (_e, name: string, phase: TemplatePhase, sections: TemplateSection[], autoRun: boolean) =>
+        handlers.createTemplate(name, phase, sections, autoRun)
+    )
+    ipcMain.handle(
+      IPC.updateTemplate,
+      (
+        _e,
+        id: string,
+        name: string,
+        phase: TemplatePhase,
+        sections: TemplateSection[],
+        autoRun: boolean
+      ) => handlers.updateTemplate(id, name, phase, sections, autoRun)
+    )
     ipcMain.handle(IPC.deleteTemplate, (_e, id: string) => handlers.deleteTemplate(id))
     ipcMain.handle(IPC.retryNote, (_, id: string) => handlers.retryNote(id))
     ipcMain.handle(IPC.processNextNote, (_, id: string) => handlers.processNextNote(id))
     ipcMain.handle(IPC.getDefaultTranscriberStatus, () => handlers.getDefaultTranscriberStatus())
     ipcMain.handle(IPC.listPlugins, () => handlers.listPlugins())
+    ipcMain.handle(
+      IPC.selectTranscriptionPlugin,
+      (_e, req: Parameters<typeof handlers.selectTranscriptionPlugin>[0]) =>
+        handlers.selectTranscriptionPlugin(req)
+    )
+    ipcMain.handle(
+      IPC.saveTranscriptionService,
+      (_e, req: Parameters<typeof handlers.saveTranscriptionService>[0]) =>
+        handlers.saveTranscriptionService(req)
+    )
     ipcMain.handle(IPC.checkPluginHealth, (_e, id: string) => handlers.checkPluginHealth(id))
-    ipcMain.handle(IPC.setStreamingTranscriber, (_e, req: { url: string; token: string }) => handlers.setStreamingTranscriber(req))
+    ipcMain.handle(IPC.setStreamingTranscriber, (_e, req: { url: string; token: string }) =>
+      handlers.setStreamingTranscriber(req)
+    )
     ipcMain.handle(IPC.clearStreamingTranscriber, () => handlers.clearStreamingTranscriber())
     ipcMain.handle(IPC.checkAudioDedup, (_e, audio: ArrayBuffer) => handlers.checkAudioDedup(audio))
-    ipcMain.handle(IPC.listSpeakerAliases, (_e, noteId: string) => handlers.listSpeakerAliases(noteId))
-    ipcMain.handle(IPC.upsertSpeakerAlias, (_e, noteId: string, label: string, aliasName: string) => handlers.upsertSpeakerAlias(noteId, label, aliasName))
-    ipcMain.handle(IPC.getDiarizationReview, (_e, noteId: string) => handlers.getDiarizationReview(noteId))
-    ipcMain.handle(IPC.postDiarizationReview, (_e, noteId: string, body: DiarizationReviewUpdate) => handlers.postDiarizationReview(noteId, body))
-    ipcMain.handle(IPC.listConversations, (_e, noteId?: string) => handlers.listConversations(noteId))
-    ipcMain.handle(IPC.createConversation, (_e, req: CreateConversationRequest) => handlers.createConversation(req))
+    ipcMain.handle(IPC.listSpeakerAliases, (_e, noteId: string) =>
+      handlers.listSpeakerAliases(noteId)
+    )
+    ipcMain.handle(IPC.upsertSpeakerAlias, (_e, noteId: string, label: string, aliasName: string) =>
+      handlers.upsertSpeakerAlias(noteId, label, aliasName)
+    )
+    ipcMain.handle(IPC.getDiarizationReview, (_e, noteId: string) =>
+      handlers.getDiarizationReview(noteId)
+    )
+    ipcMain.handle(IPC.postDiarizationReview, (_e, noteId: string, body: DiarizationReviewUpdate) =>
+      handlers.postDiarizationReview(noteId, body)
+    )
+    ipcMain.handle(IPC.listConversations, (_e, noteId?: string) =>
+      handlers.listConversations(noteId)
+    )
+    ipcMain.handle(IPC.createConversation, (_e, req: CreateConversationRequest) =>
+      handlers.createConversation(req)
+    )
     ipcMain.handle(IPC.getConversation, (_e, id: string) => handlers.getConversation(id))
     ipcMain.handle(IPC.deleteConversation, (_e, id: string) => handlers.deleteConversation(id))
-    ipcMain.handle(IPC.listMessages, (_e, conversationId: string) => handlers.listMessages(conversationId))
-    ipcMain.handle(IPC.sendMessage, (_e, conversationId: string, req: SendMessageRequest) => handlers.sendMessage(conversationId, req))
+    ipcMain.handle(IPC.listMessages, (_e, conversationId: string) =>
+      handlers.listMessages(conversationId)
+    )
+    ipcMain.handle(IPC.sendMessage, (_e, conversationId: string, req: SendMessageRequest) =>
+      handlers.sendMessage(conversationId, req)
+    )
     ipcMain.handle(IPC.resummarize, (_e, id: string) => handlers.resummarize(id))
-    ipcMain.handle(IPC.regenerateSummary, (_e, noteId: string, templateId: string) => handlers.regenerateSummary(noteId, templateId))
+    ipcMain.handle(IPC.regenerateSummary, (_e, noteId: string, templateId: string) =>
+      handlers.regenerateSummary(noteId, templateId)
+    )
     ipcMain.handle(IPC.search, (_e, q: string, opts?: SearchOptions) => handlers.search(q, opts))
     ipcMain.handle(IPC.exportFile, async (_e, defaultName: string, content: string) => {
       const opts = {
@@ -444,46 +701,58 @@ app.whenReady().then(async () => {
       return res.filePath
     })
 
-    ipcMain.handle(IPC.exportNote, async (_e, noteId: string, format: string, options?: ExportRequestOptions) => {
-      try {
-        const exported = await handlers.exportNote(noteId, format, options)
-        const fallbackName = basename(`${noteId}.${format}`)
-        const defaultPath = basename(exported.filename ?? fallbackName)
-        const filterName = format === 'md' ? 'Markdown' : format.toUpperCase()
-        const opts = {
-          defaultPath,
-          filters: [{ name: filterName, extensions: [format] }],
+    ipcMain.handle(
+      IPC.exportNote,
+      async (_e, noteId: string, format: string, options?: ExportRequestOptions) => {
+        try {
+          const exported = await handlers.exportNote(noteId, format, options)
+          const fallbackName = basename(`${noteId}.${format}`)
+          const defaultPath = basename(exported.filename ?? fallbackName)
+          const filterName = format === 'md' ? 'Markdown' : format.toUpperCase()
+          const opts = {
+            defaultPath,
+            filters: [{ name: filterName, extensions: [format] }],
+          }
+          const res = mainWindow
+            ? await dialog.showSaveDialog(mainWindow, opts)
+            : await dialog.showSaveDialog(opts)
+          if (res.canceled || !res.filePath) return { success: false as const, error: 'cancelled' }
+          await writeFile(res.filePath, exported.bytes)
+          return { success: true as const, path: res.filePath }
+        } catch (err) {
+          return {
+            success: false as const,
+            error: err instanceof Error ? err.message : String(err),
+          }
         }
-        const res = mainWindow
-          ? await dialog.showSaveDialog(mainWindow, opts)
-          : await dialog.showSaveDialog(opts)
-        if (res.canceled || !res.filePath) return { success: false as const, error: 'cancelled' }
-        await writeFile(res.filePath, exported.bytes)
-        return { success: true as const, path: res.filePath }
-      } catch (err) {
-        return { success: false as const, error: err instanceof Error ? err.message : String(err) }
       }
-    })
+    )
 
-    ipcMain.handle(IPC.exportFolder, async (_e, folderId: string, format: string, options?: ExportRequestOptions) => {
-      try {
-        const exported = await handlers.exportFolder(folderId, format, options)
-        const fallbackName = basename(`${folderId}.zip`)
-        const defaultPath = basename(exported.filename ?? fallbackName)
-        const opts = {
-          defaultPath,
-          filters: [{ name: 'Zip archive', extensions: ['zip'] }],
+    ipcMain.handle(
+      IPC.exportFolder,
+      async (_e, folderId: string, format: string, options?: ExportRequestOptions) => {
+        try {
+          const exported = await handlers.exportFolder(folderId, format, options)
+          const fallbackName = basename(`${folderId}.zip`)
+          const defaultPath = basename(exported.filename ?? fallbackName)
+          const opts = {
+            defaultPath,
+            filters: [{ name: 'Zip archive', extensions: ['zip'] }],
+          }
+          const res = mainWindow
+            ? await dialog.showSaveDialog(mainWindow, opts)
+            : await dialog.showSaveDialog(opts)
+          if (res.canceled || !res.filePath) return { success: false as const, error: 'cancelled' }
+          await writeFile(res.filePath, exported.bytes)
+          return { success: true as const, path: res.filePath }
+        } catch (err) {
+          return {
+            success: false as const,
+            error: err instanceof Error ? err.message : String(err),
+          }
         }
-        const res = mainWindow
-          ? await dialog.showSaveDialog(mainWindow, opts)
-          : await dialog.showSaveDialog(opts)
-        if (res.canceled || !res.filePath) return { success: false as const, error: 'cancelled' }
-        await writeFile(res.filePath, exported.bytes)
-        return { success: true as const, path: res.filePath }
-      } catch (err) {
-        return { success: false as const, error: err instanceof Error ? err.message : String(err) }
       }
-    })
+    )
 
     ipcMain.handle(IPC.exportAllNotes, async () => {
       const today = new Date().toISOString().slice(0, 10)
@@ -500,7 +769,6 @@ app.whenReady().then(async () => {
     })
 
     meetingDetectionManager.start()
-
   } catch (err) {
     console.error('failed to start embedded supervisor', err)
     pushEmbeddedStartupStatus({

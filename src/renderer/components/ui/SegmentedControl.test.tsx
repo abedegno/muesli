@@ -15,12 +15,12 @@ describe('SegmentedControl', () => {
         value="enhanced"
         onValueChange={onChange}
         options={[
-          { value: 'enhanced', label: 'Enhanced' },
+          { value: 'enhanced', label: 'Summary' },
           { value: 'notes', label: 'My notes' },
         ]}
-      />,
+      />
     )
-    expect(screen.getByRole('radio', { name: 'Enhanced' })).toHaveAttribute('data-state', 'on')
+    expect(screen.getByRole('radio', { name: 'Summary' })).toHaveAttribute('data-state', 'on')
     await userEvent.click(screen.getByRole('radio', { name: 'My notes' }))
     expect(onChange).toHaveBeenCalledWith('notes')
   })

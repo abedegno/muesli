@@ -9,6 +9,7 @@ type FakeWebSocketInstance = EventEmitter & {
   url: string
   options?: FakeWebSocketOptions
   readyState: number
+  bufferedAmount: number
   sent: Buffer[]
   closeCalls: number
   open: () => void
@@ -29,12 +30,13 @@ vi.mock('ws', () => ({
     static readonly CLOSED = 3
 
     public readyState = FakeWebSocket.CONNECTING
+    public bufferedAmount = 0
     public sent: Buffer[] = []
     public closeCalls = 0
 
     constructor(
       public readonly url: string,
-      public readonly options?: FakeWebSocketOptions,
+      public readonly options?: FakeWebSocketOptions
     ) {
       super()
       websocketState.websocketInstances.push(this as unknown as FakeWebSocketInstance)
@@ -66,7 +68,12 @@ async function loadRelay() {
   return await import('./noteStreamRelay')
 }
 
-function makeRelay(config: { serverUrl: string; token: string } | null = { serverUrl: 'http://server', token: 'secret' }) {
+function makeRelay(
+  config: { serverUrl: string; token: string } | null = {
+    serverUrl: 'http://server',
+    token: 'secret',
+  }
+) {
   const emit = vi.fn()
   const getConfig = vi.fn(() => config)
   return {
@@ -103,6 +110,8 @@ describe('NoteStreamRelay', () => {
     expect(websocketState.websocketCalls[0]).toEqual({
       url: 'http://server/api/notes/note-1/stream',
       options: {
+        handshakeTimeout: 10_000,
+        maxPayload: 1024 * 1024,
         headers: {
           Authorization: 'Bearer secret',
         },
@@ -115,11 +124,7 @@ describe('NoteStreamRelay', () => {
     relay.sendAudio('note-1', Uint8Array.from([4, 5, 6]).buffer)
 
     expect(emit).toHaveBeenCalledWith({ noteId: 'note-1', type: 'live' })
-    expect(socket.sent).toEqual([
-      Buffer.from([1, 2]),
-      Buffer.from([3]),
-      Buffer.from([4, 5, 6]),
-    ])
+    expect(socket.sent).toEqual([Buffer.from([1, 2]), Buffer.from([3]), Buffer.from([4, 5, 6])])
   })
 
   it('ignores unknown or already-closed notes without throwing or forwarding', async () => {
@@ -155,21 +160,46 @@ describe('NoteStreamRelay', () => {
     expect(socket.closeCalls).toBe(0)
   })
 
+  it('drops a live stream when its pre-connect queue fills instead of retaining audio indefinitely', async () => {
+    const { emit, relayFactory } = makeRelay()
+    const relay = await relayFactory()
+    relay.start('note-1')
+    const socket = websocketState.websocketInstances[0]
+    for (let i = 0; i < 51; i++) relay.sendAudio('note-1', new ArrayBuffer(6400))
+    expect(emit).toHaveBeenCalledWith({ noteId: 'note-1', type: 'dropped' })
+    socket.open()
+    expect(socket.sent).toEqual([])
+  })
+
+  it('stops forwarding when the transport cannot drain its buffer', async () => {
+    const { emit, relayFactory } = makeRelay()
+    const relay = await relayFactory()
+    relay.start('note-1')
+    const socket = websocketState.websocketInstances[0]
+    socket.open()
+    socket.bufferedAmount = 320000
+    relay.sendAudio('note-1', new ArrayBuffer(6400))
+    expect(emit).toHaveBeenCalledWith({ noteId: 'note-1', type: 'dropped' })
+    expect(socket.sent).toEqual([])
+    relay.sendAudio('note-1', new ArrayBuffer(6400))
+    expect(socket.sent).toEqual([])
+  })
+
   it('relays loading without closing the connection', async () => {
-	const { emit, relayFactory } = makeRelay()
-	const relay = await relayFactory()
-	relay.start('note-1')
-	const socket = websocketState.websocketInstances[0]
-	socket.open()
+    const { emit, relayFactory } = makeRelay()
+    const relay = await relayFactory()
+    relay.start('note-1')
+    const socket = websocketState.websocketInstances[0]
+    socket.open()
 
-	socket.emit('message', Buffer.from(JSON.stringify({ type: 'loading' })))
+    socket.emit('message', Buffer.from(JSON.stringify({ type: 'loading' })))
 
-	expect(emit).toHaveBeenCalledWith({ noteId: 'note-1', type: 'loading' })
-	expect(socket.closeCalls).toBe(0)
-	socket.emit('message', Buffer.from(JSON.stringify({ type: 'ready' })))
-	expect(emit).toHaveBeenCalledWith({ noteId: 'note-1', type: 'live' })
-	relay.sendAudio('note-1', Uint8Array.from([1]).buffer)
-	expect(socket.sent).toEqual([Buffer.from([1])])
+    expect(emit).toHaveBeenCalledWith({ noteId: 'note-1', type: 'loading' })
+    expect(socket.closeCalls).toBe(0)
+    socket.emit('message', Buffer.from(JSON.stringify({ type: 'ready' })))
+    expect(emit).toHaveBeenCalledWith({ noteId: 'note-1', type: 'live' })
+    relay.sendAudio('note-1', Uint8Array.from([1]).buffer)
+    expect(socket.sent).toEqual([Buffer.from([1])])
   })
 
   it('releases the active stream on stop and makes later sends no-ops', async () => {

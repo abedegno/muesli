@@ -28,5 +28,11 @@ func (s *Server) handleCapabilities(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"agent_configured": configured})
+	uid, _ := userIDFromContext(r.Context())
+	admin, err := s.deps.Store.IsAdmin(r.Context(), uid)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not check account permissions")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"agent_configured": configured, "is_admin": admin, "user_id": uid})
 }

@@ -1,5 +1,6 @@
+import { uiText, useLocale, getDisplayLanguage } from '@/i18n'
 import { lazy, Suspense, useEffect, useState } from 'react'
-import { Routes, Route, Navigate, useLocation, useNavigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { muesli } from './api'
 import { EmbeddedStartupGate } from './components/StartupScreen'
 import { SetupWizard } from './components/SetupWizard'
@@ -8,20 +9,46 @@ import { ConnectScreen } from './components/ConnectScreen'
 import { NotesListScreen } from './components/NotesListScreen'
 import { AnnouncerProvider, AriaAnnouncer } from './components/AriaAnnouncer'
 
-const NewMeetingScreen = lazy(() => import('./components/NewMeetingScreen').then(m => ({ default: m.NewMeetingScreen })))
-const HomeScreen = lazy(() => import('./components/HomeScreen').then(m => ({ default: m.HomeScreen })))
-const SettingsScreen = lazy(() => import('./components/SettingsScreen').then(m => ({ default: m.SettingsScreen })))
-const TemplatesScreen = lazy(() => import('./components/TemplatesScreen').then(m => ({ default: m.TemplatesScreen })))
-const TrashScreen = lazy(() => import('./components/TrashScreen').then(m => ({ default: m.TrashScreen })))
-const TagsPage = lazy(() => import('./components/TagsPage').then(m => ({ default: m.TagsPage })))
-const ChatScreen = lazy(() => import('./components/chat/ChatScreen').then(m => ({ default: m.ChatScreen })))
-const PeopleScreen = lazy(() => import('./components/PeopleScreen').then(m => ({ default: m.PeopleScreen })))
-const InsightsScreen = lazy(() => import('./components/InsightsScreen').then(m => ({ default: m.InsightsScreen })))
-const SearchScreen = lazy(() => import('./components/SearchScreen').then(m => ({ default: m.SearchScreen })))
-const ActionItemsScreen = lazy(() => import('./components/ActionItemsScreen').then(m => ({ default: m.ActionItemsScreen })))
-const PersonDetailScreen = lazy(() => import('./components/PersonDetailScreen').then(m => ({ default: m.PersonDetailScreen })))
-const CompanyDetailScreen = lazy(() => import('./components/CompanyDetailScreen').then(m => ({ default: m.CompanyDetailScreen })))
-const NoteScreen = lazy(() => import('./components/NoteScreen').then((m) => ({ default: m.NoteScreen })))
+const NewMeetingScreen = lazy(() =>
+  import('./components/NewMeetingScreen').then((m) => ({ default: m.NewMeetingScreen }))
+)
+const HomeScreen = lazy(() =>
+  import('./components/HomeScreen').then((m) => ({ default: m.HomeScreen }))
+)
+const SettingsScreen = lazy(() =>
+  import('./components/SettingsScreen').then((m) => ({ default: m.SettingsScreen }))
+)
+const TemplatesScreen = lazy(() =>
+  import('./components/TemplatesScreen').then((m) => ({ default: m.TemplatesScreen }))
+)
+const TrashScreen = lazy(() =>
+  import('./components/TrashScreen').then((m) => ({ default: m.TrashScreen }))
+)
+const TagsPage = lazy(() => import('./components/TagsPage').then((m) => ({ default: m.TagsPage })))
+const ChatScreen = lazy(() =>
+  import('./components/chat/ChatScreen').then((m) => ({ default: m.ChatScreen }))
+)
+const PeopleScreen = lazy(() =>
+  import('./components/PeopleScreen').then((m) => ({ default: m.PeopleScreen }))
+)
+const InsightsScreen = lazy(() =>
+  import('./components/InsightsScreen').then((m) => ({ default: m.InsightsScreen }))
+)
+const SearchScreen = lazy(() =>
+  import('./components/SearchScreen').then((m) => ({ default: m.SearchScreen }))
+)
+const ActionItemsScreen = lazy(() =>
+  import('./components/ActionItemsScreen').then((m) => ({ default: m.ActionItemsScreen }))
+)
+const PersonDetailScreen = lazy(() =>
+  import('./components/PersonDetailScreen').then((m) => ({ default: m.PersonDetailScreen }))
+)
+const CompanyDetailScreen = lazy(() =>
+  import('./components/CompanyDetailScreen').then((m) => ({ default: m.CompanyDetailScreen }))
+)
+const NoteScreen = lazy(() =>
+  import('./components/NoteScreen').then((m) => ({ default: m.NoteScreen }))
+)
 
 function AppContent() {
   const [connected, setConnected] = useState<boolean | null>(null)
@@ -65,9 +92,7 @@ function AppContent() {
   return (
     <AnnouncerProvider>
       <AriaAnnouncer />
-      {connected === null && (
-        <div className="p-8 text-muted-foreground">Loading…</div>
-      )}
+      {connected === null && <div className="p-8 text-muted-foreground">{uiText('Loading…')}</div>}
       {connected === false && (
         <ConnectScreen
           onConnected={() => {
@@ -86,7 +111,7 @@ function AppContent() {
         />
       )}
       {connected === true && onboarded === true && (
-        <Suspense fallback={<div className="p-8 text-muted-foreground">Loading…</div>}>
+        <Suspense fallback={<div className="p-8 text-muted-foreground">{uiText('Loading…')}</div>}>
           <Routes>
             <Route element={<AppLayout />}>
               <Route path="/" element={<HomeScreen />} />
@@ -125,20 +150,20 @@ function AppContent() {
         </Suspense>
       )}
       {connected === true && onboarded === null && (
-        <div className="p-8 text-muted-foreground">Loading…</div>
+        <div className="p-8 text-muted-foreground">{uiText('Loading…')}</div>
       )}
     </AnnouncerProvider>
   )
 }
 
 export function App() {
-  const navigate = useNavigate()
-  const location = useLocation()
+  const locale = useLocale()
+  useEffect(() => {
+    document.documentElement.lang = getDisplayLanguage()
+    document.documentElement.dir = 'ltr'
+  }, [locale])
   return (
-    <EmbeddedStartupGate
-      hideDegradedBanner={location.pathname === '/settings'}
-      onOpenAiSettings={() => navigate('/settings#ai-transcription')}
-    >
+    <EmbeddedStartupGate hideDegradedBanner>
       <AppContent />
     </EmbeddedStartupGate>
   )

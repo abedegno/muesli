@@ -1,9 +1,62 @@
-import { createHash } from 'node:crypto'
+import type { CalendarReadiness } from '../shared/types'
+import type { ServiceReadinessSnapshot } from '../shared/readiness'
+import { recordingScope, type RecordingJournal } from './recordingJournal'
+import type { RecordingRecoveryStore } from './recordingRecovery'
+import type { RecordingRecoveryInfo } from '../shared/types'
+import { createHash, randomUUID } from 'node:crypto'
 import { writeFile } from 'node:fs/promises'
 import JSZip from 'jszip'
 import { fullNoteToMarkdown } from '../renderer/lib/noteMarkdown'
-import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, DigestConfig, DiarizationReview, Folder, FullNote, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, Plugin, PluginHealth, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchResult, ServerConfig, Share, SmartList, SpeakerAlias, Template, TemplateSection } from '../shared/types'
-import type { ConnectRequest, CreateConversationRequest, CreateConversationResponse, DiarizationReviewUpdate, ExportRequestOptions, ListNoteActionItemsResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdateActionItemRequest, UpdatePersonRequest, UploadAudioRequest } from '../shared/ipc'
+import type {
+  ActionItem,
+  AudioUrlGrant,
+  CalendarEvent,
+  CompanyWithCount,
+  CompanyWithPeople,
+  Conversation,
+  CreateShareRequest,
+  CreateShareResponse,
+  DigestConfig,
+  DiarizationReview,
+  Folder,
+  FullNote,
+  GoogleOAuthStatus,
+  InsightsResponse,
+  Message,
+  MicrosoftOAuthStatus,
+  Note,
+  NoteLink,
+  NoteLinksResponse,
+  PersonWithCompany,
+  Plugin,
+  PluginHealth,
+  PluginStatus,
+  RelatedNote,
+  RetranscribeNoteRequest,
+  RetranscribeNoteResponse,
+  RuleGroup,
+  SearchResult,
+  ServerConfig,
+  Share,
+  SmartList,
+  SpeakerAlias,
+  Template,
+  TemplateSection,
+} from '../shared/types'
+import type {
+  ConnectRequest,
+  CreateConversationRequest,
+  CreateConversationResponse,
+  DiarizationReviewUpdate,
+  ExportRequestOptions,
+  ListNoteActionItemsResponse,
+  SearchOptions,
+  SendMessageRequest,
+  SendMessageResponse,
+  UpdateActionItemRequest,
+  UpdatePersonRequest,
+  UploadAudioRequest,
+} from '../shared/ipc'
 import { INSECURE_CONNECTION_CODE, isInsecureRemote } from '../shared/url'
 import type { AuthInvalidatedNotice } from '../shared/ipc'
 import type { UploadProgress } from './uploadMachine'
@@ -15,6 +68,8 @@ import { TokenStore } from './tokenStore'
 
 interface HandlerDeps {
   tokenStore: TokenStore
+  recordingJournal?: RecordingJournal
+  recordingRecovery?: RecordingRecoveryStore
   fetch?: FetchLike
   onProgress: (p: UploadProgress) => void
   onAuthInvalidated?: (notice: AuthInvalidatedNotice) => void
@@ -23,10 +78,19 @@ interface HandlerDeps {
   embeddedBaseUrl?: string
   secretStore?: Pick<
     SecretStore,
-    'loadCreds' | 'saveCreds' | 'clearCreds' | 'getManualServer' | 'setManualServer' | 'getOnboarded' | 'setOnboarded'
-    | 'getKeepRunningInBackground' | 'setKeepRunningInBackground'
+    | 'loadCreds'
+    | 'saveCreds'
+    | 'clearCreds'
+    | 'getManualServer'
+    | 'setManualServer'
+    | 'getOnboarded'
+    | 'setOnboarded'
+    | 'getKeepRunningInBackground'
+    | 'setKeepRunningInBackground'
   >
-  makeClient?: (baseUrl: string) => Pick<MuesliClient, 'setupNeeded' | 'setup' | 'login' | 'createToken'>
+  makeClient?: (
+    baseUrl: string
+  ) => Pick<MuesliClient, 'setupNeeded' | 'setup' | 'login' | 'createToken'>
   generatePassword?: () => string
   log?: (msg: string, err?: unknown) => void
 }
@@ -47,7 +111,9 @@ interface Handlers {
   listPeople(): Promise<PersonWithCompany[]>
   listCompanies(): Promise<CompanyWithCount[]>
   getInsights(from?: string, to?: string): Promise<InsightsResponse>
-  getCapabilities(): Promise<{ agentConfigured: boolean }>
+  getServiceReadiness(): Promise<ServiceReadinessSnapshot>
+  retryAIModels(): Promise<void>
+  getCapabilities(): Promise<{ agentConfigured: boolean; isAdmin?: boolean; userId?: string }>
   listNoteActionItems(noteId: string): Promise<ListNoteActionItemsResponse>
   listNoteLinks(id: string): Promise<NoteLinksResponse>
   listRelatedNotes(id: string): Promise<RelatedNote[]>
@@ -62,8 +128,9 @@ interface Handlers {
   getCompany(id: string): Promise<CompanyWithPeople>
   getFull(id: string): Promise<FullNote>
   createNote(title: string): Promise<Note>
-  startNoteCapture(id: string): Promise<Note>
-  updateBody(id: string, content: string): Promise<void>
+  startNoteCapture(id: string, captureId?: string): Promise<Note>
+  stopNoteCapture(id: string, captureId?: string): Promise<Note>
+  updateBody(id: string, content: string, connectionId?: string): Promise<void>
   updateTitle(id: string, title: string): Promise<void>
   deleteNote(id: string): Promise<void>
   duplicateNote(id: string): Promise<Note>
@@ -79,6 +146,16 @@ interface Handlers {
   revokeShare(token: string): Promise<void>
   permanentDeleteNote(id: string): Promise<void>
   getNoteAudioUrl(noteId: string): Promise<AudioUrlGrant | null>
+  beginRecordingJournal(noteId: string): Promise<string>
+  appendRecordingJournal(captureId: string, frame: ArrayBuffer): Promise<void>
+  endRecordingJournal(captureId: string): Promise<void>
+  listRecordingRecoveries(): Promise<RecordingRecoveryInfo[]>
+  recoveryAudio(noteId: string): Promise<{ bytes: Uint8Array; mimeType: string }>
+  recoverNoteCapture(id: string): Promise<Note>
+  saveRecordingRecovery(req: UploadAudioRequest): Promise<RecordingRecoveryInfo | null>
+  getRecordingRecovery(noteId: string): Promise<RecordingRecoveryInfo | null>
+  retryRecordingUpload(noteId: string): Promise<{ noteId: string }>
+  discardRecordingRecovery(noteId: string): Promise<void>
   uploadAudio(req: UploadAudioRequest): Promise<{ noteId: string }>
   addTag(noteId: string, name: string): Promise<{ id: string; name: string }>
   removeTag(noteId: string, name: string): Promise<void>
@@ -104,23 +181,55 @@ interface Handlers {
   addNoteFolder(noteId: string, folderId: string): Promise<void>
   removeNoteFolder(noteId: string, folderId: string): Promise<void>
   listTemplates(): Promise<Template[]>
-  createTemplate(name: string, phase: Template['phase'], sections: TemplateSection[], autoRun: boolean): Promise<Template>
-  updateTemplate(id: string, name: string, phase: Template['phase'], sections: TemplateSection[], autoRun: boolean): Promise<void>
+  createTemplate(
+    name: string,
+    phase: Template['phase'],
+    sections: TemplateSection[],
+    autoRun: boolean
+  ): Promise<Template>
+  updateTemplate(
+    id: string,
+    name: string,
+    phase: Template['phase'],
+    sections: TemplateSection[],
+    autoRun: boolean
+  ): Promise<void>
   deleteTemplate(id: string): Promise<void>
-  exportNote(noteId: string, format: string, options?: ExportRequestOptions): Promise<NoteExportData>
-  exportFolder(folderId: string, format: string, options?: ExportRequestOptions): Promise<NoteExportData>
+  exportNote(
+    noteId: string,
+    format: string,
+    options?: ExportRequestOptions
+  ): Promise<NoteExportData>
+  exportFolder(
+    folderId: string,
+    format: string,
+    options?: ExportRequestOptions
+  ): Promise<NoteExportData>
   retryNote(id: string): Promise<void>
   processNextNote(id: string): Promise<void>
   resummarize(id: string): Promise<void>
   regenerateSummary(noteId: string, templateId: string): Promise<void>
   search(q: string, opts?: SearchOptions): Promise<SearchResult>
-  exportAllNotes(savePath: string): Promise<{ success: true; path: string } | { success: false; error: string }>
+  exportAllNotes(
+    savePath: string
+  ): Promise<{ success: true; path: string } | { success: false; error: string }>
   getDefaultTranscriberStatus(): Promise<PluginStatus>
   listPlugins(): Promise<Plugin[]>
+  selectTranscriptionPlugin(req: {
+    kind: 'transcriber' | 'streaming-transcriber'
+    pluginId: string | null
+  }): Promise<void>
+  saveTranscriptionService(req: {
+    kind: 'transcriber' | 'streaming-transcriber'
+    url: string
+    token: string
+  }): Promise<Plugin>
   checkPluginHealth(id: string): Promise<PluginHealth>
   setStreamingTranscriber(req: { url: string; token: string }): Promise<Plugin>
   clearStreamingTranscriber(): Promise<void>
-  checkAudioDedup(audio: ArrayBuffer): Promise<{ existingNoteId?: string; existingNoteTitle?: string }>
+  checkAudioDedup(
+    audio: ArrayBuffer
+  ): Promise<{ existingNoteId?: string; existingNoteTitle?: string }>
   listSpeakerAliases(noteId: string): Promise<SpeakerAlias[]>
   upsertSpeakerAlias(noteId: string, label: string, aliasName: string): Promise<SpeakerAlias>
   getDiarizationReview(noteId: string): Promise<DiarizationReview>
@@ -131,6 +240,7 @@ interface Handlers {
   deleteConversation(id: string): Promise<void>
   listMessages(conversationId: string): Promise<Message[]>
   sendMessage(conversationId: string, req: SendMessageRequest): Promise<SendMessageResponse>
+  getCalendarReadiness(): Promise<CalendarReadiness>
   getCalendarEvents(from: string, to: string): Promise<CalendarEvent[]>
   getGoogleCalendarOAuthStatus(): Promise<GoogleOAuthStatus>
   openGoogleCalendarOAuthStart(): Promise<void>
@@ -140,7 +250,8 @@ interface Handlers {
   updateDigestConfig(cadence: DigestConfig['cadence']): Promise<DigestConfig>
 }
 
-const AUTH_INVALIDATED_MESSAGE = 'Your saved sign-in is no longer valid for this server. Sign in again to reconnect.'
+const AUTH_INVALIDATED_MESSAGE =
+  'Your saved sign-in is no longer valid for this server. Sign in again to reconnect.'
 
 class AuthInvalidatedError extends Error {
   readonly code = 'AUTH_INVALIDATED' as const
@@ -181,7 +292,7 @@ async function withApiError<T>(fn: () => Promise<T>): Promise<T> {
 
 function handleAuthedError(
   err: unknown,
-  deps: Pick<HandlerDeps, 'tokenStore' | 'onAuthInvalidated'>,
+  deps: Pick<HandlerDeps, 'tokenStore' | 'onAuthInvalidated'>
 ): never {
   if (err instanceof ApiError) {
     if (err.status === 401) {
@@ -220,11 +331,18 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       setKeepRunningInBackground: () => {},
     } satisfies Pick<
       SecretStore,
-      'loadCreds' | 'saveCreds' | 'clearCreds' | 'getManualServer' | 'setManualServer' | 'getOnboarded' | 'setOnboarded' | 'getKeepRunningInBackground' | 'setKeepRunningInBackground'
+      | 'loadCreds'
+      | 'saveCreds'
+      | 'clearCreds'
+      | 'getManualServer'
+      | 'setManualServer'
+      | 'getOnboarded'
+      | 'setOnboarded'
+      | 'getKeepRunningInBackground'
+      | 'setKeepRunningInBackground'
     >)
   const makeClient =
-    deps.makeClient ??
-    ((baseUrl: string) => new MuesliClient({ baseUrl, fetch: fetchImpl }))
+    deps.makeClient ?? ((baseUrl: string) => new MuesliClient({ baseUrl, fetch: fetchImpl }))
   const localSessionDeps = {
     embedded: deps.embedded ?? false,
     baseUrl: deps.embeddedBaseUrl ?? '',
@@ -266,6 +384,33 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     }) as MuesliClient
   }
 
+  let connectionId = randomUUID()
+  const captures = new Map<
+    string,
+    {
+      config: ServerConfig
+      client: MuesliClient
+      noteId: string
+      lastHeartbeat: number
+      pending: boolean
+    }
+  >()
+  function captureConfig(captureId?: string): ServerConfig | null {
+    if (captureId) {
+      const capture = captures.get(captureId)
+      if (!capture)
+        throw new Error(
+          'Recording session is no longer available. Open the saved recording to retry.'
+        )
+      return capture.config
+    }
+    return recoveryConfig()
+  }
+  function recoveryConfig(): ServerConfig | null {
+    const config = tokenStore.load()
+    return config ? { ...config, manualServer: secretStore.getManualServer() } : null
+  }
+
   return {
     async getConfig() {
       try {
@@ -273,8 +418,23 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       } catch (err) {
         deps.log?.('ensureLocalSession failed', err)
       }
-      const cfg = tokenStore.load()
+      let cfg = tokenStore.load()
       if (!cfg) return null
+      if (!cfg.userId) {
+        try {
+          const identity = await authedClient().getCapabilities()
+          if (identity.userId) {
+            await deps.recordingRecovery?.bindAccount(
+              { ...cfg, manualServer: secretStore.getManualServer() },
+              identity.userId
+            )
+            cfg = { ...cfg, userId: identity.userId }
+            tokenStore.save(cfg)
+          }
+        } catch (error) {
+          deps.log?.('Could not bind saved recordings to the account yet', error)
+        }
+      }
       return { ...cfg, manualServer: secretStore.getManualServer() }
     },
 
@@ -353,19 +513,45 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       }
       const session = await onboarding.login(req.email, req.password)
       const appToken = await onboarding.createToken('muesli-desktop', session)
-      tokenStore.save({ serverUrl: req.serverUrl, token: appToken })
+      const identity = await new MuesliClient({
+        baseUrl: req.serverUrl,
+        token: appToken,
+        fetch: fetchImpl,
+      })
+        .getCapabilities()
+        .catch(() => null)
+      const previous = tokenStore.load()
+      const wasManual = secretStore.getManualServer()
+      try {
+        secretStore.setManualServer(true)
+        tokenStore.save({
+          serverUrl: req.serverUrl,
+          token: appToken,
+          ...(identity?.userId ? { userId: identity.userId } : {}),
+        })
+      } catch (error) {
+        try {
+          secretStore.setManualServer(wasManual)
+          if (previous) tokenStore.save(previous)
+          else tokenStore.clear()
+        } catch (restoreError) {
+          deps.log?.('Could not restore previous connection', restoreError)
+        }
+        throw error
+      }
+      connectionId = randomUUID()
       return { serverUrl: req.serverUrl }
     },
 
     async disconnect() {
+      connectionId = randomUUID()
       tokenStore.clear()
-      secretStore.clearCreds()
       secretStore.setManualServer(true)
     },
 
     async resetToBuiltIn() {
+      connectionId = randomUUID()
       tokenStore.clear()
-      secretStore.clearCreds()
       secretStore.setManualServer(false)
     },
 
@@ -385,6 +571,12 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       return authedClient().getInsights(from, to)
     },
 
+    async getServiceReadiness() {
+      return authedClient().getServiceReadiness()
+    },
+    async retryAIModels() {
+      await authedClient().retryAIModels()
+    },
     async getCapabilities() {
       return authedClient().getCapabilities()
     },
@@ -437,6 +629,9 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       return authedClient().getCompany(id)
     },
 
+    async getCalendarReadiness() {
+      return authedClient().getCalendarReadiness()
+    },
     async getCalendarEvents(from, to) {
       return authedClient().getCalendarEvents(from, to)
     },
@@ -476,18 +671,31 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     },
 
     async getFull(id) {
-      return authedClient().getFull(id)
+      const context = connectionId
+      const full = await authedClient().getFull(id)
+      return { ...full, connectionId: context }
     },
 
     async createNote(title) {
       return authedClient().createNote(title)
     },
 
-    async startNoteCapture(id) {
-      return authedClient().startNoteCapture(id)
+    async stopNoteCapture(id, captureId) {
+      return (
+        captureId ? (captures.get(captureId)?.client ?? authedClient()) : authedClient()
+      ).stopNoteCapture(id, captureId)
+    },
+    async startNoteCapture(id, captureId) {
+      return (
+        captureId ? (captures.get(captureId)?.client ?? authedClient()) : authedClient()
+      ).startNoteCapture(id, captureId)
     },
 
-    async updateBody(id, content) {
+    async updateBody(id, content, expectedConnection) {
+      if (expectedConnection && expectedConnection !== connectionId)
+        throw new Error(
+          'The connection changed before these notes could be saved. Return to the original server to save them.'
+        )
       await authedClient().putBody(id, content)
     },
 
@@ -548,21 +756,204 @@ export function createHandlers(deps: HandlerDeps): Handlers {
         const status = getErrorStatus(err)
         if (status === 404) return null
         if (status != null) {
-          const message = err instanceof Error ? err.message.replace(/^\[\d+\]\s*/, '') : 'request failed'
+          const message =
+            err instanceof Error ? err.message.replace(/^\[\d+\]\s*/, '') : 'request failed'
           throw makeStatusError(status, message)
         }
         throw err
       }
     },
 
-    async uploadAudio(req) {
+    async beginRecordingJournal(noteId) {
+      const config = recoveryConfig()
+      if (!config || !deps.recordingJournal) throw new Error('Recording recovery is unavailable.')
+      if (captures.size >= 10)
+        throw new Error('Too many pending recordings. Recover or discard them first.')
+      const client = new MuesliClient({
+        baseUrl: config.serverUrl,
+        token: config.token,
+        fetch: fetchImpl,
+      })
+      await client.getFull(noteId)
+      if (
+        (await deps.recordingRecovery?.info(config, noteId)) ||
+        (await deps.recordingJournal.list(config)).some((item) => item.noteId === noteId)
+      )
+        throw new Error('Recover or discard the saved audio for this note before recording again.')
+      const captureId = await deps.recordingJournal.begin(config, noteId)
+      captures.set(captureId, { config, client, noteId, lastHeartbeat: Date.now(), pending: false })
+      return captureId
+    },
+    async appendRecordingJournal(captureId, frame) {
+      const capture = captures.get(captureId)
+      if (!capture || !deps.recordingJournal)
+        throw new Error('Recording session is no longer current.')
+      await deps.recordingJournal.append(captureId, frame)
+      if (
+        capture.config.userId &&
+        !capture.pending &&
+        Date.now() - capture.lastHeartbeat >= 20_000
+      ) {
+        capture.pending = true
+        capture.lastHeartbeat = Date.now()
+        void capture.client
+          .heartbeatCapture(capture.noteId, captureId)
+          .catch((error) => deps.log?.('Recording heartbeat failed', error))
+          .finally(() => {
+            capture.pending = false
+          })
+      }
+    },
+    async endRecordingJournal(captureId) {
+      if ((await deps.recordingJournal?.end(captureId)) === false) captures.delete(captureId)
+    },
+    async recoveryAudio(noteId) {
+      const config = recoveryConfig()
+      if (!config) throw new Error('Connect to the recording’s account first.')
+      const full = await deps.recordingRecovery?.load(config, noteId)
+      if (full?.audio) return { bytes: full.audio, mimeType: full.info.mimeType }
+      const partial = await deps.recordingJournal?.recover(config, noteId)
+      if (partial) return { bytes: partial.audio, mimeType: 'audio/wav' }
+      throw new Error('No saved recording is available for this note.')
+    },
+    async listRecordingRecoveries() {
+      const config = recoveryConfig()
+      if (!config) return []
+      const completed = (await deps.recordingRecovery?.list(config)) ?? []
+      const partial = (await deps.recordingJournal?.list(config)) ?? []
+      return [...completed, ...partial.filter((p) => !completed.some((c) => c.noteId === p.noteId))]
+    },
+    async recoverNoteCapture(id) {
+      return authedClient().recoverNoteCapture(id)
+    },
+    async saveRecordingRecovery(req) {
+      const config = captureConfig(req.captureId)
+      if (!config || !deps.recordingRecovery || !req.audio) return null
+      await deps.recordingRecovery.save(
+        config,
+        req.noteId,
+        new Uint8Array(req.audio),
+        req.audioMimeType ?? 'audio/webm',
+        req.captureId
+      )
+      await deps.recordingJournal?.discard(config, req.noteId, req.captureId)
+      return deps.recordingRecovery.info(config, req.noteId)
+    },
+    async getRecordingRecovery(noteId) {
+      const config = recoveryConfig()
+      if (!config) return null
+      return (
+        (await deps.recordingRecovery?.info(config, noteId)) ??
+        (await deps.recordingJournal?.list(config))?.find((info) => info.noteId === noteId) ??
+        null
+      )
+    },
+    async discardRecordingRecovery(noteId) {
+      const config = recoveryConfig()
+      if (config) {
+        await deps.recordingRecovery?.remove(config, noteId)
+        await deps.recordingJournal?.discard(config, noteId)
+        for (const [captureId, capture] of captures)
+          if (
+            capture.noteId === noteId &&
+            recordingScope(capture.config) === recordingScope(config)
+          )
+            captures.delete(captureId)
+      }
+    },
+    async retryRecordingUpload(noteId) {
+      const config = recoveryConfig()
+      if (!config || !deps.recordingRecovery)
+        throw new Error('No saved recording is available for this connection.')
+      let saved = await deps.recordingRecovery.load(config, noteId)
       const client = authedClient()
+      if (!saved) {
+        const partial = await deps.recordingJournal?.recover(config, noteId)
+        if (partial) {
+          const full = await client.getFull(noteId)
+          if (full.note.status === 'recording')
+            await client.stopNoteCapture(noteId, partial.captureId)
+          await deps.recordingRecovery.save(
+            config,
+            noteId,
+            partial.audio,
+            'audio/wav',
+            partial.captureId
+          )
+          await deps.recordingJournal?.discard(config, noteId, partial.captureId)
+          saved = await deps.recordingRecovery.load(config, noteId)
+        }
+      }
+      if (saved?.audio) {
+        const full = await client.getFull(noteId)
+        if (full.note.status === 'recording') {
+          if (saved.info.captureId) await client.stopNoteCapture(noteId, saved.info.captureId)
+          else await client.recoverNoteCapture(noteId)
+        }
+      }
+      if (!saved?.audio) throw new Error('No saved recording is available for this note.')
+      // If confirmation succeeded before its response was lost, do not enqueue
+      // another transcription or overwrite the already-uploaded recording.
+      try {
+        const uploaded = await client.getNoteAudioUrl(noteId)
+        if (!saved.info.uploadKey || uploaded.key !== saved.info.uploadKey)
+          throw new Error(
+            'This note already contains another recording. Your recovery audio has been kept; save an audio copy before choosing how to use it.'
+          )
+        await deps.recordingRecovery
+          .remove(config, noteId, saved.info.revision)
+          .catch((error) => deps.log?.('Could not remove uploaded recording backup', error))
+        onProgress({ noteId, phase: 'done' })
+        if (saved.info.captureId) captures.delete(saved.info.captureId)
+        return { noteId }
+      } catch (error) {
+        if (getErrorStatus(error) !== 404) throw error
+      }
+      const result = await uploadAudioToNote(
+        client,
+        { noteId, audio: saved.audio, audioMimeType: saved.info.mimeType },
+        onProgress,
+        (key) => deps.recordingRecovery!.setUploadKey(config, noteId, saved!.info.revision, key)
+      )
+      if (saved.info.captureId) captures.delete(saved.info.captureId)
+      await deps.recordingRecovery
+        .remove(config, noteId, saved.info.revision)
+        .catch((error) => deps.log?.('Could not remove uploaded recording backup', error))
+      return result
+    },
+    async uploadAudio(req) {
+      const config = captureConfig(req.captureId)
+      const client =
+        req.captureId && config
+          ? new MuesliClient({ baseUrl: config.serverUrl, token: config.token, fetch: fetchImpl })
+          : authedClient()
       const audio = req.audio ? new Uint8Array(req.audio) : null
-      return uploadAudioToNote(
+      let revision: string | undefined
+      if (audio?.length && config && deps.recordingRecovery) {
+        revision = await deps.recordingRecovery.save(
+          config,
+          req.noteId,
+          audio,
+          req.audioMimeType ?? 'audio/webm',
+          req.captureId
+        )
+        await deps.recordingJournal?.discard(config, req.noteId, req.captureId)
+      }
+      const result = await uploadAudioToNote(
         client,
         { noteId: req.noteId, audio, audioMimeType: req.audioMimeType },
         onProgress,
+        async (key) => {
+          if (config && revision)
+            await deps.recordingRecovery?.setUploadKey(config, req.noteId, revision, key)
+        }
       )
+      if (req.captureId) captures.delete(req.captureId)
+      if (config && revision)
+        await deps.recordingRecovery
+          ?.remove(config, req.noteId, revision)
+          .catch((error) => deps.log?.('Could not remove uploaded recording backup', error))
+      return result
     },
 
     async addTag(noteId, name) {
@@ -692,6 +1083,12 @@ export function createHandlers(deps: HandlerDeps): Handlers {
 
     async listPlugins() {
       return authedClient().listPlugins()
+    },
+    async selectTranscriptionPlugin(req) {
+      await authedClient().selectTranscriptionPlugin(req)
+    },
+    async saveTranscriptionService(req) {
+      return authedClient().saveTranscriptionService(req)
     },
 
     async checkPluginHealth(id) {

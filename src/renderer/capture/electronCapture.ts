@@ -29,6 +29,7 @@ export class MicDeviceInvalidError extends Error {
 
 export interface ElectronCaptureConfig {
   /** Specific audio input device to record from. */
+  onLimit?: () => void
   deviceId?: string
   /** Linear gain multiplier applied to the mic (0 = silent, 1 = unity, 2 = double). Defaults to 1.0. */
   gainLinear?: number
@@ -43,6 +44,12 @@ export interface ElectronCaptureConfig {
 export class ElectronCapture implements AudioCapture {
   private recorder?: MediaRecorder
   private chunks: BlobPart[] = []
+  private chunkBytes = 0
+  private encodingError: Error | null = null
+  private limitTimer?: ReturnType<typeof setTimeout>
+  private stopped?: Promise<Blob>
+  private stopRequested = false
+  private readonly onLimit?: () => void
   private streams: MediaStream[] = []
   private audioCtx?: AudioContext
   private pcmEncoder?: PcmFrameEncoder
@@ -61,6 +68,7 @@ export class ElectronCapture implements AudioCapture {
   private readonly onLevel?: (level: number) => void
 
   constructor(config: ElectronCaptureConfig = {}) {
+    this.onLimit = config.onLimit
     this.deviceId = config.deviceId
     this.gainLinear = config.gainLinear ?? 1.0
     this.getSystemAudioStream = config.getSystemAudioStream
@@ -74,12 +82,19 @@ export class ElectronCapture implements AudioCapture {
 
   async start(): Promise<void> {
     this.chunks = []
+    this.chunkBytes = 0
+    this.encodingError = null
+    this.hasSystem = false
+    this.hasMic = false
+    this.stopRequested = false
     this.streams = []
     const ctx = new AudioContext()
     this.audioCtx = ctx
     const destination = ctx.createMediaStreamDestination()
     let gainNode: GainNode | undefined
-    this.pcmEncoder = this.onPcmFrame ? new PcmFrameEncoder({ inputSampleRate: ctx.sampleRate }) : undefined
+    this.pcmEncoder = this.onPcmFrame
+      ? new PcmFrameEncoder({ inputSampleRate: ctx.sampleRate })
+      : undefined
     if (this.pcmEncoder && this.onPcmFrame) {
       const tap = ctx.createScriptProcessor(4096, 2, 1)
       const tapSink = ctx.createGain()
@@ -109,7 +124,7 @@ export class ElectronCapture implements AudioCapture {
     try {
       const audioConstraints: MediaTrackConstraints = this.deviceId
         ? { deviceId: { exact: this.deviceId } }
-        : true as unknown as MediaTrackConstraints
+        : (true as unknown as MediaTrackConstraints)
       const mic = await navigator.mediaDevices.getUserMedia({
         audio: audioConstraints,
         video: false,
@@ -139,11 +154,14 @@ export class ElectronCapture implements AudioCapture {
       this.hasMic = true
     } catch (err) {
       if (err instanceof Error && err.name === 'NotAllowedError') {
-        await this.audioCtx?.close().catch(() => {})  // clean up leaking context
+        await this.audioCtx?.close().catch(() => {}) // clean up leaking context
         this.audioCtx = undefined
         throw new MicPermissionDeniedError()
       }
-      if (err instanceof Error && (err.name === 'OverconstrainedError' || err.name === 'NotFoundError')) {
+      if (
+        err instanceof Error &&
+        (err.name === 'OverconstrainedError' || err.name === 'NotFoundError')
+      ) {
         await this.audioCtx?.close().catch(() => {})
         this.audioCtx = undefined
         throw new MicDeviceInvalidError()
@@ -182,14 +200,39 @@ export class ElectronCapture implements AudioCapture {
       throw new Error('no audio sources available (mic and system both unavailable)')
     }
 
+    if (ctx.state === 'suspended') await ctx.resume()
+
     const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
       ? 'audio/webm;codecs=opus'
       : 'audio/webm'
     const recorder = new MediaRecorder(destination.stream, { mimeType })
     recorder.ondataavailable = (e) => {
-      if (e.data.size > 0) this.chunks.push(e.data)
+      // Keep the chunk crossing the stop threshold. A final chunk can arrive
+      // after stop(); bound the complete encoded result separately at 128 MiB.
+      if (this.chunkBytes + e.data.size > 128 * 1024 * 1024) {
+        this.encodingError = new Error(
+          'Encoded audio exceeded the safe memory limit. Your disk recovery audio has been kept.'
+        )
+      } else if (e.data.size > 0) {
+        this.chunks.push(e.data)
+        this.chunkBytes += e.data.size
+      }
+      if (this.encodingError || this.chunkBytes >= 64 * 1024 * 1024) limit()
     }
-    recorder.start(1000) // 1s timeslices so long meetings flush incrementally
+    this.stopped = new Promise<Blob>((resolve) => {
+      recorder.onstop = () => resolve(new Blob(this.chunks, { type: recorder.mimeType }))
+    })
+    const limit = () => {
+      if (this.stopRequested) return
+      this.stopRequested = true
+      clearTimeout(this.limitTimer)
+      recorder.stop()
+      this.onLimit?.()
+    }
+    // Bound both RAM and the PCM recovery journal. Two hours at 16 kHz mono
+    // stays below the journal's 256 MiB per-recording limit.
+    this.limitTimer = setTimeout(limit, 2 * 60 * 60_000)
+    recorder.start(1000)
     this.recorder = recorder
     this.startedAt = Date.now()
   }
@@ -198,10 +241,12 @@ export class ElectronCapture implements AudioCapture {
     const recorder = this.recorder
     if (!recorder) throw new Error('not recording')
 
-    const blob = await new Promise<Blob>((resolve) => {
-      recorder.onstop = () => resolve(new Blob(this.chunks, { type: recorder.mimeType }))
+    clearTimeout(this.limitTimer)
+    if (!this.stopRequested) {
+      this.stopRequested = true
       recorder.stop()
-    })
+    }
+    const blob = await this.stopped!
 
     this.streams.forEach((s) => s.getTracks().forEach((t) => t.stop()))
     this.pcmTap?.disconnect()
@@ -216,6 +261,10 @@ export class ElectronCapture implements AudioCapture {
     this.levelAnimationFrame = undefined
 
     const bytes = new Uint8Array(await blob.arrayBuffer())
+    this.chunks = []
+    this.recorder = undefined
+    this.stopped = undefined
+    if (this.encodingError) throw this.encodingError
     return {
       bytes,
       mimeType: recorder.mimeType,

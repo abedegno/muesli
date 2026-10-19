@@ -480,10 +480,12 @@ auto-registers the plugins on boot and the operation is idempotent.
 > default transcriber plugin automatically (no env vars required); the
 > embedded Ollama agent is registered as the default agent plugin the same
 > way when Ollama is detected locally. The Python `plugins/whisper-transcriber`
-> reference plugin is still fully supported and can be swapped in for either
-> deployment mode using `MUESLI_DEFAULT_TRANSCRIBER_URL` /
-> `MUESLI_DEFAULT_TRANSCRIBER_TOKEN` below, the same mechanism already used
-> for other default-plugin overrides.
+> reference plugin is still fully supported. Register alternatives through the
+> admin UI/API, then select them in desktop Settings or the setup wizard.
+> Transcriber environment variables bootstrap a service and refresh its connection
+> details; they do not replace a saved selection on each restart. Embedded Whisper
+> services are registered as available choices, with live transcription on for a
+> fresh install. An explicit live-off choice survives restarting.
 
 | Variable                                     | Description                                               |
 | -------------------------------------------- | --------------------------------------------------------- |

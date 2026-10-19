@@ -138,6 +138,7 @@ func PullModel(ctx context.Context, baseURL, model string, onProgress PullProgre
 	}
 
 	type pullLine struct {
+		Error     string `json:"error"`
 		Status    string `json:"status"`
 		Total     int64  `json:"total"`
 		Completed int64  `json:"completed"`
@@ -146,6 +147,7 @@ func PullModel(ctx context.Context, baseURL, model string, onProgress PullProgre
 
 	dec := json.NewDecoder(resp.Body)
 	lastPercent := -1
+	completed := false
 	for {
 		var line pullLine
 		if err := dec.Decode(&line); err != nil {
@@ -155,9 +157,15 @@ func PullModel(ctx context.Context, baseURL, model string, onProgress PullProgre
 			return err
 		}
 
+		if line.Error != "" {
+			return fmt.Errorf("ollama model download failed: %s", line.Error)
+		}
+		if line.Done || line.Status == "success" {
+			completed = true
+		}
 		percent := lastPercent
 		switch {
-		case line.Done:
+		case line.Done || line.Status == "success":
 			percent = 100
 		case line.Total > 0 && line.Completed >= 0:
 			percent = int(line.Completed * 100 / line.Total)
@@ -172,6 +180,9 @@ func PullModel(ctx context.Context, baseURL, model string, onProgress PullProgre
 			onProgress(percent)
 		}
 		lastPercent = percent
+	}
+	if !completed {
+		return fmt.Errorf("ollama stream ended before model download completed")
 	}
 	return nil
 }

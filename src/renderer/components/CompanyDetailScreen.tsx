@@ -1,3 +1,6 @@
+import { formatDate } from '@/i18n'
+import { uiText } from '@/i18n'
+import { formatNumber } from '@/i18n'
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
@@ -15,45 +18,43 @@ function errorMessage(err: unknown): string {
 function ErrorBlock({ message, subject }: { message: string; subject: string }) {
   return (
     <div className="rounded-[var(--radius)] border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-      <p className="font-medium">Could not load {subject}</p>
+      <p className="font-medium">
+        {uiText('Could not load')} {subject}
+      </p>
       <p className="mt-1 break-words">{message}</p>
     </div>
   )
 }
 
 function formatCount(count: number): string {
-  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(count)
+  return formatNumber(count, { maximumFractionDigits: 0 })
 }
 
 function formatHours(hours: number): string {
-  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(hours)
+  return formatNumber(hours, { maximumFractionDigits: 1 })
 }
 
 function formatNoteDate(note: Note): string {
   const iso = note.started_at ?? note.created_at
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  return formatDate(new Date(iso), {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
 }
 
-function ActivityStat({
-  label,
-  value,
-}: {
-  label: string
-  value: string
-}) {
+function ActivityStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[var(--radius)] border border-border bg-card px-3 py-2">
-      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
       <p className="mt-1 text-sm font-semibold text-foreground">{value}</p>
     </div>
   )
 }
 
-function ActivityRollup({
-  notes,
-}: {
-  notes: Note[]
-}) {
+function ActivityRollup({ notes }: { notes: Note[] }) {
   const meetingCount = notes.length
   const totalHours = notes.reduce((sum, note) => {
     if (!note.started_at || !note.ended_at) return sum
@@ -71,9 +72,12 @@ function ActivityRollup({
 
   return (
     <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-      <ActivityStat label="Meetings" value={formatCount(meetingCount)} />
-      <ActivityStat label="Hours" value={formatHours(totalHours)} />
-      <ActivityStat label="Last seen" value={lastSeen ? formatNoteDate(lastSeen) : 'Never'} />
+      <ActivityStat label={uiText('Meetings')} value={formatCount(meetingCount)} />
+      <ActivityStat label={uiText('Hours')} value={formatHours(totalHours)} />
+      <ActivityStat
+        label={uiText('Last seen')}
+        value={lastSeen ? formatNoteDate(lastSeen) : 'Never'}
+      />
     </div>
   )
 }
@@ -85,7 +89,9 @@ function PersonRow({ person }: { person: Person }) {
         to={`/people/${person.id}`}
         className="block rounded-[var(--radius)] border border-border px-3 py-2 transition-colors hover:bg-muted"
       >
-        <p className="truncate text-sm font-medium">{person.display_name || 'Untitled person'}</p>
+        <p className="truncate text-sm font-medium">
+          {person.display_name || uiText('Untitled person')}
+        </p>
         <p className="truncate text-xs text-muted-foreground">{person.primary_email}</p>
       </Link>
     </li>
@@ -107,7 +113,8 @@ export function CompanyDetailScreen() {
     setActivityError(null)
     setError(null)
 
-    void muesli.getCompany(id)
+    void muesli
+      .getCompany(id)
       .then((loadedCompany) => {
         if (cancelled) return
         setCompany(loadedCompany)
@@ -166,16 +173,22 @@ export function CompanyDetailScreen() {
       <div className="mb-4 flex items-center gap-2">
         <Button variant="ghost" size="sm" onClick={() => navigate('/people')} className="px-2">
           <ArrowLeft size={14} />
-          Back to People
+          {uiText('Back to People')}
         </Button>
       </div>
 
       {loading ? (
         <div className="flex flex-col gap-2">
-          <div className="mb-2 h-7 w-52"><Skeleton className="h-full w-full" /></div>
-          <div className="h-5 w-64"><Skeleton className="h-full w-full" /></div>
+          <div className="mb-2 h-7 w-52">
+            <Skeleton className="h-full w-full" />
+          </div>
+          <div className="h-5 w-64">
+            <Skeleton className="h-full w-full" />
+          </div>
           <div className="mt-2 flex flex-col gap-2">
-            {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} className="h-12 w-full" />
+            ))}
           </div>
         </div>
       ) : error ? (
@@ -185,24 +198,31 @@ export function CompanyDetailScreen() {
           <section className="flex items-start gap-3">
             <MonogramAvatar id={company.id} label={company.name || company.domain} />
             <div className="min-w-0 flex-1 space-y-2">
-              <h1 className="font-serif text-xl font-semibold">{company.name || 'Untitled company'}</h1>
+              <h1 className="font-serif text-xl font-semibold">
+                {company.name || uiText('Untitled company')}
+              </h1>
               <p className="truncate text-sm text-muted-foreground">{company.domain}</p>
             </div>
           </section>
 
-          {activityError ? (
-            <ErrorBlock message={activityError} subject="company activity" />
-          ) : null}
+          {activityError ? <ErrorBlock message={activityError} subject="company activity" /> : null}
 
           {activityNotes !== null ? <ActivityRollup notes={activityNotes} /> : null}
 
           {isEmpty ? (
-            <EmptyState title="No people yet" hint="No people are associated with this company." />
+            <EmptyState
+              title={uiText('No people yet')}
+              hint={uiText('No people are associated with this company.')}
+            />
           ) : (
             <section>
-              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">People</h2>
+              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {uiText('People')}
+              </h2>
               <ul className="flex flex-col gap-2">
-                {company.people.map((person) => <PersonRow key={person.id} person={person} />)}
+                {company.people.map((person) => (
+                  <PersonRow key={person.id} person={person} />
+                ))}
               </ul>
             </section>
           )}

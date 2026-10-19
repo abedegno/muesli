@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { useActivity } from '@/lib/activityStore'
 import { statusLabel } from '@/lib/status'
 import type { UploadPhase } from '@/lib/activityStore'
@@ -23,10 +24,7 @@ export function ActivityFeed() {
   if (items.length === 0) return null
 
   return (
-    <div
-      aria-live="polite"
-      className="fixed bottom-20 right-4 z-50 flex flex-col gap-2"
-    >
+    <div aria-live="polite" className="fixed bottom-20 right-4 z-50 flex flex-col gap-2">
       {items.map((item) => {
         const label =
           item.kind === 'upload'
@@ -39,17 +37,17 @@ export function ActivityFeed() {
             className="flex items-center gap-2 rounded-[var(--radius)] border border-border bg-popover px-3 py-2 text-sm shadow-md"
           >
             {item.done && (
-              <span className="text-accent" aria-label="complete">
-                ✓
+              <span className="text-accent" aria-label={uiText('complete')}>
+                {uiText('✓')}
               </span>
             )}
             <span className="flex-1 text-foreground">{label}</span>
             <button
-              aria-label="Dismiss"
+              aria-label={uiText('Dismiss')}
               onClick={() => dismiss(item.id)}
               className="ml-2 text-muted-foreground hover:text-foreground"
             >
-              ×
+              {uiText('×')}
             </button>
           </div>
         )

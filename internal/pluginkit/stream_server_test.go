@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -261,4 +262,77 @@ func recvWireEvent(t *testing.T, session *plugin.StreamingSession) plugin.Stream
 		t.Fatal(err)
 	}
 	return event
+}
+
+func TestTwentyConcurrentLiveSessionsKeepAudioAndWordsIsolated(t *testing.T) {
+	engine := &wireTestEngine{started: make(chan *wireTestSession, 20)}
+	server := httptest.NewServer(TranscriberHandler(Config{Token: "secret", MaxStreamingSessions: 20}, engine))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	sessions := make([]*plugin.StreamingSession, 20)
+	defer func() {
+		for _, session := range sessions {
+			if session != nil {
+				_ = session.Close()
+			}
+		}
+	}()
+	errs := make(chan error, 20)
+	var group sync.WaitGroup
+	for i := range sessions {
+		group.Add(1)
+		go func(i int) {
+			defer group.Done()
+			var err error
+			sessions[i], err = plugin.NewStreaming(server.URL, "secret").Open(ctx, wireStart(fmt.Sprintf("meeting-%02d", i)))
+			errs <- err
+		}(i)
+	}
+	group.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if excess, err := plugin.NewStreaming(server.URL, "secret").Open(ctx, wireStart("excess")); err == nil {
+		_ = excess.Close()
+		t.Fatal("twenty-session limit was not enforced")
+	}
+	for i, session := range sessions {
+		frame := make([]byte, 2)
+		binary.LittleEndian.PutUint16(frame, uint16(i+1))
+		if err := session.WriteAudio(frame); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for i, session := range sessions {
+		for _, suffix := range []string{"-partial", "-final"} {
+			event := recvWireEvent(t, session)
+			want := fmt.Sprintf("meeting-%02d%s", i, suffix)
+			if event.Text != want {
+				t.Fatalf("cross-session words: got %q want %q", event.Text, want)
+			}
+		}
+	}
+	for range sessions {
+		select {
+		case session := <-engine.started:
+			var index int
+			if _, err := fmt.Sscanf(session.id, "meeting-%02d", &index); err != nil {
+				t.Fatal(err)
+			}
+			select {
+			case audio := <-session.audio:
+				if len(audio) != 1 || audio[0] != float32(index+1)/32768 {
+					t.Fatalf("cross-session audio for %s: %v", session.id, audio)
+				}
+			case <-ctx.Done():
+				t.Fatal("missing audio")
+			}
+		case <-ctx.Done():
+			t.Fatal("missing engine session")
+		}
+	}
 }

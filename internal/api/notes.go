@@ -42,7 +42,70 @@ func (s *Server) handleStartNoteCapture(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "not found")
 		return
 	}
-	n, err := s.deps.Store.StartNoteCapture(r.Context(), uid, id)
+	var req struct {
+		CaptureID string `json:"capture_id"`
+	}
+	if err := decodeOptionalJSONBody(r, &req); err != nil {
+		writeError(w, 400, "invalid capture request")
+		return
+	}
+	var n *model.Note
+	var err error
+	if req.CaptureID != "" {
+		if _, err = uuid.Parse(req.CaptureID); err != nil {
+			writeError(w, 400, "invalid capture identifier")
+			return
+		}
+		n, err = s.deps.Store.ClaimCapture(r.Context(), uid, id, req.CaptureID)
+	} else {
+		n, err = s.deps.Store.StartNoteCapture(r.Context(), uid, id)
+	}
+	if errors.Is(err, store.ErrCaptureActive) {
+		writeError(w, 409, err.Error())
+		return
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	writeJSON(w, http.StatusOK, n)
+}
+
+func (s *Server) handleStopNoteCapture(w http.ResponseWriter, r *http.Request) {
+	uid, _ := userIDFromContext(r.Context())
+	id := chi.URLParam(r, "id")
+	if !validNoteID(id) {
+		writeError(w, http.StatusNotFound, "not found")
+		return
+	}
+	var req struct {
+		CaptureID string `json:"capture_id"`
+	}
+	if err := decodeOptionalJSONBody(r, &req); err != nil {
+		writeError(w, 400, "invalid capture request")
+		return
+	}
+	var n *model.Note
+	var err error
+	if req.CaptureID != "" {
+		if _, err = uuid.Parse(req.CaptureID); err != nil {
+			writeError(w, 400, "invalid capture identifier")
+			return
+		}
+		n, err = s.deps.Store.StopCaptureLease(r.Context(), uid, id, req.CaptureID, false)
+	} else {
+		n, err = s.deps.Store.StopNoteCapture(r.Context(), uid, id)
+	}
+	if err == nil && n.Status == model.NoteRecording {
+		err = store.ErrCaptureActive
+	}
+	if errors.Is(err, store.ErrCaptureActive) {
+		writeError(w, 409, err.Error())
+		return
+	}
 	if errors.Is(err, store.ErrNotFound) {
 		writeError(w, http.StatusNotFound, "not found")
 		return
@@ -610,4 +673,47 @@ func (s *Server) handleProcessNextNote(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "bumped", "jobs_bumped": n})
+}
+
+func (s *Server) handleCaptureHeartbeat(w http.ResponseWriter, r *http.Request) {
+	uid, _ := userIDFromContext(r.Context())
+	id := chi.URLParam(r, "id")
+	var req struct {
+		CaptureID string `json:"capture_id"`
+	}
+	if !validNoteID(id) || json.NewDecoder(r.Body).Decode(&req) != nil {
+		writeError(w, 400, "capture identifier required")
+		return
+	}
+	if _, err := uuid.Parse(req.CaptureID); err != nil {
+		writeError(w, 400, "invalid capture identifier")
+		return
+	}
+	if err := s.deps.Store.HeartbeatCapture(r.Context(), uid, id, req.CaptureID); err != nil {
+		writeError(w, 409, "recording session is no longer current")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+func (s *Server) handleRecoverCapture(w http.ResponseWriter, r *http.Request) {
+	uid, _ := userIDFromContext(r.Context())
+	id := chi.URLParam(r, "id")
+	if !validNoteID(id) {
+		writeError(w, 404, "not found")
+		return
+	}
+	n, err := s.deps.Store.StopCaptureLease(r.Context(), uid, id, "", true)
+	if errors.Is(err, store.ErrCaptureActive) {
+		writeError(w, 409, err.Error())
+		return
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, 404, "not found")
+		return
+	}
+	if err != nil {
+		writeError(w, 500, "could not recover recording")
+		return
+	}
+	writeJSON(w, 200, n)
 }

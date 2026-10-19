@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { Users, X } from 'lucide-react'
@@ -68,9 +69,15 @@ export function DiarizationReviewPanel({
     if (typeof get !== 'function') return
     let cancelled = false
     get(noteId)
-      .then((r) => { if (!cancelled) setReview(r) })
-      .catch(() => { if (!cancelled) setReview(null) })
-    return () => { cancelled = true }
+      .then((r) => {
+        if (!cancelled) setReview(r)
+      })
+      .catch(() => {
+        if (!cancelled) setReview(null)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [noteId, hasTranscript])
 
   const speakers = useMemo(() => (review ? distinctSpeakers(review) : []), [review])
@@ -83,7 +90,8 @@ export function DiarizationReviewPanel({
     if (review.review_state === 'pending') {
       // Best-effort lifecycle transition — proceed regardless of outcome; a
       // 422 (e.g. a race with another client) just leaves review_state as-is.
-      muesli.postDiarizationReview(noteId, { reviewState: 'in_review' })
+      muesli
+        .postDiarizationReview(noteId, { reviewState: 'in_review' })
         .then((r) => setReview(r))
         .catch(() => undefined)
     }
@@ -106,32 +114,47 @@ export function DiarizationReviewPanel({
     itemRefs.current[next]?.focus()
   }
 
-  const cycleSpeaker = useCallback((idx: number, dir: 1 | -1) => {
-    if (speakers.length === 0) return
-    setTurns((ts) => ts.map((t, i) => {
-      if (i !== idx) return t
-      const cur = speakers.indexOf(t.selectedSpeaker)
-      const nextIdx = ((cur === -1 ? 0 : cur) + dir + speakers.length) % speakers.length
-      const nextSpeaker = speakers[nextIdx]
-      announce(`Turn ${idx + 1} reassigned to ${nextSpeaker}`)
-      return { ...t, selectedSpeaker: nextSpeaker }
-    }))
-  }, [speakers, announce])
+  const cycleSpeaker = useCallback(
+    (idx: number, dir: 1 | -1) => {
+      if (speakers.length === 0) return
+      setTurns((ts) =>
+        ts.map((t, i) => {
+          if (i !== idx) return t
+          const cur = speakers.indexOf(t.selectedSpeaker)
+          const nextIdx = ((cur === -1 ? 0 : cur) + dir + speakers.length) % speakers.length
+          const nextSpeaker = speakers[nextIdx]
+          announce(
+            uiText('Turn {value1} reassigned to {value2}', { value1: idx + 1, value2: nextSpeaker })
+          )
+          return { ...t, selectedSpeaker: nextSpeaker }
+        })
+      )
+    },
+    [speakers, announce]
+  )
 
-  const confirmTurn = useCallback(async (idx: number) => {
-    const t = turns[idx]
-    if (!t) return
-    setBusy(true)
-    try {
-      await muesli.postDiarizationReview(noteId, { segmentId: t.id, speaker: t.selectedSpeaker })
-      setTurns((ts) => ts.map((tt, i) => (i === idx ? { ...tt, confirmed: true } : tt)))
-      announce(`Confirmed speaker ${t.selectedSpeaker || 'unknown'} for turn ${idx + 1}`)
-    } catch {
-      announce(`Could not confirm turn ${idx + 1}`)
-    } finally {
-      setBusy(false)
-    }
-  }, [turns, noteId, announce])
+  const confirmTurn = useCallback(
+    async (idx: number) => {
+      const t = turns[idx]
+      if (!t) return
+      setBusy(true)
+      try {
+        await muesli.postDiarizationReview(noteId, { segmentId: t.id, speaker: t.selectedSpeaker })
+        setTurns((ts) => ts.map((tt, i) => (i === idx ? { ...tt, confirmed: true } : tt)))
+        announce(
+          uiText('Confirmed speaker {value1} for turn {value2}', {
+            value1: t.selectedSpeaker || 'unknown',
+            value2: idx + 1,
+          })
+        )
+      } catch {
+        announce(uiText('Could not confirm turn {value1}', { value1: idx + 1 }))
+      } finally {
+        setBusy(false)
+      }
+    },
+    [turns, noteId, announce]
+  )
 
   const acceptAllRemaining = useCallback(async () => {
     const remaining = turns.filter((t) => !t.confirmed)
@@ -150,18 +173,24 @@ export function DiarizationReviewPanel({
       }
     }
     setBusy(false)
-    announce(`Confirmed ${count} of ${remaining.length} remaining turn${remaining.length === 1 ? '' : 's'}`)
+    announce(
+      uiText('Confirmed {value1} of {value2} remaining turn{value3}', {
+        value1: count,
+        value2: remaining.length,
+        value3: remaining.length === 1 ? '' : 's',
+      })
+    )
   }, [turns, noteId, announce])
 
   const completeReview = useCallback(async () => {
     setBusy(true)
     try {
       await muesli.postDiarizationReview(noteId, { reviewState: 'completed' })
-      announce('Diarization review completed')
+      announce(uiText('Diarization review completed'))
       setReview(null) // hides the entry point
       setOpen(false)
     } catch {
-      announce('Could not complete the review')
+      announce(uiText('Could not complete the review'))
     } finally {
       setBusy(false)
     }
@@ -200,25 +229,25 @@ export function DiarizationReviewPanel({
     <>
       <button
         type="button"
-        aria-label="Review speakers"
+        aria-label={uiText('Review speakers')}
         onClick={openPanel}
         className="inline-flex items-center gap-1 rounded-[var(--radius)] px-3 py-1 text-sm font-medium text-muted-foreground hover:bg-muted"
       >
-        <Users size={16} /> Review speakers
+        <Users size={16} /> {uiText('Review speakers')}
       </button>
       {open && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
           <div
             role="dialog"
             aria-modal="true"
-            aria-label="Diarization review"
+            aria-label={uiText('Diarization review')}
             className="flex max-h-[80vh] w-[36rem] max-w-[92vw] flex-col overflow-hidden rounded-[var(--radius)] border border-border bg-popover shadow-md"
           >
             <div className="flex items-center justify-between border-b border-border px-4 py-3">
-              <h2 className="text-sm font-semibold">Review speaker turns</h2>
+              <h2 className="text-sm font-semibold">{uiText('Review speaker turns')}</h2>
               <button
                 type="button"
-                aria-label="Close review panel"
+                aria-label={uiText('Close review panel')}
                 onClick={() => setOpen(false)}
                 className="text-muted-foreground hover:text-foreground"
               >
@@ -227,17 +256,21 @@ export function DiarizationReviewPanel({
             </div>
 
             {turns.length === 0 ? (
-              <p className="px-4 py-6 text-sm text-muted-foreground">No low-confidence turns to review.</p>
+              <p className="px-4 py-6 text-sm text-muted-foreground">
+                {uiText('No low-confidence turns to review.')}
+              </p>
             ) : (
               <ul
                 role="listbox"
-                aria-label="Low-confidence speaker turns"
+                aria-label={uiText('Low-confidence speaker turns')}
                 className="flex-1 overflow-y-auto p-2"
               >
                 {turns.map((t, idx) => (
                   <li
                     key={t.id}
-                    ref={(el) => { itemRefs.current[idx] = el }}
+                    ref={(el) => {
+                      itemRefs.current[idx] = el
+                    }}
                     role="option"
                     aria-selected={idx === activeIndex}
                     tabIndex={idx === activeIndex ? 0 : -1}
@@ -245,14 +278,16 @@ export function DiarizationReviewPanel({
                     onKeyDown={(e) => onItemKeyDown(e, idx)}
                     className={cn(
                       'mb-2 flex flex-col gap-1 rounded-[var(--radius)] border border-border p-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-                      t.confirmed && 'opacity-60',
+                      t.confirmed && 'opacity-60'
                     )}
                   >
                     <p>{t.seg.text}</p>
                     <div className="flex flex-wrap items-center gap-1.5 text-xs">
-                      <span className="text-muted-foreground">Speaker:</span>
-                      <span className="font-medium" data-testid="current-speaker">{t.selectedSpeaker || '(unknown)'}</span>
-                      {t.confirmed && <span className="text-primary">Confirmed</span>}
+                      <span className="text-muted-foreground">{uiText('Speaker:')}</span>
+                      <span className="font-medium" data-testid="current-speaker">
+                        {t.selectedSpeaker || uiText('(unknown)')}
+                      </span>
+                      {t.confirmed && <span className="text-primary">{uiText('Confirmed')}</span>}
                     </div>
                     {speakers.length > 1 && (
                       <div className="flex flex-wrap gap-1">
@@ -261,11 +296,20 @@ export function DiarizationReviewPanel({
                             key={s}
                             type="button"
                             tabIndex={-1}
-                            aria-label={`Reassign turn ${idx + 1} to ${s}`}
-                            onClick={() => setTurns((ts) => ts.map((tt, i) => (i === idx ? { ...tt, selectedSpeaker: s } : tt)))}
+                            aria-label={uiText('Reassign turn {value1} to {value2}', {
+                              value1: idx + 1,
+                              value2: s,
+                            })}
+                            onClick={() =>
+                              setTurns((ts) =>
+                                ts.map((tt, i) => (i === idx ? { ...tt, selectedSpeaker: s } : tt))
+                              )
+                            }
                             className={cn(
                               'rounded border px-1.5 py-0.5',
-                              s === t.selectedSpeaker ? 'border-primary text-primary' : 'border-border text-muted-foreground',
+                              s === t.selectedSpeaker
+                                ? 'border-primary text-primary'
+                                : 'border-border text-muted-foreground'
                             )}
                           >
                             {s}
@@ -285,7 +329,7 @@ export function DiarizationReviewPanel({
                 onClick={() => void acceptAllRemaining()}
                 className="rounded-[var(--radius)] px-3 py-1.5 text-sm font-medium text-muted-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Accept all remaining
+                {uiText('Accept all remaining')}
               </button>
               <button
                 type="button"
@@ -293,7 +337,7 @@ export function DiarizationReviewPanel({
                 onClick={() => void completeReview()}
                 className="rounded-[var(--radius)] bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
               >
-                Mark review complete
+                {uiText('Mark review complete')}
               </button>
             </div>
           </div>

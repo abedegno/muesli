@@ -306,7 +306,7 @@ docker compose up
 
 # Or work on the Go server directly:
 colima start && make test-db   # throwaway Postgres on :5433
-make test                      # Go suite (serialized: -p 1)
+make test                      # Go suite (-p 4 -parallel 2; isolated test schemas)
 make build                     # build admin SPA + embed + compile server
 
 # Desktop client:

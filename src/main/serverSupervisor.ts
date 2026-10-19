@@ -65,7 +65,9 @@ function parseLoopbackAddr(raw: string | undefined): ParsedAddr {
   if (lastColon < 0) {
     const port = Number.parseInt(trimmed, 10)
     if (!Number.isFinite(port) || port <= 0) {
-      throw new Error(`invalid MUESLI_ADDR value ${JSON.stringify(trimmed)}: expected host:port or :port`)
+      throw new Error(
+        `invalid MUESLI_ADDR value ${JSON.stringify(trimmed)}: expected host:port or :port`
+      )
     }
     return { host: '127.0.0.1', port }
   }
@@ -73,7 +75,9 @@ function parseLoopbackAddr(raw: string | undefined): ParsedAddr {
   const host = trimmed.slice(0, lastColon).trim() || '127.0.0.1'
   const port = Number.parseInt(trimmed.slice(lastColon + 1), 10)
   if (!Number.isFinite(port) || port <= 0) {
-    throw new Error(`invalid MUESLI_ADDR value ${JSON.stringify(trimmed)}: expected host:port or :port`)
+    throw new Error(
+      `invalid MUESLI_ADDR value ${JSON.stringify(trimmed)}: expected host:port or :port`
+    )
   }
   return { host, port }
 }
@@ -100,7 +104,11 @@ function delay(ms: number): Promise<void> {
   })
 }
 
-function logChildOutput(logStream: WriteStream | null, stream: 'stdout' | 'stderr', data: Buffer | string) {
+function logChildOutput(
+  logStream: WriteStream | null,
+  stream: 'stdout' | 'stderr',
+  data: Buffer | string
+) {
   const text = typeof data === 'string' ? data : data.toString('utf8')
   const trimmed = text.trimEnd()
   if (!trimmed) return
@@ -127,7 +135,10 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
   private readonly killTimeoutMs: number
   private readonly embeddedAppDataPath?: string
   private readonly onSecondInstance?: () => void
-  private readonly onUnexpectedExit?: (info: { code: number | null; signal: NodeJS.Signals | null }) => void
+  private readonly onUnexpectedExit?: (info: {
+    code: number | null
+    signal: NodeJS.Signals | null
+  }) => void
   private readonly logStream: WriteStream | null
   private shutdownPromise: Promise<void> | null = null
   private quitting = false
@@ -136,7 +147,18 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
   private hasBecomeHealthy = false
   private reportedUnexpectedExit = false
 
-  constructor(child: ChildProcessWithoutNullStreams, baseUrl: string, logPath: string, logStream: WriteStream | null, opts: Required<Pick<ServerSupervisorOptions, 'healthPollIntervalMs' | 'healthTimeoutMs' | 'killTimeoutMs'>> & Pick<ServerSupervisorOptions, 'onSecondInstance' | 'onUnexpectedExit'> & { embeddedAppDataPath?: string }) {
+  constructor(
+    child: ChildProcessWithoutNullStreams,
+    baseUrl: string,
+    logPath: string,
+    logStream: WriteStream | null,
+    opts: Required<
+      Pick<ServerSupervisorOptions, 'healthPollIntervalMs' | 'healthTimeoutMs' | 'killTimeoutMs'>
+    > &
+      Pick<ServerSupervisorOptions, 'onSecondInstance' | 'onUnexpectedExit'> & {
+        embeddedAppDataPath?: string
+      }
+  ) {
     this.child = child
     this.baseUrl = baseUrl
     this.logPath = logPath
@@ -171,7 +193,12 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
   }
 
   private shouldReportUnexpectedExit(): boolean {
-    return this.hasBecomeHealthy && !this.quitting && this.shutdownPromise == null && !this.reportedUnexpectedExit
+    return (
+      this.hasBecomeHealthy &&
+      !this.quitting &&
+      this.shutdownPromise == null &&
+      !this.reportedUnexpectedExit
+    )
   }
 
   private sweepUnexpectedProcessGroup(): void {
@@ -193,7 +220,9 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
       const pidLine = readFileSync(join(dataPath, 'postmaster.pid'), 'utf8').split('\n', 1)[0]
       pid = Number.parseInt(pidLine, 10)
       if (!Number.isSafeInteger(pid) || pid <= 0 || pid === this.child.pid) return
-      const args = execFileSync('ps', ['-o', 'args=', '-p', String(pid)], { encoding: 'utf8' }).trim()
+      const args = execFileSync('ps', ['-o', 'args=', '-p', String(pid)], {
+        encoding: 'utf8',
+      }).trim()
       if (!args.includes('postgres') || !args.includes(dataPath)) return
     } catch {
       return
@@ -245,7 +274,9 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
     }
 
     const reason = lastError instanceof Error ? `: ${lastError.message}` : ''
-    throw new Error(`timed out waiting for ${this.healthUrl} after ${this.healthTimeoutMs}ms${reason}`)
+    throw new Error(
+      `timed out waiting for ${this.healthUrl} after ${this.healthTimeoutMs}ms${reason}`
+    )
   }
 
   installLifecycleHooks() {
@@ -320,7 +351,9 @@ class EmbeddedServerSupervisorImpl implements ServerSupervisor {
   }
 }
 
-export async function startServerSupervisor(opts: ServerSupervisorOptions = {}): Promise<ServerSupervisor | null> {
+export async function startServerSupervisor(
+  opts: ServerSupervisorOptions = {}
+): Promise<ServerSupervisor | null> {
   if (!electronApp.requestSingleInstanceLock()) {
     electronApp.quit()
     return null
@@ -357,6 +390,8 @@ export async function startServerSupervisor(opts: ServerSupervisorOptions = {}):
         ? {}
         : { MUESLI_APPDATA: join(userDataPath, 'embedded-server') }),
       MUESLI_ADDR: `${addr.host}:${addr.port}`,
+      MUESLI_PUBLIC_URL: baseUrl,
+      MUESLI_INTERNAL_URL: baseUrl,
       MUESLI_PARENT_PID: String(process.pid),
     },
     stdio: ['ignore', 'pipe', 'pipe'],

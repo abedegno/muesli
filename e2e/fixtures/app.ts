@@ -7,6 +7,8 @@ import { _electron, expect, test as base } from '@playwright/test'
 import type { ElectronApplication, Page } from '@playwright/test'
 
 type AppFixtures = {
+  onboarded: boolean
+  ollamaUrl: string
   electronApp: ElectronApplication
   page: Page
   userDataDir: string
@@ -69,10 +71,12 @@ export function buildElectronLaunchOptions({
   fakeTranscript,
   serverAddr,
   userDataDir,
+  ollamaUrl,
 }: {
   fakeTranscript: string
   serverAddr: string
   userDataDir: string
+  ollamaUrl?: string
 }): ElectronLaunchOptions {
   const binDir = resolve('e2e/.bin')
 
@@ -90,15 +94,20 @@ export function buildElectronLaunchOptions({
 
   const commonEnv = {
     ...process.env,
+    ...(ollamaUrl ? { MUESLI_OLLAMA_URL: ollamaUrl } : {}),
     MUESLI_ADDR: serverAddr,
     MUESLI_PUBLIC_URL: `http://${serverAddr}`,
     MUESLI_INTERNAL_URL: `http://${serverAddr}`,
     MUESLI_FAKE_TRANSCRIPT: fakeTranscript,
     ...fakeBinEnv,
   }
+  // These profiles contain disposable test credentials. Avoid prompting for
+  // access to the developer's real macOS Keychain during automated launches.
+  const keychainArgs = process.platform === 'darwin' ? ['--use-mock-keychain'] : []
 
+  const packagedExecutable = process.env.MUESLI_E2E_EXECUTABLE?.trim()
   const packagedAppPath = process.env.MUESLI_E2E_APP_PATH?.trim()
-  if (packagedAppPath) {
+  if (packagedAppPath || packagedExecutable) {
     // Packaged mode: the app IS `isPackaged`, so resolveResourceEnv() already
     // sets MUESLI_MODE=embedded and MUESLI_EMBEDDED_PG_BINARIES /
     // MUESLI_EMBEDDED_PGVECTOR_DIR / MUESLI_SERVER_BIN from
@@ -107,8 +116,12 @@ export function buildElectronLaunchOptions({
     // must NOT be overridden here; doing so would substitute a dev bundle
     // path that does not exist on the packaged-app runner.
     return {
-      executablePath: resolvePackagedBinary(packagedAppPath),
-      args: [`--user-data-dir=${userDataDir}`, ...(process.env.CI ? ['--no-sandbox'] : [])],
+      executablePath: packagedExecutable ?? resolvePackagedBinary(packagedAppPath!),
+      args: [
+        `--user-data-dir=${userDataDir}`,
+        ...keychainArgs,
+        ...(process.env.CI ? ['--no-sandbox'] : []),
+      ],
       env: commonEnv,
     }
   }
@@ -134,6 +147,7 @@ export function buildElectronLaunchOptions({
     args: [
       'out/main/main.js',
       `--user-data-dir=${userDataDir}`,
+      ...keychainArgs,
       ...(process.env.CI ? ['--no-sandbox'] : []),
     ],
     env: {
@@ -147,13 +161,15 @@ export function buildElectronLaunchOptions({
 }
 
 export const test = base.extend<AppFixtures>({
+  onboarded: [true, { option: true }],
+  ollamaUrl: ['', { option: true }],
   fakeTranscript: ['hello from fakeplugin', { option: true }],
-  userDataDir: async ({}, use) => {
+  userDataDir: async ({ onboarded }, use) => {
     const dir = await mkdtemp(join(tmpdir(), 'muesli-e2e-'))
     try {
       await writeFile(
         join(dir, 'local-session.json'),
-        JSON.stringify({ encrypted: false, manualServer: false, onboarded: true })
+        JSON.stringify({ encrypted: false, manualServer: false, onboarded })
       )
       await use(dir)
     } finally {
@@ -164,9 +180,9 @@ export const test = base.extend<AppFixtures>({
     const port = await reservePort()
     await use(`127.0.0.1:${port}`)
   },
-  electronApp: async ({ fakeTranscript, serverAddr, userDataDir }, use) => {
+  electronApp: async ({ fakeTranscript, serverAddr, userDataDir, ollamaUrl }, use) => {
     const app = await _electron.launch(
-      buildElectronLaunchOptions({ fakeTranscript, serverAddr, userDataDir })
+      buildElectronLaunchOptions({ fakeTranscript, serverAddr, userDataDir, ollamaUrl })
     )
     try {
       await use(app)

@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { useState, useEffect, useRef } from 'react'
 import { Button } from '@/components/ui/Button'
 import { useAnnouncer } from '@/hooks/useAnnouncer'
@@ -73,7 +74,9 @@ export function ProcessingBanner({
     }
 
     void poll()
-    const id = setInterval(() => { void poll() }, 3000)
+    const id = setInterval(() => {
+      void poll()
+    }, 3000)
     return () => {
       cancelled = true
       clearInterval(id)
@@ -82,31 +85,57 @@ export function ProcessingBanner({
 
   if (status === 'failed') {
     return (
-      <div role="alert" className="flex items-center justify-between gap-3 border-b border-border bg-destructive/10 px-6 py-2 text-sm text-destructive">
-        <span>Processing failed.</span>
-        {onRetry && <Button size="sm" variant="secondary" onClick={onRetry}>Re-run</Button>}
+      <div
+        role="alert"
+        className="flex items-center justify-between gap-3 border-b border-border bg-destructive/10 px-6 py-2 text-sm text-destructive"
+      >
+        <span>{uiText('Processing failed.')}</span>
+        {onRetry && (
+          <Button size="sm" variant="secondary" onClick={onRetry}>
+            {uiText('Re-run')}
+          </Button>
+        )}
       </div>
     )
   }
   if (status === 'transcribing' || status === 'summarizing' || status === 'uploaded') {
-    const label = status === 'summarizing' ? 'Summarizing…' : status === 'transcribing' ? 'Transcribing…' : 'Uploaded — queued…'
+    const label =
+      status === 'summarizing'
+        ? 'Summarizing…'
+        : status === 'transcribing'
+          ? 'Transcribing…'
+          : 'Uploaded — queued…'
     const downloadBanner =
       downloadStatus?.status === 'downloading' && downloadStatus.model
         ? `Downloading model ${downloadStatus.model} (${downloadStatus.percent ?? 0}%)`
         : null
     return (
-      <div role="status" aria-live="polite" className="flex flex-col border-b border-border bg-accent/10 px-6 py-2 text-sm text-accent">
+      <div
+        role="status"
+        aria-live="polite"
+        className="flex flex-col border-b border-border bg-accent/10 px-6 py-2 text-sm text-accent"
+      >
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <span className="h-3 w-3 animate-spin rounded-full border-2 border-accent border-t-transparent" aria-hidden />
-            {statusEnteredAt ? `${label} ${elapsedSec} s` : label}
+            <span
+              className="h-3 w-3 animate-spin rounded-full border-2 border-accent border-t-transparent"
+              aria-hidden
+            />
+            {statusEnteredAt
+              ? uiText('{value1} {value2} s', { value1: label, value2: elapsedSec })
+              : label}
           </div>
           {onProcessNext && (
-            <Button size="sm" variant="secondary" onClick={onProcessNext}>Process next</Button>
+            <Button size="sm" variant="secondary" onClick={onProcessNext}>
+              {uiText('Process next')}
+            </Button>
           )}
         </div>
         {downloadBanner && (
-          <span className="mt-1 text-xs text-muted-foreground" data-testid="download-progress-banner">
+          <span
+            className="mt-1 text-xs text-muted-foreground"
+            data-testid="download-progress-banner"
+          >
             {downloadBanner}
           </span>
         )}

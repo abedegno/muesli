@@ -21,7 +21,9 @@ function makeGlobals() {
     return { writable: { getWriter: () => writer } } as never
   }) as unknown as SystemAudioDeps['TrackGenerator']
   const AudioData = vi.fn((init: WriteInit) => init) as unknown as SystemAudioDeps['AudioData']
-  const MediaStreamCtor = vi.fn((tracks: unknown[]) => ({ tracks })) as unknown as SystemAudioDeps['MediaStreamCtor']
+  const MediaStreamCtor = vi.fn((tracks: unknown[]) => ({
+    tracks,
+  })) as unknown as SystemAudioDeps['MediaStreamCtor']
   return { write, close, TrackGenerator, AudioData, MediaStreamCtor }
 }
 
@@ -44,7 +46,12 @@ beforeEach(() => vi.clearAllMocks())
 describe('startSystemAudioStream', () => {
   it('returns null when the MediaStreamTrackGenerator runtime API is missing', async () => {
     const { deps } = makeBridge({ sampleRate: 48000, channels: 2 })
-    const handle = await startSystemAudioStream({ ...deps, TrackGenerator: undefined, AudioData: undefined, MediaStreamCtor: undefined })
+    const handle = await startSystemAudioStream({
+      ...deps,
+      TrackGenerator: undefined,
+      AudioData: undefined,
+      MediaStreamCtor: undefined,
+    })
     expect(handle).toBeNull()
     expect(deps.systemAudioStart).not.toHaveBeenCalled()
   })
@@ -54,7 +61,7 @@ describe('startSystemAudioStream', () => {
     const { deps } = makeBridge(null)
     const handle = await startSystemAudioStream({ ...deps, ...g })
     expect(handle).toBeNull()
-    expect(deps.systemAudioStop).toHaveBeenCalledTimes(1)
+    expect(deps.systemAudioStop).toHaveBeenCalledTimes(0)
   })
 
   it('writes AudioData frames of the right shape once the jitter buffer fills', async () => {
@@ -67,7 +74,13 @@ describe('startSystemAudioStream', () => {
     await flush()
     expect(g.write).toHaveBeenCalledTimes(1)
     const init = (g.AudioData as unknown as ReturnType<typeof vi.fn>).mock.calls[0][0] as WriteInit
-    expect(init).toMatchObject({ format: 'f32', sampleRate: 48000, numberOfFrames: 4, numberOfChannels: 2, timestamp: 0 })
+    expect(init).toMatchObject({
+      format: 'f32',
+      sampleRate: 48000,
+      numberOfFrames: 4,
+      numberOfChannels: 2,
+      timestamp: 0,
+    })
     // second chunk advances the timestamp by 4 frames @ 48kHz = 83us
     emit(new Uint8Array(32))
     await flush()

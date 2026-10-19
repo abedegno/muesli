@@ -17,6 +17,7 @@ export async function startMicrophonePreview({
     video: false,
   })
   const context = new AudioContext()
+  if (context.state === 'suspended') await context.resume()
   const source = context.createMediaStreamSource(stream)
   const gain = context.createGain()
   const analyser = context.createAnalyser()

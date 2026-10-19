@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { useCallback, useEffect, useState } from 'react'
 import type { ApiClient } from '../api/client'
 import type { ConfigEntry } from '../api/types'
@@ -42,20 +43,20 @@ export function ConfigView({ client }: Props) {
   return (
     <section>
       <div className="row">
-        <h1>Config</h1>
+        <h1>{uiText('Config')}</h1>
         <button onClick={() => void refresh()} disabled={refreshing}>
-          {refreshing ? 'Refreshing…' : 'Refresh'}
+          {refreshing ? uiText('Refreshing…') : uiText('Refresh')}
         </button>
       </div>
       {error && <p className="error">{error}</p>}
       <table>
         <thead>
           <tr>
-            <th>Name</th>
-            <th>Env var</th>
-            <th>Value</th>
-            <th>Source</th>
-            <th>Actions</th>
+            <th>{uiText('Name')}</th>
+            <th>{uiText('Env var')}</th>
+            <th>{uiText('Value')}</th>
+            <th>{uiText('Source')}</th>
+            <th>{uiText('Actions')}</th>
           </tr>
         </thead>
         <tbody>
@@ -68,8 +69,8 @@ export function ConfigView({ client }: Props) {
               <td>{entry.value}</td>
               <td>{entry.source}</td>
               <td>
-                <button onClick={() => handleCopy(entry)}>Copy</button>
-                {copiedEnvVar === entry.envVar && <span> Copied</span>}
+                <button onClick={() => handleCopy(entry)}>{uiText('Copy')}</button>
+                {copiedEnvVar === entry.envVar && <span> {uiText('Copied')}</span>}
               </td>
             </tr>
           ))}

@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { muesli } from '@/api'
@@ -15,8 +16,7 @@ export function TagsPage() {
   const navigate = useNavigate()
   const { notify } = useToast()
 
-  const reload = () =>
-    muesli.listTags().then((t) => setTags(t))
+  const reload = () => muesli.listTags().then((t) => setTags(t))
 
   useEffect(() => {
     reload()
@@ -26,15 +26,15 @@ export function TagsPage() {
     <div className="mx-auto max-w-xl p-8">
       <div className="mb-6 flex items-center gap-3">
         <Button variant="secondary" size="sm" onClick={() => navigate('/settings')}>
-          ← Back to Settings
+          {uiText('← Back to Settings')}
         </Button>
-        <h1 className="text-xl font-semibold">Manage Tags</h1>
+        <h1 className="text-xl font-semibold">{uiText('Manage Tags')}</h1>
       </div>
 
       {tags === null ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <p className="text-sm text-muted-foreground">{uiText('Loading…')}</p>
       ) : tags.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No tags yet.</p>
+        <p className="text-sm text-muted-foreground">{uiText('No tags yet.')}</p>
       ) : (
         <ul className="flex flex-col gap-2">
           {tags.map((tag) => (
@@ -45,24 +45,21 @@ export function TagsPage() {
               <div>
                 <span className="font-medium">{tag.name}</span>
                 <span className="ml-2 text-xs text-muted-foreground">
-                  {tag.count} note{tag.count === 1 ? '' : 's'}
+                  {tag.count} {uiText('note')}
+                  {tag.count === 1 ? '' : uiText('s')}
                 </span>
               </div>
               <div className="flex gap-2">
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setRenamingTag(tag)}
-                >
-                  Rename
+                <Button variant="secondary" size="sm" onClick={() => setRenamingTag(tag)}>
+                  {uiText('Rename')}
                 </Button>
                 <Button
                   variant="destructive"
                   size="sm"
-                  aria-label={`Delete ${tag.name}`}
+                  aria-label={uiText('Delete {value1}', { value1: tag.name })}
                   onClick={() => setConfirmDeleteTag(tag)}
                 >
-                  Delete
+                  {uiText('Delete')}
                 </Button>
               </div>
             </li>
@@ -80,7 +77,7 @@ export function TagsPage() {
               await muesli.renameTag(renamingTag.id, name)
               await reload()
             } catch (err) {
-              notify(err instanceof Error ? err.message : 'Could not rename tag', 'error')
+              notify(err instanceof Error ? err.message : uiText('Could not rename tag'), 'error')
               throw err
             }
           }}
@@ -94,15 +91,17 @@ export function TagsPage() {
           onOpenChange={(o) => {
             if (!o) setConfirmDeleteTag(null)
           }}
-          title="Delete tag?"
+          title={uiText('Delete tag?')}
         >
           <p className="text-sm text-muted-foreground">
-            Delete "{confirmDeleteTag.name}"? This removes it from {confirmDeleteTag.count} note
-            {confirmDeleteTag.count === 1 ? '' : 's'} and cannot be undone.
+            {uiText('Delete "')}
+            {confirmDeleteTag.name}
+            {uiText('"? This removes it from')} {confirmDeleteTag.count} {uiText('note')}
+            {confirmDeleteTag.count === 1 ? '' : uiText('s')} {uiText('and cannot be undone.')}
           </p>
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="secondary" size="sm" onClick={() => setConfirmDeleteTag(null)}>
-              Cancel
+              {uiText('Cancel')}
             </Button>
             <Button
               variant="destructive"
@@ -113,12 +112,15 @@ export function TagsPage() {
                   await reload()
                   setConfirmDeleteTag(null)
                 } catch (err) {
-                  notify(err instanceof Error ? err.message : 'Could not delete tag', 'error')
+                  notify(
+                    err instanceof Error ? err.message : uiText('Could not delete tag'),
+                    'error'
+                  )
                   setConfirmDeleteTag(null)
                 }
               }}
             >
-              Delete
+              {uiText('Delete')}
             </Button>
           </div>
         </Dialog>

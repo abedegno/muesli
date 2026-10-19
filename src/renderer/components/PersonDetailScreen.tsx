@@ -1,3 +1,6 @@
+import { formatDate } from '@/i18n'
+import { uiText } from '@/i18n'
+import { formatNumber } from '@/i18n'
 import { useEffect, useState, type FormEvent } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft } from 'lucide-react'
@@ -15,46 +18,44 @@ function errorMessage(err: unknown): string {
 
 function formatNoteDate(note: Note): string {
   const iso = note.started_at ?? note.created_at
-  return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
+  return formatDate(new Date(iso), {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+  })
 }
 
 function formatCount(count: number): string {
-  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(count)
+  return formatNumber(count, { maximumFractionDigits: 0 })
 }
 
 function formatHours(hours: number): string {
-  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(hours)
+  return formatNumber(hours, { maximumFractionDigits: 1 })
 }
 
 function ErrorBlock({ message, subject }: { message: string; subject: string }) {
   return (
     <div className="rounded-[var(--radius)] border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-      <p className="font-medium">Could not load {subject}</p>
+      <p className="font-medium">
+        {uiText('Could not load')} {subject}
+      </p>
       <p className="mt-1 break-words">{message}</p>
     </div>
   )
 }
 
-function ActivityStat({
-  label,
-  value,
-}: {
-  label: string
-  value: string
-}) {
+function ActivityStat({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-[var(--radius)] border border-border bg-card px-3 py-2">
-      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
+      <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
       <p className="mt-1 text-sm font-semibold text-foreground">{value}</p>
     </div>
   )
 }
 
-function ActivityRollup({
-  notes,
-}: {
-  notes: Note[]
-}) {
+function ActivityRollup({ notes }: { notes: Note[] }) {
   const meetingCount = notes.length
   const totalHours = notes.reduce((sum, note) => {
     if (!note.started_at || !note.ended_at) return sum
@@ -72,9 +73,12 @@ function ActivityRollup({
 
   return (
     <div className="grid grid-cols-1 gap-2 sm:grid-cols-3">
-      <ActivityStat label="Meetings" value={formatCount(meetingCount)} />
-      <ActivityStat label="Hours" value={formatHours(totalHours)} />
-      <ActivityStat label="Last seen" value={lastSeen ? formatNoteDate(lastSeen) : 'Never'} />
+      <ActivityStat label={uiText('Meetings')} value={formatCount(meetingCount)} />
+      <ActivityStat label={uiText('Hours')} value={formatHours(totalHours)} />
+      <ActivityStat
+        label={uiText('Last seen')}
+        value={lastSeen ? formatNoteDate(lastSeen) : 'Never'}
+      />
     </div>
   )
 }
@@ -86,7 +90,7 @@ function NoteRow({ note }: { note: Note }) {
         to={`/notes/${note.id}`}
         className="block rounded-[var(--radius)] border border-border px-3 py-2 transition-colors hover:bg-muted"
       >
-        <p className="truncate text-sm font-medium">{note.title || 'Untitled note'}</p>
+        <p className="truncate text-sm font-medium">{note.title || uiText('Untitled note')}</p>
         <p className="truncate text-xs text-muted-foreground">{formatNoteDate(note)}</p>
       </Link>
     </li>
@@ -227,16 +231,22 @@ export function PersonDetailScreen() {
       <div className="mb-4 flex items-center gap-2">
         <Button variant="ghost" size="sm" onClick={() => navigate('/people')} className="px-2">
           <ArrowLeft size={14} />
-          Back to People
+          {uiText('Back to People')}
         </Button>
       </div>
 
       {loading ? (
         <div className="flex flex-col gap-2">
-          <div className="mb-2 h-7 w-52"><Skeleton className="h-full w-full" /></div>
-          <div className="h-5 w-72"><Skeleton className="h-full w-full" /></div>
+          <div className="mb-2 h-7 w-52">
+            <Skeleton className="h-full w-full" />
+          </div>
+          <div className="h-5 w-72">
+            <Skeleton className="h-full w-full" />
+          </div>
           <div className="mt-2 flex flex-col gap-2">
-            {Array.from({ length: 3 }).map((_, i) => <Skeleton key={i} className="h-12 w-full" />)}
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} className="h-12 w-full" />
+            ))}
           </div>
         </div>
       ) : loadError ? (
@@ -247,14 +257,19 @@ export function PersonDetailScreen() {
             <div className="flex items-start gap-3">
               <MonogramAvatar id={person.id} label={person.display_name || person.primary_email} />
               <div className="min-w-0 flex-1">
-                <h1 className="font-serif text-xl font-semibold">{person.display_name || 'Untitled person'}</h1>
+                <h1 className="font-serif text-xl font-semibold">
+                  {person.display_name || uiText('Untitled person')}
+                </h1>
                 <p className="truncate text-sm text-muted-foreground">{person.primary_email}</p>
                 {person.company ? (
-                  <Link to={`/companies/${person.company.id}`} className="truncate text-sm text-muted-foreground transition-colors hover:text-foreground">
+                  <Link
+                    to={`/companies/${person.company.id}`}
+                    className="truncate text-sm text-muted-foreground transition-colors hover:text-foreground"
+                  >
                     {person.company.name || person.company.domain}
                   </Link>
                 ) : (
-                  <p className="truncate text-sm text-muted-foreground">—</p>
+                  <p className="truncate text-sm text-muted-foreground">{uiText('—')}</p>
                 )}
               </div>
             </div>
@@ -263,14 +278,14 @@ export function PersonDetailScreen() {
 
             {optionsError ? (
               <div className="rounded-[var(--radius)] border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-                <p className="font-medium">Could not load editing options</p>
+                <p className="font-medium">{uiText('Could not load editing options')}</p>
                 <p className="mt-1 break-words">{optionsError}</p>
               </div>
             ) : null}
 
             {actionError ? (
               <div className="rounded-[var(--radius)] border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
-                <p className="font-medium">Action failed</p>
+                <p className="font-medium">{uiText('Action failed')}</p>
                 <p className="mt-1 break-words">{actionError}</p>
               </div>
             ) : null}
@@ -285,7 +300,7 @@ export function PersonDetailScreen() {
                   setActionError(null)
                 }}
               >
-                {editOpen ? 'Close edit' : 'Edit'}
+                {editOpen ? uiText('Close edit') : uiText('Edit')}
               </Button>
               <Button
                 type="button"
@@ -294,27 +309,36 @@ export function PersonDetailScreen() {
                 disabled={deleting}
                 className="text-destructive hover:text-destructive"
               >
-                {deleting ? 'Deleting...' : 'Delete'}
+                {deleting ? uiText('Deleting...') : uiText('Delete')}
               </Button>
             </div>
 
             {editOpen ? (
-              <form onSubmit={handleSaveEdit} className="space-y-3 rounded-[var(--radius)] border border-border bg-muted/30 p-4">
+              <form
+                onSubmit={handleSaveEdit}
+                className="space-y-3 rounded-[var(--radius)] border border-border bg-muted/30 p-4"
+              >
                 <div className="space-y-1">
-                  <label htmlFor="person-display-name" className="block text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    Display name
+                  <label
+                    htmlFor="person-display-name"
+                    className="block text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                  >
+                    {uiText('Display name')}
                   </label>
                   <Input
                     id="person-display-name"
                     value={draftDisplayName}
                     onChange={(e) => setDraftDisplayName(e.target.value)}
-                    placeholder="Untitled person"
+                    placeholder={uiText('Untitled person')}
                   />
                 </div>
 
                 <div className="space-y-1">
-                  <label htmlFor="person-company" className="block text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    Company
+                  <label
+                    htmlFor="person-company"
+                    className="block text-xs font-medium uppercase tracking-wide text-muted-foreground"
+                  >
+                    {uiText('Company')}
                   </label>
                   <select
                     id="person-company"
@@ -323,30 +347,42 @@ export function PersonDetailScreen() {
                     onChange={(e) => setDraftCompanyId(e.target.value)}
                     disabled={!isEditReady}
                   >
-                    <option value="">No company</option>
+                    <option value="">{uiText('No company')}</option>
                     {companies?.map((company) => (
                       <option key={company.id} value={company.id}>
                         {company.name || company.domain}
                       </option>
                     ))}
                   </select>
-                  {!isEditReady ? <p className="text-xs text-muted-foreground">Loading companies...</p> : null}
+                  {!isEditReady ? (
+                    <p className="text-xs text-muted-foreground">
+                      {uiText('Loading companies...')}
+                    </p>
+                  ) : null}
                 </div>
 
                 <div className="flex items-center gap-2">
                   <Button type="submit" disabled={saving || !isEditReady}>
-                    {saving ? 'Saving...' : 'Save changes'}
+                    {saving ? uiText('Saving...') : uiText('Save changes')}
                   </Button>
-                  <Button type="button" variant="ghost" onClick={() => setEditOpen(false)} disabled={saving}>
-                    Cancel
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => setEditOpen(false)}
+                    disabled={saving}
+                  >
+                    {uiText('Cancel')}
                   </Button>
                 </div>
               </form>
             ) : null}
 
             <div className="space-y-1 rounded-[var(--radius)] border border-border bg-muted/20 p-4">
-              <label htmlFor="person-merge-target" className="block text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                Merge into
+              <label
+                htmlFor="person-merge-target"
+                className="block text-xs font-medium uppercase tracking-wide text-muted-foreground"
+              >
+                {uiText('Merge into')}
               </label>
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
                 <select
@@ -356,28 +392,44 @@ export function PersonDetailScreen() {
                   onChange={(e) => setMergeTarget(e.target.value)}
                   disabled={!isMergeReady || merging}
                 >
-                  <option value="">Choose a person</option>
-                  {people?.filter((candidate) => candidate.id !== person.id).map((candidate) => (
-                    <option key={candidate.id} value={candidate.id}>
-                      {candidate.display_name || candidate.primary_email}
-                    </option>
-                  ))}
+                  <option value="">{uiText('Choose a person')}</option>
+                  {people
+                    ?.filter((candidate) => candidate.id !== person.id)
+                    .map((candidate) => (
+                      <option key={candidate.id} value={candidate.id}>
+                        {candidate.display_name || candidate.primary_email}
+                      </option>
+                    ))}
                 </select>
-                <Button type="button" variant="ghost" onClick={handleMergePeople} disabled={merging || !isMergeReady || !mergeTarget}>
-                  {merging ? 'Merging...' : 'Merge'}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  onClick={handleMergePeople}
+                  disabled={merging || !isMergeReady || !mergeTarget}
+                >
+                  {merging ? uiText('Merging...') : uiText('Merge')}
                 </Button>
               </div>
-              {!isMergeReady ? <p className="text-xs text-muted-foreground">Loading people...</p> : null}
+              {!isMergeReady ? (
+                <p className="text-xs text-muted-foreground">{uiText('Loading people...')}</p>
+              ) : null}
             </div>
           </section>
 
           {isEmpty ? (
-            <EmptyState title="No notes yet" hint="This person has not appeared in any notes or meetings." />
+            <EmptyState
+              title={uiText('No notes yet')}
+              hint={uiText('This person has not appeared in any notes or meetings.')}
+            />
           ) : (
             <section>
-              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Notes</h2>
+              <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {uiText('Notes')}
+              </h2>
               <ul className="flex flex-col gap-2">
-                {notes?.map((note) => <NoteRow key={note.id} note={note} />)}
+                {notes?.map((note) => (
+                  <NoteRow key={note.id} note={note} />
+                ))}
               </ul>
             </section>
           )}

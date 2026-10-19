@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
 import { ToastProvider } from '@/components/ui/Toast'
@@ -26,6 +26,14 @@ const clearStreamingTranscriber = vi.fn()
 vi.mock('@/api', () => ({
   muesli: {
     getConfig: () => getConfig(),
+    getManualServer: async () => false,
+    selectTranscriptionPlugin: vi.fn(),
+    saveTranscriptionService: vi.fn(),
+    platform: 'darwin',
+    getLocalOllamaStatus: async () => ({ reachable: false, appInstalled: false }),
+    downloadOllama: vi.fn(),
+    openOllama: vi.fn(),
+    finishOllamaSetup: vi.fn(),
     getReadyz: () => getReadyz(),
     disconnect: () => disconnect(),
     resetToBuiltIn: () => resetToBuiltIn(),
@@ -56,19 +64,26 @@ afterEach(() => {
   localStorage.clear()
 })
 
-  beforeEach(() => {
-    getReadyz.mockResolvedValue(null)
-    getGoogleCalendarOAuthStatus.mockResolvedValue({ configured: false })
-    getMicrosoftCalendarOAuthStatus.mockResolvedValue({ configured: false })
-    getKeepRunningInBackground.mockResolvedValue(false)
-    getDigestConfig.mockResolvedValue({ owner_id: 'owner-1', cadence: 'off' })
-    updateDigestConfig.mockResolvedValue({ owner_id: 'owner-1', cadence: 'off' })
-    getServerHealth.mockResolvedValue({ reachable: true, authenticated: true })
-    listPlugins.mockResolvedValue([])
-    checkPluginHealth.mockResolvedValue({ healthy: true })
-    setStreamingTranscriber.mockImplementation(async ({ url }: { url: string }) => ({ id: 'stream-1', kind: 'streaming-transcriber', name: 'Streaming transcriber', endpoint_url: url, enabled: true, is_default: true }))
-    clearStreamingTranscriber.mockResolvedValue(undefined)
-  })
+beforeEach(() => {
+  getReadyz.mockResolvedValue(null)
+  getGoogleCalendarOAuthStatus.mockResolvedValue({ configured: false })
+  getMicrosoftCalendarOAuthStatus.mockResolvedValue({ configured: false })
+  getKeepRunningInBackground.mockResolvedValue(false)
+  getDigestConfig.mockResolvedValue({ owner_id: 'owner-1', cadence: 'off' })
+  updateDigestConfig.mockResolvedValue({ owner_id: 'owner-1', cadence: 'off' })
+  getServerHealth.mockResolvedValue({ reachable: true, authenticated: true })
+  listPlugins.mockResolvedValue([])
+  checkPluginHealth.mockResolvedValue({ healthy: true })
+  setStreamingTranscriber.mockImplementation(async ({ url }: { url: string }) => ({
+    id: 'stream-1',
+    kind: 'streaming-transcriber',
+    name: 'Streaming transcriber',
+    endpoint_url: url,
+    enabled: true,
+    is_default: true,
+  }))
+  clearStreamingTranscriber.mockResolvedValue(undefined)
+})
 
 function renderScreen(serverUrl = 'http://localhost:8080') {
   const onDisconnected = vi.fn()
@@ -79,89 +94,19 @@ function renderScreen(serverUrl = 'http://localhost:8080') {
       <MemoryRouter>
         <SettingsScreen onDisconnected={onDisconnected} onResetToBuiltIn={onResetToBuiltIn} />
       </MemoryRouter>
-    </ToastProvider>,
+    </ToastProvider>
   )
   return { onDisconnected, onResetToBuiltIn }
 }
 
 describe('SettingsScreen', () => {
-  const transcriber = { id: 'transcriber-1', kind: 'transcriber', name: 'Whisper', endpoint_url: 'http://whisper', enabled: true, is_default: true }
-  const streaming = { id: 'stream-1', kind: 'streaming-transcriber', name: 'Streaming', endpoint_url: 'http://stream', enabled: true, is_default: true }
-
-  it('shows a healthy current transcriber', async () => {
-    listPlugins.mockResolvedValue([transcriber])
+  it('shows transcription choices and keeps technical connections collapsed', async () => {
     renderScreen()
-    expect(await screen.findByText('Connection healthy.')).toBeInTheDocument()
-    expect(screen.getByText('Whisper · http://whisper')).toBeInTheDocument()
+    expect(await screen.findByLabelText('Final transcript')).toBeInTheDocument()
+    expect(screen.getByLabelText('Access token')).not.toBeVisible()
+    expect(screen.getByRole('button', { name: 'Help: Live transcript' })).toBeInTheDocument()
   })
 
-  it('shows when the current transcriber is missing', async () => {
-    renderScreen()
-    expect(await screen.findByText('No transcriber configured.')).toBeInTheDocument()
-  })
-
-  it('distinguishes a misconfigured current transcriber HTTP response', async () => {
-    listPlugins.mockResolvedValue([transcriber])
-    checkPluginHealth.mockResolvedValue({ healthy: false, error: 'plugin returned 500: broken' })
-    renderScreen()
-    expect(await screen.findByText('Plugin is misconfigured (HTTP 500).')).toBeInTheDocument()
-  })
-
-  it('names the endpoint when the current transcriber is unreachable', async () => {
-    listPlugins.mockResolvedValue([transcriber])
-    checkPluginHealth.mockResolvedValue({ healthy: false, error: 'connect: connection refused' })
-    renderScreen()
-    expect(await screen.findByText('Plugin is unreachable at http://whisper.')).toBeInTheDocument()
-  })
-
-  it.each([
-    ['creates', [], 'http://new-stream', 'new-token'],
-    ['updates', [streaming], 'http://updated-stream', ''],
-  ])('%s a streaming transcriber from the form', async (_label, plugins, url, token) => {
-    const user = userEvent.setup()
-    listPlugins.mockResolvedValue(plugins)
-    renderScreen()
-    const urlInput = await screen.findByLabelText('URL')
-    await user.clear(urlInput)
-    await user.type(urlInput, url)
-    if (token) await user.type(screen.getByLabelText('Token'), token)
-    await user.click(screen.getByRole('button', { name: 'Save' }))
-    await waitFor(() => expect(setStreamingTranscriber).toHaveBeenCalledWith({ url, token }))
-    expect(screen.getByLabelText('Token')).toHaveValue('')
-  })
-
-  it('prefills only the streaming URL and clears the saved configuration', async () => {
-    const user = userEvent.setup()
-    listPlugins.mockResolvedValue([streaming])
-    renderScreen()
-    expect(await screen.findByLabelText('URL')).toHaveValue('http://stream')
-    expect(screen.getByLabelText('Token')).toHaveValue('')
-    await user.click(screen.getByRole('button', { name: 'Clear' }))
-    await waitFor(() => expect(clearStreamingTranscriber).toHaveBeenCalled())
-    expect(screen.getByText('No streaming transcriber configured.')).toBeInTheDocument()
-  })
-
-  it.each([
-    [{ healthy: true }, 'Connection healthy.'],
-    [{ healthy: false, error: 'plugin returned 401: unauthorized' }, 'Authentication failed: check the plugin token.'],
-    [{ healthy: false, error: 'plugin returned 502: bad gateway' }, 'Plugin is misconfigured (HTTP 502).'],
-    [{ healthy: false, error: 'dial tcp: connection refused' }, 'Plugin is unreachable at http://stream.'],
-  ])('renders the distinct streaming connection result %#', async (health, copy) => {
-    const user = userEvent.setup()
-    listPlugins.mockResolvedValue([streaming])
-    checkPluginHealth.mockResolvedValue(health)
-    renderScreen()
-    await user.click(await screen.findByRole('button', { name: 'Test connection' }))
-    expect(await screen.findByText(copy)).toBeInTheDocument()
-  })
-
-  it('reports the distinct no-streaming-configured test state', async () => {
-    const user = userEvent.setup()
-    renderScreen()
-    await user.click(await screen.findByRole('button', { name: 'Test connection' }))
-    expect(screen.getByText('No streaming transcriber configured.')).toBeInTheDocument()
-    expect(checkPluginHealth).not.toHaveBeenCalled()
-  })
   it('hides the Google Calendar connect button until the server reports oauth configured', async () => {
     getGoogleCalendarOAuthStatus.mockResolvedValue({ configured: false })
 
@@ -176,7 +121,9 @@ describe('SettingsScreen', () => {
 
     renderScreen()
 
-    expect(await screen.findByRole('button', { name: 'Connect Google Calendar' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('button', { name: 'Connect Google Calendar' })
+    ).toBeInTheDocument()
   })
 
   it('hides the Microsoft Calendar connect button until the server reports oauth configured', async () => {
@@ -193,38 +140,35 @@ describe('SettingsScreen', () => {
 
     renderScreen()
 
-    expect(await screen.findByRole('button', { name: 'Connect Microsoft Calendar' })).toBeInTheDocument()
+    expect(
+      await screen.findByRole('button', { name: 'Connect Microsoft Calendar' })
+    ).toBeInTheDocument()
   })
 
-  it('shows the AI / Transcription section with Ollama not detected and a download affordance', async () => {
+  it('offers local AI installation when Ollama is absent', async () => {
     getReadyz.mockResolvedValue({ ollamaDetected: false })
-
     renderScreen()
-
-    expect(
-      await screen.findByText((_, element) => element?.tagName === 'P' && /ollama status: not detected/i.test(element.textContent ?? '')),
-    ).toBeInTheDocument()
-    expect(screen.getByText(/without ollama, summaries and search stay unavailable/i)).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /download ollama/i })).toHaveAttribute('href', 'https://ollama.com/download')
+    expect(await screen.findByRole('button', { name: /download ollama/i })).toBeInTheDocument()
+    expect(screen.getByText(/recording and transcription work without AI/i)).toBeInTheDocument()
   })
 
-  it('shows the AI / Transcription section with Ollama detected', async () => {
+  it('explains detected Ollama separately from transcription', async () => {
     getReadyz.mockResolvedValue({ ollamaDetected: true })
-
     renderScreen()
-
-    expect(
-      await screen.findByText((_, element) => element?.tagName === 'P' && /ollama status: detected/i.test(element.textContent ?? '')),
-    ).toBeInTheDocument()
-    expect(screen.getByText(/summaries and search are available/i)).toBeInTheDocument()
+    expect(await screen.findByText(/Ollama was detected when Muesli started/i)).toBeInTheDocument()
   })
 
   it('renders the keep-running setting and auto-record dependency copy', async () => {
     renderScreen()
 
-    expect(await screen.findByRole('checkbox', { name: /keep muesli running in the menu bar when the window is closed/i })).toBeInTheDocument()
-    expect(screen.getByText(/auto-record only runs while muesli is still open/i)).toBeInTheDocument()
-    expect(screen.getByText(/if menu bar running is off, it can only work during the current session before the window closes/i)).toBeInTheDocument()
+    expect(
+      await screen.findByRole('checkbox', {
+        name: /keep muesli running in the menu bar when the window is closed/i,
+      })
+    ).toBeInTheDocument()
+    expect(
+      screen.getByText(/automatic recording only runs while muesli is running/i)
+    ).toBeInTheDocument()
   })
 
   it('loads and saves the keep-running setting through the bridge', async () => {
@@ -233,45 +177,21 @@ describe('SettingsScreen', () => {
 
     renderScreen()
 
-    const checkbox = await screen.findByRole('checkbox', { name: /keep muesli running in the menu bar when the window is closed/i })
+    const checkbox = await screen.findByRole('checkbox', {
+      name: /keep muesli running in the menu bar when the window is closed/i,
+    })
     expect(checkbox).not.toBeChecked()
     await user.click(checkbox)
 
     await waitFor(() => expect(setKeepRunningInBackground).toHaveBeenCalledWith(true))
   })
 
-  it('keeps polling for Ollama detection changes without a restart', async () => {
-    vi.useFakeTimers()
-    getReadyz.mockResolvedValueOnce({ ollamaDetected: false }).mockResolvedValueOnce({ ollamaDetected: true })
-
-    renderScreen()
-
-    await act(async () => {
-      await Promise.resolve()
-    })
-    expect(
-      screen.getByText((_, element) => element?.tagName === 'P' && /ollama status: not detected/i.test(element.textContent ?? '')),
-    ).toBeInTheDocument()
-
-    await act(async () => {
-      vi.advanceTimersByTime(1000)
-      await Promise.resolve()
-    })
-
-    expect(
-      screen.getByText((_, element) => element?.tagName === 'P' && /ollama status: detected/i.test(element.textContent ?? '')),
-    ).toBeInTheDocument()
-  })
-
-  it('renders the AI / Transcription section when getReadyz returns null', async () => {
+  it('offers a retry when AI availability cannot be checked', async () => {
     getReadyz.mockResolvedValue(null)
-
     renderScreen()
-
-    expect(
-      await screen.findByText((_, element) => element?.tagName === 'P' && /ollama status: detection unavailable/i.test(element.textContent ?? '')),
-    ).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: /download ollama/i })).toBeInTheDocument()
+    expect(await screen.findByText('Could not check AI availability.')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Try again' }))
+    await waitFor(() => expect(getReadyz).toHaveBeenCalledTimes(2))
   })
 
   it('opens the Google Calendar connect URL when the button is clicked', async () => {
@@ -300,7 +220,8 @@ describe('SettingsScreen', () => {
 
     renderScreen()
 
-    const cadence = await screen.findByRole('combobox', { name: 'Cadence' })
+    await user.click(screen.getByText('Advanced: scheduled summaries'))
+    const cadence = await screen.findByRole('combobox', { name: 'Frequency' })
     expect(cadence).toHaveValue('daily')
 
     await user.selectOptions(cadence, 'weekly')
@@ -314,8 +235,9 @@ describe('SettingsScreen', () => {
 
     renderScreen()
 
-    const cadence = await screen.findByRole('combobox', { name: 'Cadence' })
-    expect(screen.getByLabelText('Cadence')).toBe(cadence)
+    await user.click(screen.getByText('Advanced: scheduled summaries'))
+    const cadence = await screen.findByRole('combobox', { name: 'Frequency' })
+    expect(screen.getByLabelText('Frequency')).toBe(cadence)
     expect(cadence.tagName).toBe('SELECT')
 
     cadence.focus()
@@ -332,7 +254,8 @@ describe('SettingsScreen', () => {
 
     renderScreen()
 
-    const cadence = await screen.findByRole('combobox', { name: 'Cadence' })
+    await user.click(screen.getByText('Advanced: scheduled summaries'))
+    const cadence = await screen.findByRole('combobox', { name: 'Frequency' })
     expect(cadence).toHaveValue('daily')
 
     await user.selectOptions(cadence, 'weekly')
@@ -346,23 +269,30 @@ describe('SettingsScreen', () => {
 
     renderScreen()
 
-    expect(screen.getByRole('button', { name: 'system' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('button', { name: 'light' })).toHaveAttribute('aria-pressed', 'false')
-    expect(screen.getByRole('button', { name: 'dark' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('button', { name: 'Follow system' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    )
+    expect(screen.getByRole('button', { name: 'Light' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('button', { name: 'Dark' })).toHaveAttribute('aria-pressed', 'false')
 
-    await user.click(screen.getByRole('button', { name: 'dark' }))
+    await user.click(screen.getByRole('button', { name: 'Dark' }))
 
-    expect(screen.getByRole('button', { name: 'dark' })).toHaveAttribute('aria-pressed', 'true')
-    expect(screen.getByRole('button', { name: 'system' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('button', { name: 'Dark' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'Follow system' })).toHaveAttribute(
+      'aria-pressed',
+      'false'
+    )
   })
 
   it('shows Connected for an ok health response', async () => {
     getServerHealth.mockResolvedValue({ reachable: true, authenticated: true })
 
     renderScreen()
+    await userEvent.click(screen.getByText('Advanced: storage and server connection'))
 
     expect(await screen.findByText('Connected')).toBeInTheDocument()
-    expect(screen.getByRole('status')).toHaveTextContent('Connected')
+    expect(screen.getByText('Connected').closest('[role="status"]')).toHaveTextContent('Connected')
     expect(getServerHealth).toHaveBeenCalledTimes(1)
   })
 
@@ -370,6 +300,7 @@ describe('SettingsScreen', () => {
     getServerHealth.mockResolvedValue({ reachable: true, authenticated: true, version: '1.2.3' })
 
     renderScreen('http://localhost:8080/')
+    await userEvent.click(screen.getByText('Advanced: storage and server connection'))
 
     expect(await screen.findByText('Connected · v1.2.3')).toBeInTheDocument()
     expect(getServerHealth).toHaveBeenCalledTimes(1)
@@ -379,6 +310,7 @@ describe('SettingsScreen', () => {
     getServerHealth.mockRejectedValue(new Error('offline'))
 
     renderScreen()
+    await userEvent.click(screen.getByText('Advanced: storage and server connection'))
 
     expect(await screen.findByText('Unreachable')).toBeInTheDocument()
   })
@@ -387,6 +319,7 @@ describe('SettingsScreen', () => {
     getServerHealth.mockResolvedValue({ reachable: false })
 
     renderScreen()
+    await userEvent.click(screen.getByText('Advanced: storage and server connection'))
 
     expect(await screen.findByText('Unreachable')).toBeInTheDocument()
   })
@@ -395,6 +328,7 @@ describe('SettingsScreen', () => {
     getServerHealth.mockResolvedValue({ reachable: true, authenticated: false })
 
     renderScreen()
+    await userEvent.click(screen.getByText('Advanced: storage and server connection'))
 
     expect(await screen.findByText('Sign in required')).toBeInTheDocument()
     expect(screen.queryByText('Connected')).toBeNull()
@@ -402,6 +336,7 @@ describe('SettingsScreen', () => {
 
   it('skips health fetch and badge when no server URL is configured', async () => {
     renderScreen('')
+    await userEvent.click(screen.getByText('Advanced: storage and server connection'))
 
     expect(await screen.findByText('Not connected')).toBeInTheDocument()
     await waitFor(() => expect(getServerHealth).not.toHaveBeenCalled())
@@ -457,8 +392,13 @@ describe('SettingsScreen', () => {
 
     const { onResetToBuiltIn } = renderScreen()
 
-    await user.click(await screen.findByRole('button', { name: "Use this device's built-in server" }))
-    const dialog = await screen.findByRole('dialog', { name: "Switch to this device's built-in server?" })
+    await user.click(screen.getByText('Advanced: storage and server connection'))
+    await user.click(
+      await screen.findByRole('button', { name: "Use this device's built-in server" })
+    )
+    const dialog = await screen.findByRole('dialog', {
+      name: "Switch to this device's built-in server?",
+    })
     expect(dialog).toBeInTheDocument()
 
     await user.click(within(dialog).getByRole('button', { name: 'Switch to built-in server' }))
@@ -471,8 +411,13 @@ describe('SettingsScreen', () => {
 
     renderScreen()
 
-    await user.click(await screen.findByRole('button', { name: "Use this device's built-in server" }))
-    const dialog = await screen.findByRole('dialog', { name: "Switch to this device's built-in server?" })
+    await user.click(screen.getByText('Advanced: storage and server connection'))
+    await user.click(
+      await screen.findByRole('button', { name: "Use this device's built-in server" })
+    )
+    const dialog = await screen.findByRole('dialog', {
+      name: "Switch to this device's built-in server?",
+    })
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
     expect(resetToBuiltIn).not.toHaveBeenCalled()
   })
@@ -482,6 +427,7 @@ describe('SettingsScreen', () => {
 
     const { onDisconnected } = renderScreen()
 
+    await user.click(screen.getByText('Advanced: storage and server connection'))
     await user.click(await screen.findByRole('button', { name: 'Disconnect' }))
     const dialog = await screen.findByRole('dialog', { name: 'Disconnect from this server?' })
     expect(dialog).toBeInTheDocument()
@@ -496,6 +442,7 @@ describe('SettingsScreen', () => {
 
     renderScreen()
 
+    await user.click(screen.getByText('Advanced: storage and server connection'))
     await user.click(await screen.findByRole('button', { name: 'Disconnect' }))
     const dialog = await screen.findByRole('dialog', { name: 'Disconnect from this server?' })
     await user.click(within(dialog).getByRole('button', { name: 'Cancel' }))
@@ -508,6 +455,7 @@ describe('SettingsScreen', () => {
 
     const { onDisconnected } = renderScreen()
 
+    await user.click(screen.getByText('Advanced: storage and server connection'))
     await user.click(await screen.findByRole('button', { name: 'Disconnect' }))
     const dialog = await screen.findByRole('dialog', { name: 'Disconnect from this server?' })
     await user.click(within(dialog).getByRole('button', { name: 'Disconnect' }))
@@ -522,8 +470,13 @@ describe('SettingsScreen', () => {
 
     renderScreen()
 
-    await user.click(await screen.findByRole('button', { name: "Use this device's built-in server" }))
-    const dialog = await screen.findByRole('dialog', { name: "Switch to this device's built-in server?" })
+    await user.click(screen.getByText('Advanced: storage and server connection'))
+    await user.click(
+      await screen.findByRole('button', { name: "Use this device's built-in server" })
+    )
+    const dialog = await screen.findByRole('dialog', {
+      name: "Switch to this device's built-in server?",
+    })
     await user.click(within(dialog).getByRole('button', { name: 'Switch to built-in server' }))
 
     await waitFor(() => expect(resetToBuiltIn).toHaveBeenCalledTimes(1))

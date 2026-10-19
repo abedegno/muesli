@@ -9,7 +9,9 @@ export interface LocalSessionDeps {
   baseUrl: string
   tokenStore: Pick<TokenStore, 'load' | 'save'>
   secretStore: Pick<SecretStore, 'loadCreds' | 'saveCreds' | 'getManualServer'>
-  makeClient: (baseUrl: string) => Pick<MuesliClient, 'setupNeeded' | 'setup' | 'login' | 'createToken'>
+  makeClient: (
+    baseUrl: string
+  ) => Pick<MuesliClient, 'setupNeeded' | 'setup' | 'login' | 'createToken'>
   generatePassword: () => string
   log?: (msg: string, err?: unknown) => void
 }
@@ -17,7 +19,18 @@ export interface LocalSessionDeps {
 export async function ensureLocalSession(deps: LocalSessionDeps): Promise<LocalSessionResult> {
   if (!deps.embedded) return 'skipped'
   if (deps.secretStore.getManualServer()) return 'manual'
-  if (deps.tokenStore.load()) return 'unconfirmed'
+  const existing = deps.tokenStore.load()
+  if (existing) {
+    let loopback = false
+    try {
+      loopback = ['localhost', '127.0.0.1', '[::1]'].includes(new URL(existing.serverUrl).hostname)
+    } catch {
+      /* A legacy invalid URL is handled by the normal connection UI. */
+    }
+    if (loopback && existing.serverUrl !== deps.baseUrl)
+      deps.tokenStore.save({ ...existing, serverUrl: deps.baseUrl })
+    return 'unconfirmed'
+  }
 
   const client = deps.makeClient(deps.baseUrl)
   const needs = await client.setupNeeded()

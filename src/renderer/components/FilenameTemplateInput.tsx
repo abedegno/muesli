@@ -1,7 +1,13 @@
+import { uiText } from '@/i18n'
 import { renderFilenameTemplate, validateFilenameTemplate } from '../lib/filenameTemplate'
 
 /** Dummy context used exclusively for the live preview. */
-const PREVIEW_CTX = { date: '2024-01-15', title: 'Sample Meeting' }
+const PREVIEW_CTX = {
+  date: '2024-01-15',
+  get title() {
+    return uiText('Sample Meeting')
+  },
+}
 
 /**
  * A controlled input for a filename template string.
@@ -34,9 +40,9 @@ export function FilenameTemplateInput({
         value={value}
         onChange={(e) => onChange(e.target.value)}
         className="w-full rounded border border-border bg-background px-2 py-1 text-sm focus:outline-none focus:ring-1 focus:ring-ring"
-        aria-label="Filename template"
+        aria-label={uiText('Filename template')}
       />
-      <p className="text-xs text-muted-foreground" aria-label="Preview">
+      <p className="text-xs text-muted-foreground" aria-label={uiText('Preview')}>
         {preview || ' '}
       </p>
       {errors.length > 0 && (

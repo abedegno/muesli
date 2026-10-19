@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { muesli } from '@/api'
 import { Button } from '@/components/ui/Button'
@@ -78,13 +79,16 @@ export function TemplatesScreen() {
   const builtIns = (templates ?? []).filter((t) => t.built_in)
   const mine = (templates ?? []).filter((t) => !t.built_in)
   const duplicate = async (t: Template) => {
-    const name = uniqueDuplicateName(t.name, mine.map((m) => m.name))
+    const name = uniqueDuplicateName(
+      t.name,
+      mine.map((m) => m.name)
+    )
     try {
       await muesli.createTemplate(name, t.phase, t.sections, t.auto_run)
       await reload()
-      notify(`Duplicated as "${name}"`, 'info')
+      notify(uiText('Duplicated as "{value1}"', { value1: name }), 'info')
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Could not duplicate template', 'error')
+      notify(err instanceof Error ? err.message : uiText('Could not duplicate template'), 'error')
     }
   }
 
@@ -118,12 +122,15 @@ export function TemplatesScreen() {
   if (templatesError) {
     return (
       <div className="mx-auto max-w-2xl p-6">
-        <div role="alert" className="rounded-[var(--radius)] border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-          <p className="font-medium">Could not load templates.</p>
+        <div
+          role="alert"
+          className="rounded-[var(--radius)] border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive"
+        >
+          <p className="font-medium">{uiText('Could not load templates.')}</p>
           <p className="mt-1 break-words">{templatesError}</p>
           <div className="mt-4">
             <Button variant="secondary" size="sm" onClick={() => void reload()}>
-              Try again
+              {uiText('Try again')}
             </Button>
           </div>
         </div>
@@ -133,19 +140,19 @@ export function TemplatesScreen() {
 
   return (
     <div className="mx-auto max-w-2xl p-6">
-      <h1 className="mb-6 font-serif text-3xl">Templates</h1>
+      <h1 className="mb-6 font-serif text-3xl">{uiText('Templates')}</h1>
 
       <section className="mb-8">
         <div className="mb-3 flex items-center justify-between">
           <h2 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">
-            Your templates
+            {uiText('Your templates')}
           </h2>
           <div className="flex items-center gap-2">
             <input
               ref={fileInputRef}
               type="file"
               accept="application/json"
-              aria-label="Import template file"
+              aria-label={uiText('Import template file')}
               className="hidden"
               onChange={async (e) => {
                 const file = e.target.files?.[0]
@@ -156,22 +163,25 @@ export function TemplatesScreen() {
                   const data = parseTemplateImport(text)
                   await muesli.createTemplate(data.name, data.phase, data.sections, data.auto_run)
                   await reload()
-                  notify(`Imported "${data.name}"`, 'info')
+                  notify(uiText('Imported "{value1}"', { value1: data.name }), 'info')
                 } catch (err) {
-                  notify(err instanceof Error ? err.message : 'Could not import template', 'error')
+                  notify(
+                    err instanceof Error ? err.message : uiText('Could not import template'),
+                    'error'
+                  )
                 }
               }}
             />
             <Button size="sm" variant="secondary" onClick={() => fileInputRef.current?.click()}>
-              Import template
+              {uiText('Import template')}
             </Button>
             <Button size="sm" onClick={() => setEditing({})}>
-              + New template
+              {uiText('+ New template')}
             </Button>
           </div>
         </div>
         {mine.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No custom templates yet.</p>
+          <p className="text-sm text-muted-foreground">{uiText('No custom templates yet.')}</p>
         ) : (
           <ul className="flex flex-col gap-2">
             {mine.map((t) => (
@@ -182,33 +192,43 @@ export function TemplatesScreen() {
                 <div>
                   <div className="font-medium">{t.name}</div>
                   <div className="text-xs text-muted-foreground">
-                    {t.sections.length} section{t.sections.length === 1 ? '' : 's'}
+                    {t.sections.length} {uiText('section')}
+                    {t.sections.length === 1 ? '' : uiText('s')}
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <Badge>{phaseLabel(t.phase)}</Badge>
-                  <Badge tone={t.auto_run ? 'primary' : 'neutral'}>{t.auto_run ? 'Auto-run' : 'Manual'}</Badge>
-                  <Button variant="secondary" size="sm" aria-label={`Duplicate ${t.name}`} onClick={() => duplicate(t)}>
-                    Duplicate
+                  <Badge tone={t.auto_run ? 'primary' : 'neutral'}>
+                    {t.auto_run ? uiText('Auto-run') : uiText('Manual')}
+                  </Badge>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    aria-label={uiText('Duplicate {value1}', { value1: t.name })}
+                    onClick={() => duplicate(t)}
+                  >
+                    {uiText('Duplicate')}
                   </Button>
                   <Button
                     variant="secondary"
                     size="sm"
-                    aria-label={`Export ${t.name}`}
-                    onClick={() => triggerDownload(templateExportFilename(t.name), exportTemplateJSON(t))}
+                    aria-label={uiText('Export {value1}', { value1: t.name })}
+                    onClick={() =>
+                      triggerDownload(templateExportFilename(t.name), exportTemplateJSON(t))
+                    }
                   >
-                    Export
+                    {uiText('Export')}
                   </Button>
                   <Button variant="secondary" size="sm" onClick={() => setEditing({ template: t })}>
-                    Edit
+                    {uiText('Edit')}
                   </Button>
                   <Button
                     variant="destructive"
                     size="sm"
-                    aria-label={`Delete ${t.name}`}
+                    aria-label={uiText('Delete {value1}', { value1: t.name })}
                     onClick={() => setConfirmDelete(t)}
                   >
-                    Delete
+                    {uiText('Delete')}
                   </Button>
                 </div>
               </li>
@@ -220,7 +240,7 @@ export function TemplatesScreen() {
       {builtIns.length > 0 && (
         <section>
           <h2 className="mb-3 text-sm font-medium uppercase tracking-wide text-muted-foreground">
-            Built-in
+            {uiText('Built-in')}
           </h2>
           <ul className="flex flex-col gap-2">
             {builtIns.map((t) => (
@@ -233,22 +253,36 @@ export function TemplatesScreen() {
                   <Badge>{phaseLabel(t.phase)}</Badge>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Button variant="ghost" size="sm" aria-label={`View ${t.name} sections`} onClick={() => setPreviewing(t)}>
-                    View
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    aria-label={uiText('View {value1} sections', { value1: t.name })}
+                    onClick={() => setPreviewing(t)}
+                  >
+                    {uiText('View')}
                   </Button>
-                  <Badge tone={t.auto_run ? 'primary' : 'neutral'}>{t.auto_run ? 'Auto-run' : 'Manual'}</Badge>
-                  <Button variant="secondary" size="sm" aria-label={`Duplicate ${t.name}`} onClick={() => duplicate(t)}>
-                    Duplicate
+                  <Badge tone={t.auto_run ? 'primary' : 'neutral'}>
+                    {t.auto_run ? uiText('Auto-run') : uiText('Manual')}
+                  </Badge>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    aria-label={uiText('Duplicate {value1}', { value1: t.name })}
+                    onClick={() => duplicate(t)}
+                  >
+                    {uiText('Duplicate')}
                   </Button>
                   <Button
                     variant="secondary"
                     size="sm"
-                    aria-label={`Export ${t.name}`}
-                    onClick={() => triggerDownload(templateExportFilename(t.name), exportTemplateJSON(t))}
+                    aria-label={uiText('Export {value1}', { value1: t.name })}
+                    onClick={() =>
+                      triggerDownload(templateExportFilename(t.name), exportTemplateJSON(t))
+                    }
                   >
-                    Export
+                    {uiText('Export')}
                   </Button>
-                  <Badge>Built-in</Badge>
+                  <Badge>{uiText('Built-in')}</Badge>
                 </div>
               </li>
             ))}
@@ -259,15 +293,19 @@ export function TemplatesScreen() {
       {editing && (
         <TemplateEditor
           open
-          title={editing.template ? 'Edit template' : 'New template'}
+          title={editing.template ? uiText('Edit template') : uiText('New template')}
           initial={editing.template}
           onSave={async (name, phase, sections, autoRun) => {
             try {
-              if (editing.template) await muesli.updateTemplate(editing.template.id, name, phase, sections, autoRun)
+              if (editing.template)
+                await muesli.updateTemplate(editing.template.id, name, phase, sections, autoRun)
               else await muesli.createTemplate(name, phase, sections, autoRun)
               await reload()
             } catch (err) {
-              notify(err instanceof Error ? err.message : 'Could not save template', 'error')
+              notify(
+                err instanceof Error ? err.message : uiText('Could not save template'),
+                'error'
+              )
               throw err
             }
           }}
@@ -278,15 +316,19 @@ export function TemplatesScreen() {
       {confirmDelete !== null && (
         <Dialog
           open
-          onOpenChange={(o) => { if (!o) setConfirmDelete(null) }}
-          title="Delete template?"
+          onOpenChange={(o) => {
+            if (!o) setConfirmDelete(null)
+          }}
+          title={uiText('Delete template?')}
         >
           <p className="text-sm text-muted-foreground">
-            Delete &ldquo;{confirmDelete.name}&rdquo;? This cannot be undone.
+            {uiText('Delete “')}
+            {confirmDelete.name}
+            {uiText('”? This cannot be undone.')}
           </p>
           <div className="mt-4 flex justify-end gap-2">
             <Button variant="secondary" size="sm" onClick={() => setConfirmDelete(null)}>
-              Cancel
+              {uiText('Cancel')}
             </Button>
             <Button
               variant="destructive"
@@ -297,12 +339,15 @@ export function TemplatesScreen() {
                   await reload()
                   setConfirmDelete(null)
                 } catch (err) {
-                  notify(err instanceof Error ? err.message : 'Could not delete template', 'error')
+                  notify(
+                    err instanceof Error ? err.message : uiText('Could not delete template'),
+                    'error'
+                  )
                   setConfirmDelete(null)
                 }
               }}
             >
-              Delete
+              {uiText('Delete')}
             </Button>
           </div>
         </Dialog>
@@ -311,13 +356,15 @@ export function TemplatesScreen() {
       {previewing !== null && (
         <Dialog
           open
-          onOpenChange={(o) => { if (!o) setPreviewing(null) }}
+          onOpenChange={(o) => {
+            if (!o) setPreviewing(null)
+          }}
           title={previewing.name}
         >
           <div className="mb-3 flex items-center gap-2">
             <Badge>{phaseLabel(previewing.phase)}</Badge>
             <Badge tone={previewing.auto_run ? 'primary' : 'neutral'}>
-              {previewing.auto_run ? 'Auto-run' : 'Manual'}
+              {previewing.auto_run ? uiText('Auto-run') : uiText('Manual')}
             </Badge>
           </div>
           <ul className="flex max-h-80 flex-col gap-3 overflow-y-auto">
@@ -330,7 +377,7 @@ export function TemplatesScreen() {
           </ul>
           <div className="mt-4 flex justify-end">
             <Button variant="secondary" size="sm" onClick={() => setPreviewing(null)}>
-              Close
+              {uiText('Close')}
             </Button>
           </div>
         </Dialog>

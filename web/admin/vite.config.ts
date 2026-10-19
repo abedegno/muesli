@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 // The SPA is served under /admin/ by the Go server, so asset URLs must be
 // prefixed with /admin/. Build output goes straight into the Go embed dir.
 export default defineConfig({
+  resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   base: '/admin/',
   plugins: [react()],
   build: {

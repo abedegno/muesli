@@ -43,28 +43,61 @@ describe('ipc handlers', () => {
     const fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
       const path = new URL(String(input)).pathname
       calls.push(`${init?.method ?? 'GET'} ${path}`)
-      if (path.endsWith('/health')) return new Response(JSON.stringify({ healthy: true }), { status: 200 })
+      if (path.endsWith('/health'))
+        return new Response(JSON.stringify({ healthy: true }), { status: 200 })
       return new Response(JSON.stringify([{ id: 'p1', kind: 'transcriber' }]), { status: 200 })
     }) as typeof server.fetch
     const h = makePluginHandlers(fetch)
 
     await expect(h.listPlugins()).resolves.toHaveLength(1)
     await expect(h.checkPluginHealth('p1')).resolves.toEqual({ healthy: true })
-    expect(calls).toEqual(['GET /api/admin/plugins', 'POST /api/admin/plugins/p1/health'])
+    expect(calls).toEqual(['GET /api/transcription/services', 'POST /api/admin/plugins/p1/health'])
   })
 
   it('creates a streaming transcriber when none exists', async () => {
     const requests: Array<{ method: string; body?: Record<string, unknown> }> = []
+    let created = false
     const fetch = vi.fn(async (_input: string | URL, init?: RequestInit) => {
       const method = init?.method ?? 'GET'
       requests.push({ method, body: init?.body ? JSON.parse(String(init.body)) : undefined })
-      if (method === 'GET') return new Response('[]', { status: 200 })
-      return new Response(JSON.stringify({ id: 'stream-1', kind: 'streaming-transcriber', endpoint_url: 'http://stream' }), { status: 201 })
+      if (method === 'GET')
+        return new Response(
+          JSON.stringify(
+            created
+              ? [
+                  {
+                    id: 'stream-1',
+                    kind: 'streaming-transcriber',
+                    name: 'Custom streaming transcriber',
+                    endpoint_url: 'http://stream',
+                    enabled: true,
+                    is_default: true,
+                  },
+                ]
+              : []
+          ),
+          { status: 200 }
+        )
+      created = true
+      return new Response(JSON.stringify({ id: 'stream-1' }), { status: 201 })
     }) as typeof server.fetch
-    const result = await makePluginHandlers(fetch).setStreamingTranscriber({ url: 'http://stream', token: 'secret' })
+    const result = await makePluginHandlers(fetch).setStreamingTranscriber({
+      url: 'http://stream',
+      token: 'secret',
+    })
 
     expect(result.id).toBe('stream-1')
-    expect(requests[1]).toEqual({ method: 'POST', body: { kind: 'streaming-transcriber', name: 'Streaming transcriber', endpoint_url: 'http://stream', token: 'secret', enabled: true, is_default: true } })
+    expect(requests[1]).toEqual({
+      method: 'POST',
+      body: {
+        kind: 'streaming-transcriber',
+        name: 'Custom streaming transcriber',
+        endpoint_url: 'http://stream',
+        token: 'secret',
+        enabled: true,
+        is_default: true,
+      },
+    })
   })
 
   it('updates the existing streaming transcriber without duplicating it', async () => {
@@ -73,26 +106,60 @@ describe('ipc handlers', () => {
       const method = init?.method ?? 'GET'
       const path = new URL(String(input)).pathname
       calls.push({ path, method, body: init?.body ? JSON.parse(String(init.body)) : undefined })
-      if (method === 'GET') return new Response(JSON.stringify([{ id: 'stream-1', kind: 'streaming-transcriber' }]), { status: 200 })
-      return new Response(JSON.stringify({ id: 'stream-1', kind: 'streaming-transcriber', endpoint_url: 'http://new' }), { status: 200 })
+      if (method === 'GET')
+        return new Response(
+          JSON.stringify([
+            {
+              id: 'stream-1',
+              kind: 'streaming-transcriber',
+              name: 'Streaming transcriber',
+              enabled: true,
+              is_default: true,
+            },
+          ]),
+          { status: 200 }
+        )
+      return new Response(
+        JSON.stringify({
+          id: 'stream-1',
+          kind: 'streaming-transcriber',
+          endpoint_url: 'http://new',
+        }),
+        { status: 200 }
+      )
     }) as typeof server.fetch
     await makePluginHandlers(fetch).setStreamingTranscriber({ url: 'http://new', token: '' })
 
-    expect(calls[1]).toEqual({ path: '/api/admin/plugins/stream-1', method: 'PATCH', body: { endpoint_url: 'http://new', enabled: true, is_default: true } })
+    expect(calls[1]).toEqual({
+      path: '/api/admin/plugins/stream-1',
+      method: 'PATCH',
+      body: { endpoint_url: 'http://new', enabled: true, is_default: true },
+    })
     expect(calls.filter((call) => call.method === 'POST')).toHaveLength(0)
   })
 
-  it('deletes the existing streaming transcriber when clearing', async () => {
+  it('disables the selected streaming transcriber while retaining its default marker', async () => {
     const calls: string[] = []
     const fetch = vi.fn(async (input: string | URL, init?: RequestInit) => {
       const method = init?.method ?? 'GET'
       calls.push(`${method} ${new URL(String(input)).pathname}`)
       return method === 'GET'
-        ? new Response(JSON.stringify([{ id: 'stream-1', kind: 'streaming-transcriber' }]), { status: 200 })
+        ? new Response(
+            JSON.stringify([
+              {
+                id: 'stream-1',
+                kind: 'streaming-transcriber',
+                name: 'Streaming transcriber',
+                enabled: true,
+                is_default: true,
+              },
+            ]),
+            { status: 200 }
+          )
         : new Response(null, { status: 204 })
     }) as typeof server.fetch
     await makePluginHandlers(fetch).clearStreamingTranscriber()
-    expect(calls).toEqual(['GET /api/admin/plugins', 'DELETE /api/admin/plugins/stream-1'])
+    expect(calls).toEqual(['GET /api/transcription/services', 'PATCH /api/admin/plugins/stream-1'])
   })
 
   it('clearing is a no-op when no streaming transcriber exists', async () => {
@@ -133,11 +200,19 @@ describe('ipc handlers', () => {
     const tokenStore = new TokenStore(dir, fakeSafe)
     const h = createHandlers({
       tokenStore,
-      fetch: ((...a: Parameters<typeof server.fetch>) => { called = true; return server.fetch(...a) }) as typeof server.fetch,
+      fetch: ((...a: Parameters<typeof server.fetch>) => {
+        called = true
+        return server.fetch(...a)
+      }) as typeof server.fetch,
       onProgress: () => {},
     })
     await expect(
-      h.connect({ serverUrl: 'http://192.168.1.50:8080', email: 'o@example.com', password: 'password123', isFirstRun: true }),
+      h.connect({
+        serverUrl: 'http://192.168.1.50:8080',
+        email: 'o@example.com',
+        password: 'password123',
+        isFirstRun: true,
+      })
     ).rejects.toThrow(/ERR_INSECURE_CONNECTION/)
     expect(called).toBe(false)
     expect(await h.getConfig()).toBeNull()
@@ -146,7 +221,13 @@ describe('ipc handlers', () => {
   it('connect proceeds to a non-loopback HTTP server when allowInsecure is set', async () => {
     server.seedUser('o@example.com', 'password123')
     const h = makeHandlers()
-    await h.connect({ serverUrl: 'http://192.168.1.50:8080', email: 'o@example.com', password: 'password123', isFirstRun: false, allowInsecure: true })
+    await h.connect({
+      serverUrl: 'http://192.168.1.50:8080',
+      email: 'o@example.com',
+      password: 'password123',
+      isFirstRun: false,
+      allowInsecure: true,
+    })
     expect((await h.getConfig())?.token).toMatch(/^app-/)
   })
 
@@ -155,7 +236,12 @@ describe('ipc handlers', () => {
     process.env.MUESLI_ALLOW_INSECURE = '1'
     try {
       const h = makeHandlers()
-      await h.connect({ serverUrl: 'http://192.168.1.50:8080', email: 'o@example.com', password: 'password123', isFirstRun: false })
+      await h.connect({
+        serverUrl: 'http://192.168.1.50:8080',
+        email: 'o@example.com',
+        password: 'password123',
+        isFirstRun: false,
+      })
       expect((await h.getConfig())?.token).toMatch(/^app-/)
     } finally {
       delete process.env.MUESLI_ALLOW_INSECURE
@@ -165,7 +251,18 @@ describe('ipc handlers', () => {
   it('getConfig and getManualServer reflect manual server mode', async () => {
     const tokenStore = new TokenStore(dir, fakeSafe)
     tokenStore.save({ serverUrl: 'http://localhost:1234', token: 'app-token' })
-    const secretStore: Pick<SecretStore, 'loadCreds' | 'saveCreds' | 'clearCreds' | 'getManualServer' | 'setManualServer' | 'getOnboarded' | 'setOnboarded' | 'getKeepRunningInBackground' | 'setKeepRunningInBackground'> = {
+    const secretStore: Pick<
+      SecretStore,
+      | 'loadCreds'
+      | 'saveCreds'
+      | 'clearCreds'
+      | 'getManualServer'
+      | 'setManualServer'
+      | 'getOnboarded'
+      | 'setOnboarded'
+      | 'getKeepRunningInBackground'
+      | 'setKeepRunningInBackground'
+    > = {
       loadCreds: () => null,
       saveCreds: () => {},
       clearCreds: () => {},
@@ -193,7 +290,18 @@ describe('ipc handlers', () => {
 
   it('getKeepRunningInBackground and setKeepRunningInBackground delegate to secret storage', async () => {
     let keepRunningInBackground = false
-    const secretStore: Pick<SecretStore, 'loadCreds' | 'saveCreds' | 'clearCreds' | 'getManualServer' | 'setManualServer' | 'getOnboarded' | 'setOnboarded' | 'getKeepRunningInBackground' | 'setKeepRunningInBackground'> = {
+    const secretStore: Pick<
+      SecretStore,
+      | 'loadCreds'
+      | 'saveCreds'
+      | 'clearCreds'
+      | 'getManualServer'
+      | 'setManualServer'
+      | 'getOnboarded'
+      | 'setOnboarded'
+      | 'getKeepRunningInBackground'
+      | 'setKeepRunningInBackground'
+    > = {
       loadCreds: () => null,
       saveCreds: () => {},
       clearCreds: () => {},
@@ -260,7 +368,18 @@ describe('ipc handlers', () => {
     }
     const tokenStore = new TokenStore(dir, fakeSafe)
     tokenStore.save({ serverUrl: 'http://remote.example:9000', token: 'app-token' })
-    const secretStore: Pick<SecretStore, 'loadCreds' | 'saveCreds' | 'clearCreds' | 'getManualServer' | 'setManualServer' | 'getOnboarded' | 'setOnboarded' | 'getKeepRunningInBackground' | 'setKeepRunningInBackground'> = {
+    const secretStore: Pick<
+      SecretStore,
+      | 'loadCreds'
+      | 'saveCreds'
+      | 'clearCreds'
+      | 'getManualServer'
+      | 'setManualServer'
+      | 'getOnboarded'
+      | 'setOnboarded'
+      | 'getKeepRunningInBackground'
+      | 'setKeepRunningInBackground'
+    > = {
       loadCreds: () => null,
       saveCreds: () => {},
       clearCreds: () => {},
@@ -312,7 +431,8 @@ describe('ipc handlers', () => {
   it('getReadyz falls back to the global fetch when the caller does not inject one', async () => {
     vi.stubGlobal(
       'fetch',
-      async () => new Response(JSON.stringify({ embedded: { ollamaDetected: true } }), { status: 200 }),
+      async () =>
+        new Response(JSON.stringify({ embedded: { ollamaDetected: true } }), { status: 200 })
     )
     try {
       const h = createHandlers({
@@ -353,7 +473,11 @@ describe('ipc handlers', () => {
       onProgress: () => {},
     })
 
-    await expect(h.getServerHealth()).resolves.toEqual({ reachable: true, authenticated: true, version: '1.2.3' })
+    await expect(h.getServerHealth()).resolves.toEqual({
+      reachable: true,
+      authenticated: true,
+      version: '1.2.3',
+    })
   })
 
   it('clears the token and emits reconnect when an authed call gets a 401', async () => {
@@ -414,7 +538,11 @@ describe('ipc handlers', () => {
       onProgress: () => {},
     })
 
-    await expect(h.getServerHealth()).resolves.toEqual({ reachable: true, authenticated: true, version: '1.2.3' })
+    await expect(h.getServerHealth()).resolves.toEqual({
+      reachable: true,
+      authenticated: true,
+      version: '1.2.3',
+    })
   })
 
   it('does not clear the token or emit reconnect for non-401 failures', async () => {
@@ -483,7 +611,12 @@ describe('ipc handlers', () => {
   it('connect always allows https to any host', async () => {
     server.seedUser('o@example.com', 'password123')
     const h = makeHandlers()
-    await h.connect({ serverUrl: 'https://muesli.example.com', email: 'o@example.com', password: 'password123', isFirstRun: false })
+    await h.connect({
+      serverUrl: 'https://muesli.example.com',
+      email: 'o@example.com',
+      password: 'password123',
+      isFirstRun: false,
+    })
     expect((await h.getConfig())?.token).toMatch(/^app-/)
   })
 
@@ -560,33 +693,39 @@ describe('ipc handlers', () => {
       const path = new URL(String(url)).pathname
       seen.push(`${init?.method ?? 'GET'} ${path}`)
       if (path === '/api/notes/n1/action-items') {
-        return new Response(JSON.stringify({
-          action_items: [
-            {
-              id: 'ai-1',
-              note_id: 'n1',
-              owner_id: 'owner-1',
-              text: 'Ship the launch notes',
-              owner_person_id: null,
-              status: 'open',
-              due_hint: 'Tomorrow',
-              created_at: '2026-07-11T00:00:00Z',
-            },
-          ],
-          decisions: [],
-        }), { status: 200 })
+        return new Response(
+          JSON.stringify({
+            action_items: [
+              {
+                id: 'ai-1',
+                note_id: 'n1',
+                owner_id: 'owner-1',
+                text: 'Ship the launch notes',
+                owner_person_id: null,
+                status: 'open',
+                due_hint: 'Tomorrow',
+                created_at: '2026-07-11T00:00:00Z',
+              },
+            ],
+            decisions: [],
+          }),
+          { status: 200 }
+        )
       }
       if (path === '/api/action-items/ai-1') {
-        return new Response(JSON.stringify({
-          id: 'ai-1',
-          note_id: 'n1',
-          owner_id: 'owner-1',
-          text: 'Ship the launch notes',
-          owner_person_id: null,
-          status: 'done',
-          due_hint: 'Tomorrow',
-          created_at: '2026-07-11T00:00:00Z',
-        }), { status: 200 })
+        return new Response(
+          JSON.stringify({
+            id: 'ai-1',
+            note_id: 'n1',
+            owner_id: 'owner-1',
+            text: 'Ship the launch notes',
+            owner_person_id: null,
+            status: 'done',
+            due_hint: 'Tomorrow',
+            created_at: '2026-07-11T00:00:00Z',
+          }),
+          { status: 200 }
+        )
       }
       return new Response('unexpected', { status: 500 })
     }
@@ -600,10 +739,7 @@ describe('ipc handlers', () => {
 
     const updated = await h.updateActionItem('ai-1', { status: 'done' })
     expect(updated.status).toBe('done')
-    expect(seen).toEqual([
-      'GET /api/notes/n1/action-items',
-      'PATCH /api/action-items/ai-1',
-    ])
+    expect(seen).toEqual(['GET /api/notes/n1/action-items', 'PATCH /api/action-items/ai-1'])
   })
 
   it('listActionItems calls the cross-note action-item list endpoint', async () => {
@@ -612,18 +748,21 @@ describe('ipc handlers', () => {
       const parsed = new URL(String(url))
       seen.push(`${init?.method ?? 'GET'} ${parsed.pathname}${parsed.search}`)
       if (parsed.pathname === '/api/action-items' && parsed.search === '?status=all') {
-        return new Response(JSON.stringify([
-          {
-            id: 'ai-1',
-            note_id: 'n1',
-            owner_id: 'owner-1',
-            text: 'Ship the launch notes',
-            owner_person_id: null,
-            status: 'done',
-            due_hint: 'Tomorrow',
-            created_at: '2026-07-11T00:00:00Z',
-          },
-        ]), { status: 200 })
+        return new Response(
+          JSON.stringify([
+            {
+              id: 'ai-1',
+              note_id: 'n1',
+              owner_id: 'owner-1',
+              text: 'Ship the launch notes',
+              owner_person_id: null,
+              status: 'done',
+              due_hint: 'Tomorrow',
+              created_at: '2026-07-11T00:00:00Z',
+            },
+          ]),
+          { status: 200 }
+        )
       }
       return new Response('unexpected', { status: 500 })
     }
@@ -643,9 +782,15 @@ describe('ipc handlers', () => {
       const path = new URL(String(url)).pathname
       seen.push(`${init?.method ?? 'GET'} ${path}`)
       if (path === '/api/folders/f1' && (init?.method ?? 'GET').toUpperCase() === 'PUT') {
-        return new Response(JSON.stringify({ id: 'f1', name: 'Accounts', created_at: '2026-07-10T00:00:00Z' }), { status: 200 })
+        return new Response(
+          JSON.stringify({ id: 'f1', name: 'Accounts', created_at: '2026-07-10T00:00:00Z' }),
+          { status: 200 }
+        )
       }
-      return new Response(JSON.stringify({ id: 'f1', name: 'Clients', created_at: '2026-07-10T00:00:00Z' }), { status: 200 })
+      return new Response(
+        JSON.stringify({ id: 'f1', name: 'Clients', created_at: '2026-07-10T00:00:00Z' }),
+        { status: 200 }
+      )
     }
     const tokenStore = new TokenStore(dir, fakeSafe)
     tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
@@ -654,7 +799,11 @@ describe('ipc handlers', () => {
     const updated = await h.updateFolder('f1', 'Accounts')
 
     expect(seen).toContain('PUT /api/folders/f1')
-    expect(updated).toMatchObject({ id: 'f1', name: 'Accounts', created_at: '2026-07-10T00:00:00Z' })
+    expect(updated).toMatchObject({
+      id: 'f1',
+      name: 'Accounts',
+      created_at: '2026-07-10T00:00:00Z',
+    })
   })
 
   it('pinNote and unpinNote call the note pin endpoints', async () => {
@@ -777,7 +926,7 @@ describe('ipc handlers', () => {
       seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
       return new Response(
         JSON.stringify({ id: 'l1', name: 'X', rule: { op: 'and', children: [] }, created_at: '' }),
-        { status: 200 },
+        { status: 200 }
       )
     }
     const tokenStore = new TokenStore(dir, fakeSafe)
@@ -798,10 +947,9 @@ describe('ipc handlers', () => {
     const seen: string[] = []
     const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
       seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
-      return new Response(
-        JSON.stringify({ id: 'f1', name: 'Clients', created_at: '' }),
-        { status: 200 },
-      )
+      return new Response(JSON.stringify({ id: 'f1', name: 'Clients', created_at: '' }), {
+        status: 200,
+      })
     }
     const tokenStore = new TokenStore(dir, fakeSafe)
     tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
@@ -817,7 +965,9 @@ describe('ipc handlers', () => {
     expect(seen.some((s) => s.startsWith('PUT') && s.endsWith('/api/folders/f1'))).toBe(true)
     expect(seen.some((s) => s.startsWith('DELETE') && s.endsWith('/api/folders/f1'))).toBe(true)
     expect(seen.some((s) => s.startsWith('POST') && s.endsWith('/api/notes/n1/folders'))).toBe(true)
-    expect(seen.some((s) => s.startsWith('DELETE') && s.endsWith('/api/notes/n1/folders/f1'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('DELETE') && s.endsWith('/api/notes/n1/folders/f1'))).toBe(
+      true
+    )
   })
 
   it('reorderNoteInFolder calls the client endpoint', async () => {
@@ -830,7 +980,9 @@ describe('ipc handlers', () => {
     tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
     const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
     await handlers.reorderNoteInFolder('f1', 'n1', 'n0')
-    expect(seen.some((s) => s.startsWith('PUT') && s.endsWith('/api/folders/f1/notes/n1/reorder'))).toBe(true)
+    expect(
+      seen.some((s) => s.startsWith('PUT') && s.endsWith('/api/folders/f1/notes/n1/reorder'))
+    ).toBe(true)
   })
 
   it('template handlers call the client endpoints', async () => {
@@ -838,8 +990,14 @@ describe('ipc handlers', () => {
     const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
       seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
       return new Response(
-        JSON.stringify({ id: 't1', name: 'Default', phase: 'after', sections: [], built_in: false }),
-        { status: 200 },
+        JSON.stringify({
+          id: 't1',
+          name: 'Default',
+          phase: 'after',
+          sections: [],
+          built_in: false,
+        }),
+        { status: 200 }
       )
     }
     const tokenStore = new TokenStore(dir, fakeSafe)
@@ -873,14 +1031,18 @@ describe('ipc handlers', () => {
     const seen: string[] = []
     const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
       seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
-      return new Response(JSON.stringify({ id: 'n2', title: 'Copy of N1', status: 'recording' }), { status: 201 })
+      return new Response(JSON.stringify({ id: 'n2', title: 'Copy of N1', status: 'recording' }), {
+        status: 201,
+      })
     }
     const tokenStore = new TokenStore(dir, fakeSafe)
     tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
     const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
     const note = await handlers.duplicateNote('n1')
     expect(note.id).toBe('n2')
-    expect(seen.some((s) => s.startsWith('POST') && s.endsWith('/api/notes/n1/duplicate'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('POST') && s.endsWith('/api/notes/n1/duplicate'))).toBe(
+      true
+    )
   })
 
   it('trash handlers call the client endpoints', async () => {
@@ -897,7 +1059,9 @@ describe('ipc handlers', () => {
     await handlers.permanentDeleteNote('n1')
     expect(seen.some((s) => s.startsWith('GET') && s.endsWith('/api/notes/trash'))).toBe(true)
     expect(seen.some((s) => s.startsWith('POST') && s.endsWith('/api/notes/n1/restore'))).toBe(true)
-    expect(seen.some((s) => s.startsWith('DELETE') && s.endsWith('/api/notes/n1/permanent'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('DELETE') && s.endsWith('/api/notes/n1/permanent'))).toBe(
+      true
+    )
   })
 
   it('folder trash handlers call the client endpoints', async () => {
@@ -913,8 +1077,12 @@ describe('ipc handlers', () => {
     await handlers.restoreFolder('f1')
     await handlers.permanentDeleteFolder('f1')
     expect(seen.some((s) => s.startsWith('GET') && s.endsWith('/api/folders/trash'))).toBe(true)
-    expect(seen.some((s) => s.startsWith('POST') && s.endsWith('/api/folders/f1/restore'))).toBe(true)
-    expect(seen.some((s) => s.startsWith('DELETE') && s.endsWith('/api/folders/f1/permanent'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('POST') && s.endsWith('/api/folders/f1/restore'))).toBe(
+      true
+    )
+    expect(
+      seen.some((s) => s.startsWith('DELETE') && s.endsWith('/api/folders/f1/permanent'))
+    ).toBe(true)
   })
 
   it('smart-list trash handlers call the client endpoints', async () => {
@@ -930,8 +1098,12 @@ describe('ipc handlers', () => {
     await handlers.restoreSmartList('l1')
     await handlers.permanentDeleteSmartList('l1')
     expect(seen.some((s) => s.startsWith('GET') && s.endsWith('/api/smart-lists/trash'))).toBe(true)
-    expect(seen.some((s) => s.startsWith('POST') && s.endsWith('/api/smart-lists/l1/restore'))).toBe(true)
-    expect(seen.some((s) => s.startsWith('DELETE') && s.endsWith('/api/smart-lists/l1/permanent'))).toBe(true)
+    expect(
+      seen.some((s) => s.startsWith('POST') && s.endsWith('/api/smart-lists/l1/restore'))
+    ).toBe(true)
+    expect(
+      seen.some((s) => s.startsWith('DELETE') && s.endsWith('/api/smart-lists/l1/permanent'))
+    ).toBe(true)
   })
 
   it('resummarize calls POST /api/notes/{id}/resummarize', async () => {
@@ -944,7 +1116,9 @@ describe('ipc handlers', () => {
     tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
     const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
     await handlers.resummarize('n1')
-    expect(seen.some((s) => s.startsWith('POST') && s.endsWith('/api/notes/n1/resummarize'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('POST') && s.endsWith('/api/notes/n1/resummarize'))).toBe(
+      true
+    )
   })
 
   it('retranscribeNote calls POST /api/notes/{id}/retranscribe with the provided overrides', async () => {
@@ -980,7 +1154,10 @@ describe('ipc handlers', () => {
         body: init?.body ? JSON.parse(String(init.body)) : undefined,
       })
       if (parsedUrl.pathname.endsWith('/share')) {
-        return new Response(JSON.stringify({ token: 'share-token', url: 'http://localhost/shared/share-token' }), { status: 201 })
+        return new Response(
+          JSON.stringify({ token: 'share-token', url: 'http://localhost/shared/share-token' }),
+          { status: 201 }
+        )
       }
       if (parsedUrl.pathname.endsWith('/shares')) {
         return new Response(JSON.stringify([]), { status: 200 })
@@ -1024,17 +1201,28 @@ describe('ipc handlers', () => {
     tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
     const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
     await handlers.regenerateSummary('n1', 't1')
-    expect(seen.some((s) => s.startsWith('POST') && s.endsWith('/api/notes/n1/templates/t1/summarize'))).toBe(true)
+    expect(
+      seen.some((s) => s.startsWith('POST') && s.endsWith('/api/notes/n1/templates/t1/summarize'))
+    ).toBe(true)
   })
 
   it('search delegates to GET /api/search?q=', async () => {
     const seen: string[] = []
     const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
       seen.push(`${init?.method ?? 'GET'} ${String(url)}`)
-      return new Response(JSON.stringify([
-        { note_id: 'id1', match_type: 'title' },
-        { note_id: 'id2', match_type: 'transcript', segment_id: 'seg1', start_ms: 500, snippet: '…budget review…' },
-      ]), { status: 200 })
+      return new Response(
+        JSON.stringify([
+          { note_id: 'id1', match_type: 'title' },
+          {
+            note_id: 'id2',
+            match_type: 'transcript',
+            segment_id: 'seg1',
+            start_ms: 500,
+            snippet: '…budget review…',
+          },
+        ]),
+        { status: 200 }
+      )
     }
     const tokenStore = new TokenStore(dir, fakeSafe)
     tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
@@ -1043,11 +1231,19 @@ describe('ipc handlers', () => {
     expect(matches).toEqual({
       matches: [
         { note_id: 'id1', match_type: 'title' },
-        { note_id: 'id2', match_type: 'transcript', segment_id: 'seg1', start_ms: 500, snippet: '…budget review…' },
+        {
+          note_id: 'id2',
+          match_type: 'transcript',
+          segment_id: 'seg1',
+          start_ms: 500,
+          snippet: '…budget review…',
+        },
       ],
       semanticSearchAvailable: false,
     })
-    expect(seen.some((s) => s.startsWith('GET') && s.includes('/api/search?q=budget+review'))).toBe(true)
+    expect(seen.some((s) => s.startsWith('GET') && s.includes('/api/search?q=budget+review'))).toBe(
+      true
+    )
   })
 
   it('search threads from/to onto the querystring when present', async () => {
@@ -1060,7 +1256,9 @@ describe('ipc handlers', () => {
     tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
     const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
     await handlers.search('budget', { from: '2024-01-01', to: '2024-02-01' })
-    expect(seen.some((s) => s.includes('/api/search?q=budget&from=2024-01-01&to=2024-02-01'))).toBe(true)
+    expect(seen.some((s) => s.includes('/api/search?q=budget&from=2024-01-01&to=2024-02-01'))).toBe(
+      true
+    )
   })
 
   it('search threads person/folder/tag filters onto the querystring when present', async () => {
@@ -1074,7 +1272,9 @@ describe('ipc handlers', () => {
     const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
     await handlers.search('budget', { personId: 'p-1', folderId: 'f-1', tag: 'weekly sync' })
     expect(
-      seen.some((s) => s.includes('/api/search?q=budget&person_id=p-1&folder_id=f-1&tag=weekly+sync')),
+      seen.some((s) =>
+        s.includes('/api/search?q=budget&person_id=p-1&folder_id=f-1&tag=weekly+sync')
+      )
     ).toBe(true)
   })
 
@@ -1090,7 +1290,9 @@ describe('ipc handlers', () => {
     await handlers.addTag('n1', '1on1')
     await handlers.removeTag('n1', '1on1')
     expect(seen.some((s) => s.startsWith('POST') && s.endsWith('/api/notes/n1/tags'))).toBe(true)
-    expect(seen.some((s) => s.startsWith('DELETE') && s.includes('/api/notes/n1/tags?name=1on1'))).toBe(true)
+    expect(
+      seen.some((s) => s.startsWith('DELETE') && s.includes('/api/notes/n1/tags?name=1on1'))
+    ).toBe(true)
   })
 
   it('renameTag PUTs /api/tags/{id} with the saved token', async () => {
@@ -1113,7 +1315,10 @@ describe('ipc handlers', () => {
     const seen: Array<{ method?: string; url: string }> = []
     const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
       seen.push({ method: init?.method, url: String(url) })
-      return new Response(JSON.stringify({ id: 'c1', title: 'Q&A', created_at: '', updated_at: '' }), { status: 200 })
+      return new Response(
+        JSON.stringify({ id: 'c1', title: 'Q&A', created_at: '', updated_at: '' }),
+        { status: 200 }
+      )
     }
     const tokenStore = new TokenStore(dir, fakeSafe)
     tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
@@ -1140,14 +1345,21 @@ describe('ipc handlers', () => {
     let calls = 0
     const fetchMock = async (): Promise<Response> => {
       calls += 1
-      if (calls === 1) return new Response(JSON.stringify({ error: 'message send already in progress' }), { status: 409 })
+      if (calls === 1)
+        return new Response(JSON.stringify({ error: 'message send already in progress' }), {
+          status: 409,
+        })
       return new Response(JSON.stringify({ error: 'internal error' }), { status: 500 })
     }
     const tokenStore = new TokenStore(dir, fakeSafe)
     tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
     const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
-    await expect(handlers.sendMessage('c1', { content: 'hi' })).rejects.toThrow('[409] message send already in progress')
-    await expect(handlers.sendMessage('c1', { content: 'hi' })).rejects.toThrow('[500] internal error')
+    await expect(handlers.sendMessage('c1', { content: 'hi' })).rejects.toThrow(
+      '[409] message send already in progress'
+    )
+    await expect(handlers.sendMessage('c1', { content: 'hi' })).rejects.toThrow(
+      '[500] internal error'
+    )
   })
 
   it('exportNote fetches the note export and parses the suggested filename', async () => {
@@ -1166,9 +1378,15 @@ describe('ipc handlers', () => {
     tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
     const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
 
-    const out = await handlers.exportNote('note-123', 'md', { includeTranscript: false, redactSpeakers: true })
+    const out = await handlers.exportNote('note-123', 'md', {
+      includeTranscript: false,
+      redactSpeakers: true,
+    })
 
-    expect(seen[0]).toEqual({ method: 'GET', url: 'http://localhost/api/notes/note-123/export?format=md&include_transcript=false&redact_speakers=true' })
+    expect(seen[0]).toEqual({
+      method: 'GET',
+      url: 'http://localhost/api/notes/note-123/export?format=md&include_transcript=false&redact_speakers=true',
+    })
     expect(Buffer.from(out.bytes).toString('utf8')).toBe('exported note body')
     expect(out.filename).toBe('Team Notes.md')
     expect(out.contentType).toBe('text/markdown; charset=utf-8')
@@ -1177,7 +1395,11 @@ describe('ipc handlers', () => {
   it('exportFolder fetches the batch export and parses the suggested filename', async () => {
     const seen: Array<{ url: string; method?: string; body?: string }> = []
     const fetchMock = async (url: string | URL, init?: RequestInit): Promise<Response> => {
-      seen.push({ url: String(url), method: init?.method, body: init?.body ? String(init.body) : undefined })
+      seen.push({
+        url: String(url),
+        method: init?.method,
+        body: init?.body ? String(init.body) : undefined,
+      })
       return new Response('exported zip body', {
         status: 200,
         headers: {
@@ -1190,12 +1412,20 @@ describe('ipc handlers', () => {
     tokenStore.save({ serverUrl: 'http://localhost', token: 'app-test' })
     const handlers = createHandlers({ tokenStore, fetch: fetchMock, onProgress: () => {} })
 
-    const out = await handlers.exportFolder('folder-123', 'pdf', { includeTranscript: false, redactSpeakers: true })
+    const out = await handlers.exportFolder('folder-123', 'pdf', {
+      includeTranscript: false,
+      redactSpeakers: true,
+    })
 
     expect(seen[0]).toEqual({
       method: 'POST',
       url: 'http://localhost/api/export/batch',
-      body: JSON.stringify({ folder_id: 'folder-123', format: 'pdf', include_transcript: false, redact_speakers: true }),
+      body: JSON.stringify({
+        folder_id: 'folder-123',
+        format: 'pdf',
+        include_transcript: false,
+        redact_speakers: true,
+      }),
     })
     expect(Buffer.from(out.bytes).toString('utf8')).toBe('exported zip body')
     expect(out.filename).toBe('Team Notes.zip')
@@ -1307,5 +1537,4 @@ describe('ipc handlers', () => {
       expect(result.error).toMatch(/not connected/i)
     })
   })
-
 })

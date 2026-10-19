@@ -37,11 +37,12 @@ func limitBody(next http.Handler) http.Handler {
 
 // Deps holds the server's collaborators.
 type Deps struct {
-	Store   *store.Store
-	Storage storage.Provider
-	Crypto  *crypto.Crypto
-	Worker  *worker.Pool // may be nil in API-only tests
-	Config  config.Config
+	RetryAIModels func() error
+	Store         *store.Store
+	Storage       storage.Provider
+	Crypto        *crypto.Crypto
+	Worker        *worker.Pool // may be nil in API-only tests
+	Config        config.Config
 	// Embedder generates query embeddings for semantic search. It may be nil,
 	// in which case /api/search degrades to lexical-only results.
 	Embedder embed.Embedder
@@ -78,8 +79,9 @@ type Deps struct {
 
 // Server wires dependencies to an HTTP router.
 type Server struct {
-	deps   Deps
-	router chi.Router
+	readiness readinessCache
+	deps      Deps
+	router    chi.Router
 
 	// resummarizeGuard prevents two concurrent /resummarize requests for the
 	// same note id from racing (SUM03). Keyed by note id; reusable by any
@@ -145,10 +147,14 @@ func (s *Server) routes() {
 		r.Get("/api/search", s.handleSearch)
 		r.Get("/api/insights", s.handleInsights)
 		r.Get("/api/capabilities", s.handleCapabilities)
+		r.Get("/api/readiness", s.handleReadiness)
 		r.Get("/api/notes/{id}", s.handleGetNote)
 		r.Delete("/api/notes/{id}", s.handleDeleteNote)
 		r.Post("/api/notes/{id}/duplicate", s.handleDuplicateNote)
 		r.Post("/api/notes/{id}/start-capture", s.handleStartNoteCapture)
+		r.Post("/api/notes/{id}/stop-capture", s.handleStopNoteCapture)
+		r.Post("/api/notes/{id}/capture-heartbeat", s.handleCaptureHeartbeat)
+		r.Post("/api/notes/{id}/recover-capture", s.handleRecoverCapture)
 		r.Post("/api/notes/{id}/share", s.handleCreateShare)
 		r.Get("/api/notes/{id}/shares", s.handleListNoteShares)
 		r.Post("/api/export/batch", s.handleBatchExport)
@@ -217,6 +223,7 @@ func (s *Server) routes() {
 		r.Delete("/api/calendar/sources/{id}", s.handleDeleteCalendarSource)
 		r.Post("/api/calendar/refresh", s.handleRefreshCalendar)
 		r.Get("/api/calendar/events", s.handleListCalendarEvents)
+		r.Get("/api/calendar/readiness", s.handleCalendarReadiness)
 		r.Get("/api/calendar/oauth/google/status", s.handleGoogleOAuthStatus)
 		r.Get("/api/calendar/oauth/microsoft/status", s.handleMicrosoftOAuthStatus)
 		r.Get("/api/digest/config", s.handleGetDigestConfig)
@@ -250,45 +257,52 @@ func (s *Server) routes() {
 
 		r.Post("/api/audio/dedup-check", s.handleAudioDedupCheck)
 
-		r.Get("/api/admin/jobs", s.handleListJobs)
-		r.Post("/api/admin/jobs/{id}/retry", s.handleRetryJob)
-		r.Post("/api/admin/jobs/{id}/cancel", s.handleCancelJob)
-		r.Post("/api/admin/jobs/{id}/process-next", s.handleProcessNextJob)
-		r.Get("/api/admin/notes/{id}/jobs", s.handleListNoteJobs)
-		r.Get("/api/admin/webhook-deliveries", s.handleListWebhookDeliveries)
-		r.Post("/api/admin/webhook-deliveries/{id}/retry", s.handleRetryWebhookDelivery)
-		r.Get("/api/admin/plugins", s.handleListPlugins)
-		r.Post("/api/admin/plugins", s.handleCreatePlugin)
-		r.Patch("/api/admin/plugins/{id}", s.handlePatchPlugin)
-		r.Delete("/api/admin/plugins/{id}", s.handleDeletePlugin)
-		// Static convenience route must be registered before the parameterized route.
-		r.Get("/api/admin/plugins/default-transcriber/status", s.handleGetDefaultTranscriberStatus)
-		r.Get("/api/admin/plugins/{id}/status", s.handleGetPluginStatus)
-		r.Post("/api/admin/plugins/{id}/health", s.handleCheckPluginHealth)
+		r.Get("/api/transcription/services", s.handleTranscriptionServices)
+		r.Get("/api/transcription/status", s.handleGetDefaultTranscriberStatus)
+		r.Group(func(r chi.Router) {
+			r.Use(s.requireAdmin)
+			r.Put("/api/admin/users/role", s.handleSetUserRole)
+			r.Post("/api/admin/models/retry", s.handleRetryAIModels)
+			r.Get("/api/admin/jobs", s.handleListJobs)
+			r.Post("/api/admin/jobs/{id}/retry", s.handleRetryJob)
+			r.Post("/api/admin/jobs/{id}/cancel", s.handleCancelJob)
+			r.Post("/api/admin/jobs/{id}/process-next", s.handleProcessNextJob)
+			r.Get("/api/admin/notes/{id}/jobs", s.handleListNoteJobs)
+			r.Get("/api/admin/webhook-deliveries", s.handleListWebhookDeliveries)
+			r.Post("/api/admin/webhook-deliveries/{id}/retry", s.handleRetryWebhookDelivery)
+			r.Get("/api/admin/plugins", s.handleListPlugins)
+			r.Post("/api/admin/plugins", s.handleCreatePlugin)
+			r.Patch("/api/admin/plugins/{id}", s.handlePatchPlugin)
+			r.Delete("/api/admin/plugins/{id}", s.handleDeletePlugin)
+			// Static convenience route must be registered before the parameterized route.
+			r.Get("/api/admin/plugins/default-transcriber/status", s.handleGetDefaultTranscriberStatus)
+			r.Get("/api/admin/plugins/{id}/status", s.handleGetPluginStatus)
+			r.Post("/api/admin/plugins/{id}/health", s.handleCheckPluginHealth)
 
-		// BAK01: in-app Postgres backup. No restore endpoint by design — restore
-		// stays the documented manual pg_restore/psql procedure (docs/BACKUP.md).
-		r.Post("/api/admin/backup", s.handleCreateBackup)
-		r.Get("/api/admin/backups", s.handleListBackups)
-		r.Get("/api/admin/backups/{filename}", s.handleDownloadBackup)
-		r.Get("/api/admin/backups/{filename}/verify", s.handleVerifyBackup)
+			// BAK01: in-app Postgres backup. No restore endpoint by design — restore
+			// stays the documented manual pg_restore/psql procedure (docs/BACKUP.md).
+			r.Post("/api/admin/backup", s.handleCreateBackup)
+			r.Get("/api/admin/backups", s.handleListBackups)
+			r.Get("/api/admin/backups/{filename}", s.handleDownloadBackup)
+			r.Get("/api/admin/backups/{filename}/verify", s.handleVerifyBackup)
 
-		// EMB01: embeddings status (read-only config + state).
-		r.Get("/api/admin/embeddings", s.handleAdminEmbeddingsStatus)
+			// EMB01: embeddings status (read-only config + state).
+			r.Get("/api/admin/embeddings", s.handleAdminEmbeddingsStatus)
 
-		// EMB02: on-demand admin re-embed-all (live done/total + trigger),
-		// distinct from EMB01's static config-status endpoint above.
-		r.Get("/api/admin/embeddings/status", s.handleAdminReembedStatus)
-		r.Post("/api/admin/embeddings/reembed", s.handleAdminReembedAll)
+			// EMB02: on-demand admin re-embed-all (live done/total + trigger),
+			// distinct from EMB01's static config-status endpoint above.
+			r.Get("/api/admin/embeddings/status", s.handleAdminReembedStatus)
+			r.Post("/api/admin/embeddings/reembed", s.handleAdminReembedAll)
 
-		// ADM05: aggregated admin health panel (server info, per-plugin
-		// probes, job-queue depth, embedding coverage, storage disk usage).
-		// Always 200 - per-section failures are captured inline.
-		r.Get("/api/admin/health", s.handleAdminHealth)
+			// ADM05: aggregated admin health panel (server info, per-plugin
+			// probes, job-queue depth, embedding coverage, storage disk usage).
+			// Always 200 - per-section failures are captured inline.
+			r.Get("/api/admin/health", s.handleAdminHealth)
 
-		// ADM06: read-only, redacted effective-configuration view (MUESLI_*
-		// fields only, secret-shaped values collapsed to "(set)"/"(unset)").
-		r.Get("/api/admin/config", s.handleAdminConfig)
+			// ADM06: read-only, redacted effective-configuration view (MUESLI_*
+			// fields only, secret-shaped values collapsed to "(set)"/"(unset)").
+			r.Get("/api/admin/config", s.handleAdminConfig)
+		})
 	})
 
 	// OAuth browser flows are the one place the system browser needs a

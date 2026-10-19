@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { MoreHorizontal, Pin } from 'lucide-react'
 import { muesli } from '@/api'
@@ -81,7 +82,9 @@ export function NoteHeader({
 }) {
   const [value, setValue] = useState(title)
   const [isDirty, setIsDirty] = useState(false)
-  const [titleSaveState, setTitleSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle')
+  const [titleSaveState, setTitleSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>(
+    'idle'
+  )
   const [menuOpen, setMenuOpen] = useState(false)
   const [serverExportOpen, setServerExportOpen] = useState(false)
   const [retranscribeOpen, setRetranscribeOpen] = useState(false)
@@ -98,9 +101,7 @@ export function NoteHeader({
 
   // The visible menu item buttons, in DOM order, for roving focus.
   const getItems = () =>
-    Array.from(
-      menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [],
-    )
+    Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]') ?? [])
 
   useEffect(() => {
     titleRef.current = title
@@ -119,8 +120,9 @@ export function NoteHeader({
   }, [title, isDirty])
 
   // Auto-focus the title input on mount when requested (e.g. new-meeting capture mode).
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  useEffect(() => { if (autoFocusTitle) titleInputRef.current?.focus() }, [])
+  useEffect(() => {
+    if (autoFocusTitle) titleInputRef.current?.focus()
+  }, [autoFocusTitle])
 
   // Close the menu and return focus to the toggle button.
   const closeMenu = () => {
@@ -226,10 +228,10 @@ export function NoteHeader({
         setTitleSaveState('saved')
         setIsDirty(false)
         onTitleSaved(value)
-        announce('Title saved')
+        announce(uiText('Title saved'))
       } catch {
         setTitleSaveState('error')
-        announce('Could not save title')
+        announce(uiText('Could not save title'))
       }
     } else {
       setIsDirty(false)
@@ -242,7 +244,7 @@ export function NoteHeader({
       <div className="min-w-0 flex-1">
         <input
           ref={titleInputRef}
-          aria-label="Note title"
+          aria-label={uiText('Note title')}
           value={value}
           onChange={(e) => {
             setValue(e.target.value)
@@ -262,11 +264,11 @@ export function NoteHeader({
             }
           }}
           className="min-w-0 w-full bg-transparent font-serif text-2xl font-semibold focus:outline-none"
-          placeholder="Untitled meeting"
+          placeholder={uiText('Untitled meeting')}
         />
         {titleSaveState === 'error' && (
           <p className="mt-1 text-xs text-destructive" role="alert">
-            Could not save title - press Enter to retry
+            {uiText('Could not save title - press Enter to retry')}
           </p>
         )}
       </div>
@@ -288,7 +290,7 @@ export function NoteHeader({
       <div className="relative" ref={menuRef}>
         <button
           ref={toggleRef}
-          aria-label="Note actions"
+          aria-label={uiText('Note actions')}
           aria-haspopup="menu"
           aria-expanded={menuOpen}
           onClick={() => setMenuOpen((o) => !o)}
@@ -299,7 +301,7 @@ export function NoteHeader({
         {menuOpen && (
           <div
             role="menu"
-            aria-label="Note actions"
+            aria-label={uiText('Note actions')}
             tabIndex={-1}
             onKeyDown={onMenuKeyDown}
             className="absolute right-0 z-10 mt-1 w-44 rounded-[var(--radius)] border border-border bg-popover p-1 shadow-md"
@@ -308,12 +310,21 @@ export function NoteHeader({
               <button
                 role="menuitem"
                 disabled={!agentConfigured}
-                title={!agentConfigured ? 'AI features need an agent plugin configured.' : undefined}
-                onClick={() => { closeMenu(); onResummarize() }}
+                title={
+                  !agentConfigured
+                    ? uiText('AI features need an agent plugin configured.')
+                    : undefined
+                }
+                onClick={() => {
+                  closeMenu()
+                  onResummarize()
+                }}
                 className="block w-full rounded px-2 py-1 text-left text-sm hover:bg-muted disabled:cursor-not-allowed disabled:text-muted-foreground"
               >
-                Re-run summary
-                {!agentConfigured ? <span className="block text-xs">Agent plugin required</span> : null}
+                {uiText('Re-run summary')}
+                {!agentConfigured ? (
+                  <span className="block text-xs">{uiText('Agent plugin required')}</span>
+                ) : null}
               </button>
             )}
             {canRetranscribe && (
@@ -326,67 +337,88 @@ export function NoteHeader({
                 }}
                 className="block w-full rounded px-2 py-1 text-left text-sm hover:bg-muted"
               >
-                Enhance…
+                {uiText('Enhance…')}
               </button>
             )}
             <button
               role="menuitem"
-              onClick={() => { closeMenu(); onTogglePinned() }}
+              onClick={() => {
+                closeMenu()
+                onTogglePinned()
+              }}
               className="block w-full rounded px-2 py-1 text-left text-sm hover:bg-muted"
             >
               <span className="inline-flex items-center gap-2">
                 <Pin size={14} />
-                {pinned ? 'Unpin note' : 'Pin note'}
+                {pinned ? uiText('Unpin note') : uiText('Pin note')}
               </span>
             </button>
             <button
               role="menuitem"
-              onClick={() => { closeMenu(); onExport() }}
+              onClick={() => {
+                closeMenu()
+                onExport()
+              }}
               className="block w-full rounded px-2 py-1 text-left text-sm hover:bg-muted"
             >
-              Export as Markdown…
+              {uiText('Export as Markdown…')}
             </button>
             <button
               role="menuitem"
-              onClick={() => { closeMenu(); onDuplicate() }}
+              onClick={() => {
+                closeMenu()
+                onDuplicate()
+              }}
               className="block w-full rounded px-2 py-1 text-left text-sm hover:bg-muted"
             >
-              Duplicate
+              {uiText('Duplicate')}
             </button>
             {onExportPlainText && (
               <button
                 role="menuitem"
-                onClick={() => { closeMenu(); onExportPlainText() }}
+                onClick={() => {
+                  closeMenu()
+                  onExportPlainText()
+                }}
                 className="block w-full rounded px-2 py-1 text-left text-sm hover:bg-muted"
               >
-                Export as Plain Text…
+                {uiText('Export as Plain Text…')}
               </button>
             )}
             {onExportSrt && (
               <button
                 role="menuitem"
-                onClick={() => { closeMenu(); onExportSrt() }}
+                onClick={() => {
+                  closeMenu()
+                  onExportSrt()
+                }}
                 className="block w-full rounded px-2 py-1 text-left text-sm hover:bg-muted"
               >
-                Export as SRT…
+                {uiText('Export as SRT…')}
               </button>
             )}
             {onExportAss && (
               <button
                 role="menuitem"
-                onClick={() => { closeMenu(); onExportAss() }}
+                onClick={() => {
+                  closeMenu()
+                  onExportAss()
+                }}
                 className="block w-full rounded px-2 py-1 text-left text-sm hover:bg-muted"
               >
-                Export as ASS…
+                {uiText('Export as ASS…')}
               </button>
             )}
             {onExportVtt && (
               <button
                 role="menuitem"
-                onClick={() => { closeMenu(); onExportVtt() }}
+                onClick={() => {
+                  closeMenu()
+                  onExportVtt()
+                }}
                 className="block w-full rounded px-2 py-1 text-left text-sm hover:bg-muted"
               >
-                Export as WebVTT (.vtt)…
+                {uiText('Export as WebVTT (.vtt)…')}
               </button>
             )}
             {serverExportFormats && serverExportFormats.length > 0 && (
@@ -398,32 +430,39 @@ export function NoteHeader({
                   onClick={() => setServerExportOpen((o) => !o)}
                   className="block w-full rounded px-2 py-1 text-left text-sm hover:bg-muted"
                 >
-                  Export
+                  {uiText('Export')}
                 </button>
                 {serverExportOpen && (
                   <div
                     ref={serverExportRef}
                     role="menu"
-                    aria-label="Export formats"
+                    aria-label={uiText('Export formats')}
                     className="absolute left-full top-0 z-20 ml-1 w-48 rounded-[var(--radius)] border border-border bg-popover p-1 shadow-md"
                   >
                     {onExportWithOptions && (
                       <button
                         role="menuitem"
-                        onClick={() => { closeMenu(); onExportWithOptions() }}
+                        onClick={() => {
+                          closeMenu()
+                          onExportWithOptions()
+                        }}
                         className="block w-full rounded px-2 py-1 text-left text-sm hover:bg-muted"
                       >
-                        Export with options…
+                        {uiText('Export with options…')}
                       </button>
                     )}
                     {serverExportFormats.map((format) => (
                       <button
                         key={format.id}
                         role="menuitem"
-                        onClick={() => { closeMenu(); format.onSelect() }}
+                        onClick={() => {
+                          closeMenu()
+                          format.onSelect()
+                        }}
                         className="block w-full rounded px-2 py-1 text-left text-sm hover:bg-muted"
                       >
-                        {format.label}…
+                        {format.label}
+                        {uiText('…')}
                       </button>
                     ))}
                   </div>
@@ -432,16 +471,25 @@ export function NoteHeader({
             )}
             <button
               role="menuitem"
-              onClick={() => { closeMenu(); onDeleteNote() }}
+              onClick={() => {
+                closeMenu()
+                onDeleteNote()
+              }}
               className="block w-full rounded px-2 py-1 text-left text-sm text-destructive hover:bg-muted"
             >
-              Move to Trash
+              {uiText('Move to Trash')}
             </button>
           </div>
         )}
       </div>
       {retranscribeOpen && (
-        <Dialog open onOpenChange={(open) => { if (!open) setRetranscribeOpen(false) }} title="Re-transcribe note">
+        <Dialog
+          open
+          onOpenChange={(open) => {
+            if (!open) setRetranscribeOpen(false)
+          }}
+          title={uiText('Re-transcribe note')}
+        >
           <form
             className="space-y-4"
             onSubmit={(e) => {
@@ -450,32 +498,38 @@ export function NoteHeader({
             }}
           >
             <p className="text-sm text-muted-foreground">
-              Leave the overrides blank to use the note&apos;s existing settings.
+              {uiText("Leave the overrides blank to use the note's existing settings.")}
             </p>
             <label className="block space-y-1 text-sm">
-              <span className="font-medium">Model override</span>
+              <span className="font-medium">{uiText('Model override')}</span>
               <input
                 value={retranscribeModel}
                 onChange={(e) => setRetranscribeModel(e.target.value)}
-                placeholder="Optional"
+                placeholder={uiText('Optional')}
                 className="w-full rounded-[var(--radius)] border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </label>
             <label className="block space-y-1 text-sm">
-              <span className="font-medium">Language override</span>
+              <span className="font-medium">{uiText('Language override')}</span>
               <input
                 value={retranscribeLanguage}
                 onChange={(e) => setRetranscribeLanguage(e.target.value)}
-                placeholder="Optional"
+                placeholder={uiText('Optional')}
                 className="w-full rounded-[var(--radius)] border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               />
             </label>
             <div className="flex justify-end gap-2 pt-2">
-              <Button type="button" variant="secondary" size="sm" onClick={() => setRetranscribeOpen(false)} disabled={retranscribing}>
-                Cancel
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => setRetranscribeOpen(false)}
+                disabled={retranscribing}
+              >
+                {uiText('Cancel')}
               </Button>
               <Button type="submit" size="sm" disabled={retranscribing}>
-                {retranscribing ? 'Enhancing…' : 'Re-transcribe'}
+                {retranscribing ? uiText('Enhancing…') : uiText('Re-transcribe')}
               </Button>
             </div>
           </form>

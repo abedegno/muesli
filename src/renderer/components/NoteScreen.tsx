@@ -1,4 +1,6 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { uiText, formatDate } from '@/i18n'
+import type { RecordingRecoveryInfo } from '../../shared/types'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams, useSearchParams, useOutletContext } from 'react-router-dom'
 import { ChevronRight } from 'lucide-react'
 import { muesli } from '@/api'
@@ -6,6 +8,10 @@ import { RecordingSession } from '../../main/recorder'
 import { ElectronCapture, MicPermissionDeniedError } from '../capture/electronCapture'
 import { startSystemAudioStream, type SystemAudioStreamHandle } from '../capture/systemAudioStream'
 import { pollNote } from '@/lib/pollNote'
+import {
+  finishRecordingAfterNavigation,
+  trackProcessingAfterNavigation,
+} from '@/lib/finishRecording'
 import { isProcessing } from '@/lib/status'
 import { useToast } from '@/components/ui/Toast'
 import { useActivity } from '@/lib/activityStore'
@@ -20,8 +26,6 @@ import { loadAudioPrefs, saveAudioPrefs } from '@/lib/audioPrefs'
 import { useAnnouncer } from '@/hooks/useAnnouncer'
 import { useAgentCapability } from '@/lib/agentCapability'
 import { AI_UNAVAILABLE_MESSAGE } from './AgentUnavailableNotice'
-// Lazy so TipTap (the renderer-bundle bulk) is only fetched when an editor mounts.
-const NoteEditor = lazy(() => import('./NoteEditor').then((m) => ({ default: m.NoteEditor })))
 import { NoteView } from './NoteView'
 import { fullNoteToMarkdown, fullNoteToPlainText } from '@/lib/noteMarkdown'
 import { transcriptToPlainText } from '@/lib/transcriptText'
@@ -31,7 +35,17 @@ import { cuesToSrt, cuesToAss, cuesToVtt } from '@/lib/subtitleFormats'
 import { writeClipboardText } from '@/lib/clipboard'
 import { Dialog } from '@/components/ui/Dialog'
 import { Button } from '@/components/ui/Button'
-import type { CreateShareRequest, FullNote, Folder, Note, NoteLink, NoteLinksResponse, RelatedNote, Share, Template } from '../../shared/types'
+import type {
+  CreateShareRequest,
+  FullNote,
+  Folder,
+  Note,
+  NoteLink,
+  NoteLinksResponse,
+  RelatedNote,
+  Share,
+  Template,
+} from '../../shared/types'
 import { isTerminal } from '../../shared/types'
 import { Skeleton } from './ui/Skeleton'
 import type { RecordState } from './RecordControl'
@@ -39,7 +53,12 @@ import { DuplicateAudioDialog } from './DuplicateAudioDialog'
 import { ExportOptionsDialog, type ExportOptionsValue } from './ExportOptionsDialog'
 import { recordUnavailableReason } from '@/lib/recordAvailability'
 
-interface Ctx { notes: Note[]; allNotes: Note[]; folders: Folder[]; refresh: () => void }
+interface Ctx {
+  notes: Note[]
+  allNotes: Note[]
+  folders: Folder[]
+  refresh: () => void
+}
 
 function linkedNoteId(link: NoteLink, currentNoteId: string): string {
   if (link.from_note_id === currentNoteId) return link.to_note_id
@@ -59,10 +78,10 @@ function isActiveShare(share: Share): boolean {
 }
 
 function formatShareDate(iso?: string | null): string {
-  if (!iso) return 'No expiry'
+  if (!iso) return uiText('No expiry')
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return iso
-  return date.toLocaleString()
+  return formatDate(date, { dateStyle: 'medium', timeStyle: 'short' })
 }
 
 function toRfc3339(value: string): string | undefined {
@@ -122,12 +141,14 @@ function NoteSharesPanel({ noteId }: { noteId: string }) {
       setCreating(true)
       setError(null)
       const expiresAtValue = toRfc3339(expiresAt)
-      const request: CreateShareRequest | undefined = expiresAtValue ? { expires_at: expiresAtValue } : undefined
+      const request: CreateShareRequest | undefined = expiresAtValue
+        ? { expires_at: expiresAtValue }
+        : undefined
       const created = await muesli.createShare(noteId, request)
       await writeClipboardText(created.url)
       setStatusMessage(`Share link copied to clipboard: ${created.url}`)
       setExpiresAt('')
-      announce('Share link copied to clipboard')
+      announce(uiText('Share link copied to clipboard'))
       await loadShares()
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Could not create share link'
@@ -143,7 +164,7 @@ function NoteSharesPanel({ noteId }: { noteId: string }) {
     setShares((current) => current?.filter((share) => share.token !== token) ?? current)
     try {
       await muesli.revokeShare(token)
-      announce('Share revoked')
+      announce(uiText('Share revoked'))
     } catch (err) {
       setShares(previous)
       setError(err instanceof Error ? err.message : 'Could not revoke share')
@@ -153,16 +174,21 @@ function NoteSharesPanel({ noteId }: { noteId: string }) {
   return (
     <section className="border-b border-border px-6 py-4">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Sharing</h2>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          {uiText('Sharing')}
+        </h2>
       </div>
 
       <p className="mt-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-foreground">
-        Public link: anyone who has it can read this note.
+        {uiText('Public link: anyone who has it can read this note.')}
       </p>
 
       {error ? (
-        <div role="alert" className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          Could not update shares.
+        <div
+          role="alert"
+          className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
+          {uiText('Could not update shares.')}
           <div className="mt-1 text-xs text-destructive/80">{error}</div>
         </div>
       ) : null}
@@ -170,7 +196,7 @@ function NoteSharesPanel({ noteId }: { noteId: string }) {
       <div className="mt-4 rounded-lg border border-border bg-background/70 p-3">
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end">
           <label className="flex-1 text-sm font-medium">
-            Expires at
+            {uiText('Expires at')}
             <input
               type="datetime-local"
               value={expiresAt}
@@ -178,38 +204,62 @@ function NoteSharesPanel({ noteId }: { noteId: string }) {
               className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
             />
           </label>
-          <Button type="button" size="sm" onClick={() => { void createShare() }} disabled={creating}>
-            {creating ? 'Creating...' : 'Create share link'}
+          <Button
+            type="button"
+            size="sm"
+            onClick={() => {
+              void createShare()
+            }}
+            disabled={creating}
+          >
+            {creating ? uiText('Creating...') : uiText('Create share link')}
           </Button>
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
-          Leave blank for no expiry. The link is public to anyone with the URL.
+          {uiText('Leave blank for no expiry. The link is public to anyone with the URL.')}
         </p>
       </div>
 
       {statusMessage ? (
-        <div role="status" className="mt-3 rounded-lg border border-border bg-background/70 px-3 py-2 text-sm text-foreground">
+        <div
+          role="status"
+          className="mt-3 rounded-lg border border-border bg-background/70 px-3 py-2 text-sm text-foreground"
+        >
           {statusMessage}
         </div>
       ) : null}
 
       {shares === null && error === null ? (
         <div role="status" className="mt-3 text-sm text-muted-foreground">
-          Loading shares...
+          {uiText('Loading shares...')}
         </div>
       ) : activeShares.length === 0 ? (
-        <p className="mt-3 text-sm text-muted-foreground">No active shares</p>
+        <p className="mt-3 text-sm text-muted-foreground">{uiText('No active shares')}</p>
       ) : (
         <ul className="mt-4 space-y-2">
           {activeShares.map((share) => (
-            <li key={share.id} className="flex items-start justify-between gap-3 rounded-lg border border-border bg-background/70 px-3 py-2">
+            <li
+              key={share.id}
+              className="flex items-start justify-between gap-3 rounded-lg border border-border bg-background/70 px-3 py-2"
+            >
               <div className="min-w-0">
-                <p className="text-sm font-medium">Public share</p>
-                <p className="mt-1 text-xs text-muted-foreground">Created: {formatShareDate(share.created_at)}</p>
-                <p className="text-xs text-muted-foreground">Expires: {formatShareDate(share.expires_at)}</p>
+                <p className="text-sm font-medium">{uiText('Public share')}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {uiText('Created:')} {formatShareDate(share.created_at)}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {uiText('Expires:')} {formatShareDate(share.expires_at)}
+                </p>
               </div>
-              <Button type="button" variant="secondary" size="sm" onClick={() => { void revokeShare(share.token) }}>
-                Revoke
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() => {
+                  void revokeShare(share.token)
+                }}
+              >
+                {uiText('Revoke')}
               </Button>
             </li>
           ))}
@@ -244,11 +294,11 @@ function NoteLinksPanel({ noteId, allNotes, onOpenNote, refreshToken }: NoteLink
     } catch (err) {
       setLinksError(err instanceof Error ? err.message : 'Could not load links')
     }
-  }, [noteId, refreshToken])
+  }, [noteId])
 
   useEffect(() => {
     void loadLinks()
-  }, [loadLinks])
+  }, [loadLinks, refreshToken])
 
   useEffect(() => {
     let cancelled = false
@@ -287,7 +337,10 @@ function NoteLinksPanel({ noteId, allNotes, onOpenNote, refreshToken }: NoteLink
   const loading = links === null && linksError === null
   const noteList = notes ?? []
   const filteredNotes = query.trim()
-    ? noteList.filter((note) => note.id !== noteId && note.title.toLowerCase().includes(query.trim().toLowerCase()))
+    ? noteList.filter(
+        (note) =>
+          note.id !== noteId && note.title.toLowerCase().includes(query.trim().toLowerCase())
+      )
     : []
   const showPicker = query.trim().length > 0 && !pickerDismissed
   const activeCandidate = filteredNotes[activeIndex] ?? filteredNotes[0] ?? null
@@ -316,12 +369,14 @@ function NoteLinksPanel({ noteId, allNotes, onOpenNote, refreshToken }: NoteLink
   return (
     <section className="border-b border-border px-6 py-4">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Links</h2>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          {uiText('Links')}
+        </h2>
       </div>
 
       <div className="mt-4 rounded-lg border border-border bg-background/40 p-3">
         <label htmlFor={`add-link-${noteId}`} className="text-sm font-medium">
-          Add link
+          {uiText('Add link')}
         </label>
         <input
           ref={inputRef}
@@ -329,7 +384,7 @@ function NoteLinksPanel({ noteId, allNotes, onOpenNote, refreshToken }: NoteLink
           type="text"
           autoComplete="off"
           className="mt-2 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/20"
-          placeholder="Type a note title"
+          placeholder={uiText('Type a note title')}
           value={query}
           aria-describedby={`add-link-help-${noteId}`}
           onChange={(e) => {
@@ -371,16 +426,19 @@ function NoteLinksPanel({ noteId, allNotes, onOpenNote, refreshToken }: NoteLink
           }}
         />
         <p id={`add-link-help-${noteId}`} className="mt-1 text-xs text-muted-foreground">
-          Type to filter other notes. Use Tab or Arrow keys to move through matches.
+          {uiText('Type to filter other notes. Use Tab or Arrow keys to move through matches.')}
         </p>
         {notesError ? (
-          <div role="alert" className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-            Could not load notes.
+          <div
+            role="alert"
+            className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+          >
+            {uiText('Could not load notes.')}
             <div className="mt-1 text-destructive/80">{notesError}</div>
           </div>
         ) : showPicker ? (
           filteredNotes.length > 0 ? (
-            <ul aria-label="Matching notes" className="mt-3 space-y-2">
+            <ul aria-label={uiText('Matching notes')} className="mt-3 space-y-2">
               {filteredNotes.map((note, index) => (
                 <li key={note.id}>
                   <button
@@ -423,39 +481,51 @@ function NoteLinksPanel({ noteId, allNotes, onOpenNote, refreshToken }: NoteLink
               ))}
             </ul>
           ) : (
-            <p className="mt-3 text-sm text-muted-foreground">No matching notes</p>
+            <p className="mt-3 text-sm text-muted-foreground">{uiText('No matching notes')}</p>
           )
         ) : query.trim() ? (
-          <p className="mt-3 text-sm text-muted-foreground">Press Escape to hide matches</p>
+          <p className="mt-3 text-sm text-muted-foreground">
+            {uiText('Press Escape to hide matches')}
+          </p>
         ) : (
-          <p className="mt-3 text-sm text-muted-foreground">Start typing a note title to add a link.</p>
+          <p className="mt-3 text-sm text-muted-foreground">
+            {uiText('Start typing a note title to add a link.')}
+          </p>
         )}
         {addLinkError ? (
-          <div role="alert" className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-            Could not add link.
+          <div
+            role="alert"
+            className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+          >
+            {uiText('Could not add link.')}
             <div className="mt-1 text-destructive/80">{addLinkError}</div>
           </div>
         ) : null}
-        {notes === null && !notesError ? <p className="mt-2 text-xs text-muted-foreground">Loading note list...</p> : null}
+        {notes === null && !notesError ? (
+          <p className="mt-2 text-xs text-muted-foreground">{uiText('Loading note list...')}</p>
+        ) : null}
       </div>
 
       {linksError ? (
-        <div role="alert" className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          Could not load links.
+        <div
+          role="alert"
+          className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
+          {uiText('Could not load links.')}
           <div className="mt-1 text-xs text-destructive/80">{linksError}</div>
         </div>
       ) : loading ? (
         <div role="status" className="mt-3 space-y-2">
-          <p className="text-sm text-muted-foreground">Loading links...</p>
+          <p className="text-sm text-muted-foreground">{uiText('Loading links...')}</p>
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-10 w-full" />
         </div>
       ) : !hasAnyLinks ? (
-        <p className="mt-3 text-sm text-muted-foreground">No links yet</p>
+        <p className="mt-3 text-sm text-muted-foreground">{uiText('No links yet')}</p>
       ) : (
         <div className="mt-4 space-y-5">
           <div>
-            <h3 className="text-sm font-medium">Outgoing</h3>
+            <h3 className="text-sm font-medium">{uiText('Outgoing')}</h3>
             {outgoing.length > 0 ? (
               <ul className="mt-2 space-y-2">
                 {outgoing.map((link) => {
@@ -474,12 +544,12 @@ function NoteLinksPanel({ noteId, allNotes, onOpenNote, refreshToken }: NoteLink
                 })}
               </ul>
             ) : (
-              <p className="mt-2 text-sm text-muted-foreground">No outgoing links</p>
+              <p className="mt-2 text-sm text-muted-foreground">{uiText('No outgoing links')}</p>
             )}
           </div>
 
           <div>
-            <h3 className="text-sm font-medium">Referenced by</h3>
+            <h3 className="text-sm font-medium">{uiText('Referenced by')}</h3>
             {backlinks.length > 0 ? (
               <ul className="mt-2 space-y-2">
                 {backlinks.map((link) => {
@@ -498,7 +568,7 @@ function NoteLinksPanel({ noteId, allNotes, onOpenNote, refreshToken }: NoteLink
                 })}
               </ul>
             ) : (
-              <p className="mt-2 text-sm text-muted-foreground">No references yet</p>
+              <p className="mt-2 text-sm text-muted-foreground">{uiText('No references yet')}</p>
             )}
           </div>
         </div>
@@ -515,7 +585,13 @@ interface RelatedNotesPanelProps {
   onLinked?: LinkRefreshHandler
 }
 
-export function RelatedNotesPanel({ noteId, allNotes, onOpenNote, refreshToken, onLinked }: RelatedNotesPanelProps) {
+export function RelatedNotesPanel({
+  noteId,
+  allNotes,
+  onOpenNote,
+  refreshToken,
+  onLinked,
+}: RelatedNotesPanelProps) {
   const [related, setRelated] = useState<RelatedNote[] | null>(null)
   const [relatedError, setRelatedError] = useState<string | null>(null)
   const [relatedLinkError, setRelatedLinkError] = useState<string | null>(null)
@@ -531,11 +607,11 @@ export function RelatedNotesPanel({ noteId, allNotes, onOpenNote, refreshToken, 
     } catch (err) {
       setRelatedError(err instanceof Error ? err.message : 'Could not load related notes')
     }
-  }, [noteId, refreshToken])
+  }, [noteId])
 
   useEffect(() => {
     void loadRelated()
-  }, [loadRelated])
+  }, [loadRelated, refreshToken])
 
   if (!noteId) return null
 
@@ -545,7 +621,9 @@ export function RelatedNotesPanel({ noteId, allNotes, onOpenNote, refreshToken, 
     try {
       setRelatedLinkError(null)
       await muesli.addNoteLink(noteId, candidate.note_id)
-      setRelated((current) => current?.filter((item) => item.note_id !== candidate.note_id) ?? current)
+      setRelated(
+        (current) => current?.filter((item) => item.note_id !== candidate.note_id) ?? current
+      )
       onLinked?.()
     } catch (err) {
       setRelatedLinkError(err instanceof Error ? err.message : 'Could not add link')
@@ -555,29 +633,37 @@ export function RelatedNotesPanel({ noteId, allNotes, onOpenNote, refreshToken, 
   return (
     <section className="border-b border-border px-6 py-4">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">Related</h2>
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+          {uiText('Related')}
+        </h2>
       </div>
 
       {relatedLinkError ? (
-        <div role="alert" className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          Could not add link.
+        <div
+          role="alert"
+          className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
+          {uiText('Could not add link.')}
           <div className="mt-1 text-xs text-destructive/80">{relatedLinkError}</div>
         </div>
       ) : null}
 
       {relatedError ? (
-        <div role="alert" className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          Could not load related notes.
+        <div
+          role="alert"
+          className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
+          {uiText('Could not load related notes.')}
           <div className="mt-1 text-xs text-destructive/80">{relatedError}</div>
         </div>
       ) : loading ? (
         <div role="status" className="mt-3 space-y-2">
-          <p className="text-sm text-muted-foreground">Loading related notes...</p>
+          <p className="text-sm text-muted-foreground">{uiText('Loading related notes...')}</p>
           <Skeleton className="h-10 w-full" />
           <Skeleton className="h-10 w-full" />
         </div>
       ) : (related ?? []).length === 0 ? (
-        <p className="mt-3 text-sm text-muted-foreground">No related suggestions</p>
+        <p className="mt-3 text-sm text-muted-foreground">{uiText('No related suggestions')}</p>
       ) : (
         <ul className="mt-4 space-y-2">
           {(related ?? []).map((candidate) => (
@@ -588,8 +674,12 @@ export function RelatedNotesPanel({ noteId, allNotes, onOpenNote, refreshToken, 
                   className="min-w-0 flex-1 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                   onClick={() => onOpenNote(candidate.note_id)}
                 >
-                  <span className="block truncate text-sm font-medium">{noteTitleForId(allNotes, candidate.note_id)}</span>
-                  <span className="text-xs text-muted-foreground">Score {candidate.score.toFixed(2)}</span>
+                  <span className="block truncate text-sm font-medium">
+                    {noteTitleForId(allNotes, candidate.note_id)}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {uiText('Score')} {candidate.score.toFixed(2)}
+                  </span>
                 </button>
                 <Button
                   type="button"
@@ -599,7 +689,7 @@ export function RelatedNotesPanel({ noteId, allNotes, onOpenNote, refreshToken, 
                     void linkSuggestion(candidate)
                   }}
                 >
-                  Link
+                  {uiText('Link')}
                 </Button>
               </div>
             </li>
@@ -607,8 +697,11 @@ export function RelatedNotesPanel({ noteId, allNotes, onOpenNote, refreshToken, 
         </ul>
       )}
       {relatedLinkError ? (
-        <div role="alert" className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-          Could not add link.
+        <div
+          role="alert"
+          className="mt-3 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
+          {uiText('Could not add link.')}
           <div className="mt-1 text-xs text-destructive/80">{relatedLinkError}</div>
         </div>
       ) : null}
@@ -639,13 +732,29 @@ export function NoteScreen() {
   const [micError, setMicError] = useState<Error | null>(null)
   const [microphoneLevel, setMicrophoneLevel] = useState(0)
   const [transcriptCopied, setTranscriptCopied] = useState(false)
+  const [savedRecovery, setSavedRecovery] = useState<RecordingRecoveryInfo | null>(null)
+  const [confirmDiscardRecovery, setConfirmDiscardRecovery] = useState(false)
+  const [failedUpload, setFailedUpload] = useState<{
+    audio: ArrayBuffer
+    mimeType: string
+    captureId?: string
+  } | null>(null)
   const [pendingUpload, setPendingUpload] = useState<{
     audio: ArrayBuffer
     mimeType: string
     existingNoteId: string
     existingNoteTitle: string
+    captureId?: string
   } | null>(null)
   const sessionRef = useRef<RecordingSession | null>(null)
+  const recordingOwnerRef = useRef<{
+    noteId: string
+    title: string
+    phase: 'starting' | 'recording'
+    captureId?: string
+    startRequest?: Promise<Note>
+  } | null>(null)
+  const captureGenerationRef = useRef(0)
   const noteIdRef = useRef(id)
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const pollAbortRef = useRef<AbortController | null>(null)
@@ -658,38 +767,59 @@ export function NoteScreen() {
   const systemAudioHandleRef = useRef<SystemAudioStreamHandle | null>(null)
 
   // Audio prefs — loaded on mount and kept in sync with RecordControl callbacks.
-  const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>(() => loadAudioPrefs().deviceId)
+  const [selectedDeviceId, setSelectedDeviceId] = useState<string | undefined>(
+    () => loadAudioPrefs().deviceId
+  )
   const [gainLinear, setGainLinear] = useState<number>(() => loadAudioPrefs().gain)
 
   useEffect(() => {
     const abort = new AbortController()
-    muesli.getFull(id).then((f) => {
-      setFull(f)
-      setLoadError(false)
-      if (isProcessing(f.note.status)) {
-        setRecordState('processing')
-        addProcessing(id, f.note.title, f.note.status)
-        void pollNote(id, muesli.getFull, {
-          signal: abort.signal,
-          onUpdate: (updated) => {
-            setFull(updated)
-            updateProcessing(id, updated.note.status, isTerminal(updated.note.status))
-          },
-        })
-          .then((done) => {
-            setFull(done)
-            setRecordState('idle')
-            refresh()
+    muesli
+      .getFull(id)
+      .then((f) => {
+        if (abort.signal.aborted) return
+        setFull(f)
+        setLoadError(false)
+        if (isProcessing(f.note.status)) {
+          setRecordState('processing')
+          addProcessing(id, f.note.title, f.note.status)
+          void pollNote(id, muesli.getFull, {
+            signal: abort.signal,
+            onUpdate: (updated) => {
+              setFull(updated)
+              updateProcessing(id, updated.note.status, isTerminal(updated.note.status))
+            },
           })
-          .catch(() => {})
-      }
-    }).catch((err) => {
-      notify(err instanceof Error ? err.message : 'Could not load note', 'error')
-      setLoadError(true)
-    })
+            .then((done) => {
+              setFull(done)
+              setRecordState('idle')
+              refresh()
+            })
+            .catch(() => {})
+        }
+      })
+      .catch((err) => {
+        if (abort.signal.aborted) return
+        notify(err instanceof Error ? err.message : uiText('Could not load note'), 'error')
+        setLoadError(true)
+      })
     return () => abort.abort()
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id, refresh, retryCount])
+
+  useEffect(() => {
+    let active = true
+    setSavedRecovery(null)
+    void muesli
+      .getRecordingRecovery?.(id)
+      .then((info) => {
+        if (active) setSavedRecovery(info)
+      })
+      .catch(() => {})
+    return () => {
+      active = false
+    }
+  }, [id])
 
   // Fetches every template visible to the owner (built-ins + their own) so
   // NoteView's picker can list templates that don't have a summary for this
@@ -699,8 +829,14 @@ export function NoteScreen() {
     let cancelled = false
     const list = muesli?.listTemplates
     if (typeof list !== 'function') return
-    list().then((t) => { if (!cancelled) setTemplates(t ?? []) }).catch(() => {})
-    return () => { cancelled = true }
+    list()
+      .then((t) => {
+        if (!cancelled) setTemplates(t ?? [])
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
   }, [])
 
   useEffect(() => {
@@ -719,7 +855,40 @@ export function NoteScreen() {
   }, [])
 
   useEffect(() => {
+    const generation = captureGenerationRef
     noteIdRef.current = id
+    setRecordState('idle')
+    setFailedUpload(null)
+    setPendingUpload(null)
+    return () => {
+      generation.current++
+      const owner = recordingOwnerRef.current
+      const session = sessionRef.current
+      if (!owner || owner.noteId !== id || !session) return
+      sessionRef.current = null
+      recordingOwnerRef.current = null
+      if (timerRef.current) clearInterval(timerRef.current)
+      const handle = systemAudioHandleRef.current
+      systemAudioHandleRef.current = null
+      handle?.stop()
+      if (owner.phase === 'starting') return
+      void finishRecordingAfterNavigation({
+        beforeStopMarker: owner.startRequest,
+        captureId: owner.captureId,
+        session,
+        noteId: owner.noteId,
+        title: owner.title,
+        bridge: muesli,
+        addUpload,
+        updateUpload,
+        addProcessing,
+        updateProcessing,
+        notify,
+        refresh: () => window.dispatchEvent(new Event('muesli:notes-changed')),
+      })
+    }
+    // Capture ownership is tied to this note, not a later render's route params.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id])
 
   useEffect(() => {
@@ -752,16 +921,9 @@ export function NoteScreen() {
       await muesli.retryNote(id)
       refresh()
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Could not retry the pipeline', 'error')
+      notify(err instanceof Error ? err.message : uiText('Could not retry the pipeline'), 'error')
     }
   }, [id, refresh, notify])
-
-  const stopSystemAudio = useCallback(async () => {
-    const handle = systemAudioHandleRef.current
-    systemAudioHandleRef.current = null
-    if (handle) handle.stop()
-    else await Promise.resolve(muesli.systemAudioStop?.()).catch(() => {})
-  }, [])
 
   // Bumps this note's still-pending job(s) to the front of the queue so they
   // dequeue before other queued notes. Does not touch anything already running.
@@ -771,7 +933,7 @@ export function NoteScreen() {
       await muesli.processNextNote(id)
       refresh()
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Could not prioritize this note', 'error')
+      notify(err instanceof Error ? err.message : uiText('Could not prioritize this note'), 'error')
     }
   }, [id, refresh, notify])
 
@@ -784,21 +946,30 @@ export function NoteScreen() {
       setFull(updated)
       refresh()
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Could not update note pin state', 'error')
+      notify(
+        err instanceof Error ? err.message : uiText('Could not update note pin state'),
+        'error'
+      )
     }
   }, [full, id, notify, refresh])
 
-  const linkEvent = useCallback(async (eventId: string) => {
-    if (!id) return
-    try {
-      await muesli.linkNoteEvent(id, eventId)
-      const updated = await muesli.getFull(id)
-      setFull(updated)
-      refresh()
-    } catch (err) {
-      notify(err instanceof Error ? err.message : 'Could not link calendar event', 'error')
-    }
-  }, [id, notify, refresh])
+  const linkEvent = useCallback(
+    async (eventId: string) => {
+      if (!id) return
+      try {
+        await muesli.linkNoteEvent(id, eventId)
+        const updated = await muesli.getFull(id)
+        setFull(updated)
+        refresh()
+      } catch (err) {
+        notify(
+          err instanceof Error ? err.message : uiText('Could not link calendar event'),
+          'error'
+        )
+      }
+    },
+    [id, notify, refresh]
+  )
 
   const unlinkEvent = useCallback(async () => {
     if (!id) return
@@ -808,7 +979,10 @@ export function NoteScreen() {
       setFull(updated)
       refresh()
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Could not unlink calendar event', 'error')
+      notify(
+        err instanceof Error ? err.message : uiText('Could not unlink calendar event'),
+        'error'
+      )
     }
   }, [id, notify, refresh])
 
@@ -819,29 +993,32 @@ export function NoteScreen() {
       refresh()
       navigate(`/notes/${copy.id}`)
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Could not duplicate note', 'error')
+      notify(err instanceof Error ? err.message : uiText('Could not duplicate note'), 'error')
     }
   }, [id, navigate, notify, refresh])
 
-  const refreshAfterTagMutation = useCallback(async (mutate: () => Promise<unknown>, errorMessage: string): Promise<void> => {
-    tagAbortRef.current?.abort()
-    const controller = new AbortController()
-    tagAbortRef.current = controller
+  const refreshAfterTagMutation = useCallback(
+    async (mutate: () => Promise<unknown>, errorMessage: string): Promise<void> => {
+      tagAbortRef.current?.abort()
+      const controller = new AbortController()
+      tagAbortRef.current = controller
 
-    try {
-      await mutate()
-      if (controller.signal.aborted || !mountedRef.current) return
+      try {
+        await mutate()
+        if (controller.signal.aborted || !mountedRef.current) return
 
-      const updated = await muesli.getFull(id)
-      if (controller.signal.aborted || !mountedRef.current) return
+        const updated = await muesli.getFull(id)
+        if (controller.signal.aborted || !mountedRef.current) return
 
-      setFull(updated)
-      refresh()
-    } catch (err) {
-      if (!mountedRef.current || controller.signal.aborted) return
-      notify(err instanceof Error ? err.message : errorMessage, 'error')
-    }
-  }, [id, notify, refresh])
+        setFull(updated)
+        refresh()
+      } catch (err) {
+        if (!mountedRef.current || controller.signal.aborted) return
+        notify(err instanceof Error ? err.message : errorMessage, 'error')
+      }
+    },
+    [id, notify, refresh]
+  )
 
   async function reRunSummary() {
     try {
@@ -887,26 +1064,36 @@ export function NoteScreen() {
       .catch(() => {})
   }, [id, refresh, updateProcessing])
 
-  const retranscribeNote = useCallback(async (options: { model?: string; language?: string }) => {
-    if (!full) return
-    try {
-      await muesli.retranscribeNote(id, options)
-      const startedAt = new Date().toISOString()
-      setFull((current) => current ? {
-        ...current,
-        note: {
-          ...current.note,
-          status: 'transcribing',
-          updated_at: startedAt,
-        },
-      } : current)
-      addProcessing(id, full.note.title, 'transcribing')
-      refresh()
-      beginRetranscribePoll()
-    } catch (err) {
-      notify(err instanceof Error ? err.message : 'Could not re-transcribe the note', 'error')
-    }
-  }, [addProcessing, beginRetranscribePoll, full, id, notify, refresh])
+  const retranscribeNote = useCallback(
+    async (options: { model?: string; language?: string }) => {
+      if (!full) return
+      try {
+        await muesli.retranscribeNote(id, options)
+        const startedAt = new Date().toISOString()
+        setFull((current) =>
+          current
+            ? {
+                ...current,
+                note: {
+                  ...current.note,
+                  status: 'transcribing',
+                  updated_at: startedAt,
+                },
+              }
+            : current
+        )
+        addProcessing(id, full.note.title, 'transcribing')
+        refresh()
+        beginRetranscribePoll()
+      } catch (err) {
+        notify(
+          err instanceof Error ? err.message : uiText('Could not re-transcribe the note'),
+          'error'
+        )
+      }
+    },
+    [addProcessing, beginRetranscribePoll, full, id, notify, refresh]
+  )
 
   // Regenerates a single template's summary without touching the note's other
   // summaries or re-transcribing. Modeled on reRunSummary(); tracked per-template
@@ -936,56 +1123,129 @@ export function NoteScreen() {
         .finally(clear)
     } catch (err) {
       clear()
-      notify(err instanceof Error ? err.message : 'Could not regenerate the summary', 'error')
+      notify(
+        err instanceof Error ? err.message : uiText('Could not regenerate the summary'),
+        'error'
+      )
     }
   }
 
+  const stopCaptureRef = useRef<() => Promise<void>>(async () => {})
   const start = useCallback(async () => {
+    const generation = ++captureGenerationRef.current
+    const ownsCapture = () =>
+      mountedRef.current && noteIdRef.current === id && captureGenerationRef.current === generation
+    let ownedSession: RecordingSession | null = null
+    let ownedJournal: string | undefined
+    let journalFailed = false
+    const ownedAudio: { handle: SystemAudioStreamHandle | null } = { handle: null }
     setMicError(null)
+    setRecordState('preparing')
     try {
       const micStatus = await muesli.micRequest?.()
-      if (micStatus === 'denied' || micStatus === 'restricted') {
-        throw new MicPermissionDeniedError()
+      if (!ownsCapture()) return
+      if (micStatus === 'denied' || micStatus === 'restricted') throw new MicPermissionDeniedError()
+      ownedJournal = await muesli.beginRecordingJournal?.(id)
+      if (!ownsCapture()) {
+        if (ownedJournal) await muesli.endRecordingJournal?.(ownedJournal)
+        return
       }
       void muesli.startNoteStream?.(id)?.catch(() => {})
       const session = new RecordingSession(
         new ElectronCapture({
+          onLimit: () => {
+            if (ownsCapture()) {
+              notify(
+                uiText(
+                  'Recording reached its safety limit. Saving now; start a new meeting to continue.'
+                ),
+                'info'
+              )
+              void stopCaptureRef.current()
+            }
+          },
           deviceId: selectedDeviceId,
           gainLinear,
-          onLevel: setMicrophoneLevel,
-          onPcmFrame: (frame) => {
-            void muesli.sendNoteStreamAudio?.(id, frame)?.catch(() => {})
+          onLevel: (level) => {
+            if (ownsCapture()) setMicrophoneLevel(level)
           },
-          // System audio: inject the main-process tap PCM as a MediaStream
-          // (mic-left / system-right). Returns null when unsupported -> mic-only.
+          onPcmFrame: (frame) => {
+            if (ownsCapture()) {
+              void muesli.sendNoteStreamAudio?.(id, frame)?.catch(() => {})
+              if (ownedJournal)
+                void muesli.appendRecordingJournal?.(ownedJournal, frame)?.catch(() => {
+                  if (ownsCapture() && !journalFailed) {
+                    journalFailed = true
+                    notify(
+                      uiText(
+                        'Recording recovery could not be saved. Stop and save this recording now.'
+                      ),
+                      'error'
+                    )
+                  }
+                })
+            }
+          },
           getSystemAudioStream: async () => {
-            systemAudioHandleRef.current = await startSystemAudioStream()
-            return systemAudioHandleRef.current?.stream ?? null
+            const handle = await startSystemAudioStream()
+            ownedAudio.handle = handle
+            if (!ownsCapture()) {
+              handle?.stop()
+              return null
+            }
+            systemAudioHandleRef.current = handle
+            return handle?.stream ?? null
           },
         }),
-        { onWarning: (w) => notify(w, 'info') },
+        {
+          onWarning: (warning) => {
+            if (ownsCapture()) notify(warning, 'info')
+          },
+        }
       )
+      ownedSession = session
+      const owner: NonNullable<typeof recordingOwnerRef.current> = {
+        noteId: id,
+        title: full?.note.title ?? '',
+        phase: 'starting',
+        captureId: ownedJournal,
+      }
+      recordingOwnerRef.current = owner
       sessionRef.current = session
       await session.start()
+      if (!ownsCapture()) {
+        await session.stop().catch(() => {})
+        if (ownedJournal) await muesli.endRecordingJournal?.(ownedJournal).catch(() => {})
+        ownedAudio.handle?.stop()
+        void muesli.stopNoteStream?.(id)?.catch(() => {})
+        return
+      }
+      owner.phase = 'recording'
       if (full?.note.status === 'draft') {
-        const recordingNote = await muesli.startNoteCapture(id)
+        owner.startRequest = ownedJournal
+          ? muesli.startNoteCapture(id, ownedJournal)
+          : muesli.startNoteCapture(id)
+        const recordingNote = await owner.startRequest
+        if (!ownsCapture()) return
         setFull((current) => (current ? { ...current, note: recordingNote } : current))
         refresh()
       }
+      if (!ownsCapture()) return
       setRecordState('recording')
       setElapsedMs(0)
       const startedAt = Date.now()
       timerRef.current = setInterval(() => setElapsedMs(Date.now() - startedAt), 500)
     } catch (err) {
-      try {
-        await sessionRef.current?.stop()
-      } catch {
-        // Preserve the original recording-start error if cleanup also fails.
-      } finally {
+      await ownedSession?.stop().catch(() => {})
+      if (ownedJournal) await muesli.endRecordingJournal?.(ownedJournal).catch(() => {})
+      ownedAudio.handle?.stop()
+      if (sessionRef.current === ownedSession) {
         sessionRef.current = null
+        recordingOwnerRef.current = null
+        systemAudioHandleRef.current = null
       }
       void muesli.stopNoteStream?.(id)?.catch(() => {})
-      await stopSystemAudio()
+      if (!ownsCapture()) return
       if (timerRef.current) clearInterval(timerRef.current)
       setRecordState('idle')
       if (
@@ -993,24 +1253,33 @@ export function NoteScreen() {
         ((err as { code?: string }).code === 'mic-permission-denied' ||
           err.name === 'MicPermissionDeniedError' ||
           err.name === 'NotAllowedError')
-      ) {
+      )
         setMicError(err)
-      } else if (
+      else if (
         err instanceof Error &&
         ((err as { code?: string }).code === 'mic-device-invalid' ||
           err.name === 'MicDeviceInvalidError')
       ) {
         setMicError(err)
-        // Clear the saved device prefs so retry uses the default mic.
         saveAudioPrefs({ deviceId: undefined, gain: gainLinear })
         setSelectedDeviceId(undefined)
-      } else {
-        notify(err instanceof Error ? err.message : 'Could not start recording', 'error')
-      }
+      } else
+        notify(err instanceof Error ? err.message : uiText('Could not start recording'), 'error')
     }
-  }, [full?.note.status, gainLinear, id, notify, refresh, selectedDeviceId, stopSystemAudio])
+  }, [full?.note.status, full?.note.title, gainLinear, id, notify, refresh, selectedDeviceId])
 
-  async function doUpload(audio: ArrayBuffer, mimeType: string) {
+  async function doUpload(audio: ArrayBuffer | null, mimeType: string, captureId?: string) {
+    const isCurrent = () => mountedRef.current && noteIdRef.current === id
+    const title = full?.note.title ?? ''
+    const trackInBackground = () =>
+      trackProcessingAfterNavigation({
+        noteId: id,
+        title,
+        bridge: muesli,
+        updateProcessing,
+        notify,
+        refresh: () => window.dispatchEvent(new Event('muesli:notes-changed')),
+      })
     setRecordState('processing')
     pollAbortRef.current = new AbortController()
 
@@ -1021,21 +1290,43 @@ export function NoteScreen() {
     })
     uploadProgressUnsubRef.current = unsub
 
+    let uploaded = false
     try {
-      await muesli.uploadAudio({ noteId: id, audio, audioMimeType: mimeType })
-      refresh()
+      if (audio)
+        await muesli.uploadAudio({
+          noteId: id,
+          audio,
+          audioMimeType: mimeType,
+          ...(captureId ? { captureId } : {}),
+        })
+      else await muesli.retryRecordingUpload(id)
+      uploaded = true
+      updateUpload(id, 'done', true)
+      if (isCurrent()) {
+        setFailedUpload(null)
+        setSavedRecovery(null)
+        refresh()
+      } else window.dispatchEvent(new Event('muesli:notes-changed'))
 
-      addProcessing(id, full?.note.title ?? '', 'uploaded')
+      addProcessing(id, title, 'uploaded')
+      if (!isCurrent()) {
+        void trackInBackground()
+        return
+      }
       const done = await pollNote(id, muesli.getFull, {
         signal: pollAbortRef.current.signal,
         onUpdate: (f) => {
-          setFull(f)
+          if (isCurrent()) setFull(f)
           updateProcessing(id, f.note.status, isTerminal(f.note.status))
         },
       })
       uploadProgressUnsubRef.current?.()
       uploadProgressUnsubRef.current = null
 
+      if (!isCurrent()) {
+        void trackInBackground()
+        return
+      }
       if (pollAbortRef.current?.signal.aborted) return
       setFull(done)
       setRecordState('idle')
@@ -1045,24 +1336,90 @@ export function NoteScreen() {
       uploadProgressUnsubRef.current?.()
       uploadProgressUnsubRef.current = null
 
-      if (err instanceof Error && err.message === 'aborted') return
+      if (!uploaded) updateUpload(id, 'error', true)
+      if (err instanceof Error && err.message === 'aborted') {
+        if (uploaded && !isCurrent()) void trackInBackground()
+        return
+      }
+      if (!uploaded) {
+        if (audio && isCurrent())
+          setFailedUpload({ audio, mimeType, ...(captureId ? { captureId } : {}) })
+        const info = await muesli.getRecordingRecovery?.(id).catch(() => null)
+        if (info && isCurrent()) setSavedRecovery(info)
+      }
       void muesli.stopNoteStream?.(id)?.catch(() => {})
-      setRecordState('idle')
-      notify(err instanceof Error ? err.message : 'Upload failed', 'error')
+      if (isCurrent()) setRecordState('idle')
+      notify(err instanceof Error ? err.message : uiText('Upload failed'), 'error')
     }
   }
 
+  stopCaptureRef.current = stop
   async function stop() {
+    const owner = recordingOwnerRef.current
+    if (recordState === 'preparing' && owner?.phase !== 'recording') {
+      captureGenerationRef.current++
+      sessionRef.current = null
+      recordingOwnerRef.current = null
+      systemAudioHandleRef.current?.stop()
+      systemAudioHandleRef.current = null
+      setRecordState('idle')
+      return
+    }
+    captureGenerationRef.current++
     const session = sessionRef.current
     if (!session) return
+    sessionRef.current = null
+    recordingOwnerRef.current = null
+    const title = full?.note.title ?? ''
+    const ownedAudio = systemAudioHandleRef.current
+    systemAudioHandleRef.current = null
+    ownedAudio?.stop()
     if (timerRef.current) clearInterval(timerRef.current)
     setMicrophoneLevel(0)
+    setRecordState('processing')
     try {
       const result = await session.stop()
+      if (owner?.captureId) await muesli.endRecordingJournal?.(owner.captureId).catch(() => {})
+      await owner?.startRequest?.catch(() => {})
+      if (!mountedRef.current || noteIdRef.current !== id) {
+        void finishRecordingAfterNavigation({
+          session: { stop: async () => result },
+          captureId: owner?.captureId,
+          noteId: id,
+          title,
+          bridge: muesli,
+          addUpload,
+          updateUpload,
+          addProcessing,
+          updateProcessing,
+          notify,
+          refresh: () => window.dispatchEvent(new Event('muesli:notes-changed')),
+        })
+        return
+      }
+      try {
+        const stopped = await (owner?.captureId
+          ? muesli.stopNoteCapture?.(id, owner.captureId)
+          : muesli.stopNoteCapture?.(id))
+        if (stopped) setFull((current) => (current ? { ...current, note: stopped } : current))
+        refresh()
+      } catch {
+        // Upload confirmation also advances the server state if this request fails.
+      }
       void muesli.stopNoteStream?.(id)?.catch(() => {})
       setRecordState('processing')
+      if (!result.bytes.length)
+        throw new Error('No audio was captured. Check your microphone before recording again.')
       const audio = result.bytes.slice().buffer as ArrayBuffer
 
+      await muesli
+        .saveRecordingRecovery?.({
+          noteId: id,
+          audio,
+          audioMimeType: result.mimeType,
+          ...(owner?.captureId ? { captureId: owner.captureId } : {}),
+        })
+        .catch(() => {})
       try {
         const check = await muesli.checkAudioDedup(audio)
         if (check.existingNoteId) {
@@ -1071,6 +1428,7 @@ export function NoteScreen() {
             mimeType: result.mimeType,
             existingNoteId: check.existingNoteId,
             existingNoteTitle: check.existingNoteTitle ?? '',
+            captureId: owner?.captureId,
           })
           setRecordState('idle')
           return
@@ -1079,35 +1437,69 @@ export function NoteScreen() {
         // network error — proceed with upload
       }
 
-      await doUpload(audio, result.mimeType)
-    }
-    finally {
-      await stopSystemAudio()
+      await doUpload(audio, result.mimeType, owner?.captureId)
+    } catch (err) {
+      if (owner?.captureId) await muesli.endRecordingJournal?.(owner.captureId).catch(() => {})
+      const stopped = await muesli.stopNoteCapture?.(id, owner?.captureId).catch(() => null)
+      void muesli.stopNoteStream?.(id)?.catch(() => {})
+      window.dispatchEvent(new Event('muesli:notes-changed'))
+      if (mountedRef.current && noteIdRef.current === id) {
+        setRecordState('idle')
+        if (stopped) setFull((current) => (current ? { ...current, note: stopped } : current))
+        const recovery = await muesli.getRecordingRecovery?.(id).catch(() => null)
+        if (recovery && mountedRef.current && noteIdRef.current === id) setSavedRecovery(recovery)
+        refresh()
+      }
+      notify(err instanceof Error ? err.message : uiText('Could not finish recording'), 'error')
     }
   }
 
-  const exportServerNote = useCallback(async (format: string, options?: ExportOptionsValue) => {
-    try {
-      const result = await muesli.exportNote(id, format, options)
-      if (!result.success && result.error !== 'cancelled') {
-        notify(result.error, 'error')
+  const exportServerNote = useCallback(
+    async (format: string, options?: ExportOptionsValue) => {
+      try {
+        const result = await muesli.exportNote(id, format, options)
+        if (!result.success && result.error !== 'cancelled') {
+          notify(result.error, 'error')
+        }
+      } catch (err) {
+        notify(err instanceof Error ? err.message : uiText('Could not export note'), 'error')
       }
-    } catch (err) {
-      notify(err instanceof Error ? err.message : 'Could not export note', 'error')
-    }
-  }, [id, notify])
+    },
+    [id, notify]
+  )
 
   const serverExportFormats = [
-    { id: 'md', label: 'Markdown', onSelect: () => { void exportServerNote('md') } },
-    { id: 'txt', label: 'Plain Text', onSelect: () => { void exportServerNote('txt') } },
-    { id: 'docx', label: 'Word', onSelect: () => { void exportServerNote('docx') } },
+    {
+      id: 'md',
+      label: uiText('Markdown'),
+      onSelect: () => {
+        void exportServerNote('md')
+      },
+    },
+    {
+      id: 'txt',
+      label: uiText('Plain Text'),
+      onSelect: () => {
+        void exportServerNote('txt')
+      },
+    },
+    {
+      id: 'docx',
+      label: uiText('Word'),
+      onSelect: () => {
+        void exportServerNote('docx')
+      },
+    },
   ]
 
-  const recordDisabledReason: string | undefined = loadError
-    ? 'Server unreachable'
-    : full
-      ? recordUnavailableReason(full.note.status)
-      : undefined
+  const recordDisabledReason: string | undefined =
+    failedUpload || savedRecovery
+      ? 'Retry the captured recording upload before recording again'
+      : loadError
+        ? 'Server unreachable'
+        : full
+          ? recordUnavailableReason(full.note.status)
+          : undefined
 
   const capture = params.get('capture') === '1'
   const autostart = params.get('autostart') === '1'
@@ -1118,7 +1510,10 @@ export function NoteScreen() {
   const rawSegmentIndex = params.get('segment_index')
   const parsedSegmentIndex = rawSegmentIndex != null ? Number(rawSegmentIndex) : NaN
   const initialSegmentIndex = Number.isFinite(parsedSegmentIndex) ? parsedSegmentIndex : undefined
-  const transcriptSegments = full?.transcript?.segments ?? []
+  const transcriptSegments = useMemo(
+    () => full?.transcript?.segments ?? [],
+    [full?.transcript?.segments]
+  )
 
   const handleCopyTranscript = useCallback(async () => {
     if (!transcriptSegments.length) return
@@ -1131,7 +1526,7 @@ export function NoteScreen() {
         transcriptCopyTimerRef.current = null
       }, 2000)
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Could not copy transcript', 'error')
+      notify(err instanceof Error ? err.message : uiText('Could not copy transcript'), 'error')
     }
   }, [notify, transcriptSegments])
 
@@ -1146,7 +1541,17 @@ export function NoteScreen() {
     void start()
   }, [autostart, id, micError, navigate, params, recordState, start])
 
-  if (!full) {
+  const saveBody = useCallback(
+    async (markdown: string) => {
+      if (full?.connectionId) await muesli.updateBody(id, markdown, full.connectionId)
+      else await muesli.updateBody(id, markdown)
+      if (mountedRef.current && noteIdRef.current === id)
+        setFull((current) => (current ? { ...current, body_markdown: markdown } : current))
+    },
+    [id, full?.connectionId]
+  )
+
+  if (!full || full.note.id !== id) {
     if (loadError) {
       return (
         <div className="flex h-full flex-col">
@@ -1169,7 +1574,7 @@ export function NoteScreen() {
             onExportVtt={() => {}}
           />
           <div role="alert" className="p-8 text-muted-foreground">
-            <p>Could not load note.</p>
+            <p>{uiText('Could not load note.')}</p>
             <Button
               variant="secondary"
               size="sm"
@@ -1179,7 +1584,7 @@ export function NoteScreen() {
                 setRetryCount((c) => c + 1)
               }}
             >
-              Retry
+              {uiText('Retry')}
             </Button>
           </div>
         </div>
@@ -1187,36 +1592,38 @@ export function NoteScreen() {
     }
 
     return (
-    <div className="flex h-full flex-col">
-      <NoteHeader
-        noteId={id}
-        title=""
-        recordState="idle"
-        elapsedMs={0}
-        onStart={() => {}}
-        onStop={() => {}}
-        disabledReason="Still loading"
-        onTitleSaved={() => {}}
-        onDeleteNote={() => {}}
-        onDuplicate={() => {}}
-        onExport={() => {}}
-        pinned={false}
-        onTogglePinned={() => {}}
-        onExportSrt={() => {}}
-        onExportAss={() => {}}
-        onExportVtt={() => {}}
-      />
-      <div className="p-8 space-y-4" data-testid="note-loading">
-        <Skeleton className="h-8 w-2/3" />
-        <div className="flex gap-2">
-          <Skeleton className="h-5 w-24" />
-          <Skeleton className="h-5 w-20" />
-        </div>
-        <div className="space-y-3 mt-4">
-          {Array.from({ length: 4 }).map((_, i) => <Skeleton key={i} className="h-4 w-full" />)}
+      <div className="flex h-full flex-col">
+        <NoteHeader
+          noteId={id}
+          title=""
+          recordState="idle"
+          elapsedMs={0}
+          onStart={() => {}}
+          onStop={() => {}}
+          disabledReason="Still loading"
+          onTitleSaved={() => {}}
+          onDeleteNote={() => {}}
+          onDuplicate={() => {}}
+          onExport={() => {}}
+          pinned={false}
+          onTogglePinned={() => {}}
+          onExportSrt={() => {}}
+          onExportAss={() => {}}
+          onExportVtt={() => {}}
+        />
+        <div className="p-8 space-y-4" data-testid="note-loading">
+          <Skeleton className="h-8 w-2/3" />
+          <div className="flex gap-2">
+            <Skeleton className="h-5 w-24" />
+            <Skeleton className="h-5 w-20" />
+          </div>
+          <div className="space-y-3 mt-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <Skeleton key={i} className="h-4 w-full" />
+            ))}
+          </div>
         </div>
       </div>
-    </div>
     )
   }
 
@@ -1240,7 +1647,10 @@ export function NoteScreen() {
           saveAudioPrefs({ deviceId: selectedDeviceId, gain })
         }}
         recordingLevel={microphoneLevel}
-        onMicRetry={() => { setMicError(null); void start() }}
+        onMicRetry={() => {
+          setMicError(null)
+          void start()
+        }}
         disabledReason={recordDisabledReason}
         onTitleSaved={(t) => {
           setFull((f) => (f ? { ...f, note: { ...f.note, title: t } } : f))
@@ -1250,7 +1660,11 @@ export function NoteScreen() {
         onDuplicate={duplicateNote}
         onResummarize={reRunSummary}
         agentConfigured={agentConfigured !== false}
-        onRetranscribe={full.note.status === 'ready' || full.note.status === 'failed' ? retranscribeNote : undefined}
+        onRetranscribe={
+          full.note.status === 'ready' || full.note.status === 'failed'
+            ? retranscribeNote
+            : undefined
+        }
         pinned={Boolean(full.note.pinned)}
         onTogglePinned={() => void togglePinned()}
         eventId={full.note.event_id}
@@ -1262,7 +1676,9 @@ export function NoteScreen() {
             const md = fullNoteToMarkdown(full)
             const name = `${(full.note.title || 'note').replace(/[^\w\- ]+/g, '').trim() || 'note'}.md`
             await muesli.exportFile(name, md)
-          } catch (err) { notify(err instanceof Error ? err.message : 'Could not export note', 'error') }
+          } catch (err) {
+            notify(err instanceof Error ? err.message : uiText('Could not export note'), 'error')
+          }
         }}
         onExportPlainText={async () => {
           try {
@@ -1270,10 +1686,12 @@ export function NoteScreen() {
             const today = new Date().toISOString().slice(0, 10)
             const name = renderFilenameTemplate('{title} - {date}', {
               date: today,
-              title: full.note.title || 'note',
+              title: full.note.title || uiText('note'),
             })
             await muesli.exportFile(`${name}.txt`, text)
-          } catch (err) { notify(err instanceof Error ? err.message : 'Could not export note', 'error') }
+          } catch (err) {
+            notify(err instanceof Error ? err.message : uiText('Could not export note'), 'error')
+          }
         }}
         onExportSrt={async () => {
           try {
@@ -1281,7 +1699,12 @@ export function NoteScreen() {
             const srt = cuesToSrt(cues)
             const name = `${(full.note.title || 'note').replace(/[^\w\- ]+/g, '').trim() || 'note'}.srt`
             await muesli.exportFile(name, srt)
-          } catch (err) { notify(err instanceof Error ? err.message : 'Could not export subtitles', 'error') }
+          } catch (err) {
+            notify(
+              err instanceof Error ? err.message : uiText('Could not export subtitles'),
+              'error'
+            )
+          }
         }}
         onExportAss={async () => {
           try {
@@ -1289,7 +1712,12 @@ export function NoteScreen() {
             const ass = cuesToAss(cues)
             const name = `${(full.note.title || 'note').replace(/[^\w\- ]+/g, '').trim() || 'note'}.ass`
             await muesli.exportFile(name, ass)
-          } catch (err) { notify(err instanceof Error ? err.message : 'Could not export subtitles', 'error') }
+          } catch (err) {
+            notify(
+              err instanceof Error ? err.message : uiText('Could not export subtitles'),
+              'error'
+            )
+          }
         }}
         onExportVtt={async () => {
           try {
@@ -1297,30 +1725,62 @@ export function NoteScreen() {
             const vtt = cuesToVtt(cues)
             const name = `${(full.note.title || 'note').replace(/[^\w\- ]+/g, '').trim() || 'note'}.vtt`
             await muesli.exportFile(name, vtt)
-          } catch (err) { notify(err instanceof Error ? err.message : 'Could not export subtitles', 'error') }
+          } catch (err) {
+            notify(
+              err instanceof Error ? err.message : uiText('Could not export subtitles'),
+              'error'
+            )
+          }
         }}
         onExportWithOptions={() => setExportOptionsOpen(true)}
       />
       {confirmDelete && (
-        <Dialog open onOpenChange={(o) => !o && setConfirmDelete(false)} title="Move to Trash?">
-          <p className="text-sm text-muted-foreground">This moves the note to Trash. It&apos;s recoverable for 30 days, then permanently deleted. Any files you&apos;ve previously exported from this note (for example, a Markdown export) remain on your disk — Muesli will not remove them.</p>
+        <Dialog
+          open
+          onOpenChange={(o) => !o && setConfirmDelete(false)}
+          title={uiText('Move to Trash?')}
+        >
+          <p className="text-sm text-muted-foreground">
+            {uiText(
+              "This moves the note to Trash. It's recoverable for 30 days, then permanently deleted. Any files you've previously exported from this note (for example, a Markdown export) remain on your disk — Muesli will not remove them."
+            )}
+          </p>
           <div className="mt-4 flex justify-end gap-2">
-            <Button variant="secondary" size="sm" onClick={() => setConfirmDelete(false)}>Cancel</Button>
-            <Button variant="destructive" size="sm" onClick={async () => {
-              try { await muesli.deleteNote(id); refresh(); navigate('/notes') }
-              catch (err) { notify(err instanceof Error ? err.message : 'Could not delete note', 'error'); setConfirmDelete(false) }
-            }}>Move to Trash</Button>
+            <Button variant="secondary" size="sm" onClick={() => setConfirmDelete(false)}>
+              {uiText('Cancel')}
+            </Button>
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={async () => {
+                try {
+                  await muesli.deleteNote(id)
+                  refresh()
+                  navigate('/notes')
+                } catch (err) {
+                  notify(
+                    err instanceof Error ? err.message : uiText('Could not delete note'),
+                    'error'
+                  )
+                  setConfirmDelete(false)
+                }
+              }}
+            >
+              {uiText('Move to Trash')}
+            </Button>
           </div>
         </Dialog>
       )}
       <ExportOptionsDialog
         open={exportOptionsOpen}
-        title="Export note"
-        description="Choose a format and whether to include the transcript and speaker names."
+        title={uiText('Export note')}
+        description={uiText(
+          'Choose a format and whether to include the transcript and speaker names.'
+        )}
         formats={[
-          { value: 'md', label: 'Markdown' },
-          { value: 'docx', label: 'Word' },
-          { value: 'pdf', label: 'PDF' },
+          { value: 'md', label: uiText('Markdown') },
+          { value: 'docx', label: uiText('Word') },
+          { value: 'pdf', label: uiText('PDF') },
         ]}
         confirmLabel="Export note"
         onCancel={() => setExportOptionsOpen(false)}
@@ -1351,32 +1811,173 @@ export function NoteScreen() {
           onTranscribeAgain={async () => {
             const p = pendingUpload
             setPendingUpload(null)
-            await doUpload(p.audio, p.mimeType)
+            await doUpload(p.audio, p.mimeType, p.captureId)
           }}
         />
       )}
-      <ProcessingBanner status={full.note.status} onRetry={retryPipeline} onProcessNext={processNext} statusEnteredAt={full.note.updated_at} onGetDownloadStatus={() => muesli.getDefaultTranscriberStatus()} />
-      <LiveTranscriptPanel noteId={id} isRecording={recordState === 'recording'} />
+      <ProcessingBanner
+        status={full.note.status}
+        onRetry={retryPipeline}
+        onProcessNext={processNext}
+        statusEnteredAt={full.note.updated_at}
+        onGetDownloadStatus={() => muesli.getDefaultTranscriberStatus()}
+      />
+      {(failedUpload || savedRecovery) && (
+        <div
+          role="alert"
+          className="mx-6 my-3 rounded-lg border border-destructive/40 bg-destructive/5 p-4 text-sm"
+        >
+          <p>
+            {savedRecovery
+              ? uiText(
+                  'Your recording is saved on this device and is waiting to upload. You can retry now or return to this note later.'
+                )
+              : uiText(
+                  'The recording could not be uploaded. Keep this note open and retry to preserve the captured audio.'
+                )}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              disabled={recordState === 'processing'}
+              onClick={() =>
+                void doUpload(
+                  savedRecovery ? null : (failedUpload?.audio ?? null),
+                  failedUpload?.mimeType ?? savedRecovery?.mimeType ?? 'audio/webm',
+                  failedUpload?.captureId
+                )
+              }
+            >
+              {uiText('Retry upload')}
+            </Button>
+            <Button
+              variant="ghost"
+              disabled={recordState === 'processing'}
+              onClick={() => setConfirmDiscardRecovery(true)}
+            >
+              {uiText('Discard saved audio')}
+            </Button>
+          </div>
+        </div>
+      )}
+      {confirmDiscardRecovery && (
+        <Dialog
+          open
+          title={uiText('Discard this saved recording?')}
+          onOpenChange={setConfirmDiscardRecovery}
+        >
+          <p className="text-sm">
+            {uiText(
+              'This removes the local audio waiting to upload. Your written notes and anything already uploaded stay available.'
+            )}
+          </p>
+          <div className="mt-4 flex flex-wrap justify-end gap-2">
+            <Button variant="secondary" onClick={() => setConfirmDiscardRecovery(false)}>
+              {uiText('Cancel')}
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                void muesli
+                  .discardRecordingRecovery(id)
+                  .then(() => {
+                    setFailedUpload(null)
+                    setSavedRecovery(null)
+                    setConfirmDiscardRecovery(false)
+                  })
+                  .catch((error) =>
+                    notify(
+                      error instanceof Error
+                        ? error.message
+                        : uiText('Could not discard saved audio'),
+                      'error'
+                    )
+                  )
+              }}
+            >
+              {uiText('Discard audio')}
+            </Button>
+          </div>
+        </Dialog>
+      )}
+      {full.note.status === 'recording' && recordState === 'idle' && (
+        <div role="status" className="mx-6 my-3 rounded-lg border border-border p-4 text-sm">
+          <p>
+            {uiText(
+              'This note has a recording session. If it was interrupted, you can recover it. For recordings started with older versions, first check that recording has stopped on your other devices.'
+            )}
+          </p>
+          <Button
+            variant="secondary"
+            onClick={() => {
+              void muesli
+                .recoverNoteCapture(id)
+                .then((note) => {
+                  setFull((current) => (current ? { ...current, note } : current))
+                  refresh()
+                })
+                .catch((error) =>
+                  notify(
+                    error instanceof Error ? error.message : uiText('Could not recover recording'),
+                    'error'
+                  )
+                )
+            }}
+          >
+            {uiText('Recover interrupted recording')}
+          </Button>
+        </div>
+      )}
+      <LiveTranscriptPanel
+        noteId={id}
+        isRecording={recordState === 'recording'}
+        hasFinalTranscript={
+          !!full.transcript && !full.note.partial_transcript && full.note.status === 'ready'
+        }
+      />
       <TagBar
         tags={full.note.tags ?? []}
         suggestions={tagIndex(allNotes).map((t) => t.name)}
-        onAdd={(name) => refreshAfterTagMutation(() => muesli.addTag(id, name), 'Could not add tag')}
-        onRemove={(name) => refreshAfterTagMutation(() => muesli.removeTag(id, name), 'Could not remove tag')}
+        onAdd={(name) =>
+          refreshAfterTagMutation(() => muesli.addTag(id, name), 'Could not add tag')
+        }
+        onRemove={(name) =>
+          refreshAfterTagMutation(() => muesli.removeTag(id, name), 'Could not remove tag')
+        }
       />
       <FolderBar
         folders={folders}
         memberIds={full.note.folder_ids ?? []}
         onAdd={async (folderId) => {
-          try { await muesli.addNoteFolder(id, folderId); setFull(await muesli.getFull(id)); refresh() }
-          catch (err) { notify(err instanceof Error ? err.message : 'Could not add to folder', 'error') }
+          try {
+            await muesli.addNoteFolder(id, folderId)
+            setFull(await muesli.getFull(id))
+            refresh()
+          } catch (err) {
+            notify(err instanceof Error ? err.message : uiText('Could not add to folder'), 'error')
+          }
         }}
         onCreate={async (name) => {
-          try { const f = await muesli.createFolder(name); await muesli.addNoteFolder(id, f.id); setFull(await muesli.getFull(id)); refresh() }
-          catch (err) { notify(err instanceof Error ? err.message : 'Could not create folder', 'error') }
+          try {
+            const f = await muesli.createFolder(name)
+            await muesli.addNoteFolder(id, f.id)
+            setFull(await muesli.getFull(id))
+            refresh()
+          } catch (err) {
+            notify(err instanceof Error ? err.message : uiText('Could not create folder'), 'error')
+          }
         }}
         onRemove={async (folderId) => {
-          try { await muesli.removeNoteFolder(id, folderId); setFull(await muesli.getFull(id)); refresh() }
-          catch (err) { notify(err instanceof Error ? err.message : 'Could not remove from folder', 'error') }
+          try {
+            await muesli.removeNoteFolder(id, folderId)
+            setFull(await muesli.getFull(id))
+            refresh()
+          } catch (err) {
+            notify(
+              err instanceof Error ? err.message : uiText('Could not remove from folder'),
+              'error'
+            )
+          }
         }}
       />
       <div className="border-b border-border">
@@ -1387,8 +1988,11 @@ export function NoteScreen() {
           onClick={() => setDetailsOpen((o) => !o)}
           className="flex w-full items-center gap-2 px-6 py-3 text-left text-sm font-semibold uppercase tracking-wide text-muted-foreground hover:bg-muted/40"
         >
-          <ChevronRight size={14} className={detailsOpen ? 'rotate-90 transition-transform' : 'transition-transform'} />
-          Details
+          <ChevronRight
+            size={14}
+            className={detailsOpen ? 'rotate-90 transition-transform' : 'transition-transform'}
+          />
+          {uiText('Details')}
         </button>
         {detailsOpen && (
           <div id="note-details-panel">
@@ -1411,43 +2015,37 @@ export function NoteScreen() {
         )}
       </div>
       <div className="flex-1 overflow-y-auto px-6 py-4">
-        {capture || full.note.status === 'recording' ? (
-          <Suspense fallback={<div className="p-4 text-sm text-muted-foreground">Loading editor…</div>}>
-            <NoteEditor initialMarkdown={full.body_markdown} onSave={(md) => muesli.updateBody(id, md)} />
-          </Suspense>
-        ) : (
-          <>
-            <div className="mb-2 flex justify-end">
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                className="h-7 px-3 text-xs"
-                disabled={transcriptSegments.length === 0}
-                onClick={() => void handleCopyTranscript()}
-              >
-                {transcriptCopied ? 'Copied' : 'Copy transcript'}
-              </Button>
-            </div>
-            <NoteView
-              full={full}
-              initialSegmentId={initialSegmentId}
-              initialSegmentIndex={initialSegmentIndex}
-              onSaveBody={(md) => muesli.updateBody(id, md)}
-              onRenameSpeaker={async () => {
-                try {
-                  setFull(await muesli.getFull(id))
-                  refresh()
-                } catch (err) {
-                  notify(err instanceof Error ? err.message : 'Could not refresh note', 'error')
-                }
-              }}
-              templates={templates}
-              onRegenerateTemplate={regenerateTemplate}
-              regeneratingTemplateId={regeneratingTemplateId}
-            />
-          </>
+        {transcriptSegments.length > 0 && (
+          <div className="mb-2 flex justify-end">
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              onClick={() => void handleCopyTranscript()}
+            >
+              {transcriptCopied ? uiText('Copied') : uiText('Copy transcript')}
+            </Button>
+          </div>
         )}
+        <NoteView
+          key={full.note.id}
+          initialTab="notes"
+          full={full}
+          initialSegmentId={initialSegmentId}
+          initialSegmentIndex={initialSegmentIndex}
+          onSaveBody={saveBody}
+          onRenameSpeaker={async () => {
+            try {
+              setFull(await muesli.getFull(id))
+              refresh()
+            } catch (err) {
+              notify(err instanceof Error ? err.message : uiText('Could not refresh note'), 'error')
+            }
+          }}
+          templates={templates}
+          onRegenerateTemplate={regenerateTemplate}
+          regeneratingTemplateId={regeneratingTemplateId}
+        />
       </div>
     </div>
   )

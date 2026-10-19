@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { useCallback, useEffect, useState } from 'react'
 import type { ApiClient } from '../api/client'
 import type { EmbeddingsStatus } from '../api/types'
@@ -26,7 +27,7 @@ export function EmbeddingsStatusView({ client }: Props) {
   if (error) {
     return (
       <section>
-        <h1>Embeddings</h1>
+        <h1>{uiText('Embeddings')}</h1>
         <p className="error">{error}</p>
       </section>
     )
@@ -35,43 +36,43 @@ export function EmbeddingsStatusView({ client }: Props) {
   if (!status) {
     return (
       <section>
-        <h1>Embeddings</h1>
-        <p>Loading…</p>
+        <h1>{uiText('Embeddings')}</h1>
+        <p>{uiText('Loading…')}</p>
       </section>
     )
   }
 
   return (
     <section>
-      <h1>Embeddings</h1>
+      <h1>{uiText('Embeddings')}</h1>
       <table>
         <tbody>
           <tr>
-            <th>Status</th>
+            <th>{uiText('Status')}</th>
             <td>
-              <strong>{status.enabled ? 'Enabled' : 'Disabled'}</strong>
+              <strong>{status.enabled ? uiText('Enabled') : uiText('Disabled')}</strong>
             </td>
           </tr>
           <tr>
-            <th>Model</th>
-            <td>{status.model || '(not set)'}</td>
+            <th>{uiText('Model')}</th>
+            <td>{status.model || uiText('(not set)')}</td>
           </tr>
           <tr>
-            <th>Dimension</th>
+            <th>{uiText('Dimension')}</th>
             <td>{status.dim}</td>
           </tr>
           <tr>
-            <th>Min Score</th>
+            <th>{uiText('Min Score')}</th>
             <td>{status.minScore}</td>
           </tr>
           <tr>
-            <th>Doc Prefix</th>
+            <th>{uiText('Doc Prefix')}</th>
             <td>
               <code>{status.docPrefix || '(none)'}</code>
             </td>
           </tr>
           <tr>
-            <th>Query Prefix</th>
+            <th>{uiText('Query Prefix')}</th>
             <td>
               <code>{status.queryPrefix || '(none)'}</code>
             </td>

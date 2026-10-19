@@ -99,15 +99,27 @@ describe('ElectronCapture', () => {
     const ctx = makeAudioContext(gainNode)
     const rec = makeMediaRecorder()
     let animationCallback: FrameRequestCallback | undefined
-    vi.stubGlobal('requestAnimationFrame', vi.fn((callback: FrameRequestCallback) => {
-      animationCallback = callback
-      return 1
-    }))
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn((callback: FrameRequestCallback) => {
+        animationCallback = callback
+        return 1
+      })
+    )
     vi.stubGlobal('cancelAnimationFrame', vi.fn())
-    vi.stubGlobal('AudioContext', vi.fn(() => ctx))
-    vi.stubGlobal('MediaRecorder', Object.assign(vi.fn(() => rec), {
-      isTypeSupported: vi.fn(() => true),
-    }))
+    vi.stubGlobal(
+      'AudioContext',
+      vi.fn(() => ctx)
+    )
+    vi.stubGlobal(
+      'MediaRecorder',
+      Object.assign(
+        vi.fn(() => rec),
+        {
+          isTypeSupported: vi.fn(() => true),
+        }
+      )
+    )
     vi.stubGlobal('navigator', {
       mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(makeMicStream()) },
     })
@@ -129,10 +141,19 @@ describe('ElectronCapture', () => {
     const ctx = makeAudioContext(gainNode)
     const rec = makeMediaRecorder()
 
-    vi.stubGlobal('AudioContext', vi.fn(() => ctx))
-    vi.stubGlobal('MediaRecorder', Object.assign(vi.fn(() => rec), {
-      isTypeSupported: vi.fn(() => true),
-    }))
+    vi.stubGlobal(
+      'AudioContext',
+      vi.fn(() => ctx)
+    )
+    vi.stubGlobal(
+      'MediaRecorder',
+      Object.assign(
+        vi.fn(() => rec),
+        {
+          isTypeSupported: vi.fn(() => true),
+        }
+      )
+    )
 
     const getUserMedia = vi.fn().mockResolvedValue(makeMicStream())
     const getDisplayMedia = vi.fn().mockRejectedValue(new Error('no display'))
@@ -154,10 +175,19 @@ describe('ElectronCapture', () => {
     const ctx = makeAudioContext(gainNode)
     const rec = makeMediaRecorder()
 
-    vi.stubGlobal('AudioContext', vi.fn(() => ctx))
-    vi.stubGlobal('MediaRecorder', Object.assign(vi.fn(() => rec), {
-      isTypeSupported: vi.fn(() => true),
-    }))
+    vi.stubGlobal(
+      'AudioContext',
+      vi.fn(() => ctx)
+    )
+    vi.stubGlobal(
+      'MediaRecorder',
+      Object.assign(
+        vi.fn(() => rec),
+        {
+          isTypeSupported: vi.fn(() => true),
+        }
+      )
+    )
 
     vi.stubGlobal('navigator', {
       mediaDevices: {
@@ -183,10 +213,19 @@ describe('ElectronCapture', () => {
     const ctx = makeAudioContext(gainNode)
     const rec = makeMediaRecorder()
 
-    vi.stubGlobal('AudioContext', vi.fn(() => ctx))
-    vi.stubGlobal('MediaRecorder', Object.assign(vi.fn(() => rec), {
-      isTypeSupported: vi.fn(() => true),
-    }))
+    vi.stubGlobal(
+      'AudioContext',
+      vi.fn(() => ctx)
+    )
+    vi.stubGlobal(
+      'MediaRecorder',
+      Object.assign(
+        vi.fn(() => rec),
+        {
+          isTypeSupported: vi.fn(() => true),
+        }
+      )
+    )
 
     vi.stubGlobal('navigator', {
       mediaDevices: {
@@ -213,10 +252,19 @@ describe('ElectronCapture', () => {
     const ctx = makeAudioContext(gainNode)
     const rec = makeMediaRecorder()
 
-    vi.stubGlobal('AudioContext', vi.fn(() => ctx))
-    vi.stubGlobal('MediaRecorder', Object.assign(vi.fn(() => rec), {
-      isTypeSupported: vi.fn(() => true),
-    }))
+    vi.stubGlobal(
+      'AudioContext',
+      vi.fn(() => ctx)
+    )
+    vi.stubGlobal(
+      'MediaRecorder',
+      Object.assign(
+        vi.fn(() => rec),
+        {
+          isTypeSupported: vi.fn(() => true),
+        }
+      )
+    )
 
     vi.stubGlobal('navigator', {
       mediaDevices: {
@@ -241,10 +289,19 @@ describe('ElectronCapture', () => {
     const ctx = makeAudioContext(gainNode)
     const rec = makeMediaRecorder()
 
-    vi.stubGlobal('AudioContext', vi.fn(() => ctx))
-    vi.stubGlobal('MediaRecorder', Object.assign(vi.fn(() => rec), {
-      isTypeSupported: vi.fn(() => true),
-    }))
+    vi.stubGlobal(
+      'AudioContext',
+      vi.fn(() => ctx)
+    )
+    vi.stubGlobal(
+      'MediaRecorder',
+      Object.assign(
+        vi.fn(() => rec),
+        {
+          isTypeSupported: vi.fn(() => true),
+        }
+      )
+    )
 
     vi.stubGlobal('navigator', {
       mediaDevices: {
@@ -271,10 +328,19 @@ describe('ElectronCapture', () => {
     const ctx = makeAudioContext(gainNode)
     const rec = makeMediaRecorder()
 
-    vi.stubGlobal('AudioContext', vi.fn(() => ctx))
-    vi.stubGlobal('MediaRecorder', Object.assign(vi.fn(() => rec), {
-      isTypeSupported: vi.fn(() => true),
-    }))
+    vi.stubGlobal(
+      'AudioContext',
+      vi.fn(() => ctx)
+    )
+    vi.stubGlobal(
+      'MediaRecorder',
+      Object.assign(
+        vi.fn(() => rec),
+        {
+          isTypeSupported: vi.fn(() => true),
+        }
+      )
+    )
 
     const notReadable = new Error('Mic busy')
     notReadable.name = 'NotReadableError'
@@ -303,10 +369,19 @@ describe('ElectronCapture', () => {
     const ctx = makeAudioContext(gainNode)
     const rec = makeMediaRecorder()
 
-    vi.stubGlobal('AudioContext', vi.fn(() => ctx))
-    vi.stubGlobal('MediaRecorder', Object.assign(vi.fn(() => rec), {
-      isTypeSupported: vi.fn(() => true),
-    }))
+    vi.stubGlobal(
+      'AudioContext',
+      vi.fn(() => ctx)
+    )
+    vi.stubGlobal(
+      'MediaRecorder',
+      Object.assign(
+        vi.fn(() => rec),
+        {
+          isTypeSupported: vi.fn(() => true),
+        }
+      )
+    )
 
     const notAllowed = new Error('Permission denied')
     notAllowed.name = 'NotAllowedError'
@@ -332,10 +407,19 @@ describe('ElectronCapture', () => {
     const ctx = makeAudioContext(gainNode)
     ctx.close = vi.fn().mockResolvedValue(undefined)
 
-    vi.stubGlobal('AudioContext', vi.fn(() => ctx))
-    vi.stubGlobal('MediaRecorder', Object.assign(vi.fn(() => makeMediaRecorder()), {
-      isTypeSupported: vi.fn(() => true),
-    }))
+    vi.stubGlobal(
+      'AudioContext',
+      vi.fn(() => ctx)
+    )
+    vi.stubGlobal(
+      'MediaRecorder',
+      Object.assign(
+        vi.fn(() => makeMediaRecorder()),
+        {
+          isTypeSupported: vi.fn(() => true),
+        }
+      )
+    )
 
     const notAllowed = new Error('Permission denied')
     notAllowed.name = 'NotAllowedError'
@@ -356,10 +440,19 @@ describe('ElectronCapture', () => {
     const ctx = makeAudioContext(gainNode)
     ctx.close = vi.fn().mockResolvedValue(undefined)
 
-    vi.stubGlobal('AudioContext', vi.fn(() => ctx))
-    vi.stubGlobal('MediaRecorder', Object.assign(vi.fn(() => makeMediaRecorder()), {
-      isTypeSupported: vi.fn(() => true),
-    }))
+    vi.stubGlobal(
+      'AudioContext',
+      vi.fn(() => ctx)
+    )
+    vi.stubGlobal(
+      'MediaRecorder',
+      Object.assign(
+        vi.fn(() => makeMediaRecorder()),
+        {
+          isTypeSupported: vi.fn(() => true),
+        }
+      )
+    )
 
     const overconstrained = new Error('Overconstrained')
     overconstrained.name = 'OverconstrainedError'
@@ -386,10 +479,19 @@ describe('ElectronCapture', () => {
     const ctx = makeAudioContext(gainNode)
     ctx.close = vi.fn().mockResolvedValue(undefined)
 
-    vi.stubGlobal('AudioContext', vi.fn(() => ctx))
-    vi.stubGlobal('MediaRecorder', Object.assign(vi.fn(() => makeMediaRecorder()), {
-      isTypeSupported: vi.fn(() => true),
-    }))
+    vi.stubGlobal(
+      'AudioContext',
+      vi.fn(() => ctx)
+    )
+    vi.stubGlobal(
+      'MediaRecorder',
+      Object.assign(
+        vi.fn(() => makeMediaRecorder()),
+        {
+          isTypeSupported: vi.fn(() => true),
+        }
+      )
+    )
 
     const notFound = new Error('Device not found')
     notFound.name = 'NotFoundError'
@@ -410,4 +512,77 @@ describe('ElectronCapture', () => {
     })
     expect(ctx.close).toHaveBeenCalledOnce()
   })
+})
+
+it('stops capture at the two-hour safety limit and reports it for saving', async () => {
+  vi.useFakeTimers()
+  try {
+    const ctx = makeAudioContext(makeGainNode()),
+      rec = makeMediaRecorder(),
+      onLimit = vi.fn()
+    vi.stubGlobal(
+      'AudioContext',
+      vi.fn(() => ctx)
+    )
+    vi.stubGlobal(
+      'MediaRecorder',
+      Object.assign(
+        vi.fn(() => rec),
+        { isTypeSupported: () => true }
+      )
+    )
+    vi.stubGlobal('navigator', {
+      mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(makeMicStream()) },
+    })
+    const capture = new ElectronCapture({ onLimit } as never)
+    await capture.start()
+    await vi.advanceTimersByTimeAsync(2 * 60 * 60_000)
+    expect(onLimit).toHaveBeenCalledTimes(1)
+    expect(rec.stop).toHaveBeenCalledTimes(1)
+    await capture.stop()
+    expect(ctx.close).toHaveBeenCalledTimes(1)
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('retains the chunk that reaches the stop threshold instead of silently truncating it', async () => {
+  const ctx = makeAudioContext(makeGainNode()),
+    rec = makeMediaRecorder(),
+    onLimit = vi.fn()
+  let recorded: BlobPart[] = []
+  vi.stubGlobal(
+    'AudioContext',
+    vi.fn(() => ctx)
+  )
+  vi.stubGlobal(
+    'MediaRecorder',
+    Object.assign(
+      vi.fn(() => rec),
+      { isTypeSupported: () => true }
+    )
+  )
+  vi.stubGlobal('navigator', {
+    mediaDevices: { getUserMedia: vi.fn().mockResolvedValue(makeMicStream()) },
+  })
+  vi.stubGlobal(
+    'Blob',
+    class extends TestBlob {
+      constructor(parts: BlobPart[], options?: BlobPropertyBag) {
+        super(parts, options)
+        recorded = [...parts]
+      }
+    }
+  )
+  const capture = new ElectronCapture({ onLimit })
+  await capture.start()
+  const first = { size: 60 * 1024 * 1024 },
+    last = { size: 8 * 1024 * 1024 }
+  rec.ondataavailable?.({ data: first })
+  expect(onLimit).not.toHaveBeenCalled()
+  rec.ondataavailable?.({ data: last })
+  expect(onLimit).toHaveBeenCalledOnce()
+  await capture.stop()
+  expect(recorded).toEqual([first, last])
+  expect(ctx.close).toHaveBeenCalled()
 })

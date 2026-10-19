@@ -221,3 +221,13 @@ func (s *Server) handleListCalendarEvents(w http.ResponseWriter, r *http.Request
 	}
 	writeJSON(w, http.StatusOK, events)
 }
+
+func (s *Server) handleCalendarReadiness(w http.ResponseWriter, r *http.Request) {
+	uid, _ := userIDFromContext(r.Context())
+	connections, failures, lastSynced, err := s.deps.Store.CalendarReadiness(r.Context(), uid)
+	if err != nil {
+		writeError(w, 500, "could not check calendar connections")
+		return
+	}
+	writeJSON(w, 200, map[string]any{"connections": connections, "failures": failures, "lastSyncedAt": lastSynced, "googleConfigured": s.googleOAuthConfigured(), "microsoftConfigured": s.microsoftOAuthConfigured()})
+}

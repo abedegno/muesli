@@ -4,6 +4,8 @@ import { render, screen, cleanup, waitFor, fireEvent } from '@testing-library/re
 import userEvent from '@testing-library/user-event'
 import { RecordControl } from './RecordControl'
 
+const preview = vi.hoisted(() => ({ start: vi.fn(), stop: vi.fn() }))
+vi.mock('../audio/microphonePreview', () => ({ startMicrophonePreview: preview.start }))
 const micOpenSettings = vi.hoisted(() => vi.fn())
 const systemAudioStatus = vi.hoisted(() => vi.fn())
 const systemAudioOpenSettings = vi.hoisted(() => vi.fn())
@@ -16,6 +18,8 @@ afterEach(cleanup)
 beforeEach(() => {
   localStorage.clear()
   vi.restoreAllMocks()
+  preview.start.mockReset().mockResolvedValue({ stop: preview.stop })
+  preview.stop.mockReset().mockResolvedValue(undefined)
   micOpenSettings.mockReset()
   systemAudioStatus.mockReset()
   systemAudioOpenSettings.mockReset()
@@ -27,9 +31,11 @@ beforeEach(() => {
 // ---------------------------------------------------------------------------
 
 function mockEnumerateDevices(devices: Partial<MediaDeviceInfo>[]) {
-  const enumerateDevices = vi.fn().mockResolvedValue(
-    devices.map((d) => ({ kind: 'audioinput', deviceId: '', label: '', groupId: '', ...d })),
-  )
+  const enumerateDevices = vi
+    .fn()
+    .mockResolvedValue(
+      devices.map((d) => ({ kind: 'audioinput', deviceId: '', label: '', groupId: '', ...d }))
+    )
   Object.defineProperty(navigator, 'mediaDevices', {
     value: { enumerateDevices, addEventListener: vi.fn(), removeEventListener: vi.fn() },
     configurable: true,
@@ -66,10 +72,12 @@ describe('RecordControl', () => {
         onStart={() => {}}
         onStop={() => {}}
         disabledReason="Recording is unavailable for this note"
-      />,
+      />
     )
 
-    await waitFor(() => expect(screen.getByText('Recording is unavailable for this note')).toBeVisible())
+    await waitFor(() =>
+      expect(screen.getByText('Recording is unavailable for this note')).toBeVisible()
+    )
     expect(getUserMedia).not.toHaveBeenCalled()
   })
 
@@ -84,13 +92,13 @@ describe('RecordControl', () => {
           onStart={() => {}}
           onStop={() => {}}
           recordingLevel={0.4}
-        />,
+        />
       )
       const selector = screen.getByRole('combobox', { name: /microphone/i })
       const meter = screen.getByTestId('microphone-level-meter')
       expect(selector.parentElement?.parentElement).toContainElement(meter)
       expect(screen.getByRole('meter', { name: /microphone level/i })).toBeVisible()
-    },
+    }
   )
 
   it('idle shows Record and calls onStart', async () => {
@@ -128,7 +136,7 @@ describe('RecordControl', () => {
         onStart={() => {}}
         onStop={() => {}}
         disabledReason="Server unreachable"
-      />,
+      />
     )
     expect(screen.getByText('Server unreachable')).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /record/i })).toBeNull()
@@ -143,7 +151,7 @@ describe('RecordControl', () => {
         onStart={() => {}}
         onStop={() => {}}
         disabledReason="Still loading"
-      />,
+      />
     )
     expect(screen.getByText('Still loading')).toBeInTheDocument()
   })
@@ -165,7 +173,7 @@ describe('RecordControl', () => {
         onStart={() => {}}
         onStop={() => {}}
         disabledReason="Server unreachable"
-      />,
+      />
     )
     expect(screen.getByRole('button', { name: /stop/i })).toBeInTheDocument()
     expect(screen.queryByText('Server unreachable')).toBeNull()
@@ -180,7 +188,7 @@ describe('RecordControl', () => {
         onStart={() => {}}
         onStop={() => {}}
         disabledReason="Server unreachable"
-      />,
+      />
     )
     expect(screen.getByRole('status')).toHaveTextContent(/processing/i)
     expect(screen.queryByText('Server unreachable')).toBeNull()
@@ -218,15 +226,12 @@ describe('RecordControl — device picker', () => {
         onStart={() => {}}
         onStop={() => {}}
         onDeviceChange={onDeviceChange}
-      />,
+      />
     )
     await waitFor(() =>
-      expect(screen.getByRole('option', { name: /usb mic/i })).toBeInTheDocument(),
+      expect(screen.getByRole('option', { name: /usb mic/i })).toBeInTheDocument()
     )
-    await userEvent.selectOptions(
-      screen.getByRole('combobox', { name: /microphone/i }),
-      'dev-2',
-    )
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: /microphone/i }), 'dev-2')
     expect(onDeviceChange).toHaveBeenCalledWith('dev-2')
   })
 
@@ -234,7 +239,7 @@ describe('RecordControl — device picker', () => {
     mockEnumerateDevices([{ deviceId: 'dev-1', label: 'Built-in Mic', kind: 'audioinput' }])
     render(<RecordControl state="recording" elapsedMs={0} onStart={() => {}} onStop={() => {}} />)
     await waitFor(() =>
-      expect(screen.getByRole('combobox', { name: /microphone/i })).toBeDisabled(),
+      expect(screen.getByRole('combobox', { name: /microphone/i })).toBeDisabled()
     )
   })
 })
@@ -262,7 +267,7 @@ describe('RecordControl — gain slider', () => {
         onStart={() => {}}
         onStop={() => {}}
         onGainChange={onGainChange}
-      />,
+      />
     )
     const slider = screen.getByRole('slider', { name: /gain/i })
     fireEvent.change(slider, { target: { value: '150' } })
@@ -297,12 +302,16 @@ describe('RecordControl — permission denied', () => {
         onStart={() => {}}
         onStop={() => {}}
         micError={makeMicError()}
-      />,
+      />
     )
     expect(screen.getByRole('alert')).toBeInTheDocument()
     expect(screen.getByText(/microphone access was denied/i)).toBeInTheDocument()
     expect(
-      screen.getByText((_, element) => element?.tagName === 'P' && /system settings|grant microphone permission/i.test(element.textContent ?? '')),
+      screen.getByText(
+        (_, element) =>
+          element?.tagName === 'P' &&
+          /system settings|grant microphone permission/i.test(element.textContent ?? '')
+      )
     ).toBeInTheDocument()
   })
 
@@ -315,7 +324,7 @@ describe('RecordControl — permission denied', () => {
         onStart={() => {}}
         onStop={() => {}}
         micError={makeMicError()}
-      />,
+      />
     )
     await userEvent.click(screen.getByRole('button', { name: /open system settings/i }))
     expect(micOpenSettings).toHaveBeenCalledOnce()
@@ -332,7 +341,7 @@ describe('RecordControl — permission denied', () => {
         onStop={() => {}}
         micError={makeMicError()}
         onRetry={onRetry}
-      />,
+      />
     )
     await userEvent.click(screen.getByRole('button', { name: /retry/i }))
     expect(onRetry).toHaveBeenCalledOnce()
@@ -349,7 +358,7 @@ describe('RecordControl — permission denied', () => {
         onStart={() => {}}
         onStop={() => {}}
         micError={err}
-      />,
+      />
     )
     expect(screen.getByRole('alert')).toBeInTheDocument()
   })
@@ -363,7 +372,7 @@ describe('RecordControl — permission denied', () => {
         onStart={() => {}}
         onStop={() => {}}
         micError={null}
-      />,
+      />
     )
     expect(screen.queryByRole('alert')).toBeNull()
     expect(screen.getByRole('button', { name: /record/i })).toBeInTheDocument()
@@ -375,23 +384,23 @@ describe('RecordControl — permission denied', () => {
 // ---------------------------------------------------------------------------
 
 describe('RecordControl — system audio notice', () => {
-  it.each([
-    ['denied' as const],
-    ['restricted' as const],
-  ])('shows the notice on macOS in idle state when system audio is %s', async (status) => {
-    mockEnumerateDevices([])
-    setPlatform('MacIntel')
-    systemAudioStatus.mockResolvedValueOnce(status)
+  it.each([['denied' as const], ['restricted' as const]])(
+    'shows the notice on macOS in idle state when system audio is %s',
+    async (status) => {
+      mockEnumerateDevices([])
+      setPlatform('MacIntel')
+      systemAudioStatus.mockResolvedValueOnce(status)
 
-    render(<RecordControl state="idle" elapsedMs={0} onStart={() => {}} onStop={() => {}} />)
+      render(<RecordControl state="idle" elapsedMs={0} onStart={() => {}} onStop={() => {}} />)
 
-    expect(await screen.findByRole('alert')).toBeInTheDocument()
-    expect(screen.getByText(/system audio capture is not enabled/i)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: /record/i })).toBeInTheDocument()
+      expect(await screen.findByRole('alert')).toBeInTheDocument()
+      expect(screen.getByText(/system audio capture is not enabled/i)).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: /record/i })).toBeInTheDocument()
 
-    await userEvent.click(screen.getByRole('button', { name: /open system settings/i }))
-    expect(systemAudioOpenSettings).toHaveBeenCalledOnce()
-  })
+      await userEvent.click(screen.getByRole('button', { name: /open system settings/i }))
+      expect(systemAudioOpenSettings).toHaveBeenCalledOnce()
+    }
+  )
 
   it('shows the notice on macOS in recording state when system audio is denied', async () => {
     mockEnumerateDevices([])
@@ -404,21 +413,20 @@ describe('RecordControl — system audio notice', () => {
     expect(screen.getByText(/system audio capture is not enabled/i)).toBeInTheDocument()
   })
 
-  it.each([
-    ['granted' as const],
-    ['unknown' as const],
-    ['not-determined' as const],
-  ])('does not show the notice on macOS when system audio is %s', async (status) => {
-    mockEnumerateDevices([])
-    setPlatform('MacIntel')
-    systemAudioStatus.mockResolvedValueOnce(status)
+  it.each([['granted' as const], ['unknown' as const], ['not-determined' as const]])(
+    'does not show the notice on macOS when system audio is %s',
+    async (status) => {
+      mockEnumerateDevices([])
+      setPlatform('MacIntel')
+      systemAudioStatus.mockResolvedValueOnce(status)
 
-    render(<RecordControl state="idle" elapsedMs={0} onStart={() => {}} onStop={() => {}} />)
+      render(<RecordControl state="idle" elapsedMs={0} onStart={() => {}} onStop={() => {}} />)
 
-    await waitFor(() => expect(systemAudioStatus).toHaveBeenCalledOnce())
-    expect(screen.queryByRole('alert')).toBeNull()
-    expect(screen.queryByRole('button', { name: /open system settings/i })).toBeNull()
-  })
+      await waitFor(() => expect(systemAudioStatus).toHaveBeenCalledOnce())
+      expect(screen.queryByRole('alert')).toBeNull()
+      expect(screen.queryByRole('button', { name: /open system settings/i })).toBeNull()
+    }
+  )
 
   it('does not show the notice when system audio is denied but platform is not macOS', async () => {
     mockEnumerateDevices([])
@@ -448,9 +456,7 @@ describe('RecordControl — device-invalid', () => {
   }
 
   it('shows unavailable-mic message and device picker, NOT the OS settings hint', async () => {
-    mockEnumerateDevices([
-      { deviceId: 'dev-1', label: 'Built-in Mic', kind: 'audioinput' },
-    ])
+    mockEnumerateDevices([{ deviceId: 'dev-1', label: 'Built-in Mic', kind: 'audioinput' }])
     render(
       <RecordControl
         state="idle"
@@ -458,7 +464,7 @@ describe('RecordControl — device-invalid', () => {
         onStart={() => {}}
         onStop={() => {}}
         micError={makeDeviceInvalidError()}
-      />,
+      />
     )
     await waitFor(() => expect(screen.getByRole('alert')).toBeInTheDocument())
     expect(screen.getByText(/unavailable or was unplugged/i)).toBeInTheDocument()
@@ -480,10 +486,22 @@ describe('RecordControl — device-invalid', () => {
         onStop={() => {}}
         micError={makeDeviceInvalidError()}
         onRetry={onRetry}
-      />,
+      />
     )
     await waitFor(() => expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument())
     await userEvent.click(screen.getByRole('button', { name: /retry/i }))
     expect(onRetry).toHaveBeenCalledOnce()
   })
+})
+
+it('keeps the microphone off until an explicit test, then stops the test before recording', async () => {
+  mockEnumerateDevices([])
+  const onStart = vi.fn()
+  render(<RecordControl state="idle" elapsedMs={0} onStart={onStart} onStop={() => {}} />)
+  expect(preview.start).not.toHaveBeenCalled()
+  await userEvent.click(screen.getByRole('button', { name: 'Test microphone' }))
+  await waitFor(() => expect(preview.start).toHaveBeenCalledTimes(1))
+  await userEvent.click(screen.getByRole('button', { name: 'Record' }))
+  await waitFor(() => expect(preview.stop).toHaveBeenCalledTimes(1))
+  expect(onStart).toHaveBeenCalledTimes(1)
 })

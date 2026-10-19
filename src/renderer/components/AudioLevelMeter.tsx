@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { useEffect, useRef, useState } from 'react'
 
 export const SUSTAINED_SILENCE_MS = 30_000
@@ -35,14 +36,20 @@ export function AudioLevelMeter({
     return () => window.clearTimeout(timer)
   }, [active, clampedLevel, silenceThresholdMs])
 
-  const state = !active ? 'Inactive' : silent ? 'No sound detected' : clampedLevel > SILENCE_LEVEL ? 'Sound detected' : 'Listening…'
+  const state = !active
+    ? 'Inactive'
+    : silent
+      ? 'No sound detected'
+      : clampedLevel > SILENCE_LEVEL
+        ? 'Sound detected'
+        : 'Listening…'
 
   return (
     <div className="flex items-center gap-2 text-xs" data-testid="microphone-level-meter">
       <div
         className="h-2 flex-1 overflow-hidden rounded-full bg-muted"
         role="meter"
-        aria-label="Microphone level"
+        aria-label={uiText('Microphone level')}
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={Math.round(clampedLevel * 100)}
@@ -58,4 +65,3 @@ export function AudioLevelMeter({
     </div>
   )
 }
-

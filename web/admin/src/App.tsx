@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react'
+import { uiText } from '@/i18n'
+import { useEffect, useState, useMemo } from 'react'
 import { ApiClient } from './api/client'
 import { SessionStore, session as defaultSession } from './auth/session'
 import { SetupView } from './views/SetupView'
@@ -10,6 +11,8 @@ import { BackupsView } from './views/BackupsView'
 import { EmbeddingsStatusView } from './views/EmbeddingsStatusView'
 import { EmbeddingsView } from './views/EmbeddingsView'
 import { HealthView } from './views/HealthView'
+import { AccessView } from './views/AccessView'
+import { useLocale, languageChoice, setDisplayLanguage, getDisplayLanguage } from './i18n'
 import { ConfigView } from './views/ConfigView'
 
 interface Props {
@@ -17,20 +20,41 @@ interface Props {
   session?: SessionStore
 }
 
-type Boot = 'loading' | 'setup' | 'login' | 'console'
-type Tab = 'plugins' | 'jobs' | 'webhook-deliveries' | 'backups' | 'embeddings' | 'health' | 'config'
+type Boot = 'loading' | 'setup' | 'login' | 'console' | 'forbidden' | 'access-error'
+type Tab =
+  | 'plugins'
+  | 'jobs'
+  | 'webhook-deliveries'
+  | 'backups'
+  | 'embeddings'
+  | 'health'
+  | 'config'
+  | 'access'
 
 export function App({ client, session }: Props) {
   const sess = session ?? defaultSession
-  const api = client ?? new ApiClient(sess)
+  const locale = useLocale()
+  useEffect(() => {
+    document.documentElement.lang = getDisplayLanguage()
+  }, [locale])
+  const api = useMemo(() => client ?? new ApiClient(sess), [client, sess])
   const [boot, setBoot] = useState<Boot>('loading')
   const [tab, setTab] = useState<Tab>('plugins')
+
+  async function authorization(): Promise<Boot> {
+    try {
+      return (await api.getCapabilities()).is_admin ? 'console' : 'forbidden'
+    } catch {
+      return sess.isAuthenticated() ? 'access-error' : 'login'
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
     async function decide() {
       if (sess.isAuthenticated()) {
-        if (!cancelled) setBoot('console')
+        const next = await authorization()
+        if (!cancelled) setBoot(next)
         return
       }
       try {
@@ -47,12 +71,62 @@ export function App({ client, session }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const languageControl = (
+    <label>
+      {uiText('Display language')}{' '}
+      <select
+        aria-label={uiText('Display language')}
+        value={languageChoice()}
+        onChange={(event) => setDisplayLanguage(event.target.value)}
+      >
+        <option value="system">{uiText('Follow system')}</option>
+        <option value="en">{uiText('English')}</option>
+        <option value="fr">{uiText('Français')}</option>
+        <option value="de">{uiText('Deutsch')}</option>
+        <option value="es">{uiText('Español')}</option>
+      </select>
+    </label>
+  )
+  const signOut = () => {
+    sess.clear()
+    setBoot('login')
+  }
+  if (boot === 'forbidden' || boot === 'access-error')
+    return (
+      <main className="shell">
+        {languageControl}
+        <h1>
+          {boot === 'forbidden'
+            ? uiText('Administrator access required')
+            : uiText('Could not check your access')}
+        </h1>
+        <p>
+          {boot === 'forbidden'
+            ? uiText(
+                'Your account can use Muesli. Ask a server administrator to grant access to this console.'
+              )
+            : uiText('Check your connection and try again.')}
+        </p>
+        {boot === 'access-error' && (
+          <button
+            onClick={() => {
+              setBoot('loading')
+              void authorization().then(setBoot)
+            }}
+          >
+            {uiText('Try again')}
+          </button>
+        )}
+        <button onClick={signOut}>{uiText('Sign out')}</button>
+      </main>
+    )
+
   if (boot === 'loading')
     return (
       <main className="shell startup-shell">
         <div className="startup-card">
-          <h1 className="startup-heading">Muesli is starting up…</h1>
-          <p className="startup-subtitle">This may take a moment on the first boot.</p>
+          <h1 className="startup-heading">{uiText('Muesli is starting up…')}</h1>
+          <p className="startup-subtitle">{uiText('This may take a moment on the first boot.')}</p>
         </div>
       </main>
     )
@@ -63,7 +137,7 @@ export function App({ client, session }: Props) {
         onSubmit={async (email, password) => {
           await api.setup(email, password)
           await api.login(email, password)
-          setBoot('console')
+          setBoot(await authorization())
         }}
       />
     )
@@ -74,7 +148,7 @@ export function App({ client, session }: Props) {
       <LoginView
         onSubmit={async (email, password) => {
           await api.login(email, password)
-          setBoot('console')
+          setBoot(await authorization())
         }}
       />
     )
@@ -82,23 +156,28 @@ export function App({ client, session }: Props) {
 
   return (
     <main className="shell">
+      {languageControl}
       <nav className="row">
-        <button onClick={() => setTab('plugins')}>Plugins</button>
-        <button onClick={() => setTab('jobs')}>Jobs</button>
-        <button onClick={() => setTab('webhook-deliveries')}>Webhook deliveries</button>
-        <button onClick={() => setTab('backups')}>Backups</button>
-        <button onClick={() => setTab('embeddings')}>Embeddings</button>
-        <button onClick={() => setTab('health')}>Health</button>
-        <button onClick={() => setTab('config')}>Config</button>
+        <button onClick={() => setTab('access')}>{uiText('Account access')}</button>
+        <button onClick={() => setTab('plugins')}>{uiText('Plugins')}</button>
+        <button onClick={() => setTab('jobs')}>{uiText('Jobs')}</button>
+        <button onClick={() => setTab('webhook-deliveries')}>{uiText('Webhook deliveries')}</button>
+        <button onClick={() => setTab('backups')}>{uiText('Backups')}</button>
+        <button onClick={() => setTab('embeddings')}>{uiText('Embeddings')}</button>
+        <button onClick={() => setTab('health')}>{uiText('Health')}</button>
+        <button onClick={() => setTab('config')}>{uiText('Config')}</button>
         <button
           onClick={() => {
             sess.clear()
             setBoot('login')
           }}
         >
-          Sign out
+          {uiText('Sign out')}
         </button>
       </nav>
+      {tab === 'access' && (
+        <AccessView client={api} onChanged={async () => setBoot(await authorization())} />
+      )}
       {tab === 'plugins' && <PluginsView client={api} />}
       {tab === 'jobs' && <JobsView client={api} />}
       {tab === 'webhook-deliveries' && <WebhookDeliveriesView client={api} />}

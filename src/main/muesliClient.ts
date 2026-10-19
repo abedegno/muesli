@@ -1,13 +1,65 @@
-import type { ActionItem, AudioUrlGrant, CalendarEvent, CompanyWithCount, CompanyWithPeople, Conversation, CreateShareRequest, CreateShareResponse, Decision, DigestConfig, DiarizationReview, FullNote, Folder, GoogleOAuthStatus, InsightsResponse, Message, MicrosoftOAuthStatus, Note, NoteLink, NoteLinksResponse, PersonWithCompany, Plugin, PluginHealth, PluginStatus, RelatedNote, RetranscribeNoteRequest, RetranscribeNoteResponse, RuleGroup, SearchMatch, SearchResult, Share, SmartList, SpeakerAlias, Template, TemplateSection, UploadGrant } from '../shared/types'
-import type { CreateConversationRequest, CreateConversationResponse, ListNoteActionItemsResponse, SearchOptions, SendMessageRequest, SendMessageResponse, UpdateActionItemRequest, UpdatePersonRequest } from '../shared/ipc'
-import { buildNoteExportRequest, parseContentDispositionFilename, type ExportOptions } from '../shared/export'
+import type { CalendarReadiness } from '../shared/types'
+import type { ServiceReadinessSnapshot } from '../shared/readiness'
+import type {
+  ActionItem,
+  AudioUrlGrant,
+  CalendarEvent,
+  CompanyWithCount,
+  CompanyWithPeople,
+  Conversation,
+  CreateShareRequest,
+  CreateShareResponse,
+  Decision,
+  DigestConfig,
+  DiarizationReview,
+  FullNote,
+  Folder,
+  GoogleOAuthStatus,
+  InsightsResponse,
+  Message,
+  MicrosoftOAuthStatus,
+  Note,
+  NoteLink,
+  NoteLinksResponse,
+  PersonWithCompany,
+  Plugin,
+  PluginHealth,
+  PluginStatus,
+  RelatedNote,
+  RetranscribeNoteRequest,
+  RetranscribeNoteResponse,
+  RuleGroup,
+  SearchMatch,
+  SearchResult,
+  Share,
+  SmartList,
+  SpeakerAlias,
+  Template,
+  TemplateSection,
+  UploadGrant,
+} from '../shared/types'
+import type {
+  CreateConversationRequest,
+  CreateConversationResponse,
+  ListNoteActionItemsResponse,
+  SearchOptions,
+  SendMessageRequest,
+  SendMessageResponse,
+  UpdateActionItemRequest,
+  UpdatePersonRequest,
+} from '../shared/ipc'
+import {
+  buildNoteExportRequest,
+  parseContentDispositionFilename,
+  type ExportOptions,
+} from '../shared/export'
 import { buildCalendarEventsPath } from '../shared/calendar'
 
 export class ApiError extends Error {
   constructor(
     public status: number,
     message: string,
-    public body?: unknown,
+    public body?: unknown
   ) {
     super(message)
     this.name = 'ApiError'
@@ -39,7 +91,7 @@ export class MuesliClient {
     this.baseUrl = opts.baseUrl.replace(/\/+$/, '')
     this.token = opts.token
     // Fall back to the global fetch (Electron/Node 18+) when not injected.
-    this.fetchImpl = opts.fetch ?? ((globalThis as { fetch: FetchLike }).fetch)
+    this.fetchImpl = opts.fetch ?? (globalThis as { fetch: FetchLike }).fetch
   }
 
   setToken(token: string | undefined) {
@@ -74,10 +126,44 @@ export class MuesliClient {
     return this.json<Note>('POST', '/api/notes', { title })
   }
 
-  async startNoteCapture(id: string): Promise<Note> {
-    return this.json<Note>('POST', `/api/notes/${id}/start-capture`)
+  async stopNoteCapture(id: string, captureId?: string): Promise<Note> {
+    return this.json<Note>(
+      'POST',
+      `/api/notes/${id}/stop-capture`,
+      captureId ? { capture_id: captureId } : undefined,
+      undefined,
+      AbortSignal.timeout(10_000)
+    )
   }
 
+  async startNoteCapture(id: string, captureId?: string): Promise<Note> {
+    return this.json<Note>(
+      'POST',
+      `/api/notes/${id}/start-capture`,
+      captureId ? { capture_id: captureId } : undefined,
+      undefined,
+      AbortSignal.timeout(10_000)
+    )
+  }
+
+  async recoverNoteCapture(id: string): Promise<Note> {
+    return this.json<Note>(
+      'POST',
+      `/api/notes/${id}/recover-capture`,
+      undefined,
+      undefined,
+      AbortSignal.timeout(10_000)
+    )
+  }
+  async heartbeatCapture(id: string, captureId: string): Promise<void> {
+    await this.json<void>(
+      'POST',
+      `/api/notes/${id}/capture-heartbeat`,
+      { capture_id: captureId },
+      undefined,
+      AbortSignal.timeout(5000)
+    )
+  }
   async listNotes(folderId?: string): Promise<Note[]> {
     const path = folderId ? `/api/notes?folder_id=${encodeURIComponent(folderId)}` : '/api/notes'
     return this.json<Note[]>('GET', path)
@@ -95,17 +181,51 @@ export class MuesliClient {
     const params = new URLSearchParams()
     if (from) params.set('from', from)
     if (to) params.set('to', to)
-    const path = params.toString().length > 0 ? `/api/insights?${params.toString()}` : '/api/insights'
+    const path =
+      params.toString().length > 0 ? `/api/insights?${params.toString()}` : '/api/insights'
     return this.json<InsightsResponse>('GET', path)
   }
 
-  async getCapabilities(): Promise<{ agentConfigured: boolean }> {
-    const result = await this.json<{ agent_configured: boolean }>('GET', '/api/capabilities')
-    return { agentConfigured: result.agent_configured }
+  async getServiceReadiness(): Promise<ServiceReadinessSnapshot> {
+    return this.json<ServiceReadinessSnapshot>(
+      'GET',
+      '/api/readiness',
+      undefined,
+      undefined,
+      AbortSignal.timeout(8000)
+    )
+  }
+  async retryAIModels(): Promise<void> {
+    await this.json(
+      'POST',
+      '/api/admin/models/retry',
+      undefined,
+      undefined,
+      AbortSignal.timeout(10_000)
+    )
+  }
+  async getCapabilities(): Promise<{
+    agentConfigured: boolean
+    isAdmin?: boolean
+    userId?: string
+  }> {
+    const result = await this.json<{
+      agent_configured: boolean
+      is_admin?: boolean
+      user_id?: string
+    }>('GET', '/api/capabilities', undefined, undefined, AbortSignal.timeout(5000))
+    return {
+      agentConfigured: result.agent_configured,
+      isAdmin: result.is_admin === true,
+      userId: result.user_id,
+    }
   }
 
   async listNoteActionItems(id: string): Promise<ListNoteActionItemsResponse> {
-    const res = await this.json<{ action_items: ActionItem[]; decisions: Decision[] }>('GET', `/api/notes/${id}/action-items`)
+    const res = await this.json<{ action_items: ActionItem[]; decisions: Decision[] }>(
+      'GET',
+      `/api/notes/${id}/action-items`
+    )
     return { actionItems: res.action_items, decisions: res.decisions }
   }
 
@@ -122,7 +242,9 @@ export class MuesliClient {
   }
 
   async listActionItems(status?: string): Promise<ActionItem[]> {
-    const path = status ? `/api/action-items?status=${encodeURIComponent(status)}` : '/api/action-items'
+    const path = status
+      ? `/api/action-items?status=${encodeURIComponent(status)}`
+      : '/api/action-items'
     return this.json<ActionItem[]>('GET', path)
   }
 
@@ -166,6 +288,15 @@ export class MuesliClient {
     return this.json<CalendarEvent[]>('GET', buildCalendarEventsPath(from, to))
   }
 
+  async getCalendarReadiness(): Promise<CalendarReadiness> {
+    return this.json<CalendarReadiness>(
+      'GET',
+      '/api/calendar/readiness',
+      undefined,
+      undefined,
+      AbortSignal.timeout(8000)
+    )
+  }
   async getGoogleCalendarOAuthStatus(): Promise<GoogleOAuthStatus> {
     return this.json<GoogleOAuthStatus>('GET', '/api/calendar/oauth/google/status')
   }
@@ -192,7 +323,11 @@ export class MuesliClient {
 
   async createShare(id: string, options?: CreateShareRequest): Promise<CreateShareResponse> {
     const expiresAt = options?.expires_at?.trim()
-    return this.json<CreateShareResponse>('POST', `/api/notes/${id}/share`, expiresAt ? { expires_at: expiresAt } : undefined)
+    return this.json<CreateShareResponse>(
+      'POST',
+      `/api/notes/${id}/share`,
+      expiresAt ? { expires_at: expiresAt } : undefined
+    )
   }
 
   async listNoteShares(id: string): Promise<Share[]> {
@@ -208,12 +343,17 @@ export class MuesliClient {
     return this.downloadAttachment(path, method)
   }
 
-  async exportFolder(folderId: string, format: string, options?: ExportOptions): Promise<NoteExportData> {
+  async exportFolder(
+    folderId: string,
+    format: string,
+    options?: ExportOptions
+  ): Promise<NoteExportData> {
     const body: Record<string, unknown> = {
       folder_id: folderId,
       format,
     }
-    if (options?.includeTranscript !== undefined) body.include_transcript = options.includeTranscript
+    if (options?.includeTranscript !== undefined)
+      body.include_transcript = options.includeTranscript
     if (options?.redactSpeakers !== undefined) body.redact_speakers = options.redactSpeakers
     return this.downloadAttachment('/api/export/batch', 'POST', body)
   }
@@ -238,9 +378,10 @@ export class MuesliClient {
     const text = await res.text()
     const parsed = text ? safeParse(text) : undefined
     if (!res.ok) {
-      const message = parsed && typeof parsed === 'object' && 'error' in parsed
-        ? String((parsed as { error: unknown }).error)
-        : `request failed: ${res.status}`
+      const message =
+        parsed && typeof parsed === 'object' && 'error' in parsed
+          ? String((parsed as { error: unknown }).error)
+          : `request failed: ${res.status}`
       throw new ApiError(res.status, message, parsed)
     }
     return {
@@ -250,7 +391,13 @@ export class MuesliClient {
   }
 
   async getFull(id: string): Promise<FullNote> {
-    return this.json<FullNote>('GET', `/api/notes/${id}/full`)
+    return this.json<FullNote>(
+      'GET',
+      `/api/notes/${id}/full`,
+      undefined,
+      undefined,
+      AbortSignal.timeout(30_000)
+    )
   }
 
   async updateTitle(id: string, title: string): Promise<void> {
@@ -290,13 +437,17 @@ export class MuesliClient {
     await this.json('POST', `/api/notes/${id}/restore`)
   }
 
-  async retranscribeNote(id: string, options?: RetranscribeNoteRequest): Promise<RetranscribeNoteResponse> {
-    const body = options && (options.model !== undefined || options.language !== undefined)
-      ? {
-          ...(options.model !== undefined ? { model: options.model } : {}),
-          ...(options.language !== undefined ? { language: options.language } : {}),
-        }
-      : undefined
+  async retranscribeNote(
+    id: string,
+    options?: RetranscribeNoteRequest
+  ): Promise<RetranscribeNoteResponse> {
+    const body =
+      options && (options.model !== undefined || options.language !== undefined)
+        ? {
+            ...(options.model !== undefined ? { model: options.model } : {}),
+            ...(options.language !== undefined ? { language: options.language } : {}),
+          }
+        : undefined
     return this.json<RetranscribeNoteResponse>('POST', `/api/notes/${id}/retranscribe`, body)
   }
 
@@ -365,8 +516,14 @@ export class MuesliClient {
   async reorderFolder(id: string, afterId: string | null): Promise<void> {
     await this.json('PUT', `/api/folders/${id}/reorder`, { after_id: afterId })
   }
-  async reorderNoteInFolder(folderId: string, noteId: string, afterId: string | null): Promise<void> {
-    await this.json('PUT', `/api/folders/${folderId}/notes/${noteId}/reorder`, { after_id: afterId })
+  async reorderNoteInFolder(
+    folderId: string,
+    noteId: string,
+    afterId: string | null
+  ): Promise<void> {
+    await this.json('PUT', `/api/folders/${folderId}/notes/${noteId}/reorder`, {
+      after_id: afterId,
+    })
   }
   async listTrashedFolders(): Promise<Folder[]> {
     return this.json<Folder[]>('GET', '/api/folders/trash')
@@ -388,10 +545,26 @@ export class MuesliClient {
   async listTemplates(): Promise<Template[]> {
     return this.json<Template[]>('GET', '/api/templates')
   }
-  async createTemplate(name: string, phase: Template['phase'], sections: TemplateSection[], autoRun: boolean): Promise<Template> {
-    return this.json<Template>('POST', '/api/templates', { name, phase, sections, auto_run: autoRun })
+  async createTemplate(
+    name: string,
+    phase: Template['phase'],
+    sections: TemplateSection[],
+    autoRun: boolean
+  ): Promise<Template> {
+    return this.json<Template>('POST', '/api/templates', {
+      name,
+      phase,
+      sections,
+      auto_run: autoRun,
+    })
   }
-  async updateTemplate(id: string, name: string, phase: Template['phase'], sections: TemplateSection[], autoRun: boolean): Promise<void> {
+  async updateTemplate(
+    id: string,
+    name: string,
+    phase: Template['phase'],
+    sections: TemplateSection[],
+    autoRun: boolean
+  ): Promise<void> {
     await this.json('PUT', `/api/templates/${id}`, { name, phase, sections, auto_run: autoRun })
   }
   async deleteTemplate(id: string): Promise<void> {
@@ -405,11 +578,7 @@ export class MuesliClient {
 
   // PUT raw bytes to the signed URL. No bearer token — the URL itself is the grant.
   // contentType is the recorder's actual mimeType (e.g. 'audio/webm;codecs=opus').
-  async putAudio(
-    grant: UploadGrant,
-    bytes: Uint8Array,
-    contentType = 'audio/webm',
-  ): Promise<void> {
+  async putAudio(grant: UploadGrant, bytes: Uint8Array, contentType = 'audio/webm'): Promise<void> {
     const res = await this.fetchImpl(grant.url, {
       method: 'PUT',
       headers: { 'Content-Type': contentType },
@@ -447,20 +616,31 @@ export class MuesliClient {
     await this.json('PUT', `/api/notes/${id}/body`, { content })
   }
 
-  async checkAudioDedup(audioHash: string): Promise<{ matches: Array<{ note_id: string; title: string; status: string; created_at: string }> }> {
-    return this.json<{ matches: Array<{ note_id: string; title: string; status: string; created_at: string }> }>('POST', '/api/audio/dedup-check', { audio_hash: audioHash })
+  async checkAudioDedup(audioHash: string): Promise<{
+    matches: Array<{ note_id: string; title: string; status: string; created_at: string }>
+  }> {
+    return this.json<{
+      matches: Array<{ note_id: string; title: string; status: string; created_at: string }>
+    }>('POST', '/api/audio/dedup-check', { audio_hash: audioHash })
   }
 
   // --- Speaker aliases (DZ03) ---
   async listSpeakerAliases(id: string): Promise<SpeakerAlias[]> {
-    const out = await this.json<{ aliases: SpeakerAlias[] }>('GET', `/api/notes/${id}/speaker-aliases`)
+    const out = await this.json<{ aliases: SpeakerAlias[] }>(
+      'GET',
+      `/api/notes/${id}/speaker-aliases`
+    )
     return out.aliases
   }
 
   // `label` is always the raw/original speaker label (e.g. 'SPEAKER_00'), never a
   // previously-assigned alias name — see DZ03a.
   async upsertSpeakerAlias(id: string, label: string, aliasName: string): Promise<SpeakerAlias> {
-    return this.json<SpeakerAlias>('PUT', `/api/notes/${id}/speaker-aliases/${encodeURIComponent(label)}`, { alias_name: aliasName })
+    return this.json<SpeakerAlias>(
+      'PUT',
+      `/api/notes/${id}/speaker-aliases/${encodeURIComponent(label)}`,
+      { alias_name: aliasName }
+    )
   }
 
   // --- Diarization review (DZ04b/DZ04d) ---
@@ -473,26 +653,74 @@ export class MuesliClient {
   // stays a thin, directly-testable wrapper over the wire format.
   async postDiarizationReview(
     id: string,
-    body: { segment_id?: string; speaker?: string; review_state?: string },
+    body: { segment_id?: string; speaker?: string; review_state?: string }
   ): Promise<DiarizationReview> {
     return this.json<DiarizationReview>('POST', `/api/notes/${id}/transcript/review`, body)
   }
 
-    // --- internals ---
+  // --- internals ---
   async getDefaultTranscriberStatus(): Promise<PluginStatus> {
-    return this.json<PluginStatus>('GET', '/api/admin/plugins/default-transcriber/status')
+    return this.json<PluginStatus>('GET', '/api/transcription/status')
   }
 
   async listPlugins(): Promise<Plugin[]> {
-    return this.json<Plugin[]>('GET', '/api/admin/plugins')
+    return this.json<Plugin[]>('GET', '/api/transcription/services')
   }
 
   async checkPluginHealth(id: string): Promise<PluginHealth> {
-    return this.json<PluginHealth>('POST', `/api/admin/plugins/${encodeURIComponent(id)}/health`)
+    return this.json<PluginHealth>(
+      'POST',
+      `/api/admin/plugins/${encodeURIComponent(id)}/health`,
+      undefined,
+      undefined,
+      AbortSignal.timeout(10_000)
+    )
   }
 
   async setStreamingTranscriber(req: { url: string; token: string }): Promise<Plugin> {
-    const existing = (await this.listPlugins()).find((plugin) => plugin.kind === 'streaming-transcriber')
+    return this.saveTranscriptionService({ ...req, kind: 'streaming-transcriber' })
+  }
+
+  async selectTranscriptionPlugin(req: {
+    kind: 'transcriber' | 'streaming-transcriber'
+    pluginId: string | null
+  }): Promise<void> {
+    const plugins = await this.listPlugins()
+    if (req.pluginId === null) {
+      if (req.kind !== 'streaming-transcriber')
+        throw new Error('Choose a final transcription service.')
+      const selected = plugins.find((p) => p.kind === req.kind && p.is_default)
+      if (selected)
+        await this.json('PATCH', `/api/admin/plugins/${encodeURIComponent(selected.id)}`, {
+          enabled: false,
+        })
+      return
+    }
+    const selected = plugins.find((p) => p.id === req.pluginId && p.kind === req.kind)
+    if (!selected)
+      throw new Error('That transcription service is not available. Refresh and try again.')
+    await this.json('PATCH', `/api/admin/plugins/${encodeURIComponent(selected.id)}`, {
+      enabled: true,
+      is_default: true,
+    })
+  }
+
+  async saveTranscriptionService(req: {
+    kind: 'transcriber' | 'streaming-transcriber'
+    url: string
+    token: string
+  }): Promise<Plugin> {
+    const url = new URL(req.url)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:')
+      throw new Error('Use an HTTP or HTTPS service URL.')
+    const name =
+      req.kind === 'transcriber' ? 'Custom final transcriber' : 'Custom streaming transcriber'
+    const existing = (await this.listPlugins()).find(
+      (p) =>
+        p.kind === req.kind &&
+        (p.name === name ||
+          (req.kind === 'streaming-transcriber' && p.name === 'Streaming transcriber'))
+    )
     const body = {
       endpoint_url: req.url,
       ...(req.token ? { token: req.token } : {}),
@@ -500,23 +728,31 @@ export class MuesliClient {
       is_default: true,
     }
     if (existing) {
-      return this.json<Plugin>('PATCH', `/api/admin/plugins/${encodeURIComponent(existing.id)}`, body)
+      await this.json('PATCH', `/api/admin/plugins/${encodeURIComponent(existing.id)}`, body)
+    } else {
+      const created = await this.json<{ id: string }>('POST', '/api/admin/plugins', {
+        kind: req.kind,
+        name,
+        ...body,
+      })
+      const saved = (await this.listPlugins()).find((p) => p.id === created.id)
+      if (!saved) throw new Error('The saved transcription service could not be loaded.')
+      return saved
     }
-    return this.json<Plugin>('POST', '/api/admin/plugins', {
-      kind: 'streaming-transcriber',
-      name: 'Streaming transcriber',
-      ...body,
-    })
+    const saved = (await this.listPlugins()).find((p) => p.id === existing.id)
+    if (!saved) throw new Error('The saved transcription service could not be loaded.')
+    return saved
   }
 
   async clearStreamingTranscriber(): Promise<void> {
-    const existing = (await this.listPlugins()).find((plugin) => plugin.kind === 'streaming-transcriber')
-    if (existing) await this.json('DELETE', `/api/admin/plugins/${encodeURIComponent(existing.id)}`)
+    await this.selectTranscriptionPlugin({ kind: 'streaming-transcriber', pluginId: null })
   }
 
   // --- Chat (CHT01-CHT05) ---
   async listConversations(noteId?: string): Promise<Conversation[]> {
-    const path = noteId ? `/api/conversations?note_id=${encodeURIComponent(noteId)}` : '/api/conversations'
+    const path = noteId
+      ? `/api/conversations?note_id=${encodeURIComponent(noteId)}`
+      : '/api/conversations'
     return this.json<Conversation[]>('GET', path)
   }
 
@@ -540,11 +776,22 @@ export class MuesliClient {
   // conversation ("message send already in progress") — callers should check
   // `err instanceof ApiError && err.status === 409` and surface that distinctly
   // from a generic failure.
-  async sendMessage(conversationId: string, body: SendMessageRequest): Promise<SendMessageResponse> {
-    return this.json<SendMessageResponse>('POST', `/api/conversations/${conversationId}/messages`, body)
+  async sendMessage(
+    conversationId: string,
+    body: SendMessageRequest
+  ): Promise<SendMessageResponse> {
+    return this.json<SendMessageResponse>(
+      'POST',
+      `/api/conversations/${conversationId}/messages`,
+      body
+    )
   }
 
-  private async downloadAttachment(path: string, method: 'GET' | 'POST', body?: unknown): Promise<NoteExportData> {
+  private async downloadAttachment(
+    path: string,
+    method: 'GET' | 'POST',
+    body?: unknown
+  ): Promise<NoteExportData> {
     const headers: Record<string, string> = {}
     if (this.token) headers.Authorization = `Bearer ${this.token}`
     if (body !== undefined) headers['Content-Type'] = 'application/json'
@@ -578,6 +825,7 @@ export class MuesliClient {
     path: string,
     body?: unknown,
     overrideToken?: string,
+    signal?: AbortSignal
   ): Promise<T> {
     const headers: Record<string, string> = {}
     const token = overrideToken ?? this.token
@@ -588,6 +836,7 @@ export class MuesliClient {
       method,
       headers,
       body: body !== undefined ? JSON.stringify(body) : undefined,
+      ...(signal ? { signal } : {}),
     })
 
     const text = await res.text()

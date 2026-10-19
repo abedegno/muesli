@@ -3,6 +3,7 @@ import type { FullNote, Note, NoteStatus, UploadGrant } from '../src/shared/type
 interface StoredNote extends Note {
   body: string
   audioKey?: string
+  uploadKey?: string
   audioBytes?: Uint8Array
 }
 
@@ -46,11 +47,14 @@ export class FakeServer {
     // --- Signed storage PUT (no bearer; key is in the path) ---
     if (method === 'PUT' && path.startsWith('/_storage/')) {
       const key = path.slice('/_storage/'.length)
-      const note = [...this.notes.values()].find((n) => n.audioKey === key)
+      const note = [...this.notes.values()].find((n) => n.uploadKey === key)
       if (!note) return new Response('no such object', { status: 403 })
       note.audioBytes = new Uint8Array(body as ArrayBuffer)
       return new Response('', { status: 200 })
     }
+
+    if (method === 'GET' && path === '/api/setup/status')
+      return json(200, { needs_setup: this.users.size === 0 })
 
     if (method === 'POST' && path === '/api/setup') {
       const { email, password } = JSON.parse(body as string)
@@ -76,6 +80,10 @@ export class FakeServer {
 
     // Everything below requires a valid app token.
     const authed = bearer && this.appTokens.has(bearer)
+    if (method === 'GET' && path === '/api/capabilities') {
+      if (!authed) return json(401, { error: 'unauthorized' })
+      return json(200, { agent_configured: false, is_admin: true, user_id: 'user-1' })
+    }
 
     if (method === 'POST' && path === '/api/notes') {
       if (!authed) return json(401, { error: 'unauthorized' })
@@ -85,7 +93,7 @@ export class FakeServer {
       this.notes.set(id, {
         id,
         title: title ?? '',
-        status: 'recording',
+        status: 'draft',
         pinned: false,
         body: '',
         created_at: now,
@@ -136,7 +144,7 @@ export class FakeServer {
 
       if (sub === '/audio-upload-url' && method === 'POST') {
         const key = `notes/${id}/audio/${++this.seq}`
-        note.audioKey = key
+        note.uploadKey = key
         const grant: UploadGrant = {
           url: `http://fake/_storage/${key}`,
           method: 'PUT',
@@ -149,6 +157,7 @@ export class FakeServer {
       if (sub === '/audio-url' && method === 'GET') {
         if (!note.audioKey) return json(404, { error: 'not found' })
         return json(200, {
+          key: note.audioKey,
           url: `http://fake/_storage/${note.audioKey}`,
           expires_at: new Date(Date.now() + 3_600_000).toISOString(),
         })
@@ -156,9 +165,10 @@ export class FakeServer {
 
       if (sub === '/audio-uploaded' && method === 'POST') {
         const { key } = JSON.parse(body as string)
-        if (key !== note.audioKey || !note.audioBytes?.length) {
+        if (key !== note.uploadKey || !note.audioBytes?.length) {
           return json(400, { error: 'object not found or empty' })
         }
+        note.audioKey = key
         note.status = 'uploaded'
         return json(200, { status: 'uploaded' })
       }

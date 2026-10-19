@@ -1,13 +1,22 @@
+import { uiText } from '@/i18n'
+import { formatNumber } from '@/i18n'
 import { useEffect, useState } from 'react'
 import { muesli } from '@/api'
 import { EmptyState } from './EmptyState'
 import { Skeleton } from '@/components/ui/Skeleton'
-import type { InsightsResponse, MeetingCountByDay, MeetingHoursByWeek, PersonWithMeetingCount, CompanyWithMeetingCount, FolderWithMeetingCount } from '../../shared/types'
+import type {
+  InsightsResponse,
+  MeetingCountByDay,
+  MeetingHoursByWeek,
+  PersonWithMeetingCount,
+  CompanyWithMeetingCount,
+  FolderWithMeetingCount,
+} from '../../shared/types'
 import { useAgentCapability } from '@/lib/agentCapability'
 import { AgentUnavailableNotice } from './AgentUnavailableNotice'
 
-const DAY_FORMATTER = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' })
-const WEEK_FORMATTER = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric' })
+const DAY_FORMATTER = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })
+const WEEK_FORMATTER = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric' })
 const EMPTY_INSIGHTS: InsightsResponse = {
   meetings_per_day: [],
   total_hours: 0,
@@ -20,7 +29,9 @@ const EMPTY_INSIGHTS: InsightsResponse = {
 type RangePreset = '7d' | '30d' | '90d' | 'all' | 'custom'
 
 function utcDateString(date: Date): string {
-  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate())).toISOString().slice(0, 10)
+  return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()))
+    .toISOString()
+    .slice(0, 10)
 }
 
 function utcTodayString(now = new Date()): string {
@@ -33,7 +44,10 @@ function utcDaysAgoString(days: number, now = new Date()): string {
   return utcDateString(date)
 }
 
-function presetRange(preset: Exclude<RangePreset, 'custom'>, now = new Date()): { from: string; to: string } {
+function presetRange(
+  preset: Exclude<RangePreset, 'custom'>,
+  now = new Date()
+): { from: string; to: string } {
   const to = utcTodayString(now)
 
   switch (preset) {
@@ -73,11 +87,11 @@ function errorMessage(err: unknown): string {
 }
 
 function formatCount(count: number): string {
-  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 0 }).format(count)
+  return formatNumber(count, { maximumFractionDigits: 0 })
 }
 
 function formatHours(hours: number): string {
-  return new Intl.NumberFormat('en-US', { maximumFractionDigits: 1 }).format(hours)
+  return formatNumber(hours, { maximumFractionDigits: 1 })
 }
 
 function formatDayLabel(day: string): string {
@@ -88,27 +102,32 @@ function formatWeekLabel(weekStart: string): string {
   return WEEK_FORMATTER.format(new Date(weekStart))
 }
 
-function entityLabel(entity: { display_name?: string; primary_email?: string; name?: string; domain?: string; id: string }): string {
-  if ('display_name' in entity) return entity.display_name || entity.primary_email || 'Untitled person'
+function entityLabel(entity: {
+  display_name?: string
+  primary_email?: string
+  name?: string
+  domain?: string
+  id: string
+}): string {
+  if ('display_name' in entity)
+    return entity.display_name || entity.primary_email || 'Untitled person'
   if ('name' in entity) return entity.name || entity.domain || 'Untitled entity'
   return entity.domain || entity.name || 'Untitled folder'
 }
 
-function MeetingChart({
-  data,
-}: {
-  data: MeetingCountByDay[]
-}) {
+function MeetingChart({ data }: { data: MeetingCountByDay[] }) {
   if (data.length === 0) {
     return (
       <figure className="rounded-[var(--radius)] border border-border bg-card p-4">
         <div className="mb-3 flex items-baseline justify-between gap-3">
           <div>
-            <h2 className="text-sm font-semibold">Meetings over time</h2>
-            <p className="text-xs text-muted-foreground">Daily meetings for the selected range.</p>
+            <h2 className="text-sm font-semibold">{uiText('Meetings over time')}</h2>
+            <p className="text-xs text-muted-foreground">
+              {uiText('Daily meetings for the selected range.')}
+            </p>
           </div>
         </div>
-        <p className="text-sm text-muted-foreground">No meetings in this range.</p>
+        <p className="text-sm text-muted-foreground">{uiText('No meetings in this range.')}</p>
       </figure>
     )
   }
@@ -125,19 +144,26 @@ function MeetingChart({
     <figure className="rounded-[var(--radius)] border border-border bg-card p-4">
       <div className="mb-3 flex items-baseline justify-between gap-3">
         <div>
-          <h2 className="text-sm font-semibold">Meetings over time</h2>
-          <p className="text-xs text-muted-foreground">Daily meetings for the selected range.</p>
+          <h2 className="text-sm font-semibold">{uiText('Meetings over time')}</h2>
+          <p className="text-xs text-muted-foreground">
+            {uiText('Daily meetings for the selected range.')}
+          </p>
         </div>
-        <p className="text-xs text-muted-foreground">{data.length} day{data.length === 1 ? '' : 's'}</p>
+        <p className="text-xs text-muted-foreground">
+          {data.length} {uiText('day')}
+          {data.length === 1 ? '' : uiText('s')}
+        </p>
       </div>
       <svg
         role="img"
-        aria-label="Meetings over time chart"
+        aria-label={uiText('Meetings over time chart')}
         viewBox={`0 0 ${width} ${height}`}
         className="h-56 w-full"
       >
-        <title>Meetings over time</title>
-        <desc>Vertical bars showing the number of meetings for each day in the range.</desc>
+        <title>{uiText('Meetings over time')}</title>
+        <desc>
+          {uiText('Vertical bars showing the number of meetings for each day in the range.')}
+        </desc>
         <line
           x1={padding.left}
           y1={height - padding.bottom}
@@ -187,20 +213,21 @@ function MeetingChart({
       </svg>
       <ul className="sr-only">
         {data.map((point) => (
-          <li key={point.day}>{formatDayLabel(point.day)}: {formatCount(point.count)} meetings</li>
+          <li key={point.day}>
+            {formatDayLabel(point.day)}
+            {uiText(':')} {formatCount(point.count)} {uiText('meetings')}
+          </li>
         ))}
       </ul>
     </figure>
   )
 }
 
-function WeeklyHoursChart({
-  data,
-}: {
-  data: MeetingHoursByWeek[]
-}) {
+function WeeklyHoursChart({ data }: { data: MeetingHoursByWeek[] }) {
   if (data.length === 0) {
-    return <p className="text-sm text-muted-foreground">No weekly hours in this range.</p>
+    return (
+      <p className="text-sm text-muted-foreground">{uiText('No weekly hours in this range.')}</p>
+    )
   }
 
   const maxHours = Math.max(1, ...data.map((point) => point.hours))
@@ -213,8 +240,13 @@ function WeeklyHoursChart({
         return (
           <li key={point.week_start} aria-label={label} className="grid gap-1">
             <div className="flex items-baseline justify-between gap-3">
-              <span className="truncate text-sm font-medium">{formatWeekLabel(point.week_start)}</span>
-              <span className="shrink-0 text-sm text-muted-foreground">{formatHours(point.hours)}h</span>
+              <span className="truncate text-sm font-medium">
+                {formatWeekLabel(point.week_start)}
+              </span>
+              <span className="shrink-0 text-sm text-muted-foreground">
+                {formatHours(point.hours)}
+                {uiText('h')}
+              </span>
             </div>
             <div className="h-2 rounded-full bg-muted">
               <div
@@ -230,17 +262,15 @@ function WeeklyHoursChart({
   )
 }
 
-function TopBarList<T extends { count: number }>(
-  {
-    items,
-    emptyLabel,
-    getLabel,
-  }: {
-    items: T[]
-    emptyLabel: string
-    getLabel: (item: T) => string
-  },
-) {
+function TopBarList<T extends { count: number }>({
+  items,
+  emptyLabel,
+  getLabel,
+}: {
+  items: T[]
+  emptyLabel: string
+  getLabel: (item: T) => string
+}) {
   if (items.length === 0) {
     return <p className="text-sm text-muted-foreground">{emptyLabel}</p>
   }
@@ -255,18 +285,26 @@ function TopBarList<T extends { count: number }>(
         return (
           <li
             key={`${label}-${index}`}
-            aria-label={`${label}: ${formatCount(item.count)} meetings`}
+            aria-label={uiText('{value1}: {value2} meetings', {
+              value1: label,
+              value2: formatCount(item.count),
+            })}
             className="grid gap-1"
           >
             <div className="flex items-baseline justify-between gap-3">
               <span className="truncate text-sm font-medium">{label}</span>
-              <span className="shrink-0 text-sm text-muted-foreground">{formatCount(item.count)}</span>
+              <span className="shrink-0 text-sm text-muted-foreground">
+                {formatCount(item.count)}
+              </span>
             </div>
             <div className="h-2 rounded-full bg-muted">
               <div
                 className="h-full rounded-full bg-primary"
                 style={{ width: `${Math.max(2, ratio * 100)}%` }}
-                title={`${label}: ${formatCount(item.count)} meetings`}
+                title={uiText('{value1}: {value2} meetings', {
+                  value1: label,
+                  value2: formatCount(item.count),
+                })}
               />
             </div>
           </li>
@@ -276,15 +314,7 @@ function TopBarList<T extends { count: number }>(
   )
 }
 
-function SummaryCard({
-  label,
-  value,
-  hint,
-}: {
-  label: string
-  value: string
-  hint?: string
-}) {
+function SummaryCard({ label, value, hint }: { label: string; value: string; hint?: string }) {
   return (
     <div className="rounded-[var(--radius)] border border-border bg-card p-4">
       <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
@@ -298,8 +328,12 @@ function InsightsSkeleton() {
   return (
     <div className="mx-auto flex max-w-5xl flex-col gap-6 p-6">
       <div>
-        <div className="mb-2 h-8 w-40"><Skeleton className="h-full w-full" /></div>
-        <div className="h-4 w-72"><Skeleton className="h-full w-full" /></div>
+        <div className="mb-2 h-8 w-40">
+          <Skeleton className="h-full w-full" />
+        </div>
+        <div className="h-4 w-72">
+          <Skeleton className="h-full w-full" />
+        </div>
       </div>
       <div className="grid gap-3 md:grid-cols-3">
         <Skeleton className="h-24 w-full" />
@@ -318,8 +352,15 @@ function InsightsSkeleton() {
 
 function LoadingIndicator({ label }: { label: string }) {
   return (
-    <div role="status" aria-live="polite" className="inline-flex items-center gap-2 text-xs text-muted-foreground">
-      <span className="h-3 w-3 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent" aria-hidden />
+    <div
+      role="status"
+      aria-live="polite"
+      className="inline-flex items-center gap-2 text-xs text-muted-foreground"
+    >
+      <span
+        className="h-3 w-3 animate-spin rounded-full border-2 border-muted-foreground border-t-transparent"
+        aria-hidden
+      />
       {label}
     </div>
   )
@@ -374,13 +415,29 @@ function DateRangeControl({
 
   return (
     <fieldset className="rounded-[var(--radius)] border border-border bg-card p-4">
-      <legend className="px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">Date range</legend>
-      <div className="mt-3 flex flex-wrap gap-2" role="group" aria-label="Insights date range presets">
-        <RangeButton active={preset === '7d'} onClick={() => onPresetChange('7d')}>7d</RangeButton>
-        <RangeButton active={preset === '30d'} onClick={() => onPresetChange('30d')}>30d</RangeButton>
-        <RangeButton active={preset === '90d'} onClick={() => onPresetChange('90d')}>90d</RangeButton>
-        <RangeButton active={preset === 'all'} onClick={() => onPresetChange('all')}>all</RangeButton>
-        <RangeButton active={preset === 'custom'} onClick={() => onPresetChange('custom')}>custom</RangeButton>
+      <legend className="px-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+        {uiText('Date range')}
+      </legend>
+      <div
+        className="mt-3 flex flex-wrap gap-2"
+        role="group"
+        aria-label={uiText('Insights date range presets')}
+      >
+        <RangeButton active={preset === '7d'} onClick={() => onPresetChange('7d')}>
+          {uiText('7d')}
+        </RangeButton>
+        <RangeButton active={preset === '30d'} onClick={() => onPresetChange('30d')}>
+          {uiText('30d')}
+        </RangeButton>
+        <RangeButton active={preset === '90d'} onClick={() => onPresetChange('90d')}>
+          {uiText('90d')}
+        </RangeButton>
+        <RangeButton active={preset === 'all'} onClick={() => onPresetChange('all')}>
+          {uiText('all')}
+        </RangeButton>
+        <RangeButton active={preset === 'custom'} onClick={() => onPresetChange('custom')}>
+          {uiText('custom')}
+        </RangeButton>
       </div>
       <form
         className="mt-4 grid gap-3 md:grid-cols-[repeat(2,minmax(0,14rem))_auto] md:items-end"
@@ -390,10 +447,12 @@ function DateRangeControl({
         }}
       >
         <label className="grid gap-1">
-          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">From</span>
+          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {uiText('From')}
+          </span>
           <input
             type="date"
-            aria-label="Custom range start date"
+            aria-label={uiText('Custom range start date')}
             value={customFrom}
             onChange={(event) => onCustomFromChange(event.target.value)}
             disabled={preset !== 'custom'}
@@ -401,10 +460,12 @@ function DateRangeControl({
           />
         </label>
         <label className="grid gap-1">
-          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">To</span>
+          <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {uiText('To')}
+          </span>
           <input
             type="date"
-            aria-label="Custom range end date"
+            aria-label={uiText('Custom range end date')}
             value={customTo}
             onChange={(event) => onCustomToChange(event.target.value)}
             disabled={preset !== 'custom'}
@@ -417,14 +478,16 @@ function DateRangeControl({
             disabled={preset !== 'custom' || !customValid}
             className="h-10 rounded-[var(--radius)] border border-primary bg-primary px-4 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 focus:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-60"
           >
-            Apply custom range
+            {uiText('Apply custom range')}
           </button>
-          <p className="text-xs text-muted-foreground">Custom ranges must use UTC dates and start on or before the end date.</p>
+          <p className="text-xs text-muted-foreground">
+            {uiText('Custom ranges must use UTC dates and start on or before the end date.')}
+          </p>
         </div>
       </form>
       {preset === 'custom' && !customValid ? (
         <p className="mt-3 text-xs text-destructive" role="alert">
-          Choose a start date on or before the end date.
+          {uiText('Choose a start date on or before the end date.')}
         </p>
       ) : customError ? (
         <p className="mt-3 text-xs text-destructive" role="alert">
@@ -455,7 +518,8 @@ export function InsightsScreen() {
     setIsFetching(true)
     setError(null)
 
-    void muesli.getInsights(requestedRange.from, requestedRange.to)
+    void muesli
+      .getInsights(requestedRange.from, requestedRange.to)
       .then((data) => {
         if (cancelled) return
         setInsights(data)
@@ -519,28 +583,47 @@ export function InsightsScreen() {
 
   const content = showEmptyState ? (
     <EmptyState
-      title="No insights yet"
-      hint="As meetings and linked notes accumulate, summary cards and charts will appear here."
+      title={uiText('No insights yet')}
+      hint={uiText(
+        'As meetings and linked notes accumulate, summary cards and charts will appear here.'
+      )}
     />
   ) : showData ? (
     <>
-      <section aria-label="Summary">
+      <section aria-label={uiText('Summary')}>
         <div className="grid gap-3 md:grid-cols-3">
-          <SummaryCard label="Total meetings" value={formatCount(totalMeetings)} hint="Sum of meetings per day" />
-          <SummaryCard label="Total hours" value={formatHours(data.total_hours)} hint="Across all meetings" />
-          <SummaryCard label="Distinct people" value={formatCount(data.top_people.length)} hint="People seen in the range" />
+          <SummaryCard
+            label={uiText('Total meetings')}
+            value={formatCount(totalMeetings)}
+            hint={uiText('Sum of meetings per day')}
+          />
+          <SummaryCard
+            label={uiText('Total hours')}
+            value={formatHours(data.total_hours)}
+            hint={uiText('Across all meetings')}
+          />
+          <SummaryCard
+            label={uiText('Distinct people')}
+            value={formatCount(data.top_people.length)}
+            hint={uiText('People seen in the range')}
+          />
         </div>
       </section>
 
-      <section className="grid gap-6 lg:grid-cols-2" aria-label="Charts">
+      <section className="grid gap-6 lg:grid-cols-2" aria-label={uiText('Charts')}>
         <MeetingChart data={data.meetings_per_day} />
         <div className="rounded-[var(--radius)] border border-border bg-card p-4">
           <div className="mb-3 flex items-baseline justify-between gap-3">
             <div>
-              <h2 className="text-sm font-semibold">Weekly hours</h2>
-              <p className="text-xs text-muted-foreground">Total meeting hours by calendar week.</p>
+              <h2 className="text-sm font-semibold">{uiText('Weekly hours')}</h2>
+              <p className="text-xs text-muted-foreground">
+                {uiText('Total meeting hours by calendar week.')}
+              </p>
             </div>
-            <p className="text-xs text-muted-foreground">{formatHours(data.total_hours)}h total</p>
+            <p className="text-xs text-muted-foreground">
+              {formatHours(data.total_hours)}
+              {uiText('h total')}
+            </p>
           </div>
           <WeeklyHoursChart data={data.hours_per_week} />
         </div>
@@ -548,7 +631,7 @@ export function InsightsScreen() {
 
       <section className="grid gap-4 lg:grid-cols-3">
         <div className="rounded-[var(--radius)] border border-border bg-card p-4">
-          <h2 className="mb-3 text-sm font-semibold">Top people</h2>
+          <h2 className="mb-3 text-sm font-semibold">{uiText('Top people')}</h2>
           <TopBarList<PersonWithMeetingCount>
             items={data.top_people}
             emptyLabel="No people in this range."
@@ -556,7 +639,7 @@ export function InsightsScreen() {
           />
         </div>
         <div className="rounded-[var(--radius)] border border-border bg-card p-4">
-          <h2 className="mb-3 text-sm font-semibold">Top companies</h2>
+          <h2 className="mb-3 text-sm font-semibold">{uiText('Top companies')}</h2>
           <TopBarList<CompanyWithMeetingCount>
             items={data.top_companies}
             emptyLabel="No companies in this range."
@@ -564,7 +647,7 @@ export function InsightsScreen() {
           />
         </div>
         <div className="rounded-[var(--radius)] border border-border bg-card p-4">
-          <h2 className="mb-3 text-sm font-semibold">Top folders</h2>
+          <h2 className="mb-3 text-sm font-semibold">{uiText('Top folders')}</h2>
           <TopBarList<FolderWithMeetingCount>
             items={data.top_folders}
             emptyLabel="No folders in this range."
@@ -579,8 +662,10 @@ export function InsightsScreen() {
     <div className="mx-auto flex max-w-5xl flex-col gap-6 p-6">
       {agentConfigured === false ? <AgentUnavailableNotice compact /> : null}
       <div>
-        <h1 className="font-serif text-xl font-semibold">Insights</h1>
-        <p className="text-sm text-muted-foreground">Meeting trends and top collaborators across the selected range.</p>
+        <h1 className="font-serif text-xl font-semibold">{uiText('Insights')}</h1>
+        <p className="text-sm text-muted-foreground">
+          {uiText('Meeting trends and top collaborators across the selected range.')}
+        </p>
         <p className="text-sm text-muted-foreground">{rangeDescription}</p>
       </div>
 
@@ -611,12 +696,14 @@ export function InsightsScreen() {
 
       {error ? (
         <div className="rounded-[var(--radius)] border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">
-          <p className="font-medium">Could not load insights</p>
+          <p className="font-medium">{uiText('Could not load insights')}</p>
           <p className="mt-1 break-words">{error}</p>
         </div>
       ) : null}
 
-      {isFetching && hasResolvedOnce ? <LoadingIndicator label="Updating insights..." /> : null}
+      {isFetching && hasResolvedOnce ? (
+        <LoadingIndicator label={uiText('Updating insights...')} />
+      ) : null}
 
       {content}
     </div>

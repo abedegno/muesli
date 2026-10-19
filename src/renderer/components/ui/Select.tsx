@@ -15,9 +15,9 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
       <select
         ref={ref}
         className={cn(
-          'h-9 appearance-none rounded-[var(--radius)] border border-input bg-background pl-3 pr-8 text-sm text-foreground',
+          'h-9 w-full min-w-0 appearance-none rounded-[var(--radius)] border border-input bg-background pl-3 pr-8 text-sm text-foreground',
           'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-          className,
+          className
         )}
         {...props}
       >
@@ -29,6 +29,6 @@ export const Select = forwardRef<HTMLSelectElement, SelectHTMLAttributes<HTMLSel
         className="pointer-events-none absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground"
       />
     </span>
-  ),
+  )
 )
 Select.displayName = 'Select'

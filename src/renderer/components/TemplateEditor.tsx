@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { useEffect, useState } from 'react'
 import { Dialog } from '@/components/ui/Dialog'
 import { Button } from '@/components/ui/Button'
@@ -14,14 +15,19 @@ export function TemplateEditor({
   open: boolean
   title: string
   initial?: Template
-  onSave: (name: string, phase: TemplatePhase, sections: TemplateSection[], autoRun: boolean) => Promise<void>
+  onSave: (
+    name: string,
+    phase: TemplatePhase,
+    sections: TemplateSection[],
+    autoRun: boolean
+  ) => Promise<void>
   onClose: () => void
 }) {
   const [name, setName] = useState(initial?.name ?? '')
   const [phase, setPhase] = useState<TemplatePhase>(initial?.phase ?? 'after')
   const [autoRun, setAutoRun] = useState(initial?.auto_run ?? true)
   const [sections, setSections] = useState<TemplateSection[]>(
-    initial?.sections ?? [{ heading: '', instruction: '' }],
+    initial?.sections ?? [{ heading: '', instruction: '' }]
   )
   const [busy, setBusy] = useState(false)
 
@@ -44,7 +50,7 @@ export function TemplateEditor({
         s.heading.trim().length > 0 &&
         s.heading.trim().length <= 80 &&
         s.instruction.trim().length > 0 &&
-        s.instruction.trim().length <= 500,
+        s.instruction.trim().length <= 500
     )
 
   const update = (i: number, patch: Partial<TemplateSection>) =>
@@ -60,64 +66,64 @@ export function TemplateEditor({
   return (
     <Dialog open={open} onOpenChange={(o) => !o && onClose()} title={title}>
       <label htmlFor="template-editor-name" className="mb-3 block text-sm">
-        <span className="mb-1 block font-medium">Template name</span>
+        <span className="mb-1 block font-medium">{uiText('Template name')}</span>
         <Input
           id="template-editor-name"
-          aria-label="Template name"
+          aria-label={uiText('Template name')}
           value={name}
           maxLength={80}
           onChange={(e) => setName(e.target.value)}
         />
       </label>
       <label htmlFor="template-editor-phase" className="mb-3 block text-sm">
-        <span className="mb-1 block font-medium">Phase</span>
+        <span className="mb-1 block font-medium">{uiText('Phase')}</span>
         <select
           id="template-editor-phase"
-          aria-label="Phase"
+          aria-label={uiText('Phase')}
           value={phase}
           onChange={(e) => setPhase(e.target.value as TemplatePhase)}
           className="w-full rounded-[var(--radius)] border border-input bg-background px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
-          <option value="after">After</option>
-          <option value="pre">Pre</option>
-          <option value="during">During</option>
-          <option value="cross">Cross</option>
+          <option value="after">{uiText('After')}</option>
+          <option value="pre">{uiText('Pre')}</option>
+          <option value="during">{uiText('During')}</option>
+          <option value="cross">{uiText('Cross')}</option>
         </select>
       </label>
       <label htmlFor="template-editor-auto-run" className="mb-3 flex items-center gap-2 text-sm">
         <input
           id="template-editor-auto-run"
-          aria-label="Auto-run on new notes"
+          aria-label={uiText('Auto-run on new notes')}
           type="checkbox"
           checked={autoRun}
           onChange={(e) => setAutoRun(e.target.checked)}
           className="h-4 w-4 rounded border border-input"
         />
-        <span className="font-medium">Auto-run on new notes</span>
+        <span className="font-medium">{uiText('Auto-run on new notes')}</span>
       </label>
       <div className="mb-4 flex max-h-80 flex-col gap-3 overflow-y-auto">
         {sections.map((section, i) => (
           <div key={i} className="rounded-[var(--radius)] border border-border p-3">
             <Input
-              aria-label={`Section ${i + 1} heading`}
+              aria-label={uiText('Section {value1} heading', { value1: i + 1 })}
               value={section.heading}
               maxLength={80}
               onChange={(e) => update(i, { heading: e.target.value })}
-              placeholder="Heading"
+              placeholder={uiText('Heading')}
               className="mb-2"
             />
             <textarea
-              aria-label={`Section ${i + 1} instruction`}
+              aria-label={uiText('Section {value1} instruction', { value1: i + 1 })}
               value={section.instruction}
               maxLength={500}
               onChange={(e) => update(i, { instruction: e.target.value })}
-              placeholder="Instruction"
+              placeholder={uiText('Instruction')}
               rows={3}
               className="w-full rounded-[var(--radius)] border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
             <div className="mt-2 flex gap-2">
               <Button variant="ghost" size="sm" disabled={i === 0} onClick={() => swap(i, i - 1)}>
-                Move up
+                {uiText('Move up')}
               </Button>
               <Button
                 variant="ghost"
@@ -125,28 +131,36 @@ export function TemplateEditor({
                 disabled={i === sections.length - 1}
                 onClick={() => swap(i, i + 1)}
               >
-                Move down
+                {uiText('Move down')}
               </Button>
               <Button
                 variant="ghost"
                 size="sm"
-                aria-label={`Remove section ${i + 1}`}
+                aria-label={uiText('Remove section {value1}', { value1: i + 1 })}
                 disabled={sections.length === 1}
                 onClick={() => remove(i)}
               >
-                Remove
+                {uiText('Remove')}
               </Button>
             </div>
           </div>
         ))}
-        <Button variant="secondary" size="sm" className="self-start" onClick={add} disabled={sections.length >= 12}>
-          + Add section
+        <Button
+          variant="secondary"
+          size="sm"
+          className="self-start"
+          onClick={add}
+          disabled={sections.length >= 12}
+        >
+          {uiText('+ Add section')}
         </Button>
-        {sections.length >= 12 && <p className="text-xs text-muted-foreground">Maximum 12 sections</p>}
+        {sections.length >= 12 && (
+          <p className="text-xs text-muted-foreground">{uiText('Maximum 12 sections')}</p>
+        )}
       </div>
       <div className="flex items-center justify-end gap-2">
         <Button variant="secondary" size="sm" onClick={onClose}>
-          Cancel
+          {uiText('Cancel')}
         </Button>
         <Button
           size="sm"
@@ -157,8 +171,11 @@ export function TemplateEditor({
               await onSave(
                 name.trim(),
                 phase,
-                sections.map((s) => ({ heading: s.heading.trim(), instruction: s.instruction.trim() })),
-                autoRun,
+                sections.map((s) => ({
+                  heading: s.heading.trim(),
+                  instruction: s.instruction.trim(),
+                })),
+                autoRun
               )
               onClose()
             } catch {
@@ -168,7 +185,7 @@ export function TemplateEditor({
             }
           }}
         >
-          Save
+          {uiText('Save')}
         </Button>
       </div>
     </Dialog>

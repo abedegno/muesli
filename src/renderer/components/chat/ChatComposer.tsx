@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { useState } from 'react'
 
 // Message input with a pending state: disabled + a visible "sending"
@@ -30,7 +31,7 @@ export function ChatComposer({
       className="mt-2 flex items-end gap-2"
     >
       <textarea
-        aria-label="Message"
+        aria-label={uiText('Message')}
         value={value}
         disabled={sending}
         aria-busy={sending}
@@ -51,7 +52,7 @@ export function ChatComposer({
         aria-busy={sending}
         className="h-9 shrink-0 rounded-[var(--radius)] bg-primary px-3 text-sm font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-60"
       >
-        {sending ? 'Sending…' : 'Send'}
+        {sending ? uiText('Sending…') : uiText('Send')}
       </button>
     </form>
   )

@@ -1,8 +1,18 @@
+import { uiText } from '@/i18n'
 import { Pin } from 'lucide-react'
 import { muesli } from '@/api'
 import { useToast } from '@/components/ui/Toast'
 import { NoteListItem } from './NoteListItem'
-import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuSub, ContextMenuSubContent, ContextMenuSubTrigger, ContextMenuTrigger } from '@/components/ui/ContextMenu'
+import {
+  ContextMenu,
+  ContextMenuContent,
+  ContextMenuItem,
+  ContextMenuSeparator,
+  ContextMenuSub,
+  ContextMenuSubContent,
+  ContextMenuSubTrigger,
+  ContextMenuTrigger,
+} from '@/components/ui/ContextMenu'
 import type { Folder, Note } from '../../shared/types'
 import { useAgentCapability } from '@/lib/agentCapability'
 import { AI_UNAVAILABLE_MESSAGE } from './AgentUnavailableNotice'
@@ -42,16 +52,12 @@ export function FeedNoteRow({
           draggable
           onDragStart={(e) => e.dataTransfer.setData('text/note-id', note.id)}
         >
-          <button
-            type="button"
-            className="w-full text-left"
-            onClick={onOpen}
-          >
+          <button type="button" className="w-full text-left" onClick={onOpen}>
             <NoteListItem note={note} folders={folders} />
           </button>
           <button
             type="button"
-            aria-label={pinned ? 'Unpin note' : 'Pin note'}
+            aria-label={pinned ? uiText('Unpin note') : uiText('Pin note')}
             onClick={(e) => {
               e.stopPropagation()
               void run(() => (pinned ? muesli.unpinNote(note.id) : muesli.pinNote(note.id)))
@@ -64,15 +70,15 @@ export function FeedNoteRow({
       </ContextMenuTrigger>
       <ContextMenuContent>
         <ContextMenuItem destructive onSelect={() => run(() => muesli.deleteNote(note.id))}>
-          Move to Trash
+          {uiText('Move to Trash')}
         </ContextMenuItem>
         <ContextMenuSeparator />
         <ContextMenuSub>
-          <ContextMenuSubTrigger>Add to folder</ContextMenuSubTrigger>
+          <ContextMenuSubTrigger>{uiText('Add to folder')}</ContextMenuSubTrigger>
           <ContextMenuSubContent>
             {folders.length === 0 ? (
               <ContextMenuItem disabled className="text-muted-foreground">
-                No folders yet
+                {uiText('No folders yet')}
               </ContextMenuItem>
             ) : (
               folders.map((f) => (
@@ -93,8 +99,10 @@ export function FeedNoteRow({
           onSelect={() => run(() => muesli.resummarize(note.id))}
           className="data-[disabled]:cursor-not-allowed data-[disabled]:text-muted-foreground"
         >
-          Re-run summary
-          {agentConfigured === false ? <span className="text-xs">Agent plugin required</span> : null}
+          {uiText('Re-run summary')}
+          {agentConfigured === false ? (
+            <span className="text-xs">{uiText('Agent plugin required')}</span>
+          ) : null}
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>
@@ -116,7 +124,9 @@ export function GroupedNoteSections({
     <>
       {groups.map((g) => (
         <section key={g.label}>
-          <h2 className="px-1 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">{g.label}</h2>
+          <h2 className="px-1 pb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            {g.label}
+          </h2>
           <ul className="flex flex-col gap-1">
             {g.notes.map((n) => (
               <li key={n.id}>

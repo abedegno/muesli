@@ -28,7 +28,10 @@ vi.mock('react-router-dom', () => {
   const ctx = { allNotes: [], folders: [], refresh: testState.refresh }
   // Includes `segment` so the SRC01b jump-to-timestamp wiring (NoteScreen reads
   // it and threads it to NoteView as `initialSegmentId`) is exercised below.
-  const searchParams: [URLSearchParams, () => void] = [new URLSearchParams('segment=seg-99'), () => {}]
+  const searchParams: [URLSearchParams, () => void] = [
+    new URLSearchParams('segment=seg-99'),
+    () => {},
+  ]
   return {
     useParams: () => ({ id: testState.currentNoteId }),
     useSearchParams: () => searchParams,
@@ -48,7 +51,14 @@ function freshUploadDeferred() {
 }
 
 const fullNote: FullNote = {
-  note: { id: 'n1', title: 'Standup', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
+  note: {
+    id: 'n1',
+    title: 'Standup',
+    status: 'ready',
+    created_at: '',
+    updated_at: '',
+    partial_transcript: false,
+  },
   body_markdown: '',
   transcript: null,
   summaries: [],
@@ -56,7 +66,14 @@ const fullNote: FullNote = {
 const fullNoteById: Record<string, FullNote> = {
   n1: fullNote,
   n2: {
-    note: { id: 'n2', title: 'Planning', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
+    note: {
+      id: 'n2',
+      title: 'Planning',
+      status: 'ready',
+      created_at: '',
+      updated_at: '',
+      partial_transcript: false,
+    },
     body_markdown: '',
     transcript: null,
     summaries: [],
@@ -68,8 +85,18 @@ vi.mock('@/api', () => ({
     // Terminal status on load → the mount effect does not start a poll.
     getFull: vi.fn(async (id: string) => fullNoteById[id] ?? fullNote),
     uploadAudio: vi.fn(() => uploadPromise),
-    addTag: vi.fn(() => new Promise<void>((res) => { testState.resolveTagMutation.addTag = res })),
-    removeTag: vi.fn(() => new Promise<void>((res) => { testState.resolveTagMutation.removeTag = res })),
+    addTag: vi.fn(
+      () =>
+        new Promise<void>((res) => {
+          testState.resolveTagMutation.addTag = res
+        })
+    ),
+    removeTag: vi.fn(
+      () =>
+        new Promise<void>((res) => {
+          testState.resolveTagMutation.removeTag = res
+        })
+    ),
     addNoteFolder: vi.fn(),
     removeNoteFolder: vi.fn(),
     createFolder: vi.fn(),
@@ -113,7 +140,15 @@ vi.mock('../capture/electronCapture', () => ({ ElectronCapture: class {} }))
 // Child components reduced to inert stand-ins. NoteHeader exposes the start/stop
 // and duplicate callbacks as buttons so the test can drive the lifecycle.
 vi.mock('./NoteHeader', () => ({
-  NoteHeader: (props: { title: string; onStart: () => void; onStop: () => void; onDeleteNote: () => void; onDuplicate: () => void; onExportWithOptions?: () => void; disabledReason?: string }) => (
+  NoteHeader: (props: {
+    title: string
+    onStart: () => void
+    onStop: () => void
+    onDeleteNote: () => void
+    onDuplicate: () => void
+    onExportWithOptions?: () => void
+    disabledReason?: string
+  }) => (
     <div>
       <span data-testid="note-title">{props.title}</span>
       <span data-testid="record-disabled-reason">{props.disabledReason ?? ''}</span>
@@ -121,7 +156,9 @@ vi.mock('./NoteHeader', () => ({
       <button onClick={props.onStop}>stop-rec</button>
       <button onClick={props.onDeleteNote}>delete-note</button>
       <button onClick={props.onDuplicate}>duplicate-note</button>
-      {props.onExportWithOptions && <button onClick={props.onExportWithOptions}>export-with-options</button>}
+      {props.onExportWithOptions && (
+        <button onClick={props.onExportWithOptions}>export-with-options</button>
+      )}
     </div>
   ),
 }))
@@ -136,7 +173,11 @@ vi.mock('./TagBar', () => ({
 }))
 vi.mock('./FolderBar', () => ({ FolderBar: () => null }))
 vi.mock('./NoteView', () => ({
-  NoteView: (props: { onRegenerateTemplate?: (templateId: string) => void; regeneratingTemplateId?: string | null; initialSegmentId?: string }) => (
+  NoteView: (props: {
+    onRegenerateTemplate?: (templateId: string) => void
+    regeneratingTemplateId?: string | null
+    initialSegmentId?: string
+  }) => (
     <div>
       {props.onRegenerateTemplate && (
         <button
@@ -214,7 +255,7 @@ describe('NoteScreen — upload AbortController micro-race', () => {
   it('disables microphone preview for an already-transcribed note', async () => {
     render(<NoteScreen />)
     expect(await screen.findByTestId('record-disabled-reason')).toHaveTextContent(
-      'This note already has a recording',
+      'This note already has a recording'
     )
   })
 
@@ -309,10 +350,12 @@ describe('NoteScreen — export options dialog', () => {
     await user.click(screen.getByLabelText(/redact speaker names/i))
     await user.click(screen.getByRole('button', { name: /^export note$/i }))
 
-    await waitFor(() => expect(muesli.exportNote).toHaveBeenCalledWith('n1', 'pdf', {
-      includeTranscript: false,
-      redactSpeakers: true,
-    }))
+    await waitFor(() =>
+      expect(muesli.exportNote).toHaveBeenCalledWith('n1', 'pdf', {
+        includeTranscript: false,
+        redactSpeakers: true,
+      })
+    )
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
   })
 })
@@ -350,7 +393,7 @@ describe('NoteScreen — copy transcript', () => {
 
     render(<NoteScreen />)
     await screen.findByText('Standup')
-    expect(screen.getByRole('button', { name: /copy transcript/i })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: /copy transcript/i })).not.toBeInTheDocument()
   })
 })
 
@@ -358,30 +401,33 @@ describe('NoteScreen — tag refresh abort on route change', () => {
   it.each([
     ['add-tag', 'addTag'],
     ['remove-tag', 'removeTag'],
-  ] as const)('does not let a stale %s refresh overwrite the next note', async (buttonLabel, apiMethod) => {
-    const user = userEvent.setup()
-    const { muesli } = await import('@/api')
+  ] as const)(
+    'does not let a stale %s refresh overwrite the next note',
+    async (buttonLabel, apiMethod) => {
+      const user = userEvent.setup()
+      const { muesli } = await import('@/api')
 
-    testState.currentNoteId = 'n1'
-    const { rerender } = render(<NoteScreen />)
+      testState.currentNoteId = 'n1'
+      const { rerender } = render(<NoteScreen />)
 
-    await screen.findByText('start-rec')
-    await waitFor(() => expect(screen.getByTestId('note-title')).toHaveTextContent('Standup'))
+      await screen.findByText('start-rec')
+      await waitFor(() => expect(screen.getByTestId('note-title')).toHaveTextContent('Standup'))
 
-    await user.click(screen.getByText(buttonLabel))
-    expect(vi.mocked(muesli[apiMethod])).toHaveBeenCalledWith('n1', 'urgent')
+      await user.click(screen.getByText(buttonLabel))
+      expect(vi.mocked(muesli[apiMethod])).toHaveBeenCalledWith('n1', 'urgent')
 
-    testState.currentNoteId = 'n2'
-    rerender(<NoteScreen />)
+      testState.currentNoteId = 'n2'
+      rerender(<NoteScreen />)
 
-    await waitFor(() => expect(screen.getByTestId('note-title')).toHaveTextContent('Planning'))
+      await waitFor(() => expect(screen.getByTestId('note-title')).toHaveTextContent('Planning'))
 
-    const callsBefore = vi.mocked(muesli.getFull).mock.calls.length
-    testState.resolveTagMutation[apiMethod]?.()
-    await waitFor(() => expect(vi.mocked(muesli.getFull).mock.calls.length).toBe(callsBefore))
+      const callsBefore = vi.mocked(muesli.getFull).mock.calls.length
+      testState.resolveTagMutation[apiMethod]?.()
+      await waitFor(() => expect(vi.mocked(muesli.getFull).mock.calls.length).toBe(callsBefore))
 
-    expect(screen.getByTestId('note-title')).toHaveTextContent('Planning')
-  })
+      expect(screen.getByTestId('note-title')).toHaveTextContent('Planning')
+    }
+  )
 })
 
 describe('NoteScreen — failed note load (Gap 1)', () => {
@@ -486,14 +532,20 @@ describe('NoteScreen — regenerateTemplate (TPL01)', () => {
     const btn = await screen.findByText('regenerate-tpl-1')
     const callsBefore = vi.mocked(muesli.getFull).mock.calls.length
     await user.click(btn)
-    await waitFor(() => expect(vi.mocked(muesli.getFull).mock.calls.length).toBeGreaterThan(callsBefore))
+    await waitFor(() =>
+      expect(vi.mocked(muesli.getFull).mock.calls.length).toBeGreaterThan(callsBefore)
+    )
   })
 
   it('disables the regenerate control for its template while in flight, then clears it', async () => {
     const user = userEvent.setup()
     const { muesli } = await import('@/api')
     let resolveRegen: () => void = () => {}
-    vi.mocked(muesli.regenerateSummary).mockReturnValueOnce(new Promise((res) => { resolveRegen = () => res(undefined) }))
+    vi.mocked(muesli.regenerateSummary).mockReturnValueOnce(
+      new Promise((res) => {
+        resolveRegen = () => res(undefined)
+      })
+    )
     render(<NoteScreen />)
     const btn = await screen.findByText('regenerate-tpl-1')
     await user.click(btn)
@@ -501,11 +553,15 @@ describe('NoteScreen — regenerateTemplate (TPL01)', () => {
     // While the regenerateSummary call is unresolved, the mock NoteView is told
     // this template is regenerating (surfaced via the disabled attribute + the
     // regeneratingTemplateId span the test mock renders).
-    await waitFor(() => expect(screen.getByTestId('regenerating-template-id')).toHaveTextContent('tpl-1'))
+    await waitFor(() =>
+      expect(screen.getByTestId('regenerating-template-id')).toHaveTextContent('tpl-1')
+    )
     expect(btn).toBeDisabled()
 
     resolveRegen()
-    await waitFor(() => expect(screen.getByTestId('regenerating-template-id')).toHaveTextContent(''))
+    await waitFor(() =>
+      expect(screen.getByTestId('regenerating-template-id')).toHaveTextContent('')
+    )
     expect(btn).not.toBeDisabled()
   })
 
@@ -517,6 +573,44 @@ describe('NoteScreen — regenerateTemplate (TPL01)', () => {
     const btn = await screen.findByText('regenerate-tpl-1')
     await user.click(btn)
     await waitFor(() => expect(mockNotify).toHaveBeenCalledWith('boom', 'error'))
-    await waitFor(() => expect(screen.getByTestId('regenerating-template-id')).toHaveTextContent(''))
+    await waitFor(() =>
+      expect(screen.getByTestId('regenerating-template-id')).toHaveTextContent('')
+    )
   })
+})
+
+it('reports upload failure and keeps captured bytes available for an explicit retry', async () => {
+  const { ActivityProvider } = await import('@/lib/activityStore')
+  const { ActivityFeed } = await import('./ActivityFeed')
+  const { muesli } = await import('@/api')
+  vi.mocked(muesli.uploadAudio).mockRejectedValueOnce(new Error('Server unavailable'))
+  render(
+    <ActivityProvider>
+      <NoteScreen />
+      <ActivityFeed />
+    </ActivityProvider>
+  )
+  await userEvent.click(await screen.findByText('start-rec'))
+  await userEvent.click(screen.getByText('stop-rec'))
+  expect(await screen.findByRole('alert')).toHaveTextContent('Keep this note open and retry')
+  expect(screen.queryByText(/Preparing upload/)).not.toBeInTheDocument()
+  expect(screen.getByText(/Upload failed/)).toBeInTheDocument()
+  await userEvent.click(screen.getByRole('button', { name: 'Retry upload' }))
+  await waitFor(() => expect(muesli.uploadAudio).toHaveBeenCalledTimes(2))
+  expect(vi.mocked(muesli.uploadAudio).mock.calls[1][0].audio?.byteLength).toBe(3)
+})
+
+it('finishes upload activity even when no progress event arrives', async () => {
+  const { ActivityProvider } = await import('@/lib/activityStore')
+  const { ActivityFeed } = await import('./ActivityFeed')
+  render(
+    <ActivityProvider>
+      <NoteScreen />
+      <ActivityFeed />
+    </ActivityProvider>
+  )
+  await userEvent.click(await screen.findByText('start-rec'))
+  await userEvent.click(screen.getByText('stop-rec'))
+  resolveUpload()
+  await waitFor(() => expect(screen.queryByText(/Preparing upload/)).not.toBeInTheDocument())
 })

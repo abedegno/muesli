@@ -1,3 +1,4 @@
+import { uiText } from '@/i18n'
 import { useEffect, useState } from 'react'
 import { Calendar, CalendarPlus } from 'lucide-react'
 import { muesli } from '@/api'
@@ -53,7 +54,10 @@ export function NoteEventLink({
   const [linkedEvent, setLinkedEvent] = useState<LinkedEventLookup>(undefined)
 
   useEffect(() => {
-    if (!eventId) { setLinkedEvent(undefined); return }
+    if (!eventId) {
+      setLinkedEvent(undefined)
+      return
+    }
     let cancelled = false
     setLinkedEvent(undefined)
     const now = Date.now()
@@ -61,9 +65,15 @@ export function NoteEventLink({
     const to = new Date(now + LINKED_EVENT_LOOKUP_DAYS * DAY_MS).toISOString()
     muesli
       .getCalendarEvents(from, to)
-      .then((evs) => { if (!cancelled) setLinkedEvent(evs.find((e) => e.id === eventId) ?? null) })
-      .catch(() => { if (!cancelled) setLinkedEvent(null) })
-    return () => { cancelled = true }
+      .then((evs) => {
+        if (!cancelled) setLinkedEvent(evs.find((e) => e.id === eventId) ?? null)
+      })
+      .catch(() => {
+        if (!cancelled) setLinkedEvent(null)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [eventId])
 
   const handleOpenChange = (next: boolean) => {
@@ -84,23 +94,29 @@ export function NoteEventLink({
         <Calendar size={14} className="shrink-0" aria-hidden />
         <div className="min-w-0">
           {linkedEvent === undefined ? (
-            <p className="truncate font-medium text-foreground">Loading linked event…</p>
+            <p className="truncate font-medium text-foreground">
+              {uiText('Loading linked event…')}
+            </p>
           ) : linkedEvent === null ? (
-            <p className="truncate font-medium text-foreground">Linked event (details unavailable)</p>
+            <p className="truncate font-medium text-foreground">
+              {uiText('Linked event (details unavailable)')}
+            </p>
           ) : (
             <>
-              <p className="truncate font-medium text-foreground">{linkedEvent.title || 'Untitled event'}</p>
+              <p className="truncate font-medium text-foreground">
+                {linkedEvent.title || uiText('Untitled event')}
+              </p>
               <p className="truncate">{formatEventTimeRange(linkedEvent)}</p>
             </>
           )}
         </div>
         <button
           type="button"
-          aria-label="Unlink calendar event"
+          aria-label={uiText('Unlink calendar event')}
           onClick={onUnlink}
           className="ml-1 shrink-0 rounded px-1.5 py-0.5 hover:bg-muted hover:text-foreground"
         >
-          Unlink
+          {uiText('Unlink')}
         </button>
       </div>
     )
@@ -111,23 +127,23 @@ export function NoteEventLink({
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          aria-label="Link to calendar event"
+          aria-label={uiText('Link to calendar event')}
           className="inline-flex items-center gap-1.5 rounded-[var(--radius)] border border-border px-2 py-1 text-xs text-muted-foreground hover:bg-muted hover:text-foreground"
         >
           <CalendarPlus size={14} aria-hidden />
-          Link to event
+          {uiText('Link to event')}
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
         {upcoming === null ? (
-          <DropdownMenuItem disabled>Loading…</DropdownMenuItem>
+          <DropdownMenuItem disabled>{uiText('Loading…')}</DropdownMenuItem>
         ) : upcoming.length === 0 ? (
-          <DropdownMenuItem disabled>No upcoming events</DropdownMenuItem>
+          <DropdownMenuItem disabled>{uiText('No upcoming events')}</DropdownMenuItem>
         ) : (
           upcoming.map((ev) => (
             <DropdownMenuItem key={ev.id} onSelect={() => onLink(ev.id)}>
               <div className="min-w-0">
-                <p className="truncate">{ev.title || 'Untitled event'}</p>
+                <p className="truncate">{ev.title || uiText('Untitled event')}</p>
                 <p className="truncate text-xs text-muted-foreground">{formatEventTimeRange(ev)}</p>
               </div>
             </DropdownMenuItem>

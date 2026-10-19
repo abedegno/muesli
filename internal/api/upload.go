@@ -58,6 +58,7 @@ func (s *Server) handleAudioUploadURL(w http.ResponseWriter, r *http.Request) {
 }
 
 type audioURLGrant struct {
+	Key       string `json:"key"`
 	URL       string `json:"url"`
 	ExpiresAt string `json:"expires_at"`
 }
@@ -91,6 +92,7 @@ func (s *Server) handleAudioDownloadURL(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	writeJSON(w, http.StatusOK, audioURLGrant{
+		Key:       note.AudioObjectKey,
 		URL:       url,
 		ExpiresAt: time.Now().Add(ttl).UTC().Format(time.RFC3339),
 	})

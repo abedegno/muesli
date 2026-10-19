@@ -14,6 +14,7 @@ export type NoteStatus = (typeof NOTE_STATUSES)[number]
 
 /** Server-produced note snapshot; optional fields vary by endpoint and processing state. */
 export interface Note {
+  capture_needs_review?: boolean
   id: string
   owner_id?: string
   title: string
@@ -101,6 +102,7 @@ export interface RetranscribeNoteResponse {
 
 /** Time-limited server URL used by the renderer to play a note's audio. */
 export interface AudioUrlGrant {
+  key?: string
   url: string
   expires_at: string
 }
@@ -156,6 +158,7 @@ interface Summary {
 
 /** Complete server note snapshot returned through main; transcript null means not available yet. */
 export interface FullNote {
+  connectionId?: string
   note: Note
   body_markdown: string
   // The server returns `transcript: null` until a transcript exists (e.g. while
@@ -190,6 +193,7 @@ export interface Decision {
 
 /** Main-owned persisted connection config exposed to renderer as a point-in-time snapshot. */
 export interface ServerConfig {
+  userId?: string
   serverUrl: string
   token: string
   manualServer?: boolean
@@ -215,6 +219,7 @@ export interface DigestConfig {
 
 /** Server plugin execution category consumed by renderer. */
 export type PluginKind = 'transcriber' | 'streaming-transcriber' | 'agent'
+export type TranscriberKind = Exclude<PluginKind, 'agent'>
 
 /** Server plugin configuration snapshot; optional config is absent when not supplied. */
 export interface Plugin {
@@ -239,9 +244,16 @@ export type RuleField = 'tag' | 'title' | 'status' | 'created' | 'folder'
 /** Operator interpreted by the server for a smart-list condition. */
 export type RuleOperator = 'is' | 'isNot' | 'contains' | 'equals' | 'withinLastDays'
 /** Renderer-authored leaf predicate sent to main and then the server unchanged. */
-export interface RuleCondition { field: RuleField; operator: RuleOperator; value: string | number }
+export interface RuleCondition {
+  field: RuleField
+  operator: RuleOperator
+  value: string | number
+}
 /** Renderer-authored recursive boolean group; children may contain further groups. */
-export interface RuleGroup { op: 'and' | 'or'; children: RuleNode[] }
+export interface RuleGroup {
+  op: 'and' | 'or'
+  children: RuleNode[]
+}
 /** Recursive wire node accepted and returned by smart-list APIs. */
 export type RuleNode = RuleGroup | RuleCondition
 
@@ -327,7 +339,8 @@ export interface EmbeddedStartupError {
 }
 
 /** Live main-to-renderer embedded-server startup event union. */
-export type EmbeddedStartupStatus = EmbeddedStartupProgress | EmbeddedStartupReady | EmbeddedStartupError
+export type EmbeddedStartupStatus =
+  EmbeddedStartupProgress | EmbeddedStartupReady | EmbeddedStartupError
 
 /**
  * Server-persisted client-facing rename of a raw diarization label.
@@ -493,4 +506,20 @@ export interface InsightsResponse {
   top_people: PersonWithMeetingCount[]
   top_companies: CompanyWithMeetingCount[]
   top_folders: FolderWithMeetingCount[]
+}
+
+export interface RecordingRecoveryInfo {
+  captureId?: string
+  noteId: string
+  mimeType: string
+  byteLength: number
+  createdAt: string
+}
+
+export interface CalendarReadiness {
+  connections: number
+  failures: number
+  lastSyncedAt: string | null
+  googleConfigured: boolean
+  microsoftConfigured: boolean
 }

@@ -20,7 +20,7 @@ describe('activityReducer — ADD_UPLOAD', () => {
     expect(state).toHaveLength(1)
     expect(state[0]).toMatchObject({
       kind: 'upload',
-      id: 'n1',
+      id: 'upload:n1',
       noteId: 'n1',
       noteTitle: 'My Meeting',
       phase: 'requesting-url',
@@ -30,7 +30,14 @@ describe('activityReducer — ADD_UPLOAD', () => {
 
   it('does not duplicate if an upload item already exists for the same noteId', () => {
     const initial: ActivityItem[] = [
-      { kind: 'upload', id: 'n1', noteId: 'n1', noteTitle: 'My Meeting', phase: 'uploading-audio', done: false },
+      {
+        kind: 'upload',
+        id: 'upload:n1',
+        noteId: 'n1',
+        noteTitle: 'My Meeting',
+        phase: 'uploading-audio',
+        done: false,
+      },
     ]
     const state = activityReducer(initial, {
       type: 'ADD_UPLOAD',
@@ -38,14 +45,23 @@ describe('activityReducer — ADD_UPLOAD', () => {
       noteTitle: 'My Meeting',
     })
     expect(state).toHaveLength(1)
-    expect(state[0].kind === 'upload' && (state[0] as Extract<ActivityItem, { kind: 'upload' }>).phase).toBe('uploading-audio')
+    expect(
+      state[0].kind === 'upload' && (state[0] as Extract<ActivityItem, { kind: 'upload' }>).phase
+    ).toBe('uploading-audio')
   })
 })
 
 describe('activityReducer — UPDATE_UPLOAD', () => {
   it('updates the phase of an existing upload item', () => {
     const initial: ActivityItem[] = [
-      { kind: 'upload', id: 'n1', noteId: 'n1', noteTitle: 'My Meeting', phase: 'requesting-url', done: false },
+      {
+        kind: 'upload',
+        id: 'upload:n1',
+        noteId: 'n1',
+        noteTitle: 'My Meeting',
+        phase: 'requesting-url',
+        done: false,
+      },
     ]
     const state = activityReducer(initial, {
       type: 'UPDATE_UPLOAD',
@@ -61,7 +77,14 @@ describe('activityReducer — UPDATE_UPLOAD', () => {
 
   it('marks done=true when updating to done phase', () => {
     const initial: ActivityItem[] = [
-      { kind: 'upload', id: 'n1', noteId: 'n1', noteTitle: 'My Meeting', phase: 'confirming-upload', done: false },
+      {
+        kind: 'upload',
+        id: 'upload:n1',
+        noteId: 'n1',
+        noteTitle: 'My Meeting',
+        phase: 'confirming-upload',
+        done: false,
+      },
     ]
     const state = activityReducer(initial, {
       type: 'UPDATE_UPLOAD',
@@ -86,7 +109,7 @@ describe('activityReducer — ADD_PROCESSING', () => {
     expect(state).toHaveLength(1)
     expect(state[0]).toMatchObject({
       kind: 'processing',
-      id: 'n2',
+      id: 'processing:n2',
       noteId: 'n2',
       noteTitle: 'Sprint Retro',
       status: 'transcribing',
@@ -96,7 +119,14 @@ describe('activityReducer — ADD_PROCESSING', () => {
 
   it('does not duplicate if processing item for same noteId exists', () => {
     const initial: ActivityItem[] = [
-      { kind: 'processing', id: 'n2', noteId: 'n2', noteTitle: 'Sprint Retro', status: 'transcribing', done: false },
+      {
+        kind: 'processing',
+        id: 'processing:n2',
+        noteId: 'n2',
+        noteTitle: 'Sprint Retro',
+        status: 'transcribing',
+        done: false,
+      },
     ]
     const state = activityReducer(initial, {
       type: 'ADD_PROCESSING',
@@ -113,7 +143,14 @@ describe('activityReducer — ADD_PROCESSING', () => {
 describe('activityReducer — UPDATE_PROCESSING', () => {
   it('updates the status of an existing processing item', () => {
     const initial: ActivityItem[] = [
-      { kind: 'processing', id: 'n2', noteId: 'n2', noteTitle: 'Sprint Retro', status: 'transcribing', done: false },
+      {
+        kind: 'processing',
+        id: 'processing:n2',
+        noteId: 'n2',
+        noteTitle: 'Sprint Retro',
+        status: 'transcribing',
+        done: false,
+      },
     ]
     const state = activityReducer(initial, {
       type: 'UPDATE_PROCESSING',
@@ -128,7 +165,14 @@ describe('activityReducer — UPDATE_PROCESSING', () => {
 
   it('marks done=true when status becomes ready', () => {
     const initial: ActivityItem[] = [
-      { kind: 'processing', id: 'n2', noteId: 'n2', noteTitle: 'Sprint Retro', status: 'summarizing', done: false },
+      {
+        kind: 'processing',
+        id: 'processing:n2',
+        noteId: 'n2',
+        noteTitle: 'Sprint Retro',
+        status: 'summarizing',
+        done: false,
+      },
     ]
     const state = activityReducer(initial, {
       type: 'UPDATE_PROCESSING',
@@ -145,12 +189,26 @@ describe('activityReducer — UPDATE_PROCESSING', () => {
 describe('activityReducer — DISMISS', () => {
   it('removes an item by id', () => {
     const initial: ActivityItem[] = [
-      { kind: 'upload', id: 'n1', noteId: 'n1', noteTitle: 'Meeting', phase: 'uploading-audio', done: false },
-      { kind: 'processing', id: 'n2', noteId: 'n2', noteTitle: 'Retro', status: 'transcribing', done: false },
+      {
+        kind: 'upload',
+        id: 'upload:n1',
+        noteId: 'n1',
+        noteTitle: 'Meeting',
+        phase: 'uploading-audio',
+        done: false,
+      },
+      {
+        kind: 'processing',
+        id: 'processing:n2',
+        noteId: 'n2',
+        noteTitle: 'Retro',
+        status: 'transcribing',
+        done: false,
+      },
     ]
-    const state = activityReducer(initial, { type: 'DISMISS', id: 'n1' })
+    const state = activityReducer(initial, { type: 'DISMISS', id: 'upload:n1' })
     expect(state).toHaveLength(1)
-    expect(state[0].id).toBe('n2')
+    expect(state[0].id).toBe('processing:n2')
   })
 })
 
@@ -158,14 +216,35 @@ describe('activityReducer — multiple concurrent items', () => {
   it('tracks multiple items independently', () => {
     let state: ActivityItem[] = []
     state = activityReducer(state, { type: 'ADD_UPLOAD', noteId: 'n1', noteTitle: 'Note 1' })
-    state = activityReducer(state, { type: 'ADD_PROCESSING', noteId: 'n2', noteTitle: 'Note 2', status: 'transcribing' })
+    state = activityReducer(state, {
+      type: 'ADD_PROCESSING',
+      noteId: 'n2',
+      noteTitle: 'Note 2',
+      status: 'transcribing',
+    })
     expect(state).toHaveLength(2)
 
-    state = activityReducer(state, { type: 'UPDATE_UPLOAD', noteId: 'n1', phase: 'uploading-audio', done: false })
-    state = activityReducer(state, { type: 'UPDATE_PROCESSING', noteId: 'n2', status: 'summarizing', done: false })
+    state = activityReducer(state, {
+      type: 'UPDATE_UPLOAD',
+      noteId: 'n1',
+      phase: 'uploading-audio',
+      done: false,
+    })
+    state = activityReducer(state, {
+      type: 'UPDATE_PROCESSING',
+      noteId: 'n2',
+      status: 'summarizing',
+      done: false,
+    })
 
-    const upload = state.find((i) => i.kind === 'upload') as Extract<ActivityItem, { kind: 'upload' }>
-    const processing = state.find((i) => i.kind === 'processing') as Extract<ActivityItem, { kind: 'processing' }>
+    const upload = state.find((i) => i.kind === 'upload') as Extract<
+      ActivityItem,
+      { kind: 'upload' }
+    >
+    const processing = state.find((i) => i.kind === 'processing') as Extract<
+      ActivityItem,
+      { kind: 'processing' }
+    >
     expect(upload.phase).toBe('uploading-audio')
     expect(processing.status).toBe('summarizing')
   })
@@ -243,8 +322,26 @@ describe('ActivityProvider — dismiss', () => {
     expect(result.current.items).toHaveLength(1)
 
     act(() => {
-      result.current.dismiss('n1')
+      result.current.dismiss('upload:n1')
     })
     expect(result.current.items).toHaveLength(0)
+  })
+})
+
+it('does not remove processing when the same note upload completes and expires', async () => {
+  vi.useFakeTimers()
+  const { result } = renderHook(() => useActivity(), { wrapper: ActivityProvider })
+  act(() => {
+    result.current.addUpload('same-note', 'Meeting')
+    result.current.updateUpload('same-note', 'done', true)
+    result.current.addProcessing('same-note', 'Meeting', 'transcribing')
+  })
+  expect(new Set(result.current.items.map((item) => item.id)).size).toBe(2)
+  act(() => vi.advanceTimersByTime(2000))
+  expect(result.current.items).toHaveLength(1)
+  expect(result.current.items[0]).toMatchObject({
+    kind: 'processing',
+    status: 'transcribing',
+    done: false,
   })
 })

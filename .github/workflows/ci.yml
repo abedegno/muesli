@@ -348,6 +348,7 @@ jobs:
         run: npm run check:tokens
       - name: Format check (Prettier)
         run: npm run format:check
+      - run: npm run check:i18n
       - run: npm run typecheck
       - name: Test coverage
         run: npm run test:coverage

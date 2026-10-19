@@ -7,6 +7,8 @@ vi.mock('@tiptap/react', async () => {
   const { useEffect, useState } = await import('react')
 
   type MockEditor = {
+    options: { editorProps: object }
+    setOptions: ReturnType<typeof vi.fn>
     _markdown: string
     _options: { onUpdate?: ({ editor }: { editor: MockEditor }) => void } | null
     storage: { markdown: { getMarkdown: () => string } }
@@ -25,6 +27,8 @@ vi.mock('@tiptap/react', async () => {
 
   const createEditor = (content: string): MockEditor => {
     const editor: MockEditor = {
+      options: { editorProps: {} },
+      setOptions: vi.fn(),
       _markdown: content,
       _options: null,
       storage: {
@@ -60,7 +64,10 @@ vi.mock('@tiptap/react', async () => {
     return editor
   }
 
-  function useEditor(options: { content: string; onUpdate?: ({ editor }: { editor: MockEditor }) => void }) {
+  function useEditor(options: {
+    content: string
+    onUpdate?: ({ editor }: { editor: MockEditor }) => void
+  }) {
     const [editor] = useState(() => createEditor(options.content))
     editor._options = options
     return editor
@@ -113,7 +120,9 @@ afterEach(() => {
 
 describe('NoteEditor', () => {
   it('renders the editor surface with the initial markdown', () => {
-    render(<NoteEditor initialMarkdown="Hello world" onSave={vi.fn().mockResolvedValue(undefined)} />)
+    render(
+      <NoteEditor initialMarkdown="Hello world" onSave={vi.fn().mockResolvedValue(undefined)} />
+    )
 
     expect(screen.getByLabelText('Note editor')).toBeInTheDocument()
     expect(screen.getByText('Hello world')).toBeInTheDocument()
@@ -125,7 +134,9 @@ describe('NoteEditor', () => {
   it('opens and closes the find bar from keyboard shortcuts', async () => {
     const user = userEvent.setup()
 
-    render(<NoteEditor initialMarkdown="Hello world" onSave={vi.fn().mockResolvedValue(undefined)} />)
+    render(
+      <NoteEditor initialMarkdown="Hello world" onSave={vi.fn().mockResolvedValue(undefined)} />
+    )
 
     await user.click(screen.getByLabelText('Note editor'))
     await user.keyboard('{Control>}f{/Control}')

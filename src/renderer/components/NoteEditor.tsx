@@ -1,3 +1,4 @@
+import { uiText, useLocale } from '@/i18n'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useEditor, EditorContent, useEditorState } from '@tiptap/react'
 import StarterKit from '@tiptap/starter-kit'
@@ -27,7 +28,7 @@ type SaveState = 'idle' | 'saving' | 'saved' | 'error'
  */
 function buildPlainTextPosMap(doc: PmNode): number[] {
   const posMap: number[] = []
-  let separated = true  // start true so the first block never gets a separator
+  let separated = true // start true so the first block never gets a separator
 
   doc.nodesBetween(0, doc.content.size, (node, pos) => {
     if (node.isText && node.text) {
@@ -35,7 +36,7 @@ function buildPlainTextPosMap(doc: PmNode): number[] {
         posMap.push(pos + i)
       }
       separated = false
-      return false  // text nodes have no children
+      return false // text nodes have no children
     }
     if (node.isBlock) {
       if (!separated) {
@@ -43,7 +44,7 @@ function buildPlainTextPosMap(doc: PmNode): number[] {
         posMap.push(pos)
         separated = true
       }
-      return true  // continue into block children
+      return true // continue into block children
     }
     // hardBreak is an inline leaf that editor.getText() serializes as '\n',
     // so it contributes one character to the plain-text string. Push its PM
@@ -65,10 +66,7 @@ function buildPlainTextPosMap(doc: PmNode): number[] {
  * Map a plain-text match range to a ProseMirror selection range.
  * Returns null if the mapping can't be done (e.g. out-of-bounds).
  */
-function matchToPmRange(
-  match: MatchRange,
-  posMap: number[],
-): { from: number; to: number } | null {
+function matchToPmRange(match: MatchRange, posMap: number[]): { from: number; to: number } | null {
   const from = posMap[match.from]
   const lastCharPos = posMap[match.to - 1]
   if (from === undefined || lastCharPos === undefined) return null
@@ -119,12 +117,8 @@ const FindHighlightExtension = Extension.create({
               const pmRange = matchToPmRange(matches[i], posMap)
               if (!pmRange) continue
               const cls =
-                i === currentIndex
-                  ? 'find-highlight find-highlight-current'
-                  : 'find-highlight'
-              decorations.push(
-                Decoration.inline(pmRange.from, pmRange.to, { class: cls }),
-              )
+                i === currentIndex ? 'find-highlight find-highlight-current' : 'find-highlight'
+              decorations.push(Decoration.inline(pmRange.from, pmRange.to, { class: cls }))
             }
 
             return DecorationSet.create(state.doc, decorations)
@@ -166,9 +160,10 @@ export function NoteEditor({
           .then(() => setSaveState('saved'))
           .catch(() => setSaveState('error'))
       }, 800),
-    [onSave],
+    [onSave]
   )
 
+  const locale = useLocale()
   const editor = useEditor({
     editable,
     extensions: [StarterKit, Markdown, FindHighlightExtension],
@@ -182,10 +177,23 @@ export function NoteEditor({
     editorProps: {
       attributes: {
         class: 'prose-sm max-w-[70ch] focus:outline-none min-h-[12rem]',
-        'aria-label': 'Note editor',
+        'aria-label': uiText('Note editor'),
       },
     },
   })
+
+  useEffect(() => {
+    if (editor)
+      editor.setOptions({
+        editorProps: {
+          ...editor.options.editorProps,
+          attributes: {
+            class: 'prose-sm max-w-[70ch] focus:outline-none min-h-[12rem]',
+            'aria-label': uiText('Note editor'),
+          },
+        },
+      })
+  }, [editor, locale])
 
   // ---------- current plain text for the hook ----------
   // blockSeparator:'\n' must match the single-slot posMap inserts per block boundary
@@ -199,21 +207,17 @@ export function NoteEditor({
       editor,
       selector: ({ editor }) => (editor ? editor.getText({ blockSeparator: '\n' }) : ''),
     }) ?? ''
-  const { matches, currentIndex, next, prev } =
-    useFindReplace(plainText, findOpen ? findQuery : '')
+  const { matches, currentIndex, next, prev } = useFindReplace(plainText, findOpen ? findQuery : '')
 
   // ---------- push match decorations into the editor ----------
   useEffect(() => {
     if (!editor) return
-    editor.view.dispatch(
-      editor.state.tr.setMeta(findReplacePluginKey, { matches, currentIndex }),
-    )
+    editor.view.dispatch(editor.state.tr.setMeta(findReplacePluginKey, { matches, currentIndex }))
   }, [editor, matches, currentIndex])
 
   // ---------- scroll/select the current match ----------
   useEffect(() => {
-    if (!editor || !findOpen || currentIndex < 0 || currentIndex >= matches.length)
-      return
+    if (!editor || !findOpen || currentIndex < 0 || currentIndex >= matches.length) return
     const posMap = buildPlainTextPosMap(editor.state.doc)
     const pmRange = matchToPmRange(matches[currentIndex], posMap)
     if (pmRange) {
@@ -317,10 +321,12 @@ export function NoteEditor({
 
       <div ref={containerRef}>
         <div className="mb-2 h-4 text-xs text-muted-foreground" aria-live="polite">
-          {saveState === 'saving' && 'Saving…'}
-          {saveState === 'saved' && 'Saved'}
+          {saveState === 'saving' && uiText('Saving…')}
+          {saveState === 'saved' && uiText('Saved')}
           {saveState === 'error' && (
-            <span className="text-destructive">Save failed — retrying on next edit</span>
+            <span className="text-destructive">
+              {uiText('Save failed — retrying on next edit')}
+            </span>
           )}
         </div>
 

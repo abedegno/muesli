@@ -11,15 +11,16 @@ interface PollOptions {
 const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
     if (signal?.aborted) return reject(new Error('aborted'))
-    const t = setTimeout(resolve, ms)
-    signal?.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(t)
-        reject(new Error('aborted'))
-      },
-      { once: true },
-    )
+    const abort = () => {
+      clearTimeout(timer)
+      signal?.removeEventListener('abort', abort)
+      reject(new Error('aborted'))
+    }
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', abort)
+      resolve()
+    }, ms)
+    signal?.addEventListener('abort', abort, { once: true })
   })
 
 // pollNote repeatedly fetches the full note until its status is terminal
@@ -28,13 +29,14 @@ const sleep = (ms: number, signal?: AbortSignal) =>
 export async function pollNote(
   id: string,
   getFull: (id: string) => Promise<FullNote>,
-  opts: PollOptions = {},
+  opts: PollOptions = {}
 ): Promise<FullNote> {
-  const { intervalMs = 3000, maxAttempts = Infinity, signal, onUpdate } = opts
+  const { intervalMs = 3000, maxAttempts = 1200, signal, onUpdate } = opts
   let attempts = 0
   while (true) {
     if (signal?.aborted) throw new Error('aborted')
     const full = await getFull(id)
+    if (signal?.aborted) throw new Error('aborted')
     attempts++
     onUpdate?.(full)
     if (isTerminal(full.note.status as NoteStatus)) return full

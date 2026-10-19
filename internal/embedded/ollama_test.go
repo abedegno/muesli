@@ -389,3 +389,18 @@ func TestConfigureEmbeddedOllama(t *testing.T) {
 		}
 	})
 }
+
+func TestPullModelRequiresSuccessfulStreamCompletion(t *testing.T) {
+	t.Parallel()
+	for _, body := range []string{`{"error":"model download failed"}` + "\n", `{"status":"pulling","total":100,"completed":50}` + "\n"} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/x-ndjson")
+			_, _ = io.WriteString(w, body)
+		}))
+		err := PullModel(context.Background(), srv.URL, "test", nil)
+		srv.Close()
+		if err == nil {
+			t.Errorf("unsuccessful streamed pull reported success: %s", body)
+		}
+	}
+}

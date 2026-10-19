@@ -1,5 +1,6 @@
+import { uiText } from '@/i18n'
 import * as RToast from '@radix-ui/react-toast'
-import { createContext, useCallback, useContext, useState, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useState, useRef, type ReactNode } from 'react'
 
 interface ToastMsg {
   id: number
@@ -12,13 +13,12 @@ interface ToastApi {
 const Ctx = createContext<ToastApi>({ notify: () => {} })
 export const useToast = () => useContext(Ctx)
 
-let nextId = 1
-
 export function ToastProvider({ children }: { children: ReactNode }) {
+  const nextId = useRef(1)
   const [msgs, setMsgs] = useState<ToastMsg[]>([])
   const notify = useCallback((title: string, tone: 'error' | 'info' = 'info') => {
-    const id = nextId++
-    setMsgs((m) => [...m, { id, title, tone }])
+    const id = nextId.current++
+    setMsgs((m) => [...m.slice(-19), { id, title, tone }])
   }, [])
   return (
     <Ctx.Provider value={{ notify }}>
@@ -32,7 +32,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             role="alert"
           >
             <RToast.Title className={m.tone === 'error' ? 'text-destructive' : 'text-foreground'}>
-              {m.title}
+              {uiText(m.title)}
             </RToast.Title>
           </RToast.Root>
         ))}

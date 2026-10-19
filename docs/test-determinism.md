@@ -104,7 +104,7 @@ The `check-test-determinism` make target runs before `go test`:
 
 ```yaml
 - run: make check-test-determinism
-- run: go test ./... -p 1 -parallel 2
+- run: go test ./... -p 4 -parallel 2
 ```
 
 ### Python plugins job

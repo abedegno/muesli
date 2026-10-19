@@ -22,9 +22,12 @@ function createSource() {
 
 describe('LiveTranscriptPanel', () => {
   const scrollIntoView = vi.fn()
+  const scrollTo = vi.fn()
 
   beforeEach(() => {
     scrollIntoView.mockClear()
+    scrollTo.mockClear()
+    HTMLElement.prototype.scrollTo = scrollTo
     Element.prototype.scrollIntoView = scrollIntoView
   })
 
@@ -78,10 +81,14 @@ describe('LiveTranscriptPanel', () => {
     expect(screen.getByText('Live')).toBeInTheDocument()
     expect(screen.getByText('first')).toBeInTheDocument()
     expect(screen.getByText('second')).toBeInTheDocument()
-    expect(screen.getByText('first').compareDocumentPosition(screen.getByText('second')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(
+      screen.getByText('first').compareDocumentPosition(screen.getByText('second')) &
+        Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy()
 
     await waitFor(() => {
-      expect(scrollIntoView).toHaveBeenCalled()
+      expect(scrollTo).toHaveBeenCalled()
+      expect(scrollIntoView).not.toHaveBeenCalled()
     })
   })
 
@@ -151,7 +158,7 @@ describe('LiveTranscriptPanel', () => {
     })
 
     expect(await screen.findByTestId('live-transcript-unavailable')).toHaveTextContent(
-      'Live transcript unavailable — the full transcript will be ready after recording.',
+      'Live transcript unavailable — the full transcript will be ready after recording.'
     )
     expect(screen.queryByTestId('live-transcript-panel')).not.toBeInTheDocument()
 
@@ -165,23 +172,56 @@ describe('LiveTranscriptPanel', () => {
   })
 
   it('stays visible with distinct startup copy while loading, then transitions to listening and segments', async () => {
-	const source = createSource()
-	render(<LiveTranscriptPanel noteId="note-1" isRecording source={source} />)
+    const source = createSource()
+    render(<LiveTranscriptPanel noteId="note-1" isRecording source={source} />)
 
-	act(() => source.emit({ noteId: 'note-1', type: 'loading' }))
+    act(() => source.emit({ noteId: 'note-1', type: 'loading' }))
 
-	expect(await screen.findByTestId('live-transcript-panel')).toBeVisible()
-	expect(screen.getByText(/Starting the transcription engine/)).toBeInTheDocument()
-	expect(screen.queryByText('Listening…')).not.toBeInTheDocument()
+    expect(await screen.findByTestId('live-transcript-panel')).toBeVisible()
+    expect(screen.getByText(/Starting the transcription engine/)).toBeInTheDocument()
+    expect(screen.queryByText('Listening…')).not.toBeInTheDocument()
 
-	act(() => source.emit({ noteId: 'note-1', type: 'live' }))
-	expect(screen.getByText('Listening…')).toBeInTheDocument()
-	expect(screen.queryByText(/Starting the transcription engine/)).not.toBeInTheDocument()
+    act(() => source.emit({ noteId: 'note-1', type: 'live' }))
+    expect(screen.getByText('Listening…')).toBeInTheDocument()
+    expect(screen.queryByText(/Starting the transcription engine/)).not.toBeInTheDocument()
 
-	act(() => source.emit({
-		noteId: 'note-1', type: 'segment', text: 'Ready now', start_ms: 0, end_ms: 100,
-		speaker: null, provisional: true, final: true,
-	}))
-	expect(screen.getByText('Ready now')).toBeInTheDocument()
+    act(() =>
+      source.emit({
+        noteId: 'note-1',
+        type: 'segment',
+        text: 'Ready now',
+        start_ms: 0,
+        end_ms: 100,
+        speaker: null,
+        provisional: true,
+        final: true,
+      })
+    )
+    expect(screen.getByText('Ready now')).toBeInTheDocument()
   })
+})
+
+it('keeps the last live words after stop and when the stream drops, until a final transcript replaces them', async () => {
+  const source = createSource()
+  Element.prototype.scrollIntoView = vi.fn()
+  const view = render(<LiveTranscriptPanel noteId="note-1" isRecording source={source} />)
+  act(() =>
+    source.emit({
+      noteId: 'note-1',
+      type: 'segment',
+      text: 'Keep these meeting words',
+      start_ms: 0,
+      end_ms: 100,
+      speaker: null,
+      provisional: true,
+      final: false,
+    })
+  )
+  view.rerender(<LiveTranscriptPanel noteId="note-1" isRecording={false} source={source} />)
+  expect(screen.getByText('Keep these meeting words')).toBeVisible()
+  expect(screen.getByText(/recording stopped/i)).toBeVisible()
+  act(() => source.emit({ noteId: 'note-1', type: 'dropped' }))
+  expect(screen.getByText('Keep these meeting words')).toBeVisible()
+  view.rerender(<LiveTranscriptPanel noteId="note-2" isRecording={false} source={source} />)
+  expect(screen.queryByText('Keep these meeting words')).not.toBeInTheDocument()
 })

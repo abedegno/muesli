@@ -32,8 +32,12 @@ interface AudioDataInit {
 type AudioDataCtor = new (init: AudioDataInit) => unknown
 
 export interface SystemAudioDeps {
-  systemAudioStart: () => Promise<{ sampleRate: number; channels: number } | null>
-  systemAudioStop: () => Promise<void>
+  systemAudioStart: () => Promise<{
+    sampleRate: number
+    channels: number
+    captureId?: string
+  } | null>
+  systemAudioStop: (captureId?: string) => Promise<void>
   onSystemAudioPcm: (cb: (chunk: Uint8Array) => void) => () => void
   TrackGenerator?: TrackGeneratorCtor
   AudioData?: AudioDataCtor
@@ -49,7 +53,7 @@ function defaultDeps(): SystemAudioDeps {
   }
   return {
     systemAudioStart: () => muesli.systemAudioStart(),
-    systemAudioStop: () => muesli.systemAudioStop(),
+    systemAudioStop: (captureId) => muesli.systemAudioStop(captureId),
     onSystemAudioPcm: (cb) => muesli.onSystemAudioPcm(cb),
     TrackGenerator: g.MediaStreamTrackGenerator,
     AudioData: g.AudioData,
@@ -63,15 +67,16 @@ function defaultDeps(): SystemAudioDeps {
  * The caller must invoke `handle.stop()` when recording ends.
  */
 export async function startSystemAudioStream(
-  overrides: Partial<SystemAudioDeps> = {},
+  overrides: Partial<SystemAudioDeps> = {}
 ): Promise<SystemAudioStreamHandle | null> {
   const deps = { ...defaultDeps(), ...overrides }
   const { TrackGenerator, AudioData, MediaStreamCtor } = deps
   if (!TrackGenerator || !AudioData || !MediaStreamCtor) return null
 
   const fmt = await deps.systemAudioStart()
-  if (!fmt || fmt.sampleRate < 1 || fmt.channels < 1) {
-    await deps.systemAudioStop().catch(() => {})
+  if (!fmt) return null
+  if (fmt.sampleRate < 1 || fmt.channels < 1) {
+    await deps.systemAudioStop(fmt.captureId).catch(() => {})
     return null
   }
   const { sampleRate, channels } = fmt
@@ -105,7 +110,7 @@ export async function startSystemAudioStream(
           numberOfChannels: channels,
           timestamp: timestampUs,
           data: samples,
-        }),
+        })
       )
       timestampUs += Math.round((numberOfFrames / sampleRate) * 1_000_000)
     } catch {
@@ -149,7 +154,7 @@ export async function startSystemAudioStream(
     closed = true
     unsubscribe()
     writeChain = writeChain.then(() => writer.close().catch(() => {}))
-    void deps.systemAudioStop().catch(() => {})
+    void deps.systemAudioStop(fmt.captureId).catch(() => {})
   }
 
   return { stream, stop }

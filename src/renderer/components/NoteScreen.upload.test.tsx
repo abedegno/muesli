@@ -29,6 +29,7 @@ const mockNotify = vi.fn()
 // Mutable start-impl so individual tests can inject a throw without needing to
 // reconstruct the whole RecordingSession mock.
 let startImpl: () => Promise<void> = async () => {}
+let stopFailure: Error | null = null
 
 // ---------------------------------------------------------------------------
 // Route / outlet mock
@@ -52,14 +53,28 @@ vi.mock('react-router-dom', () => {
 // ---------------------------------------------------------------------------
 
 const readyNote: FullNote = {
-  note: { id: 'n1', title: 'Standup', status: 'ready', created_at: '', updated_at: '', partial_transcript: false },
+  note: {
+    id: 'n1',
+    title: 'Standup',
+    status: 'ready',
+    created_at: '',
+    updated_at: '',
+    partial_transcript: false,
+  },
   body_markdown: '',
   transcript: null,
   summaries: [],
 }
 
 const transcribingNote: FullNote = {
-  note: { id: 'n1', title: 'Standup', status: 'transcribing', created_at: '', updated_at: '', partial_transcript: false },
+  note: {
+    id: 'n1',
+    title: 'Standup',
+    status: 'transcribing',
+    created_at: '',
+    updated_at: '',
+    partial_transcript: false,
+  },
   body_markdown: '',
   transcript: null,
   summaries: [],
@@ -72,6 +87,10 @@ const transcribingNote: FullNote = {
 vi.mock('@/api', () => ({
   muesli: {
     getFull: vi.fn(async () => readyNote),
+    beginRecordingJournal: vi.fn(async () => undefined),
+    endRecordingJournal: vi.fn(async () => {}),
+    stopNoteCapture: vi.fn(async () => ({ ...readyNote.note, status: 'draft' })),
+    getRecordingRecovery: vi.fn(async () => null),
     uploadAudio: vi.fn(async () => {}),
     retryNote: vi.fn(async () => {}),
     addTag: vi.fn(),
@@ -104,8 +123,11 @@ vi.mock('@/api', () => ({
 
 vi.mock('../../main/recorder', () => ({
   RecordingSession: class {
-    async start() { return startImpl() }
+    async start() {
+      return startImpl()
+    }
     async stop() {
+      if (stopFailure) throw stopFailure
       return { bytes: new Uint8Array([1, 2, 3]), mimeType: 'audio/webm', hasSystemAudio: true }
     }
   },
@@ -114,7 +136,11 @@ vi.mock('../../main/recorder', () => ({
 vi.mock('../capture/electronCapture', () => ({ ElectronCapture: class {} }))
 
 vi.mock('./DuplicateAudioDialog', () => ({
-  DuplicateAudioDialog: (props: { existingNoteTitle: string; onOpenExisting: () => void; onTranscribeAgain: () => void }) => (
+  DuplicateAudioDialog: (props: {
+    existingNoteTitle: string
+    onOpenExisting: () => void
+    onTranscribeAgain: () => void
+  }) => (
     <div data-testid="dedup-dialog">
       <span data-testid="dedup-title">{props.existingNoteTitle}</span>
       <button onClick={props.onOpenExisting}>Open existing recording</button>
@@ -130,7 +156,12 @@ vi.mock('./DuplicateAudioDialog', () => ({
 // ---------------------------------------------------------------------------
 
 vi.mock('./NoteHeader', () => ({
-  NoteHeader: (props: { onStart: () => void; onStop: () => void; recordState: string; elapsedMs?: number }) => (
+  NoteHeader: (props: {
+    onStart: () => void
+    onStop: () => void
+    recordState: string
+    elapsedMs?: number
+  }) => (
     <div>
       <button onClick={props.onStart}>start-rec</button>
       <button onClick={props.onStop}>stop-rec</button>
@@ -158,6 +189,7 @@ import { NoteScreen } from './NoteScreen'
 // ---------------------------------------------------------------------------
 
 beforeEach(() => {
+  stopFailure = null
   startImpl = async () => {}
   navigate.mockClear()
   mockRefresh.mockClear()
@@ -195,9 +227,7 @@ describe('NoteScreen — start() success path', () => {
     await user.click(screen.getByText('start-rec'))
 
     // RecordingSession.start() resolves (default no-op) -> state must flip.
-    await waitFor(() =>
-      expect(screen.getByTestId('record-state')).toHaveTextContent('recording'),
-    )
+    await waitFor(() => expect(screen.getByTestId('record-state')).toHaveTextContent('recording'))
   })
 
   it('resets elapsedMs to 0 after the elapsed-timer has incremented it', async () => {
@@ -210,22 +240,20 @@ describe('NoteScreen — start() success path', () => {
 
       // First start — setElapsedMs(0) called, fake interval registered.
       await user.click(screen.getByText('start-rec'))
-      await waitFor(() =>
-        expect(screen.getByTestId('record-state')).toHaveTextContent('recording'),
-      )
+      await waitFor(() => expect(screen.getByTestId('record-state')).toHaveTextContent('recording'))
 
       // Advance fake clock by 1000 ms — the 500 ms interval fires twice, setting
       // elapsedMs to ~500 then ~1000. act() flushes the resulting React updates.
-      act(() => { vi.advanceTimersByTime(1000) })
+      act(() => {
+        vi.advanceTimersByTime(1000)
+      })
       await waitFor(() =>
-        expect(Number(screen.getByTestId('elapsed-ms').textContent)).toBeGreaterThan(0),
+        expect(Number(screen.getByTestId('elapsed-ms').textContent)).toBeGreaterThan(0)
       )
 
       // Second start (no explicit stop) calls setElapsedMs(0) — the reset under test.
       await user.click(screen.getByText('start-rec'))
-      await waitFor(() =>
-        expect(screen.getByTestId('elapsed-ms')).toHaveTextContent('0'),
-      )
+      await waitFor(() => expect(screen.getByTestId('elapsed-ms')).toHaveTextContent('0'))
 
       // No error at any point.
       expect(mockNotify).not.toHaveBeenCalled()
@@ -237,7 +265,9 @@ describe('NoteScreen — start() success path', () => {
 
 describe('NoteScreen — start() failure path', () => {
   it('shows an error toast and leaves state as "idle" when RecordingSession.start() throws', async () => {
-    startImpl = async () => { throw new Error('Microphone access denied') }
+    startImpl = async () => {
+      throw new Error('Microphone access denied')
+    }
 
     const user = userEvent.setup()
     await renderAndLoad()
@@ -245,14 +275,16 @@ describe('NoteScreen — start() failure path', () => {
     await user.click(screen.getByText('start-rec'))
 
     await waitFor(() =>
-      expect(mockNotify).toHaveBeenCalledWith('Microphone access denied', 'error'),
+      expect(mockNotify).toHaveBeenCalledWith('Microphone access denied', 'error')
     )
     // State must NOT be left as 'recording' on failure.
     expect(screen.getByTestId('record-state')).toHaveTextContent('idle')
   })
 
   it('does NOT transition to "recording" when start() throws', async () => {
-    startImpl = async () => { throw new Error('Permission denied') }
+    startImpl = async () => {
+      throw new Error('Permission denied')
+    }
 
     const user = userEvent.setup()
     await renderAndLoad()
@@ -272,15 +304,11 @@ describe('NoteScreen — stop() happy path', () => {
     await renderAndLoad()
 
     await user.click(screen.getByText('start-rec'))
-    await waitFor(() =>
-      expect(screen.getByTestId('record-state')).toHaveTextContent('recording'),
-    )
+    await waitFor(() => expect(screen.getByTestId('record-state')).toHaveTextContent('recording'))
 
     await user.click(screen.getByText('stop-rec'))
 
-    await waitFor(() =>
-      expect(navigate).toHaveBeenCalledWith('/notes/n1', { replace: true }),
-    )
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/notes/n1', { replace: true }))
   })
 
   it('calls refresh() and returns recordState to "idle" after a successful stop()', async () => {
@@ -288,17 +316,13 @@ describe('NoteScreen — stop() happy path', () => {
     await renderAndLoad()
 
     await user.click(screen.getByText('start-rec'))
-    await waitFor(() =>
-      expect(screen.getByTestId('record-state')).toHaveTextContent('recording'),
-    )
+    await waitFor(() => expect(screen.getByTestId('record-state')).toHaveTextContent('recording'))
 
     await user.click(screen.getByText('stop-rec'))
 
     // After the full upload -> poll -> done chain, the component should be idle
     // and refresh() should have been called.
-    await waitFor(() =>
-      expect(screen.getByTestId('record-state')).toHaveTextContent('idle'),
-    )
+    await waitFor(() => expect(screen.getByTestId('record-state')).toHaveTextContent('idle'))
     // refresh() is called twice in the happy path (before poll + after poll).
     expect(mockRefresh).toHaveBeenCalled()
   })
@@ -313,14 +337,12 @@ describe('NoteScreen — stop() error path', () => {
     await renderAndLoad()
 
     await user.click(screen.getByText('start-rec'))
-    await waitFor(() =>
-      expect(screen.getByTestId('record-state')).toHaveTextContent('recording'),
-    )
+    await waitFor(() => expect(screen.getByTestId('record-state')).toHaveTextContent('recording'))
 
     await user.click(screen.getByText('stop-rec'))
 
     await waitFor(() =>
-      expect(mockNotify).toHaveBeenCalledWith('Upload failed: quota exceeded', 'error'),
+      expect(mockNotify).toHaveBeenCalledWith('Upload failed: quota exceeded', 'error')
     )
     // State must be reset so the user can try again.
     expect(screen.getByTestId('record-state')).toHaveTextContent('idle')
@@ -364,9 +386,7 @@ describe('NoteScreen — mount: isProcessing() branch', () => {
 
     // After the mount effect runs + pollNote completes, recordState should be
     // 'idle' and refresh() should have been called.
-    await waitFor(() =>
-      expect(screen.getByTestId('record-state')).toHaveTextContent('idle'),
-    )
+    await waitFor(() => expect(screen.getByTestId('record-state')).toHaveTextContent('idle'))
     expect(mockRefresh).toHaveBeenCalled()
   })
 
@@ -381,12 +401,9 @@ describe('NoteScreen — mount: isProcessing() branch', () => {
     render(<NoteScreen />)
 
     // The component must show 'processing' while the poll is in-flight.
-    await waitFor(() =>
-      expect(screen.getByTestId('record-state')).toHaveTextContent('processing'),
-    )
+    await waitFor(() => expect(screen.getByTestId('record-state')).toHaveTextContent('processing'))
   })
 })
-
 
 describe('NoteScreen — stop() dedup gate', () => {
   it('shows DuplicateAudioDialog and does NOT upload when checkAudioDedup returns a match', async () => {
@@ -400,9 +417,7 @@ describe('NoteScreen — stop() dedup gate', () => {
     await renderAndLoad()
 
     await user.click(screen.getByText('start-rec'))
-    await waitFor(() =>
-      expect(screen.getByTestId('record-state')).toHaveTextContent('recording'),
-    )
+    await waitFor(() => expect(screen.getByTestId('record-state')).toHaveTextContent('recording'))
 
     await user.click(screen.getByText('stop-rec'))
 
@@ -425,9 +440,7 @@ describe('NoteScreen — stop() dedup gate', () => {
     await renderAndLoad()
 
     await user.click(screen.getByText('start-rec'))
-    await waitFor(() =>
-      expect(screen.getByTestId('record-state')).toHaveTextContent('recording'),
-    )
+    await waitFor(() => expect(screen.getByTestId('record-state')).toHaveTextContent('recording'))
 
     await user.click(screen.getByText('stop-rec'))
 
@@ -444,9 +457,7 @@ describe('NoteScreen — stop() dedup gate', () => {
     await renderAndLoad()
 
     await user.click(screen.getByText('start-rec'))
-    await waitFor(() =>
-      expect(screen.getByTestId('record-state')).toHaveTextContent('recording'),
-    )
+    await waitFor(() => expect(screen.getByTestId('record-state')).toHaveTextContent('recording'))
 
     await user.click(screen.getByText('stop-rec'))
 
@@ -454,4 +465,25 @@ describe('NoteScreen — stop() dedup gate', () => {
     await waitFor(() => expect(muesli.uploadAudio).toHaveBeenCalledTimes(1))
     expect(screen.queryByTestId('dedup-dialog')).not.toBeInTheDocument()
   })
+})
+
+it('closes the journal and clears recording state when final encoding fails', async () => {
+  const { muesli } = await import('@/api')
+  vi.mocked(muesli.beginRecordingJournal).mockResolvedValueOnce('capture-test')
+  vi.mocked(muesli.getRecordingRecovery).mockResolvedValue({
+    noteId: 'n1',
+    mimeType: 'audio/wav',
+    byteLength: 64044,
+    createdAt: '2026-10-19T10:00:00Z',
+  })
+  stopFailure = new Error('Encoding failed; disk recovery kept.')
+  await renderAndLoad()
+  await userEvent.click(screen.getByText('start-rec'))
+  await waitFor(() => expect(screen.getByTestId('record-state')).toHaveTextContent('recording'))
+  await userEvent.click(screen.getByText('stop-rec'))
+  await waitFor(() => expect(muesli.endRecordingJournal).toHaveBeenCalledWith('capture-test'))
+  expect(muesli.stopNoteCapture).toHaveBeenCalledWith('n1', 'capture-test')
+  expect(muesli.uploadAudio).not.toHaveBeenCalled()
+  await waitFor(() => expect(screen.getByTestId('record-state')).toHaveTextContent('idle'))
+  expect(mockNotify).toHaveBeenCalledWith('Encoding failed; disk recovery kept.', 'error')
 })
