@@ -503,3 +503,19 @@ registration logic.
 > API keys or other secrets) is stored encrypted at rest on the server. It is
 > decrypted only at call time and sent directly to your plugin in the `config`
 > field of each request.
+
+### Hosted permissions
+
+Plugin administration, health actions, default selection and model-download
+retries require an administrator account. The first account is the administrator;
+other accounts are members. An administrator can change an existing account's
+role in the administration console's Account access screen. The last
+administrator cannot be demoted, and permissions are checked on each request.
+
+Members can inspect the available transcription choices through
+`GET /api/transcription/services`. This response omits configuration, schemas,
+tokens and endpoint URLs for members, including credentials embedded in URLs.
+It does not grant permission to change the server's shared defaults.
+`GET /api/transcription/status` and `GET /api/readiness` provide read-only status.
+Upgrade hosted servers alongside the desktop client to provide these endpoints
+and the administrator boundary.

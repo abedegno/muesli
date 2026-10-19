@@ -253,3 +253,24 @@ under the AGPL.
 
 Open a [discussion or issue](../../issues). We're happy to help you find a good
 first task.
+
+## Interface languages
+
+The desktop and administration UI support English, French, German and Spanish.
+Keep display language, regional date/number formatting and spoken transcription
+language separate. User-written notes, speaker names and transcripts are data;
+never pass them through the UI translation catalogue.
+
+Use `uiText('Complete message', { name: value })` for controls and feedback, or
+`t` for the named messages in `src/renderer/i18n/en.ts`. Write complete messages
+instead of appending English plural suffixes. Use the shared `formatDate` and
+`formatNumber` helpers so regional preferences apply consistently. Module-level
+labels must be evaluated when rendered, not translated once when imported.
+Language changes must not remount the recording/editor tree.
+
+Run `node scripts/extract-ui-messages.mjs --write` after changing interface copy.
+Update `fr.json`, `de.json` and `es.json` in `src/renderer/i18n/`, keeping the same
+keys and named placeholders as `messages.json`. Then run `npm run check:i18n`
+and `npm test -- src/shared/localization.test.ts`. The extraction check catches
+uncatalogued explicit controls; translation tests catch missing entries and
+changed placeholders. Review helper-generated text and runtime layout too.
