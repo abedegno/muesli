@@ -44,14 +44,14 @@ jobs:
 
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.11'
+          go-version-file: go.mod
 
       - name: Go tests (macOS-sensitive packages)
         run: go test ./internal/embedded/...
 
       - uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Build whisper.cpp static libs (Metal, arm64)
         run: |
@@ -88,7 +88,18 @@ jobs:
       - name: Assemble desktop resources
         run: bash scripts/assemble-desktop-resources.sh darwin-arm64
 
+      # Dependabot and fork PRs do not receive signing credentials. Validate the
+      # package with an ad-hoc signature; trusted nightlies/releases still sign.
+      - name: Build ad-hoc package (pull request)
+        if: github.event_name == 'pull_request'
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: |
+          npx electron-vite build
+          npx electron-builder --config.mac.identity=- --config.mac.notarize=false --publish never
+
       - name: Build + sign (+ notarize on tag)
+        if: github.event_name != 'pull_request'
         env:
           CSC_LINK: ${{ secrets.CSC_LINK }}
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
@@ -198,14 +209,14 @@ jobs:
       # wrong path says so instead of looking healthy.
       - name: Upload Playwright traces (packaged E2E)
         if: failure() && (github.event_name == 'schedule' || startsWith(github.ref, 'refs/tags/desktop-v'))
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: playwright-traces-packaged-macos
           path: test-results/
           if-no-files-found: warn
 
       - name: Upload dmg artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: muesli-macos-arm64-dmg
           path: dist-desktop/*.dmg
@@ -222,10 +233,10 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: '1.25.11'
+          go-version-file: go.mod
       - uses: actions/setup-node@v6
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Install build toolchain (Linux)
         run: sudo apt-get update -qq && sudo apt-get install -y build-essential cmake git
@@ -270,7 +281,7 @@ jobs:
       # per #652's scope. This is a real, named coverage gap, not dropped
       # silently.
       - name: Upload AppImage artifact
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: muesli-linux-x64-appimage
           path: dist-desktop/*.AppImage

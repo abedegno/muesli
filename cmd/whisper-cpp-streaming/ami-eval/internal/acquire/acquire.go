@@ -36,9 +36,13 @@ var repoTopLevelDenyList = []string{
 	".github",
 	"agents",
 	"bircher",
+	"bin",
 	"build",
 	"cmd",
+	"coverage",
 	"coverage-floors",
+	"dist",
+	"dist-desktop",
 	"docs",
 	"e2e",
 	"infra",
@@ -49,10 +53,13 @@ var repoTopLevelDenyList = []string{
 	// local dev shell may have installed it too. Deny it defensively like
 	// every other real top-level directory.
 	"node_modules",
+	"out",
+	"playwright-report",
 	"plugins",
 	"scripts",
 	"src",
 	"test",
+	"test-results",
 	"testdata",
 	"web",
 }

@@ -21,6 +21,22 @@ updates:
     labels:
       - 'type:chore'
       - 'area:ui'
+    # TypeScript 7 removes the JS compiler API used by typescript-eslint.
+    # Electron Vite 5 supports Vite <=7; plugin-react 6 requires Vite 8.
+    # Vitest 4 changes branch accounting (73.56% vs the 84.19% gate in trial);
+    # migrate coverage separately before upgrading the desktop test runner.
+    # Revisit these deferrals when those upstream compatibility ranges change.
+    ignore:
+      - dependency-name: typescript
+        versions: ['>=7']
+      - dependency-name: vitest
+        versions: ['>=4']
+      - dependency-name: '@vitest/coverage-v8'
+        versions: ['>=4']
+      - dependency-name: vite
+        versions: ['>=8']
+      - dependency-name: '@vitejs/plugin-react'
+        versions: ['>=6']
     # Keep Electron updates individual: stale Electron versions are a desktop security exposure.
     groups:
       non-major:
@@ -30,6 +46,9 @@ updates:
 
   - package-ecosystem: npm
     directory: /web/admin
+    ignore:
+      - dependency-name: typescript
+        versions: ['>=7']
     schedule:
       interval: weekly
     open-pull-requests-limit: 3
@@ -113,6 +132,10 @@ updates:
 
   - package-ecosystem: docker
     directory: /
+    # Keep the server build on Node 24 LTS; review a new major at LTS adoption.
+    ignore:
+      - dependency-name: node
+        update-types: ['version-update:semver-major']
     schedule:
       interval: weekly
     open-pull-requests-limit: 5
