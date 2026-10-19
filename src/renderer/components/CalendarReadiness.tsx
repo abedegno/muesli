@@ -47,10 +47,11 @@ export function CalendarReadiness({ hosted }: { hosted: boolean | null }) {
                     ? uiText(
                         'A calendar connection needs attention. Reconnect its account to resume syncing.'
                       )
-                    : uiText('{value1} calendar connection{value2} available.', {
-                        value1: state.connections,
-                        value2: state.connections === 1 ? '' : 's',
-                      })}
+                    : state.connections === 1
+                      ? uiText('1 calendar connection available.')
+                      : uiText('{count} calendar connections available.', {
+                          count: state.connections,
+                        })}
                 </p>
                 <p className="text-muted-foreground">
                   {state.lastSyncedAt

@@ -35,10 +35,11 @@ function EventRow({ event }: { event: CalendarEvent }) {
       <div className="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
         <span
           className="flex items-center gap-1"
-          title={uiText('{value1} attendee{value2}', {
-            value1: event.attendees.length,
-            value2: event.attendees.length === 1 ? '' : 's',
-          })}
+          title={
+            event.attendees.length === 1
+              ? uiText('{count} attendee', { count: event.attendees.length })
+              : uiText('{count} attendees', { count: event.attendees.length })
+          }
         >
           <Users size={14} /> {event.attendees.length}
         </span>

@@ -65,8 +65,12 @@ const MATCH_TYPE_LABEL: Record<SearchMatch['match_type'], string> = {
   get title() {
     return uiText('Title')
   },
-  transcript: 'Transcript',
-  summary: 'Summary',
+  get transcript() {
+    return uiText('Transcript')
+  },
+  get summary() {
+    return uiText('Summary')
+  },
 }
 
 // One row per match on a semantic-search hit: a small type badge (Title /

@@ -8,7 +8,7 @@ import { CalendarReadiness } from './CalendarReadiness'
 import { RecoveryInbox } from './RecoveryInbox'
 import { LanguageSettings } from './LanguageSettings'
 import { TranscriptionModels } from './TranscriptionModels'
-import { useLocale } from '@/i18n'
+import { useLocale, setDisplayLanguage } from '@/i18n'
 const api = vi.hoisted(() => ({
   getCapabilities: vi.fn(),
   getServiceReadiness: vi.fn(),
@@ -181,4 +181,17 @@ it('shows model progress without presenting optional downloads as a recording pr
   expect(screen.getByText(/does not prevent recording/)).toBeVisible()
   expect(screen.queryByRole('button', { name: 'Retry AI model downloads' })).not.toBeInTheDocument()
   view.unmount()
+})
+
+it('uses complete plural messages for German calendar counts', async () => {
+  setDisplayLanguage('de')
+  api.getCalendarReadiness.mockResolvedValue({
+    connections: 2,
+    failures: 0,
+    googleConfigured: false,
+    microsoftConfigured: false,
+    lastSyncedAt: null,
+  })
+  render(<CalendarReadiness hosted />)
+  expect(await screen.findByText('2 Kalenderverbindungen verfügbar.')).toBeVisible()
 })

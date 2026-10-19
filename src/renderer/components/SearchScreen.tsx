@@ -16,21 +16,21 @@ function errorMessage(err: unknown): string {
 }
 
 function personLabel(person: PersonWithCompany): string {
-  return person.display_name || person.primary_email || 'Untitled person'
+  return person.display_name || person.primary_email || uiText('Untitled person')
 }
 
 function folderLabel(folder: Folder): string {
-  return folder.name || 'Untitled folder'
+  return folder.name || uiText('Untitled folder')
 }
 
 function matchTypeLabel(matchType: SearchMatch['match_type']): string {
   switch (matchType) {
     case 'title':
-      return 'Title'
+      return uiText('Title')
     case 'transcript':
-      return 'Transcript'
+      return uiText('Transcript')
     case 'summary':
-      return 'Summary'
+      return uiText('Summary')
   }
 }
 
@@ -189,11 +189,10 @@ export function SearchScreen() {
           </p>
           {hasQueried && !loading && !error ? (
             <p className="text-sm text-muted-foreground">
-              {groupedResults.length} {uiText('note')}
-              {groupedResults.length === 1 ? '' : uiText('s')} {uiText('matched,')} {totalMatches}{' '}
-              {uiText('total match')}
-              {totalMatches === 1 ? '' : uiText('es')}
-              {uiText('.')}
+              {uiText('Matching notes: {notes} · Matches: {matches}', {
+                notes: groupedResults.length,
+                matches: totalMatches,
+              })}
             </p>
           ) : null}
         </div>
@@ -371,8 +370,9 @@ export function SearchScreen() {
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{noteTitle(note, noteId)}</p>
                     <p className="text-xs text-muted-foreground">
-                      {matches.length} {uiText('match')}
-                      {matches.length === 1 ? '' : uiText('es')}
+                      {matches.length === 1
+                        ? uiText('{count} match', { count: matches.length })
+                        : uiText('{count} matches', { count: matches.length })}
                     </p>
                   </div>
                   <p className="shrink-0 text-xs text-muted-foreground">{noteId.slice(0, 8)}</p>

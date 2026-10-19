@@ -164,7 +164,8 @@ The seven review areas are implemented for both local and hosted deployments:
    the role on every request. The console checks access before mounting, and its
    Account access form changes existing users' roles. The last administrator
    cannot be demoted. Ordinary members can inspect available transcription
-   services but cannot change shared selections or secrets.
+   services but cannot change shared selections or secrets. Member responses omit
+   endpoint URLs too, since URLs may contain inline credentials.
 2. **Interrupted recording recovery:** mixed 16 kHz PCM is journalled privately on
    disk independently of live transcription. Writes sync after about one second
    of audio; a crash can still lose the unsynced tail. Limits are ten captures,
@@ -271,16 +272,21 @@ measurement, and shared-probe concurrency is not a twenty-meeting ASR throughput
 benchmark. External OAuth providers require the operator's application credentials.
 Translations should receive native-speaker review before claiming editorial quality.
 
-Local follow-up checks: 1,532 client tests across 156 files passed, with coverage
-86.99% lines, 84.35% branches and 78.14% functions. The administration suite has
+Local follow-up checks: 1,533 client tests across 156 files passed, with coverage
+86.99% lines, 84.40% branches and 78.17% functions. The administration suite has
 118 passing tests. Both TypeScript projects compile; ESLint has no errors and
 eight existing warnings. Token compliance, catalogue extraction and whole-repo
 formatting pass. The desktop release workflow passes actionlint. The full Go
 suite passed against disposable PostgreSQL; new API/store paths and twenty
-simultaneous streaming connections also passed the race detector. Fifteen
-packaged scenarios were exercised; after fixing dropdown names, the language
-restart and recording lifecycle scenarios were rerun successfully.
+simultaneous streaming connections also passed the race detector. All fifteen
+packaged scenarios passed against the app installed from a local test DMG.
+Language preferences and transcription alternatives survive real restarts;
+active-capture and failed-upload recovery survive interruption.
 
 Hosted deployments must upgrade the server alongside the client to gain the new
 role checks, readiness endpoints and capture-lease support. An older server does
 not gain those protections from a desktop update alone.
+
+Remote CI validation remains pending for this branch. The local DMG installation
+check uses an ad-hoc signature, so it does not substitute for Apple notarization
+or Linux CI validation. No release has been published.

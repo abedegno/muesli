@@ -174,10 +174,9 @@ export function DiarizationReviewPanel({
     }
     setBusy(false)
     announce(
-      uiText('Confirmed {value1} of {value2} remaining turn{value3}', {
-        value1: count,
-        value2: remaining.length,
-        value3: remaining.length === 1 ? '' : 's',
+      uiText('Confirmed turns: {confirmed} of {total}.', {
+        confirmed: count,
+        total: remaining.length,
       })
     )
   }, [turns, noteId, announce])

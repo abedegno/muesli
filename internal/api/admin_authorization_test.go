@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"github.com/abedegno/muesli/internal/auth"
 	"net/http"
+	"strings"
 	"testing"
 )
 
@@ -23,6 +24,15 @@ func TestMemberCannotAdministerServer(t *testing.T) {
 		t.Fatal(err)
 	}
 	hdr := map[string]string{"Authorization": "Bearer " + raw}
+	created := doJSON(t, srv, http.MethodPost, "/api/admin/plugins", map[string]any{"kind": "transcriber", "name": "Custom service", "endpoint_url": "https://user:private-password@transcription.example?key=private-key", "token": "private-token", "config": map[string]string{"api_key": "private-config"}, "enabled": true}, admin)
+	if created.Code != 201 {
+		t.Fatalf("create service: %d %s", created.Code, created.Body)
+	}
+	services := doJSON(t, srv, http.MethodGet, "/api/transcription/services", nil, hdr)
+	if services.Code != 200 || strings.Contains(services.Body.String(), "private-") {
+		t.Fatalf("member received service credentials: %d %s", services.Code, services.Body)
+	}
+
 	for _, path := range []string{"/api/admin/plugins", "/api/admin/jobs", "/api/admin/backups", "/api/admin/config", "/api/admin/embeddings", "/api/admin/health"} {
 		rec := doJSON(t, srv, http.MethodGet, path, nil, hdr)
 		if rec.Code != http.StatusForbidden {

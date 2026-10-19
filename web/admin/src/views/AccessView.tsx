@@ -64,7 +64,7 @@ export function AccessView({
           {busy ? uiText('Saving…') : uiText('Save account access')}
         </button>
       </form>
-      {message && <p role="status">{message}</p>}
+      {message && <p role="status">{uiText(message)}</p>}
     </section>
   )
 }

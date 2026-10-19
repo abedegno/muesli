@@ -52,6 +52,17 @@ func (s *Server) handleSetUserRole(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, 200, user)
 }
 func (s *Server) handleTranscriptionServices(w http.ResponseWriter, r *http.Request) {
+	uid, ok := userIDFromContext(r.Context())
+	if !ok {
+		writeError(w, 401, "unauthorized")
+		return
+	}
+	admin, err := s.deps.Store.IsAdmin(r.Context(), uid)
+	if err != nil {
+		writeError(w, 503, "could not check account permissions")
+		return
+	}
+
 	list, err := s.deps.Store.ListPlugins(r.Context(), s.deps.Crypto)
 	if err != nil {
 		writeError(w, 500, "could not load transcription services")
@@ -60,6 +71,12 @@ func (s *Server) handleTranscriptionServices(w http.ResponseWriter, r *http.Requ
 	result := make([]model.Plugin, 0)
 	for _, p := range list {
 		if p.Kind == model.PluginTranscriber || p.Kind == model.PluginStreamingTranscriber {
+			// Endpoint URLs can contain credentials in userinfo or query parameters.
+			// Members only need display names and default/enabled flags.
+			if !admin {
+				p.EndpointURL = ""
+			}
+			p.Token = ""
 			p.Config = nil
 			p.ConfigSchema = nil
 			result = append(result, p)
