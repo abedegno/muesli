@@ -94,6 +94,8 @@ jobs:
         if: github.event_name == 'pull_request'
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+          # Force the ad-hoc signing pass even on PRs; no credentials are used.
+          CSC_FOR_PULL_REQUEST: 'true'
         run: |
           npx electron-vite build
           npx electron-builder --config.mac.identity=- --config.mac.notarize=false --publish never
