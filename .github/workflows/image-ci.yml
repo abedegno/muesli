@@ -11,6 +11,7 @@ on:
       - web/admin/**
       - plugins/**
       - .github/workflows/image-ci.yml
+      - scripts/check-plugin-image.py
 
 jobs:
   validate:
@@ -26,18 +27,32 @@ jobs:
             context: .
             dockerfile: Dockerfile
             image: ghcr.io/abedegno/muesli-server
+            module: ''
+            native_imports: ''
           - name: whisper-transcriber
             context: plugins/whisper-transcriber
             dockerfile: plugins/whisper-transcriber/Dockerfile
             image: ghcr.io/abedegno/muesli-whisper-transcriber
+            module: whisper_app.main
+            native_imports: 'faster_whisper'
           - name: ollama-agent
             context: plugins/ollama-agent
             dockerfile: plugins/ollama-agent/Dockerfile
             image: ghcr.io/abedegno/muesli-ollama-agent
+            module: ollama_app.main
+            native_imports: ''
           - name: streaming-transcriber
             context: plugins/streaming-transcriber
             dockerfile: plugins/streaming-transcriber/Dockerfile
             image: ghcr.io/abedegno/muesli-streaming-transcriber
+            module: streaming_app.main
+            native_imports: 'faster_whisper webrtcvad'
+          - name: parakeet-transcriber
+            context: plugins/parakeet-transcriber
+            dockerfile: plugins/parakeet-transcriber/Dockerfile
+            image: ghcr.io/abedegno/muesli-parakeet-transcriber
+            module: parakeet_app.main
+            native_imports: ''
     steps:
       - uses: actions/checkout@v7
 
@@ -51,5 +66,15 @@ jobs:
           platforms: linux/amd64
           push: false
           load: true
+          tags: ${{ matrix.image }}:ci
           cache-from: type=gha,scope=${{ matrix.name }}
           cache-to: type=gha,mode=max,scope=${{ matrix.name }}
+
+      - name: Exercise installed plugin imports and health
+        if: matrix.module != ''
+        env:
+          IMAGE: ${{ matrix.image }}:ci
+          MODULE: ${{ matrix.module }}
+          NATIVE_IMPORTS: ${{ matrix.native_imports }}
+        run: |
+          docker run --rm -i --entrypoint python "$IMAGE" - "$MODULE" $NATIVE_IMPORTS < scripts/check-plugin-image.py
